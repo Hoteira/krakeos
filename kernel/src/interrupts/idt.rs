@@ -1,4 +1,4 @@
-use crate::interrupts::{exceptions, task};
+use crate::interrupts::{exceptions, task, syscalls};
 use core::arch::asm;
 use core::mem::size_of;
 
@@ -19,7 +19,7 @@ pub struct Entry {
 
 impl Entry {
     pub fn set(&mut self, offset: u64) {
-        self.gdt_selector = 0x28;
+        self.gdt_selector = 0x28; // Kernel Code
         self.pointer_low = (offset & 0xFFFF) as u16;
         self.pointer_middle = ((offset >> 16) & 0xFFFF) as u16;
         self.pointer_high = (offset >> 32) as u32;
@@ -28,7 +28,7 @@ impl Entry {
     }
 
     pub fn set_ring_3(&mut self, offset: u64) {
-        self.gdt_selector = 0x28;
+        self.gdt_selector = 0x28; // Kernel Code
         self.pointer_low = (offset & 0xFFFF) as u16;
         self.pointer_middle = ((offset >> 16) & 0xFFFF) as u16;
         self.pointer_high = (offset >> 32) as u32;
@@ -87,6 +87,9 @@ impl Idt {
         self.add(exceptions::TIMER_INT as usize, task::timer_handler as u64);
         self.add(exceptions::KEYBOARD_INT as usize, exceptions::keyboard_handler as u64);
         self.add(exceptions::MOUSE_INT as usize, exceptions::mouse_handler as u64);
+        
+        // Syscall
+        self.add_ring_3(0x80, syscalls::int80_handler as u64);
     }
 }
 

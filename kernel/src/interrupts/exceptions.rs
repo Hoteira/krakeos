@@ -1,4 +1,5 @@
-use std::io::port::{inb, outb};
+use crate::drivers::port::{inb, outb};
+use crate::drivers::periferics::keyboard::KEYBOARD_BUFFER; // Import KEYBOARD_BUFFER
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
@@ -70,7 +71,7 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
     let scancode: u8 = inb(0x60);
 
     if let Some(character) = crate::drivers::periferics::keyboard::handle_scancode(scancode) {
-        std::print!("{}", character);
+        KEYBOARD_BUFFER.lock().push_back(character); // Push to buffer instead of printing
     }
 
     unsafe {

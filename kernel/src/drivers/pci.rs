@@ -1,5 +1,4 @@
-use std::io::port::{inl, outl};
-use std::println;
+use crate::drivers::port::{inl, outl};
 
 const PCI_CONFIG_ADDRESS: u32 = 0xCF8;
 const PCI_CONFIG_DATA: u32 = 0xCFC;
@@ -107,7 +106,7 @@ pub fn list_devices() {
                     let class_code = (class_subclass >> 24) & 0xFF;
                     let subclass_code = (class_subclass >> 16) & 0xFF;
 
-                    println!(
+                    crate::debugln!(
                         "CLASS: {:#X}, SUBCLASS: {:#X}, VENDOR: {:#X}, DEVICE: {:#X}",
                         class_code,
                         subclass_code,
@@ -121,7 +120,7 @@ pub fn list_devices() {
 }
 impl PciDevice {
     pub fn new(vendor_id: u32, device_id: u32) -> Option<PciDevice> {
-        println!("Finding device...");
+        crate::debugln!("Finding device...");
         find_device(vendor_id, device_id)
     }
 

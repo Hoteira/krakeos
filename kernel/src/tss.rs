@@ -1,4 +1,23 @@
 use crate::boot::TaskStateSegment;
+use core::sync::atomic::{AtomicU64, Ordering};
+
+pub static mut BASE_TSS: TaskStateSegment = TaskStateSegment {
+    reserved1: 0,
+    rsp0: 0,
+    rsp1: 0,
+    rsp2: 0,
+    reserved2: 0,
+    ist1: 0,
+    ist2: 0,
+    ist3: 0,
+    ist4: 0,
+    ist5: 0,
+    ist6: 0,
+    ist7: 0,
+    reserved3: 0,
+    reserved4: 0,
+    iopb_offset: 0,
+};
 
 #[repr(C, packed)]
 struct Descriptor {
@@ -8,6 +27,16 @@ struct Descriptor {
 
 pub fn set_tss(kernel_stack: u64) {
     unsafe {
+        // We know where the TSS is because we statically allocated it in `swiftboot` logic or here?
+        // Actually, `swiftboot` creates its own GDT and TSS.
+        // The Kernel just inherits it.
+        // BUT, `kernel/src/boot.rs` says `pub tss: u16`. That's the Selector.
+        // We don't know the address unless we parse the GDT (which we do below).
+        // OR we can rely on `BASE_TSS` if we reloaded the GDT (which we reverted).
+        
+        // Since we reverted GDT reloading, we are using the Bootloader's GDT and TSS.
+        // We MUST find the Bootloader's TSS address via SGDT/STR logic.
+        
         // 1. Get the current Task Register (TR) selector
         let tr: u16;
         core::arch::asm!("str {:x}", out(reg) tr);
@@ -19,34 +48,12 @@ pub fn set_tss(kernel_stack: u64) {
         let gdt_base = gdt_ptr.offset;
         let tr_index = tr >> 3; // Selector index (TR / 8)
         
-        // 3. Calculate the address of the TSS Descriptor in the GDT
-        // Each descriptor is 8 bytes.
-        // Note: In 64-bit mode, a TSS descriptor is 16 bytes (occupies 2 slots).
-        // We need the first 8 bytes (Low part) and next 8 bytes (High part) to reconstruct the base.
-        
         let tss_desc_low_ptr = (gdt_base + (tr_index as u64 * 8)) as *mut u64;
         let tss_desc_high_ptr = (gdt_base + (tr_index as u64 * 8) + 8) as *mut u64;
         
         let low = *tss_desc_low_ptr;
         let high = *tss_desc_high_ptr;
         
-        // 4. Decode the TSS Base Address from the Descriptor
-        // Low:  Base[23:16] (bits 39:32) | Base[15:0] (bits 31:16)
-        // High: Base[63:32] (bits 31:0) | Base[31:24] (bits 63:56 of Low part, wait... typical layout)
-        
-        // Standard 64-bit TSS Descriptor Layout:
-        // Low (64-bit): 
-        //   Bit 63-56: Base 31:24
-        //   Bit 55-52: Flags
-        //   Bit 51-48: Limit 19:16
-        //   Bit 47-40: Access Byte
-        //   Bit 39-32: Base 23:16
-        //   Bit 31-16: Base 15:0
-        //   Bit 15-00: Limit 15:0
-        // High (64-bit):
-        //   Bit 31-00: Base 63:32
-        //   Bit 63-32: Reserved (Zero)
-
         let mut base = 0u64;
         base |= (low >> 16) & 0xFFFF;          // Base 0-15
         base |= ((low >> 32) & 0xFF) << 16;    // Base 16-23

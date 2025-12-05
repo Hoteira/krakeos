@@ -1,5 +1,5 @@
 use core::arch::{asm, naked_asm};
-use crate::memory::pmm;
+use crate::memory::{pmm, vmm};
 
 const STACK_SIZE: u64 = 64 * 1024; // 64KB
 const MAX_TASKS: usize = 125;
@@ -32,12 +32,12 @@ pub struct CPUState {
     r10: u64,
     r9: u64,
     r8: u64,
-    rdi: u64,
-    rsi: u64,
+    pub(crate) rdi: u64,
+    pub(crate) rsi: u64,
     rdx: u64,
     rcx: u64,
     rbx: u64,
-    rax: u64,
+    pub(crate) rax: u64,
     rbp: u64,
 
     // Pushed by CPU on interrupt
@@ -105,7 +105,9 @@ impl Task {
         let u_frame = unsafe { pmm::allocate_frame().expect("Task init_user: OOM (ustack)") };
         self.stack = u_frame; 
         
-        let u_stack_top = u_frame + 4096; // This will be used as the User RSP
+        // Map it to virtual user space
+        let u_stack_virt = vmm::map_user_stack(u_frame);
+        let u_stack_top = u_stack_virt + 4096; // This will be used as the User RSP
 
         // 3. Setup CPU State on the KERNEL Stack
         let state_size = core::mem::size_of::<CPUState>();
@@ -128,10 +130,10 @@ impl Task {
             (*state_ptr).rbp = 0;
             
             // User Context
-            (*state_ptr).rip = entry_point; // Direct physical/identity-mapped address
+            (*state_ptr).rip = entry_point; 
             (*state_ptr).cs = 0x33; // User Code 64 (0x30) | RPL 3
-            (*state_ptr).rflags = 0x3202; // Interrupts enabled + IOPL 3
-            (*state_ptr).rsp = u_stack_top; // User Stack (Physical/identity-mapped)
+            (*state_ptr).rflags = 0x202; // Interrupts enabled (No IOPL 3!)
+            (*state_ptr).rsp = u_stack_top; // User Stack (Virtual)
             (*state_ptr).ss = 0x23; // User Data (0x20) | RPL 3
         }
     }
@@ -149,7 +151,7 @@ pub struct LockedTaskManager {
 }
 
 // Helper since we don't have the user's mutex lib
-mod spin {
+pub mod spin {
     use core::sync::atomic::{AtomicBool, Ordering};
     use core::cell::UnsafeCell;
 
@@ -362,6 +364,7 @@ pub extern "C" fn timer_handler() {
         );
     }
 }
+
 
 #[unsafe(no_mangle)]
 pub extern "C" fn switch(rsp: u64) -> u64 {

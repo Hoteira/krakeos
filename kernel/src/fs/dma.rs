@@ -1,11 +1,11 @@
 use crate::drivers::pci::*;
-use std::io::port::*;
-use std::println;
+use crate::drivers::port::*;
+use crate::debugln;
 
 fn test_pci_detection() {
     unsafe {
         if let Some(dev) = find_device(0x8086, 0x7010) {
-            println!("IDE controller found!");
+            debugln!("IDE controller found!");
 
             BM_BASE = dev.get_bar(4).unwrap() as u16;
             BMR_COMMAND = BM_BASE + 0;

@@ -1,5 +1,6 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 use crate::boot::{BOOT_INFO, MemoryMapEntry};
+use crate::debugln;
 
 pub const PAGE_SIZE: u64 = 4096;
 
@@ -27,7 +28,7 @@ static mut PMM: BitmapPmm = BitmapPmm {
 
 pub fn init() {
     unsafe {
-        std::println!("[PMM] Starting initialization...");
+        debugln!("[PMM] Starting initialization...");
         
         // Access BOOT_INFO safely
         let mmap = &(*(&raw mut BOOT_INFO)).mmap;
@@ -45,23 +46,22 @@ pub fn init() {
         }
         
         if max_addr == 0 {
-            std::println!("[PMM] Error: No memory found in map.");
+            debugln!("[PMM] Error: No memory found in map.");
             return;
         }
 
         let total_frames = (max_addr / PAGE_SIZE) as usize;
         let bitmap_size = (total_frames + 7) / 8;
 
-        std::println!("[PMM] Total Frames: {}, Bitmap Size: {} bytes", total_frames, bitmap_size);
+        debugln!("[PMM] Total Frames: {}, Bitmap Size: {} bytes", total_frames, bitmap_size);
 
         // 2. Find a place for the bitmap
         // We explicitly look for memory ABOVE 4MB (0x400000) to avoid:
         // - The first 1MB (BIOS/VGA)
         // - The Kernel (loaded somewhere low)
-        // - The Hardcoded Heap (0x300000 - 0x400000)
-        let safe_threshold = 0x400000; 
-        
-        let mut bitmap_addr: u64 = 0;
+                    // - The Hardcoded Heap (0x300000 - 0x400000)
+                    let safe_threshold = 0x400000;
+                                let mut bitmap_addr: u64 = 0;
         let mut found = false;
 
         for i in 0..32 {
@@ -98,7 +98,7 @@ pub fn init() {
             panic!("PMM: Could not find safe memory (above 4MB) for bitmap!");
         }
         
-        std::println!("[PMM] Bitmap placed at {:#x}", bitmap_addr);
+        debugln!("[PMM] Bitmap placed at {:#x}", bitmap_addr);
 
         let pmm_ptr = &raw mut PMM;
         (*pmm_ptr).bitmap = bitmap_addr as *mut u8;
@@ -155,7 +155,7 @@ pub fn init() {
              }
         }
 
-        std::println!("[PMM] Initialized. Used: {} KB, Free: {} KB", 
+        debugln!("[PMM] Initialized. Used: {} KB, Free: {} KB", 
             ((*pmm_ptr).used_frames * 4), 
             (total_frames - (*pmm_ptr).used_frames) * 4
         );

@@ -1,15 +1,17 @@
 use crate::memory::{pmm, paging};
 use core::arch::asm;
+use crate::debugln;
 
 pub fn init() {
     unsafe {
         let pml4_phys = (*(&raw const crate::boot::BOOT_INFO)).pml4;
-        std::println!("[VMM] PML4 at {:#x}", pml4_phys);
+        debugln!("[VMM] PML4 at {:#x}", pml4_phys);
     }
 }
 
 pub fn map_page(virt: u64, phys: u64, flags: u64) {
     unsafe {
+        // std::println!("[VMM] Mapping v={:#x} to p={:#x}", virt, phys);
         let pml4 = paging::active_level_4_table();
         
         let p4_idx = (virt >> 39) & 0x1FF;
@@ -25,7 +27,7 @@ pub fn map_page(virt: u64, phys: u64, flags: u64) {
             pml4.entries[p4_idx as usize] = p3_entry;
             paging::get_table(p3_entry).unwrap().zero();
         }
-        let p3 = paging::get_table(p3_entry).unwrap();
+        let p3 = paging::get_table(p3_entry).expect("VMM: Failed to get L3 table");
 
         let mut p2_entry = p3.entries[p3_idx as usize];
         if p2_entry & paging::PAGE_PRESENT == 0 {
@@ -34,7 +36,10 @@ pub fn map_page(virt: u64, phys: u64, flags: u64) {
             p3.entries[p3_idx as usize] = p2_entry;
             paging::get_table(p2_entry).unwrap().zero();
         }
-        let p2 = paging::get_table(p2_entry).unwrap();
+        if p2_entry & paging::PAGE_HUGE != 0 {
+            panic!("VMM: Huge page collision at L3 level for virt {:#x}", virt);
+        }
+        let p2 = paging::get_table(p2_entry).expect("VMM: Failed to get L2 table");
 
         let mut p1_entry = p2.entries[p2_idx as usize];
         if p1_entry & paging::PAGE_PRESENT == 0 {
@@ -43,7 +48,10 @@ pub fn map_page(virt: u64, phys: u64, flags: u64) {
             p2.entries[p2_idx as usize] = p1_entry;
             paging::get_table(p1_entry).unwrap().zero();
         }
-        let p1 = paging::get_table(p1_entry).unwrap();
+        if p1_entry & paging::PAGE_HUGE != 0 {
+            panic!("VMM: Huge page collision at L2 level for virt {:#x}", virt);
+        }
+        let p1 = paging::get_table(p1_entry).expect("VMM: Failed to get L1 table");
 
         p1.entries[p1_idx as usize] = phys | flags;
         

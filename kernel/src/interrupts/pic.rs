@@ -1,4 +1,4 @@
-use std::io::port::{inb, outb};
+use crate::drivers::port::{inb, outb};
 
 pub static mut PICS: Pics = Pics {
     master: Pic {

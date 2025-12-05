@@ -2,6 +2,7 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::mem::size_of;
+use crate::debugln;
 
 use crate::fs::disk;
 use crate::fs::ext2::structs::{Superblock, BlockGroupDescriptor, Inode};
@@ -87,6 +88,7 @@ impl Ext2 {
     }
 
     pub fn read_inode(&self, inode_idx: u32) -> Inode {
+        debugln!("DEBUG: read_inode({})", inode_idx);
         // Inode indices are 1-based
         let group = (inode_idx - 1) / self.inodes_per_group;
         let index_in_group = (inode_idx - 1) % self.inodes_per_group;
@@ -171,5 +173,145 @@ impl Ext2 {
         let mut bytes = [0u8; 4];
         self.read_disk_data(read_offset, &mut bytes);
         u32::from_le_bytes(bytes)
+    }
+}
+
+use crate::fs::vfs::{FileSystem, VfsNode, FileType};
+use crate::fs::ext2::structs::DirectoryEntry;
+
+pub struct Ext2Node {
+    fs: *mut Ext2, 
+    inode_idx: u32,
+    inode: Inode,
+    name: String,
+}
+
+impl FileSystem for Ext2 {
+    fn root(&mut self) -> Result<Box<dyn VfsNode>, String> {
+        let inode = self.read_inode(2); // Root is inode 2
+        Ok(Box::new(Ext2Node {
+            fs: self as *mut _,
+            inode_idx: 2,
+            inode,
+            name: String::from("/"),
+        }))
+    }
+}
+
+impl VfsNode for Ext2Node {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn size(&self) -> u64 {
+        self.inode.size as u64
+    }
+
+    fn kind(&self) -> FileType {
+        if (self.inode.mode & 0xF000) == 0x4000 {
+            FileType::Directory
+        } else if (self.inode.mode & 0xF000) == 0x8000 {
+            FileType::File
+        } else {
+            FileType::Unknown
+        }
+    }
+
+    fn read(&mut self, offset: u64, buffer: &mut [u8]) -> Result<usize, String> {
+        let fs = unsafe { &*self.fs };
+        let mut bytes_read = 0;
+        let mut current_offset = offset;
+        
+        debugln!("DEBUG: Reading file size {}, offset {}, buf_len {}", self.size(), offset, buffer.len());
+
+        while bytes_read < buffer.len() && current_offset < self.size() {
+            let block_idx = (current_offset / fs.block_size) as u32;
+            let block_offset = (current_offset % fs.block_size) as usize;
+            
+            debugln!("DEBUG: Logical Block {}, Block Offset {}", block_idx, block_offset);
+
+            // Use get_block_address to handle indirect blocks
+            let physical_block = fs.get_block_address(&self.inode, block_idx);
+            
+            debugln!("DEBUG: Physical Block {}", physical_block);
+
+            let mut block_buf = alloc::vec![0u8; fs.block_size as usize];
+            
+            if physical_block != 0 {
+                fs.read_disk_data(physical_block as u64 * fs.block_size, &mut block_buf);
+            } else {
+                // Sparse block, already zeroed
+            }
+            
+            let available = fs.block_size as usize - block_offset;
+            let to_copy = core::cmp::min(buffer.len() - bytes_read, available);
+            let to_copy = core::cmp::min(to_copy, (self.size() - current_offset) as usize);
+            
+            buffer[bytes_read..bytes_read+to_copy].copy_from_slice(&block_buf[block_offset..block_offset+to_copy]);
+            
+            bytes_read += to_copy;
+            current_offset += to_copy as u64;
+        }
+        
+        Ok(bytes_read)
+    }
+
+    fn write(&mut self, _offset: u64, _buffer: &[u8]) -> Result<usize, String> {
+        Err(String::from("Read-only"))
+    }
+
+    fn children(&mut self) -> Result<Vec<Box<dyn VfsNode>>, String> {
+        if self.kind() != FileType::Directory {
+            return Err(String::from("Not a directory"));
+        }
+        
+        let fs = unsafe { &*self.fs };
+        let mut entries = Vec::new();
+        let mut buf = alloc::vec![0u8; self.size() as usize];
+        
+        self.read(0, &mut buf)?;
+        
+        let mut offset = 0;
+        while offset < buf.len() {
+            // Ensure we don't read past buffer
+            if offset + size_of::<DirectoryEntry>() > buf.len() { break; }
+
+            let ptr = unsafe { buf.as_ptr().add(offset) };
+            let entry = unsafe { &*(ptr as *const DirectoryEntry) };
+            
+            if entry.rec_len == 0 { break; } // Corrupt or end?
+
+            if entry.inode != 0 {
+                let name_len = entry.name_len as usize;
+                let name_ptr = unsafe { ptr.add(8) }; // Struct size is 8
+                
+                if offset + 8 + name_len > buf.len() { break; }
+
+                let name_slice = unsafe { core::slice::from_raw_parts(name_ptr, name_len) };
+                let name = String::from_utf8_lossy(name_slice).into_owned();
+                
+                let child_inode = fs.read_inode(entry.inode);
+                entries.push(Box::new(Ext2Node {
+                    fs: self.fs,
+                    inode_idx: entry.inode,
+                    inode: child_inode,
+                    name,
+                }) as Box<dyn VfsNode>);
+            }
+            
+            offset += entry.rec_len as usize;
+        }
+        
+        Ok(entries)
+    }
+
+    fn find(&mut self, name: &str) -> Result<Box<dyn VfsNode>, String> {
+        let children = self.children()?;
+        for child in children {
+            if child.name() == name {
+                return Ok(child);
+            }
+        }
+        Err(String::from("File not found"))
     }
 }

@@ -8,13 +8,14 @@ mod drivers;
 mod fs;
 mod memory;
 mod tss;
-
-use alloc::boxed::Box;
-use std::println;
-use crate::boot::{BootInfo, BOOT_INFO};
-use core::arch::asm;
+pub mod debug;
 
 extern crate alloc;
+
+use crate::boot::{BootInfo, BOOT_INFO};
+use crate::fs::vfs::FileSystem; 
+use crate::fs::ext2::fs::Ext2; // Added Ext2 for font loading
+use core::arch::asm;
 
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".start")]
@@ -29,66 +30,62 @@ pub extern "C" fn _start(bootinfo_ptr: *const BootInfo) -> ! {
 
     memory::init();
 
-    fs::dma::init();
-    std::memory::heap::init_heap(0x30_0000 as *mut u8, 0x10_0000);
+    // Initialize Video (Framebuffer)
+    drivers::video::framebuffer::init();
+    
+    // Draw Blue Screen
+    drivers::video::framebuffer::clear_screen(0xFF0000FF); // ARGB (Blue)
 
-    println!("[KERNEL] Hello World!");
+    fs::dma::init();
+    std::memory::heap::init_heap(0x30_0000 as *mut u8, 0x100_0000);
+
+    debugln!("[KERNEL] Hello World!");
 
     interrupts::task::TASK_MANAGER.lock().init();
 
-    // Kernel Task (can use println!)
     interrupts::task::TASK_MANAGER.lock().add_task(test_task as u64, None);
     
-    // User Task (MUST be self-contained, no kernel calls)
-    interrupts::task::TASK_MANAGER.lock().add_task(user_task as u64, None);
+    debugln!("[KERNEL] Initializing Ext2...");
 
-    load_idt();
-    //keyboard::init();
-
-    println!("[KERNEL] Initializing Ext2...");
-    
-    // Mount Ext2 at offset 16384 (where make.bat puts it)
-    // Disk 0
-    match crate::fs::ext2::fs::Ext2::new(0, 16384) {
-        Ok(fs) => {
-            println!("[EXT2] Superblock found!");
-            println!(" - Magic: {:#x}", fs.superblock.magic + 0);
-            println!(" - Inodes Count: {}", fs.superblock.inodes_count + 0);
-            println!(" - Blocks Count: {}", fs.superblock.blocks_count + 0);
-            println!(" - Block Size: 1024 << {} = {}", fs.superblock.log_block_size + 0, 1024 << fs.superblock.log_block_size + 0);
-            println!(" - First Data Block: {}", fs.superblock.first_data_block + 0);
-            println!(" - Mount Count: {}", fs.superblock.mount_count + 0);
+    match Ext2::new(0, 16384) {
+        Ok(mut fs) => {
+            debugln!("[EXT2] Superblock found!");
+            debugln!(" - Magic: {:#x}", fs.superblock.magic + 0);
+            
+            match fs.root() {
+                Ok(mut root) => {
+                     match root.find("user") {
+                         Ok(mut user_file) => {
+                             let mut elf_buf = alloc::vec![0u8; user_file.size() as usize];
+                             if let Ok(bytes) = user_file.read(0, &mut elf_buf) {
+                                 match crate::fs::elf::load_elf(&elf_buf[0..bytes]) {
+                                     Ok(entry_point) => {
+                                         debugln!("[ELF] Loaded user program. Entry: {:#x}", entry_point);
+                                         interrupts::task::TASK_MANAGER.lock().add_user_task(entry_point, None);
+                                     }
+                                     Err(e) => debugln!("[ELF] Load failed: {}", e),
+                                 }
+                             }
+                         }
+                         Err(e) => debugln!("[EXT2] Failed to find user binary: {}", e),
+                     }
+                }
+                Err(e) => debugln!("[EXT2] Root error: {}", e),
+            }
         }
-        Err(e) => println!("[EXT2] Failed to mount Disk 0 @ 16384: {}", e),
+        Err(e) => debugln!("[EXT2] Failed to mount Disk 0 @ 16384: {}", e),
     }
 
-    println!("[KERNEL] Starting Kernel Tasks...");
+    debugln!("[KERNEL] Starting Kernel Tasks...");
+    load_idt();
 
     loop {}
 }
 
 fn test_task() {
     loop {
-        println!("Task A (Kernel)");
+        debugln!(".");
         for _ in 0..10000000 { unsafe { core::arch::asm!("nop") } }
-    }
-}
-
-fn user_task() {
-    loop {
-        unsafe {
-            // Write 'U' to serial port 0x3F8
-            core::arch::asm!(
-                "mov dx, 0x3F8",
-                "mov al, 0x55", // 'U'
-                "out dx, al",
-                options(nomem, nostack, preserves_flags)
-            );
-
-            for _ in 0..10000000 { 
-                core::arch::asm!("nop");
-            }
-        }
     }
 }
 
@@ -111,7 +108,7 @@ pub fn load_idt() {
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
-    println!("[KERNEL_PANIC]\n{}", info);
+    debugln!("[KERNEL_PANIC]\n{}", info);
     loop {}
 }
 

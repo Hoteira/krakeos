@@ -1,6 +1,10 @@
 // kernel/src/drivers/periferics/keyboard.rs
 
-use std::io::port::{inb, outb};
+use crate::drivers::port::{inb, outb};
+use alloc::collections::VecDeque;
+use crate::interrupts::task::spin::Mutex;
+
+pub static KEYBOARD_BUFFER: Mutex<VecDeque<char>> = Mutex::new(VecDeque::new());
 
 // PS/2 Controller Ports
 const DATA_PORT: u16 = 0x60;

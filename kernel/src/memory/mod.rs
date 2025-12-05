@@ -3,8 +3,8 @@ pub mod vmm;
 pub mod paging;
 
 pub fn init() {
-    std::println!("[MEMORY] Init...");
+    crate::debugln!("[MEMORY] Init...");
     pmm::init();
     vmm::init();
-    std::println!("[MEMORY] Init Done.");
+    crate::debugln!("[MEMORY] Init Done.");
 }
