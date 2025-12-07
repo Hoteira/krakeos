@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 use alloc::string::String;
 use alloc::string::ToString;
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Path {
     pub disk_id: u8,
@@ -10,6 +11,7 @@ pub struct Path {
 }
 
 impl Path {
+    #[allow(dead_code)]
     pub fn parse(path_str: &str) -> Result<Self, String> {
         if !path_str.starts_with('@') {
             return Err(String::from("Path must start with '@' (e.g., @0/path/to/file)"));
@@ -42,10 +44,12 @@ impl Path {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileType {
     File,
     Directory,
+    #[allow(dead_code)]
     Device,
     Unknown,
 }

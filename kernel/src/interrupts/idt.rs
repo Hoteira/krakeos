@@ -1,4 +1,4 @@
-use crate::interrupts::{exceptions, task, syscalls};
+use crate::interrupts::{exceptions, task};
 use core::arch::asm;
 use core::mem::size_of;
 
@@ -27,6 +27,11 @@ impl Entry {
         self.reserved = 0;
     }
 
+    pub fn set_ist(&mut self, ist: u8) {
+        self.options = (self.options & 0xFFF8) | (ist as u16 & 0x7);
+    }
+
+    #[allow(dead_code)]
     pub fn set_ring_3(&mut self, offset: u64) {
         self.gdt_selector = 0x28; // Kernel Code
         self.pointer_low = (offset & 0xFFFF) as u16;
@@ -59,6 +64,7 @@ impl Idt {
         self.entries[int].set(handler);
     }
 
+    #[allow(dead_code)]
     pub fn add_ring_3(&mut self, int: usize, handler: u64) {
         self.entries[int].set_ring_3(handler);
     }
@@ -75,24 +81,33 @@ impl Idt {
     }
 
     pub fn processor_exceptions(&mut self) {
-        self.add(0x0, exceptions::div_error as u64);
-        self.add(0x5, exceptions::bounds as u64);
-        self.add(0x6, exceptions::invalid_opcode as u64);
-        self.add(0x8, exceptions::double_fault as u64);
-        self.add(0xd, exceptions::general_protection_fault as u64);
-        self.add(0xe, exceptions::page_fault as u64);
+        self.entries[0].set(crate::interrupts::exceptions::div_error as u64);
+        self.entries[5].set(crate::interrupts::exceptions::bounds as u64);
+        self.entries[6].set(crate::interrupts::exceptions::invalid_opcode as u64);
+        
+        // Double Fault: Use IST Index 1
+        self.entries[8].set(crate::interrupts::exceptions::double_fault as u64);
+        self.entries[8].set_ist(1); 
+
+        self.entries[13].set(crate::interrupts::exceptions::general_protection_fault as u64);
+
+        // Page Fault: Use IST Index 2
+        self.entries[14].set(crate::interrupts::exceptions::page_fault as u64);
+        self.entries[14].set_ist(2);
     }
 
     pub fn hardware_interrupts(&mut self) {
-        self.add(exceptions::TIMER_INT as usize, task::timer_handler as u64);
+        self.add_ring_3(exceptions::TIMER_INT as usize, task::timer_handler as u64);
         self.add(exceptions::KEYBOARD_INT as usize, exceptions::keyboard_handler as u64);
         self.add(exceptions::MOUSE_INT as usize, exceptions::mouse_handler as u64);
         
-        // Syscall
-        self.add_ring_3(0x80, syscalls::int80_handler as u64);
+        // Syscall (int 0x80) is replaced by SYSCALL instruction via MSRs.
+        // The old entry point is no longer needed.
+        // self.add_ring_3(0x80, syscalls::int80_handler as u64);
     }
 }
 
+#[allow(dead_code)]
 pub fn interrupts() -> bool {
     let flags: u64;
 

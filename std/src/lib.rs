@@ -3,6 +3,7 @@
 pub mod io;
 pub mod memory;
 pub mod os;
+pub mod graphics;
 
 pub use crate::io::serial::_print;
 

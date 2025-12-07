@@ -30,30 +30,30 @@ pub(crate) fn setup_paging() {
         core::ptr::write_bytes(pd0, 3, 1);
 
         // PML4[0] -> PDPT
-        (*pml4).entries[0] = PDPT_ADDR | 0b11; // Present + Writable
+        (*pml4).entries[0] = PDPT_ADDR | 0b111; // Present + Writable + User
 
         // PDPT[0] -> PD
-        (*pdpt).entries[0] = PD0_ADDR | 0b11;
-        (*pdpt).entries[1] = PD1_ADDR | 0b11;
-        (*pdpt).entries[2] = PD2_ADDR | 0b11;
-        (*pdpt).entries[3] = PD3_ADDR | 0b11;
+        (*pdpt).entries[0] = PD0_ADDR | 0b111;
+        (*pdpt).entries[1] = PD1_ADDR | 0b111;
+        (*pdpt).entries[2] = PD2_ADDR | 0b111;
+        (*pdpt).entries[3] = PD3_ADDR | 0b111;
 
 
         // Identity map first 4GB using 2MB pages (so that it includes the framebuffer)
         for i in 0..512 {
-            (*pd0).entries[i] = (i as u64 * 0x20_0000) | 0b10000011; // PS + Present + Writable
+            (*pd0).entries[i] = (i as u64 * 0x20_0000) | 0b10000111; // PS + Present + Writable + User
         }
 
         for i in 0..512 {
-            (*pd1).entries[i] = (0x4000_0000 + i as u64 * 0x20_0000) | 0b10000011;
+            (*pd1).entries[i] = (0x4000_0000 + i as u64 * 0x20_0000) | 0b10000111;
         }
 
         for i in 0..512 {
-            (*pd2).entries[i] = (0x8000_0000 + i as u64 * 0x20_0000) | 0b10000011;
+            (*pd2).entries[i] = (0x8000_0000 + i as u64 * 0x20_0000) | 0b10000111;
         }
 
         for i in 0..512 {
-            (*pd3).entries[i] = (0xC000_0000 + i as u64 * 0x20_0000) | 0b10000011;
+            (*pd3).entries[i] = (0xC000_0000 + i as u64 * 0x20_0000) | 0b10000111;
         }
 
         PML4 = *pml4;

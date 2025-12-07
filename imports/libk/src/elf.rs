@@ -174,6 +174,12 @@ pub fn load_lib(fname: &str, _args: Option<&[u32]>) -> Result<u32, &'static str>
         return Err("Invalid ELF header");
     }
 
+    // Only support ET_DYN (3) which is PIE / Shared Library
+    // ET_EXEC (2) has absolute addresses and cannot be loaded at a random malloc base
+    if hdr.e_type != 3 {
+        return Err("Only PIE/Shared Libraries (ET_DYN) supported");
+    }
+
     let base_addr = match crate::syscall::malloc(file.size) {
         0 => return Err("Failed to allocate memory for ELF"),
         addr => addr,

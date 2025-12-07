@@ -1,16 +1,26 @@
 use crate::drivers::port::{inl, outl};
 
+#[allow(dead_code)]
 const PCI_CONFIG_ADDRESS: u32 = 0xCF8;
+#[allow(dead_code)]
 const PCI_CONFIG_DATA: u32 = 0xCFC;
 
+#[allow(dead_code)]
 #[derive(Debug, Copy, Clone)]
 pub struct PciDevice {
+    #[allow(dead_code)]
     pub class: u32,
+    #[allow(dead_code)]
     pub subclass: u32,
+    #[allow(dead_code)]
     pub vendor_id: u32,
+    #[allow(dead_code)]
     pub device_id: u32,
+    #[allow(dead_code)]
     pub bus: u8,
+    #[allow(dead_code)]
     pub device: u8,
+    #[allow(dead_code)]
     pub function: u8,
 }
 
@@ -34,6 +44,7 @@ fn pci_read(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     value
 }
 
+#[allow(dead_code)]
 pub fn find_device(v_id: u32, d_id: u32) -> Option<PciDevice> {
     for bus in 0..=255 {
         for device in 0..32 {
@@ -64,6 +75,7 @@ pub fn find_device(v_id: u32, d_id: u32) -> Option<PciDevice> {
     None
 }
 
+#[allow(dead_code)]
 pub fn find_device_by_class(class_id: u32, subclass_id: u32) -> Option<PciDevice> {
     for bus in 0..=255 {
         for device in 0..32 {
@@ -94,6 +106,7 @@ pub fn find_device_by_class(class_id: u32, subclass_id: u32) -> Option<PciDevice
     None
 }
 
+#[allow(dead_code)]
 pub fn list_devices() {
     for bus in 0..=255 {
         for device in 0..32 {
@@ -119,16 +132,19 @@ pub fn list_devices() {
     }
 }
 impl PciDevice {
+    #[allow(dead_code)]
     pub fn new(vendor_id: u32, device_id: u32) -> Option<PciDevice> {
         crate::debugln!("Finding device...");
         find_device(vendor_id, device_id)
     }
 
+    #[allow(dead_code)]
     fn get_pci_irq(bus: u8, device: u8, function: u8) -> u8 {
         let value = pci_read(bus, device, function, 0x3C);
         (value & 0xFF) as u8
     }
 
+    #[allow(dead_code)]
     pub fn get_bar(&self, bar_index: u8) -> Option<u32> {
         if bar_index > 5 {
             return None;
@@ -172,6 +188,7 @@ impl PciDevice {
         enable_bit | bus | device | function | aligned_offset
     }
 
+    #[allow(dead_code)]
     pub fn enable_bus_mastering(&self) -> bool {
         let current_command = match self.read_command_register() {
             Some(cmd) => cmd,

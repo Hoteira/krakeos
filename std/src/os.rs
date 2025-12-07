@@ -5,12 +5,15 @@ pub unsafe fn syscall(num: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
 
     unsafe {
         asm!(
-            "int 0x80",
-            in("rax") num,
-            in("rdi") arg1,
-            in("rsi") arg2,
-            in("rdx") arg3,
-            lateout("rax") result,
+            "syscall",
+            in("rax") num,    // Syscall number in RAX
+            in("rdi") arg1,   // Arg1 in RDI
+            in("rsi") arg2,   // Arg2 in RSI
+            in("rdx") arg3,   // Arg3 in RDX
+            // RCX and R11 are clobbered by syscall/sysret, so they don't need to be listed in `out` or `lateout`.
+            // RBP, RBX, R12-R15 are preserved by convention.
+            lateout("rax") result, // Return value in RAX
+            options(nostack, preserves_flags)
         );
     }
 
@@ -24,11 +27,8 @@ pub fn print(s: &str) {
 }
 
 pub fn yield_task() {
-
     unsafe {
-
-        syscall(2, 0, 0, 0);
-
+        asm!("int 0x20");
     }
 
 }

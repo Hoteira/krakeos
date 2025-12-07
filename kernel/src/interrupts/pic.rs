@@ -54,6 +54,7 @@ impl Pic {
         self.write_data(mask);
     }
 
+    #[allow(dead_code)]
     pub fn mask_irq(&self, irq: u8) {
         let mask = self.read_data() | (1 << irq);
         self.write_data(mask);
@@ -113,6 +114,7 @@ impl Pics {
     }
 }
 
+#[allow(dead_code)]
 pub fn reset_ps2_controller() {
     outb(0x64, 0xAD);
     outb(0x64, 0xA7);

@@ -1,40 +1,49 @@
 use core::arch::asm;
 
+#[allow(dead_code)]
 pub struct Port {
     port: u16
 }
 
 impl Port {
 
+    #[allow(dead_code)]
     pub fn new(port: u16) -> Self {
         Port { port }
     }
 
+    #[allow(dead_code)]
     pub fn outb(&self, value: u8) {
         outb(self.port, value);
     }
 
+    #[allow(dead_code)]
     pub fn inb(&self) -> u8 {
         inb(self.port)
     }
 
+    #[allow(dead_code)]
     pub fn outw(&self, value: u16) {
         outw(self.port, value);
     }
 
+    #[allow(dead_code)]
     pub fn inw(&self) -> u16 {
         inw(self.port)
     }
 
+    #[allow(dead_code)]
     pub fn outl(&self, value: u32) {
         outl(self.port, value);
     }
 
+    #[allow(dead_code)]
     pub fn inl(&self) -> u32 {
         inl(self.port)
     }
 }
 
+#[allow(dead_code)]
 #[inline(always)]
 pub fn inb(port: u16) -> u8 {
     let value: u8;
@@ -47,6 +56,7 @@ pub fn inb(port: u16) -> u8 {
     value
 }
 
+#[allow(dead_code)]
 #[inline(always)]
 pub fn outb(port: u16, value: u8) {
     unsafe {
@@ -57,6 +67,7 @@ pub fn outb(port: u16, value: u8) {
     }
 }
 
+#[allow(dead_code)]
 #[inline(always)]
 pub fn outw(port: u16, value: u16) {
     unsafe {
@@ -67,6 +78,7 @@ pub fn outw(port: u16, value: u16) {
     }
 }
 
+#[allow(dead_code)]
 #[inline(always)]
 pub fn inw(port: u16) -> u16 {
     let value: u16;
@@ -79,6 +91,7 @@ pub fn inw(port: u16) -> u16 {
     value
 }
 
+#[allow(dead_code)]
 #[inline(always)]
 pub fn outl(port: u16, value: u32) {
     unsafe {
@@ -89,6 +102,7 @@ pub fn outl(port: u16, value: u32) {
     }
 }
 
+#[allow(dead_code)]
 #[inline(always)]
 pub fn inl(port: u16) -> u32 {
     unsafe {

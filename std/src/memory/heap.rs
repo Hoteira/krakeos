@@ -36,10 +36,12 @@ impl Free {
 
 
 impl Used {
+    #[allow(dead_code)]
     fn start(&self) -> *mut u8 {
         unsafe { (self as *const Used).add(1) as *mut u8 }
     }
 
+    #[allow(dead_code)]
     fn total_size(&self) -> usize {
         size_of::<Used>() + self.size
     }

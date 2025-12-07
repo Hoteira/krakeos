@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -151,7 +152,7 @@ impl Ext2 {
         indirect_idx -= (ptrs_per_block * ptrs_per_block) as u32;
 
         // Triply Indirect (14)
-        let p3 = ptrs_per_block * ptrs_per_block * ptrs_per_block;
+        let _p3 = ptrs_per_block * ptrs_per_block * ptrs_per_block;
         // Implementation logic similar to above...
         let first_idx = indirect_idx / (ptrs_per_block * ptrs_per_block) as u32;
         let rem = indirect_idx % (ptrs_per_block * ptrs_per_block) as u32;

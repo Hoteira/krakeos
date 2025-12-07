@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct Superblock {

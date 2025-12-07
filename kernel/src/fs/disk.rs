@@ -2,6 +2,7 @@ use core::arch::asm;
 use crate::drivers::port::*;
 use crate::debugln;
 
+#[allow(dead_code)]
 pub fn read(lba: u64, disk: u8, buffer: &mut [u8]) {
     debugln!("Disk: Read LBA {} (DMA Active: {})", lba, crate::fs::dma::is_active());
     if crate::fs::dma::is_active() {
@@ -34,9 +35,7 @@ pub fn read(lba: u64, disk: u8, buffer: &mut [u8]) {
         outb(0x1F3, current_lba as u8);
         outb(0x1F4, (current_lba >> 8) as u8);
         outb(0x1F5, (current_lba >> 16) as u8);
-        outb(0x1F6, (disk | ((current_lba >> 24) & 0x0F) as u8));
-        outb(0x1F7, 0x20); // Read w/ retry
-
+            outb(0x1F6, disk | ((current_lba >> 24) & 0x0F) as u8);
         while is_busy() {}
         while !is_ready() {}
 
@@ -62,6 +61,7 @@ pub fn read(lba: u64, disk: u8, buffer: &mut [u8]) {
     reset();
 }
 
+#[allow(dead_code)]
 pub fn write(lba: u64, disk: u8, buffer: &[u8]) {
     if crate::fs::dma::is_active() {
         crate::fs::dma::write(lba, disk, buffer);
@@ -70,7 +70,7 @@ pub fn write(lba: u64, disk: u8, buffer: &[u8]) {
 
     // PIO Fallback
     let total_bytes = buffer.len();
-    let sector_count = (total_bytes + 511) / 512; // Used for loop, not necessarily sent to port if we loop manually
+    let _sector_count = (total_bytes + 511) / 512;
     
     let mut current_lba = lba;
     let mut bytes_written = 0;
@@ -84,7 +84,7 @@ pub fn write(lba: u64, disk: u8, buffer: &[u8]) {
         outb(0x1F3, current_lba as u8);
         outb(0x1F4, (current_lba >> 8) as u8);
         outb(0x1F5, (current_lba >> 16) as u8);
-        outb(0x1F6, (disk | ((current_lba >> 24) & 0x0F) as u8));
+        outb(0x1F6, disk | ((current_lba >> 24) & 0x0F) as u8);
         outb(0x1F7, 0x30); // Write command
 
         while is_busy() {}
@@ -113,11 +113,13 @@ pub fn write(lba: u64, disk: u8, buffer: &[u8]) {
     outb(0x1F7, 0xE7); // Cache flush?
 }
 
+#[allow(dead_code)]
 pub fn reset() {
     outb(0x3f6, 0b00000110);
     outb(0x3f6, 0b00000010);
 }
 
+#[allow(dead_code)]
 pub fn is_ready() -> bool {
     let status: u8 = inb(0x1F7);
 

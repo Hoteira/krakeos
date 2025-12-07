@@ -4,26 +4,41 @@ use crate::drivers::port::{inb, outb};
 use alloc::collections::VecDeque;
 use crate::interrupts::task::spin::Mutex;
 
+#[allow(dead_code)]
 pub static KEYBOARD_BUFFER: Mutex<VecDeque<char>> = Mutex::new(VecDeque::new());
 
 // PS/2 Controller Ports
+#[allow(dead_code)]
 const DATA_PORT: u16 = 0x60;
+#[allow(dead_code)]
 const STATUS_PORT: u16 = 0x64;
+#[allow(dead_code)]
 const COMMAND_PORT: u16 = 0x64;
 
 // PS/2 Controller Commands
+#[allow(dead_code)]
 const PS2_CMD_READ_CONFIG: u8 = 0x20;
+#[allow(dead_code)]
 const PS2_CMD_WRITE_CONFIG: u8 = 0x60;
+#[allow(dead_code)]
 const PS2_CMD_DISABLE_PORT1: u8 = 0xAD;
+#[allow(dead_code)]
 const PS2_CMD_ENABLE_PORT1: u8 = 0xAE;
+#[allow(dead_code)]
 const PS2_CMD_DISABLE_PORT2: u8 = 0xA7; // Not always present
+#[allow(dead_code)]
 const PS2_CMD_ENABLE_PORT2: u8 = 0xA8; // Not always present
+#[allow(dead_code)]
 const PS2_CMD_TEST_PORT1: u8 = 0xAB;
+#[allow(dead_code)]
 const PS2_CMD_TEST_PORT2: u8 = 0xA9; // Not always present
+#[allow(dead_code)]
 const PS2_CMD_TEST_CONTROLLER: u8 = 0xAA;
+#[allow(dead_code)]
 const PS2_CMD_RESET_DEVICE: u8 = 0xFF;
 
 // Keyboard device commands
+#[allow(dead_code)]
 const KEYBOARD_CMD_ENABLE_SCANNING: u8 = 0xF4;
 
 // Scancode set 1 (Standard XT/AT)
@@ -77,6 +92,7 @@ fn wait_for_write() -> bool {
     true
 }
 
+#[allow(dead_code)]
 pub fn init() {
     // Disable PS/2 Port 1 first to prevent interference
     if !wait_for_write() { return; }
@@ -120,6 +136,7 @@ pub fn init() {
     }
 }
 
+#[allow(dead_code)]
 pub fn handle_scancode(scancode: u8) -> Option<char> {
     unsafe {
         match scancode {
