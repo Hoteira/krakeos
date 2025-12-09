@@ -5,6 +5,7 @@ use crate::debugln;
 use crate::drivers::periferics::keyboard::KEYBOARD_BUFFER; 
 use crate::memory::paging::{self, PAGE_USER, PAGE_WRITABLE};
 use crate::composer::Window;
+use crate::fs::vfs::FileSystem;
 
 // Syscall Numbers
 pub const SYS_READ: u64 = 0;
