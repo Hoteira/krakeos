@@ -6,6 +6,7 @@ use crate::layout::{Display, FlexDirection};
 use std::graphics::{self, Items};
 use std::os::syscall;
 use alloc::string::String;
+use std::println;
 
 pub struct FrameBuffer {
     pub address: *mut u32,
@@ -52,6 +53,7 @@ pub struct Window {
 impl Window {
     pub fn new(title: &str, width: usize, height: usize) -> Self {
         let size = width * height * 4 + 4;
+
         Window {
             id: 0,
             title: String::from(title),
@@ -99,15 +101,19 @@ impl Window {
     }
 
     pub fn draw(&mut self) {
+        if self.buffer.address.is_null() {
+            return;
+        }
+
+        let buffer_len = self.buffer.size / 4;
+        let buffer = unsafe {
+            slice::from_raw_parts_mut(
+                self.buffer.address,
+                buffer_len
+            )
+        };
+        
         for child in &mut self.children {
-            let buffer = unsafe {
-                slice::from_raw_parts_mut(
-                    self.buffer.address,
-                    self.width * self.height + 1
-                )
-            };
-            
-            // Pass 0 for parent_margin as it's the root widget's parent.
             draw_recursive(buffer, self.width, child, 0, 0, self.width, self.height, 0, 0);
         }
     }
@@ -203,6 +209,15 @@ impl Window {
         }
         None
     }
+
+    pub fn find_widget_by_id(&self, id: WidgetId) -> Option<&Widget> {
+        for child in &self.children {
+            if let Some(found) = child.find_widget_by_id(id) {
+                return Some(found);
+            }
+        }
+        None
+    }
 }
 
 fn find_interactive_widget_recursive(widget: &Widget, x: usize, y: usize) -> Option<&Widget> {
@@ -234,8 +249,9 @@ pub fn draw_recursive(
     parent_width: usize,
     parent_height: usize,
     parent_padding: usize,
-    _parent_margin: usize, // Renamed to _parent_margin to ignore unused variable warning
+    _parent_margin: usize,
 ) {
+
     widget.update_layout(parent_x, parent_y, parent_width, parent_height, parent_padding, _parent_margin, &Display::None);
     widget.draw(buffer, width0);
 

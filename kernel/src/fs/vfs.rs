@@ -14,17 +14,24 @@ pub struct FileHandle {
 }
 
 pub fn init() {
-    // No explicit initialization needed for static arrays initialized with None
+    unsafe {
+        crate::debugln!("FILESYSTEMS at {:p}", core::ptr::addr_of!(FILESYSTEMS));
+        // Zero out FILESYSTEMS because .bss is not zeroed by bootloader
+        // If we don't do this, 'mount' will try to drop garbage "previous" values.
+        core::ptr::write_bytes(core::ptr::addr_of_mut!(FILESYSTEMS), 0, 1);
+        core::ptr::write_bytes(core::ptr::addr_of_mut!(OPEN_FILES), 0, 1);
+    }
 }
 
 pub fn mount(disk_id: u8, fs: Box<dyn FileSystem>) {
+    crate::debugln!("Mounting at index {}, fs box: {:p}", disk_id, fs);
     unsafe {
         FILESYSTEMS[disk_id as usize] = Some(fs);
     }
 }
 
-pub fn open_file(path_obj: &Path) -> Result<usize, String> {
-    let node = open(path_obj)?;
+pub fn open_file(disk_id: u8, path_str: &str) -> Result<usize, String> {
+    let node = open(disk_id, path_str)?;
     unsafe {
         for i in 3..256 {
             if OPEN_FILES[i].is_none() {
@@ -54,13 +61,27 @@ pub fn close_file(fd: usize) {
     }
 }
 
-pub fn open(path_obj: &Path) -> Result<Box<dyn VfsNode>, String> {
+pub fn open(disk_id: u8, path_str: &str) -> Result<Box<dyn VfsNode>, String> {
+    crate::debug::serial_print_str("vfs::open: start\r\n");
+    // let disk_id = 0xE0;
+    // let path_str = "user";
+    crate::debugln!("vfs::open: disk_id check...");
+    
+    // Hardcode path parsing logic for now
+    // let path_str_literal = "user";
+    let components: Vec<String> = path_str.split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
+
     unsafe {
-        if let Some(fs) = &mut FILESYSTEMS[path_obj.disk_id as usize] {
+        crate::debugln!("Accessing FILESYSTEMS at index {}", disk_id);
+        if let Some(fs) = &mut FILESYSTEMS[disk_id as usize] {
+             crate::debugln!("FS box ptr: {:p}", fs);
+             crate::debugln!("vfs::open: found fs, calling root()");
              let mut node = fs.root()?;
-             for component in &path_obj.components {
+             for component in components.iter() {
+                 crate::debugln!("vfs::open: finding component {}", component);
                  node = node.find(&component)?;
              }
+             crate::debugln!("vfs::open: done");
              Ok(node)
         } else {
             Err(String::from("Disk ID not mounted"))
@@ -68,11 +89,17 @@ pub fn open(path_obj: &Path) -> Result<Box<dyn VfsNode>, String> {
     }
 }
 
-pub fn read(path_obj: Path, offset: u64, size: u64, buffer: *mut u8) -> Result<usize, String> {
+pub fn read(disk_id: u8, path_str: &str, offset: u64, size: u64, buffer: *mut u8) -> Result<usize, String> {
+    let components: Vec<String> = path_str
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+
     unsafe {
-        if let Some(fs) = &mut FILESYSTEMS[path_obj.disk_id as usize] {
+        if let Some(fs) = &mut FILESYSTEMS[disk_id as usize] {
              let mut node = fs.root()?;
-             for component in path_obj.components {
+             for component in components {
                  node = node.find(&component)?;
              }
              let slice = core::slice::from_raw_parts_mut(buffer, size as usize);
@@ -80,42 +107,6 @@ pub fn read(path_obj: Path, offset: u64, size: u64, buffer: *mut u8) -> Result<u
         } else {
             Err(String::from("Disk ID not mounted"))
         }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Path {
-    pub disk_id: u8,
-    pub components: Vec<String>,
-}
-
-impl Path {
-    pub fn new(path_str: &str) -> Result<Self, String> {
-        if !path_str.starts_with('@') {
-            return Err(String::from("Path must start with '@' (e.g., @0/path/to/file)"));
-        }
-
-        let disk_end = path_str.find('/').ok_or(String::from("Invalid path format: missing '/' after disk ID"))?;
-        
-        let disk_part = &path_str[1..disk_end];
-        let path_part = &path_str[disk_end+1..];
-
-        let disk_id = if disk_part.starts_with("0x") || disk_part.starts_with("0X") {
-            u8::from_str_radix(&disk_part[2..], 16).map_err(|_| String::from("Invalid hex disk ID"))?
-        } else {
-            disk_part.parse::<u8>().map_err(|_| String::from("Invalid decimal disk ID"))?
-        };
-
-        let components: Vec<String> = path_part
-            .split('/')
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-            .collect();
-
-        Ok(Path {
-            disk_id,
-            components,
-        })
     }
 }
 

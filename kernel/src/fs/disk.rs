@@ -32,7 +32,9 @@ pub fn read(lba: u64, disk: u8, buffer: &mut [u8]) {
         outb(0x1F3, current_lba as u8);
         outb(0x1F4, (current_lba >> 8) as u8);
         outb(0x1F5, (current_lba >> 16) as u8);
-            outb(0x1F6, disk | ((current_lba >> 24) & 0x0F) as u8);
+        outb(0x1F6, disk | ((current_lba >> 24) & 0x0F) as u8);
+        outb(0x1F7, 0x20);
+
         while is_busy() {}
         while !is_ready() {}
 

@@ -134,6 +134,13 @@ pub fn get_screen_height() -> u64 {
     unsafe { syscall(45, 0, 0, 0) }
 }
 
+pub fn get_mouse_pos() -> (u16, u16) {
+    let res = unsafe { syscall(53, 0, 0, 0) };
+    let x = (res >> 32) as u16;
+    let y = res as u16;
+    (x, y)
+}
+
 #[repr(C, packed)]
 #[derive(Copy, Clone, Debug)]
 pub struct Process {

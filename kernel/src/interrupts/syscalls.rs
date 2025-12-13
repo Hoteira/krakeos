@@ -1,4 +1,5 @@
 use alloc::string::String;
+use alloc::vec::Vec;
 use core::arch::{asm, naked_asm};
 use crate::interrupts::task::CPUState;
 use crate::debugln;
@@ -48,6 +49,7 @@ pub extern "C" fn syscall_entry() {
             "push r13",
             "push r14",
             "push r15",
+            "cld", // Clear direction flag for Rust ABI compliance
             "mov rdi, rsp",
             "call syscall_dispatcher",
             "pop r15",
@@ -119,7 +121,17 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
         SYS_MALLOC => {
             let size = context.rdi as usize;
             let pages = (size + 4095) / 4096;
-            if let Some(addr) = crate::memory::pmm::allocate_frames(pages) {
+            
+            let pid = {
+                let tm = crate::interrupts::task::TASK_MANAGER.lock();
+                if tm.current_task >= 0 {
+                    tm.current_task as u64
+                } else {
+                    0
+                }
+            };
+
+            if let Some(addr) = crate::memory::pmm::allocate_frames(pages, pid) {
                 context.rax = addr;
             } else {
                 context.rax = 0;
@@ -177,15 +189,30 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
              let ptr = context.rdi as *const u8;
              let len = context.rsi as usize;
              let s = unsafe { core::slice::from_raw_parts(ptr, len) };
-             let path_str = String::from_utf8_lossy(s);
+             let path_str_full = String::from_utf8_lossy(s);
              
-             match crate::fs::vfs::Path::new(&path_str) {
-                 Ok(path_obj) => {
-                     match crate::fs::vfs::open_file(&path_obj) {
-                         Ok(fd) => context.rax = fd as u64,
-                         Err(_) => context.rax = u64::MAX,
-                     }
-                 },
+             let path_parts: Vec<&str> = path_str_full.split('/').collect();
+             if path_parts.len() < 1 || !path_parts[0].starts_with('@') {
+                 context.rax = u64::MAX; // Invalid path format
+                 return;
+             }
+
+             let disk_part = &path_parts[0][1..];
+             let disk_id = if disk_part.starts_with("0x") || disk_part.starts_with("0X") {
+                 u8::from_str_radix(&disk_part[2..], 16).unwrap_or(0xFF)
+             } else {
+                 disk_part.parse::<u8>().unwrap_or(0xFF)
+             };
+
+             if disk_id == 0xFF {
+                 context.rax = u64::MAX;
+                 return;
+             }
+             
+             let actual_path_str = if path_parts.len() > 1 { path_parts[1..].join("/") } else { String::from("") };
+
+             match crate::fs::vfs::open_file(disk_id, &actual_path_str) {
+                 Ok(fd) => context.rax = fd as u64,
                  Err(_) => context.rax = u64::MAX,
              }
         }
@@ -207,6 +234,13 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
              } else {
                  context.rax = u64::MAX;
              }
+        }
+
+        53 => { // SYS_GET_MOUSE_POS
+            unsafe {
+                let mouse = &*(&raw const crate::composer::MOUSE);
+                context.rax = ((mouse.x as u64) << 32) | (mouse.y as u64);
+            }
         }
 
         SYS_EXIT => {

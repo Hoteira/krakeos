@@ -76,10 +76,14 @@ impl WidgetGeometry {
             user_height: Size::Absolute(30),
             user_margin: Size::Absolute(0),
             user_padding: Size::Absolute(0),
-
-            border_color: Color::rgba(0, 0, 0, 0),
-            border_radius: Size::Absolute(0),
-            border_size: Size::Absolute(0),
+            border_color: Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 0,
+            },
+            border_radius: Size::Auto,
+            border_size: Size::Auto,
         }
     }
 }
@@ -152,7 +156,7 @@ impl Widget {
             background_color: Color::rgb(100, 100, 100),
         }
     }
-
+    
     // Fluent API
     pub fn width(mut self, width: Size) -> Self {
         self.geometry_mut().user_width = width;
@@ -225,7 +229,7 @@ impl Widget {
         }
         self
     }
-
+    
     pub fn set_text_align(mut self, align: Align) -> Self {
         match &mut self {
             Widget::Button { text, .. } |
@@ -362,7 +366,7 @@ impl Widget {
         parent_width: usize,
         parent_height: usize,
         parent_padding: usize,
-        _parent_margin: usize, // Renamed to _parent_margin
+        _parent_margin: usize,
         display: &Display,
     ) {
         let geometry = self.geometry_mut();
@@ -426,7 +430,7 @@ impl Widget {
         let widget_width = geometry.width;
         let widget_height = geometry.height;
         let widget_padding = geometry.padding;
-        let _widget_margin = geometry.margin; // Renamed to _widget_margin
+        let _widget_margin = geometry.margin;
 
         match self {
             Widget::Frame { children, .. } => {
@@ -446,7 +450,6 @@ impl Widget {
                             let child_parent_x = widget_x + widget_padding + col * cell_width;
                             let child_parent_y = widget_y + widget_padding + row * cell_height;
                             
-                            // Pass current widget's margin as parent_margin to children
                             child.update_layout(child_parent_x, child_parent_y, cell_width, cell_height, 0, _widget_margin, &Display::None);
                         }
                     },
@@ -456,7 +459,6 @@ impl Widget {
                         let content_width = widget_width.saturating_sub(widget_padding * 2);
                         let content_height = widget_height.saturating_sub(widget_padding * 2);
 
-                        // Take ownership to mutate, then push back
                         let children_vec = core::mem::take(children);
                         let mut current_x = 0;
                         let mut current_y = 0;
@@ -464,7 +466,6 @@ impl Widget {
                         let mut line_width = 0;
 
                         for mut child in children_vec.into_iter() {
-                            // Give child generous bounds to calculate preferred size
                             child.update_layout(content_x, content_y, content_width, content_height, 0, _widget_margin, &Display::None);
                             let child_geo = child.geometry();
                             let child_total_w = child_geo.width + child_geo.margin * 2;
@@ -579,6 +580,7 @@ impl Widget {
                         let src_end = src_start + geometry.width;
 
                         if dest_end <= framebuffer.len() && src_end <= widget_buffer.len() {
+                            // Blending is not applied here (direct copy), maybe improve later
                             framebuffer[dest_start..dest_end].copy_from_slice(&widget_buffer[src_start..src_end]);
                         }
                     }

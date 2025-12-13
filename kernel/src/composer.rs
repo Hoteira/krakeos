@@ -2,7 +2,8 @@ use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use crate::display::{Color, DisplayServer, Mouse, State};
 use core::sync::atomic::{AtomicU16, Ordering};
-use crate::debugln;
+use std::os::print;
+use crate::{debugln, println};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 #[repr(C)]
@@ -144,13 +145,35 @@ impl DisplayServer {
             crate::display::DEPTH = vbe.bpp;
         }
 
-        self.framebuffer = vbe.framebuffer as u64;
+        // Remap Framebuffer to Write-Combining (WC)
+        // We use a high virtual address to avoid collisions
+        let fb_phys = vbe.framebuffer as u64;
+        let fb_size = (self.pitch * self.height) as usize;
+        let fb_pages = (fb_size + 4095) / 4096;
+        let fb_virt_base = 0xFFFF_8000_FD00_0000; // Arbitrary high address
+
+        for i in 0..fb_pages {
+            let offset = (i * 4096) as u64;
+            let phys = fb_phys + offset;
+            let virt = fb_virt_base + offset;
+            
+            // Use PAGE_PAT bit to select Index 4 (WC)
+            // Note: PAGE_HUGE is also bit 7, but map_page handles 4KB pages where Bit 7 is PAT.
+            // Ensure map_page doesn't set PAGE_HUGE.
+            let flags = crate::memory::paging::PAGE_PRESENT | 
+                        crate::memory::paging::PAGE_WRITABLE | 
+                        crate::memory::paging::PAGE_PAT; // WC
+            
+            crate::memory::vmm::map_page(virt, phys, flags, None);
+        }
+
+        self.framebuffer = fb_virt_base;
 
         let size_bytes = self.pitch as usize * self.height as usize;
         let pages = (size_bytes + 4095) / 4096;
 
         unsafe {
-            if let Some(buffer) = crate::memory::pmm::allocate_frames(pages) {
+            if let Some(buffer) = crate::memory::pmm::allocate_frames(pages, 0) {
                 self.double_buffer = buffer;
             } else {
                 panic!("[DisplayServer] Failed to allocate double buffer!");
@@ -176,19 +199,29 @@ impl DisplayServer {
             _  => return,
         };
 
+        let max_x = (self.width as u32).min(x + width);
+        let max_y = (self.height as u32).min(y + height);
+
+        if x >= self.width as u32 || y >= self.height as u32 {
+            return;
+        }
+
+        let copy_width = (max_x - x) as usize;
+        let copy_height = (max_y - y) as usize;
+
         let src = self.double_buffer as *const u8;
         let dst = self.framebuffer   as *mut u8;
         let pitch = self.pitch as u32;
 
         unsafe {
-            for row in 0..height {
-                let line_start = (y + row) * pitch;
+            for row in 0..copy_height {
+                let line_start = (y + row as u32) * pitch;
                 let offset = line_start + x * bytes_per_pixel;
 
                 core::ptr::copy(
                     src.add(offset as usize),
                     dst.add(offset as usize),
-                    (width * bytes_per_pixel) as usize,
+                    copy_width * bytes_per_pixel as usize,
                 );
             }
         }
@@ -502,187 +535,174 @@ pub static mut W_WIDTH: usize = 0;
 pub static mut W_HEIGHT: usize = 0;
 
 impl Mouse {
-    pub fn cursor(&mut self, data: [u8; 4]) {
-        unsafe { (*(&raw mut DISPLAY_SERVER)).copy_to_fb(self.x as u32, self.y as u32, 32, 32) };
+        pub fn cursor(&mut self, data: [u8; 4]) {
+            unsafe { (*(&raw mut DISPLAY_SERVER)).copy_to_fb(self.x as u32, self.y as u32, 32, 32) };
+    
+            let mut x_rel = data[1] as i16;
+            let mut y_rel = data[2] as i16;
 
-        let mut x_rel = data[1] as i16;
-        let mut y_rel = data[2] as i16;
-
-        // Parse Sign Bits from Byte 0 (Standard PS/2)
-        if (data[0] & 0x10) != 0 { // X Sign
-            x_rel |= 0xFF00u16 as i16;
-        }
-        if (data[0] & 0x20) != 0 { // Y Sign
-            y_rel |= 0xFF00u16 as i16;
-        }
-
-        self.x = self.clamp_mx(x_rel);
-        self.y = self.clamp_my(-y_rel);
-
-        let prev_left = self.left;
-        self.left = (data[0] & 0b00000001) != 0;
-        self.right = (data[0] & 0b00000010) != 0;
-        self.center = (data[0] & 0b00000100) != 0;
-
-        unsafe {
-            LAST_INPUT = data[0];
-        }
-
-        // Removed initial draw_mouse call.
-
-        let scroll_val = data[3] as i8;
-        let x_vec = x_rel;
-        let y_vec = y_rel;
-
-        unsafe {
-            if self.left {
-                DRAGS = DRAGS.wrapping_add(1);
-                if DRAGS > 1 {
-                    DRAG = true;
-                }
-            } else {
-                DRAGS = 0;
-                DRAG = false;
-
-                if (*(&raw mut RESIZING_WINDOW)).load(Ordering::Relaxed) != 0 {
-                    let w = (*(&raw mut COMPOSER))
-                        .find_window_id((*(&raw mut RESIZING_WINDOW)).load(Ordering::Relaxed) as usize)
-                        .unwrap();
-
-                    (*(&raw mut DRAGGING_WINDOW)).store(0, Ordering::Relaxed);
-                    (*(&raw mut RESIZING_WINDOW)).store(0, Ordering::Relaxed);
-
-                    if w.event_handler != 0 {
-                        (*(&raw mut GLOBAL_EVENT_QUEUE)).add_event(Event::Resize(ResizeEvent {
-                            wid: w.id as u32,
-                            width: W_WIDTH,
-                            height: W_HEIGHT,
-                        }));
-                    }
-                    W_WIDTH = 0;
-                    W_HEIGHT = 0;
-
-                } else if (*(&raw mut DRAGGING_WINDOW)).load(Ordering::Relaxed) != 0 {
-                    let wid = (*(&raw mut DRAGGING_WINDOW)).load(Ordering::Relaxed) as usize;
-                    // Drop: Commit final position to Double Buffer
-                    (*(&raw mut COMPOSER)).copy_window(wid);
-                    // Fix artifacts: Redraw window to FB to cover any holes made by cursor restore from empty DB
-                    (*(&raw mut COMPOSER)).copy_window_fb(wid);
-
-                    (*(&raw mut DRAGGING_WINDOW)).store(0, Ordering::Relaxed);
-                    (*(&raw mut RESIZING_WINDOW)).store(0, Ordering::Relaxed);
-                    W_WIDTH = 0;
-                    W_HEIGHT = 0;
-                }
-                // Draw mouse before returning (Mouse not clicked path)
-                (*(&raw mut DISPLAY_SERVER)).draw_mouse(self.x, self.y);
-                return;
+            if (data[0] & 0x10) != 0 {
+                x_rel |= 0xFF00u16 as i16; 
             }
-        }
 
-        if self.left {
-            if !prev_left {
-                debugln!("Left Click at {}, {}", self.x, self.y);
+            if (data[0] & 0x20) != 0 {
+                y_rel |= 0xFF00u16 as i16;
+            }
+    
+            self.x = self.clamp_mx(x_rel);
+            self.y = self.clamp_my(-y_rel);
+    
+            let prev_left = self.left;
+            self.left = (data[0] & 0b00000001) != 0;
+            self.right = (data[0] & 0b00000010) != 0;
+            self.center = (data[0] & 0b00000100) != 0;
+    
+            unsafe {
+                LAST_INPUT = data[0];
+            }
+    
+            let scroll_val = data[3] as i8;
+            let x_vec = x_rel;
+            let y_vec = y_rel;
+    
+            unsafe {
+                if self.left {
+
+                    DRAGS = DRAGS.wrapping_add(1);
+                    if DRAGS > 2 {
+                        DRAG = true;
+                    }
+                } else {
+                    DRAGS = 0;
+                    DRAG = false;
+    
+                    if (*(&raw mut RESIZING_WINDOW)).load(Ordering::Relaxed) != 0 {
+                        let w = (*(&raw mut COMPOSER))
+                            .find_window_id((*(&raw mut RESIZING_WINDOW)).load(Ordering::Relaxed) as usize)
+                            .unwrap();
+    
+                        (*(&raw mut DRAGGING_WINDOW)).store(0, Ordering::Relaxed);
+                        (*(&raw mut RESIZING_WINDOW)).store(0, Ordering::Relaxed);
+    
+                        if w.event_handler != 0 {
+                            (*(&raw mut GLOBAL_EVENT_QUEUE)).add_event(Event::Resize(ResizeEvent {
+                                wid: w.id as u32,
+                                width: W_WIDTH,
+                                height: W_HEIGHT,
+                            }));
+                        }
+                        W_WIDTH = 0;
+                        W_HEIGHT = 0;
+    
+                    } else if (*(&raw mut DRAGGING_WINDOW)).load(Ordering::Relaxed) != 0 {
+                         let wid = (*(&raw mut DRAGGING_WINDOW)).load(Ordering::Relaxed) as usize;
+                         (*(&raw mut COMPOSER)).copy_window(wid);
+                         (*(&raw mut COMPOSER)).copy_window_fb(wid);
+    
+                         (*(&raw mut DRAGGING_WINDOW)).store(0, Ordering::Relaxed);
+                         (*(&raw mut RESIZING_WINDOW)).store(0, Ordering::Relaxed);
+                         W_WIDTH = 0;
+                         W_HEIGHT = 0;
+                    }
+                }
             }
 
             let w = unsafe { (*(&raw mut COMPOSER)).find_window(self.x as usize, self.y as usize) };
-
+    
             if unsafe { (*(&raw mut RESIZING_WINDOW)).load(Ordering::Relaxed) != 0 } {
-                let dx = x_vec;
-                let dy = y_vec * -1; // Invert Y
-
-                let w = unsafe {
+                 let dx = x_vec;
+                 let dy = y_vec * -1; // Invert Y
+                
+                 let w = unsafe {
                     (*(&raw mut COMPOSER))
                         .find_window_id((*(&raw mut RESIZING_WINDOW)).load(Ordering::Relaxed) as usize)
                         .unwrap()
                 };
-
+                
                 let final_width = self.rem_sign(unsafe { W_WIDTH } as i16 + dx) as usize;
                 let final_height = self.rem_sign(unsafe { W_HEIGHT } as i16 + dy) as usize;
-
+                
                 unsafe {
                     W_WIDTH = cap(final_width, ((*(&raw mut DISPLAY_SERVER)).width as usize).saturating_sub(w.x));
                     W_HEIGHT = cap(final_height, ((*(&raw mut DISPLAY_SERVER)).height as usize).saturating_sub(w.y));
                 }
-                self.draw_square_outline(w.y as u16, w.x as u16, unsafe { W_HEIGHT as u16 }, unsafe { W_WIDTH as u16 }, Color::rgb(245, 245, 247));
 
+                self.draw_square_outline(w.y as u16, w.x as u16, unsafe { W_HEIGHT as u16 }, unsafe { W_WIDTH as u16 }, Color::rgb(245, 245, 247));
+    
                 // Draw mouse before returning (Resize path)
                 unsafe { (*(&raw mut DISPLAY_SERVER)).draw_mouse(self.x, self.y) };
                 return;
-
+    
             } else if unsafe { (*(&raw mut DRAGGING_WINDOW)).load(Ordering::Relaxed) != 0 } {
                 let composer = unsafe { &mut *(&raw mut COMPOSER) };
                 let display_server = unsafe { &mut *(&raw mut DISPLAY_SERVER) };
                 let wid = unsafe { (*(&raw mut DRAGGING_WINDOW)).load(Ordering::Relaxed) as usize };
-
+    
                 let (id, width, height, old_x, old_y) = {
                     let window_opt = composer.find_window_id(wid);
                     let w = match window_opt {
                         Some(w) => w,
                         None => return,
                     };
-
+    
                     let old_x = w.x;
                     let old_y = w.y;
                     let width = w.width;
                     let height = w.height;
-
+    
                     let mut new_x = w.x;
                     let mut new_y = w.y;
-
+    
                     if x_vec < 0 {
                         new_x = new_x.saturating_sub((-x_vec) as usize);
                     } else {
                         new_x = new_x.saturating_add(x_vec as usize);
                     }
-
+    
                     if -y_vec < 0 {
                         new_y = new_y.saturating_sub((-(-y_vec)) as usize);
                     } else {
                         new_y = new_y.saturating_add((-y_vec) as usize);
                     }
-
+    
                     let mut final_x = new_x;
                     let mut final_y = new_y;
                     let screen_width = display_server.width as usize;
                     let screen_height = display_server.height as usize;
-
+    
                     // Relaxed clamping: Keep 10px visible
                     if final_x > screen_width.saturating_sub(10) { final_x = screen_width.saturating_sub(10); }
                     if final_y > screen_height.saturating_sub(10) { final_y = screen_height.saturating_sub(10); }
-
+    
                     w.x = final_x;
                     w.y = final_y;
-
+    
                     (w.id, width, height, old_x, old_y)
                 };
 
-                // Lift & Move
-                // Restore OLD position from clean double buffer
                 display_server.copy_to_fb(
                     old_x as u32,
                     old_y as u32,
                     width as u32,
                     height as u32,
                 );
-                // Draw NEW position
+
                 composer.copy_window_fb(id);
 
-                // Draw mouse before returning (Drag path)
                 display_server.draw_mouse(self.x, self.y);
                 return;
             }
-
+    
             if let Some(ws) = w {
-                if ws.w_type == Items::Window && ws.z != 0 && unsafe { DRAG == false } {
-                    // Click to front
-                    let x = ws.x;
-                    let y = ws.y;
-                    let width = ws.width;
-                    let height = ws.height;
-                    let id = ws.id;
-
-                    unsafe {
+                if ws.w_type == Items::Window && ws.z != 0 && self.left && !prev_left {
+                     // Click to front
+                     let x = ws.x;
+                     let y = ws.y;
+                     let width = ws.width;
+                     let height = ws.height;
+                     let id = ws.id;
+    
+                     unsafe {
                         for i in (*(&raw mut COMPOSER)).windows.iter_mut() {
                             if i.id != id {
                                 i.z = i.z.wrapping_add(1);
@@ -692,80 +712,71 @@ impl Mouse {
                         }
                         (*(&raw mut COMPOSER)).windows.sort_by_key(|w| w.z);
                         (*(&raw mut COMPOSER)).copy_window(id);
-
+                        
                         (*(&raw mut DISPLAY_SERVER)).copy_to_fb(
                             x as u32,
                             y as u32,
                             width as u32,
                             height as u32,
                         );
-                        // Draw mouse (Click to front path)
-                        (*(&raw mut DISPLAY_SERVER)).draw_mouse(self.x, self.y);
-                    }
-                } else {
-                    // Check Drag/Resize Start
+                     }
+                }
+
+                let mut handled_drag = false;
+                if self.left {
                     if ws.can_move && self.y as usize >= ws.y && self.y as usize <= ws.y + 25 {
                         if unsafe { DRAG == true } {
-                            debugln!("Start Dragging Window {}", ws.id);
-                            unsafe {
-                                (*(&raw mut DRAGGING_WINDOW)).store(0, Ordering::Relaxed);
-                                W_WIDTH = 0;
-                                W_HEIGHT = 0;
+                            if unsafe { (*(&raw mut DRAGGING_WINDOW)).load(Ordering::Relaxed) == 0 } {
 
-                                (*(&raw mut DRAGGING_WINDOW)).store(ws.id as u16, Ordering::Relaxed);
-                                (*(&raw mut COMPOSER)).recompose_except(ws.id);
-                            }
-                            // Draw mouse before returning (Drag Start path)
-                            unsafe { (*(&raw mut DISPLAY_SERVER)).draw_mouse(self.x, self.y) };
-                            return;
-                        } else if ws.event_handler != 0 {
-                            let xc = ws.x;
-                            let yc = ws.y;
-                            let id = ws.id;
-                            unsafe {
-                                (*(&raw mut GLOBAL_EVENT_QUEUE)).add_event(Event::Mouse(MouseEvent {
-                                    wid: id as u32,
-                                    x: self.x as usize - xc,
-                                    y: self.y as usize - yc,
-                                    buttons: [self.left, self.center, self.right],
-                                    scroll: scroll_val,
-                                }));
-                            }
-                        }
-                    } else if ws.can_move && self.is_bottom_right(ws.x as u16, ws.y as u16, ws.width as u16, ws.height as u16, self.x, self.y) {
-                        if unsafe { DRAG == true } {
-                            if unsafe { (*(&raw mut RESIZING_WINDOW)).load(Ordering::Relaxed) == 0 } {
                                 unsafe {
-                                    W_WIDTH = ws.width;
-                                    W_HEIGHT = ws.height;
-                                    (*(&raw mut RESIZING_WINDOW)).store(ws.id as u16, Ordering::Relaxed);
+                                    (*(&raw mut DRAGGING_WINDOW)).store(ws.id as u16, Ordering::Relaxed);
+                                    (*(&raw mut COMPOSER)).recompose_except(ws.id);
                                 }
                             }
+                            handled_drag = true;
                         }
-                    } else {
-                        // Normal Click
-                        if ws.event_handler != 0 && unsafe { DRAG == false } {
-                            let xc = ws.x;
-                            let yc = ws.y;
-                            let id = ws.id;
-                            unsafe {
-                                (*(&raw mut GLOBAL_EVENT_QUEUE)).add_event(Event::Mouse(MouseEvent {
-                                    wid: id as u32,
-                                    x: self.x as usize - xc,
-                                    y: self.y as usize - yc,
-                                    buttons: [self.left, self.center, self.right],
-                                    scroll: scroll_val,
-                                }));
-                            }
-                        }
+                    } else if ws.can_move && self.is_bottom_right(ws.x as u16, ws.y as u16, ws.width as u16, ws.height as u16, self.x, self.y) {
+                         if unsafe { DRAG == true } {
+                             if unsafe { (*(&raw mut RESIZING_WINDOW)).load(Ordering::Relaxed) == 0 } {
+                                 unsafe {
+                                     W_WIDTH = ws.width;
+                                     W_HEIGHT = ws.height;
+                                     (*(&raw mut RESIZING_WINDOW)).store(ws.id as u16, Ordering::Relaxed);
+                                 }
+                             }
+                             handled_drag = true;
+                         }
                     }
                 }
+    
+                if handled_drag {
+                    unsafe { (*(&raw mut DISPLAY_SERVER)).draw_mouse(self.x, self.y) };
+                    return;
+                }
+    
+                // Normal Click/Scroll/Move Event
+                if ws.event_handler != 0 && unsafe { DRAG == false } {
+                     // Only send event if something changed (click or scroll) to avoid flooding? 
+                     // Or send every move? User asked for "mouse's ... click + scroll".
+                     // If we send every move, it's fine for now.
+                     let xc = ws.x;
+                     let yc = ws.y;
+                     let id = ws.id;
+                     unsafe {
+                        (*(&raw mut GLOBAL_EVENT_QUEUE)).add_event(Event::Mouse(MouseEvent {
+                            wid: id as u32,
+                            x: self.x as usize - xc,
+                            y: self.y as usize - yc,
+                            buttons: [self.left, self.center, self.right],
+                            scroll: scroll_val,
+                        }));
+                     }
+                }
             }
+            
+            // Final draw_mouse at the very end to guarantee it's on top.
+            unsafe { (*(&raw mut DISPLAY_SERVER)).draw_mouse(self.x, self.y) };
         }
-        // Final draw_mouse at the very end to guarantee it's on top.
-        unsafe { (*(&raw mut DISPLAY_SERVER)).draw_mouse(self.x, self.y) };
-    }
-
     fn rem_sign(&self, n: i16) -> u16 {
         if n < 0 { (n * -1) as u16 } else { n as u16 }
     }

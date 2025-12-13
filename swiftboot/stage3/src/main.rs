@@ -22,7 +22,7 @@ pub const KERNEL_RAM: u32 = 0x10_0000;
 pub const KERNEL_LBA: u64 = 1644;
 
 
-const STACK_ADDRESS: u64 = 0x30_0000;
+const STACK_ADDRESS: u64 = 0x200_0000;
 const BOOT_MODE: u8 = 64; //32 or 64 bits
 
 #[unsafe(no_mangle)]

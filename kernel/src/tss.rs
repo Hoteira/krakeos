@@ -53,10 +53,10 @@ pub fn init_ists() {
         
         let tss_struct = base as *mut TaskStateSegment;
 
-        let ist1_frame = pmm::allocate_frame().expect("TSS: OOM for IST1");
+        let ist1_frame = pmm::allocate_frame(0).expect("TSS: OOM for IST1");
         (*tss_struct).ist1 = ist1_frame + 4096;
 
-        let ist2_frame = pmm::allocate_frame().expect("TSS: OOM for IST2");
+        let ist2_frame = pmm::allocate_frame(0).expect("TSS: OOM for IST2");
         (*tss_struct).ist2 = ist2_frame + 4096;
         
 

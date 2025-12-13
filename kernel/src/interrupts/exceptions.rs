@@ -1,3 +1,4 @@
+use crate::debugln;
 use crate::drivers::port::{inb, outb};
 use crate::drivers::periferics::keyboard::KEYBOARD_BUFFER;
 
@@ -16,59 +17,73 @@ fn serial_print(s: &str) {
         while (inb(0x3F8 + 5) & 0x20) == 0 {}
         outb(0x3F8, b);
     }
-    let newline = b"\r\n";
-    for b in newline {
+}
+
+fn serial_println(s: &str) {
+    serial_print(s);
+    serial_print("\r\n");
+}
+
+fn print_hex(mut n: u64) {
+    serial_print("0x");
+    if n == 0 {
+        serial_print("0");
+        return;
+    }
+    let mut buffer = [0u8; 20];
+    let mut i = 0;
+    while n > 0 {
+        let digit = (n % 16) as u8;
+        buffer[i] = if digit < 10 { b'0' + digit } else { b'a' + (digit - 10) };
+        n /= 16;
+        i += 1;
+    }
+    while i > 0 {
+        i -= 1;
+        let c = buffer[i];
         while (inb(0x3F8 + 5) & 0x20) == 0 {}
-        outb(0x3F8, *b);
+        outb(0x3F8, c);
     }
 }
 
 pub extern "x86-interrupt" fn div_error(_info: &mut StackFrame) {
-    serial_print("EXCEPTION: DIV ERROR");
+    serial_println("EXCEPTION: DIV ERROR");
     loop {}
 }
 
 pub extern "x86-interrupt" fn bounds(_info: &mut StackFrame) {
-    serial_print("EXCEPTION: BOUNDS");
+    serial_println("EXCEPTION: BOUNDS");
     loop {}
 }
 
 pub extern "x86-interrupt" fn invalid_opcode(info: &mut StackFrame) {
-    use core::fmt::Write;
-    let mut writer = crate::debug::SerialDebug::new();
-    let _ = write!(writer, "\n=== INVALID OPCODE ===\n");
-    let _ = write!(writer, "RIP: {:#x}\n", info.instruction_pointer);
-    let _ = write!(writer, "CS: {:#x}\n", info.code_segment);
-    let _ = write!(writer, "RFLAGS: {:#x}\n", info.cpu_flags);
-    let _ = write!(writer, "RSP: {:#x}\n", info.stack_pointer);
-    let _ = write!(writer, "SS: {:#x}\n", info.stack_segment);
+    serial_println("\n=== INVALID OPCODE ===");
+    serial_print("RIP: ");
+    print_hex(info.instruction_pointer);
+    serial_print("\r\nCS: ");
+    print_hex(info.code_segment);
+    serial_print("\r\nRFLAGS: ");
+    print_hex(info.cpu_flags);
+    serial_print("\r\nRSP: ");
+    print_hex(info.stack_pointer);
+    serial_print("\r\nSS: ");
+    print_hex(info.stack_segment);
+    serial_println("");
     loop {}
 }
 
 pub extern "x86-interrupt" fn double_fault(_info: &mut StackFrame, _error_code: u64) -> ! {
-    serial_print("EXCEPTION: DOUBLE FAULT");
+    serial_println("EXCEPTION: DOUBLE FAULT");
     loop {}
 }
 
 pub extern "x86-interrupt" fn general_protection_fault(info: &mut StackFrame, error_code: u64) {
-    serial_print("=== GENERAL PROTECTION FAULT===");
-
-    let external = (error_code & 0x1) != 0;
-    let table = (error_code >> 1) & 0x3;
-    let index = (error_code >> 3) & 0x1FFF;
-
-    use core::fmt::Write;
-    let mut writer = crate::debug::SerialDebug::new();
-    let _ = write!(writer, "Error Code: {:#x}\n", error_code);
-    let _ = write!(writer, "  External: {}\n", external);
-    let _ = write!(writer, "  Table: {} (0=GDT, 1=IDT, 2/3=LDT/IDT)\n", table);
-    let _ = write!(writer, "  Index: {:#x}\n", index);
-    let _ = write!(writer, "RIP: {:#x}\n", info.instruction_pointer);
-    let _ = write!(writer, "CS: {:#x}\n", info.code_segment);
-    let _ = write!(writer, "RFLAGS: {:#x}\n", info.cpu_flags);
-    let _ = write!(writer, "RSP: {:#x}\n", info.stack_pointer);
-    let _ = write!(writer, "SS: {:#x}\n", info.stack_segment);
-
+    serial_println("=== GENERAL PROTECTION FAULT===");
+    serial_print("Error Code: ");
+    print_hex(error_code);
+    serial_print("\r\nRIP: ");
+    print_hex(info.instruction_pointer);
+    serial_println("");
     loop {}
 }
 
@@ -78,30 +93,19 @@ pub extern "x86-interrupt" fn page_fault(info: &mut StackFrame, error_code: u64)
         core::arch::asm!("mov {}, cr2", out(reg) cr2);
     }
 
-    use core::fmt::Write;
-    let mut writer = crate::debug::SerialDebug::new();
-    let _ = write!(writer, "\n=== PAGE FAULT ===\n");
-    let _ = write!(writer, "Address (CR2): {:#x}\n", cr2);
-    let _ = write!(writer, "Error Code: {:#x}\n", error_code);
-    let _ = write!(writer, "RIP: {:#x}\n", info.instruction_pointer);
-    let _ = write!(writer, "CS: {:#x}\n", info.code_segment);
-    let _ = write!(writer, "RFLAGS: {:#x}\n", info.cpu_flags);
-    let _ = write!(writer, "RSP: {:#x}\n", info.stack_pointer);
-    let _ = write!(writer, "SS: {:#x}\n", info.stack_segment);
-    
-    let present = (error_code & 1) != 0;
-    let write = (error_code & 2) != 0;
-    let user = (error_code & 4) != 0;
-    let reserved = (error_code & 8) != 0;
-    let instruction = (error_code & 16) != 0;
-
-    let _ = write!(writer, "Flags: P:{} W:{} U:{} R:{} I:{}\n", present, write, user, reserved, instruction);
-
+    serial_println("\n=== PAGE FAULT ===");
+    serial_print("Address (CR2): ");
+    print_hex(cr2);
+    serial_print("\r\nError Code: ");
+    print_hex(error_code);
+    serial_print("\r\nRIP: ");
+    print_hex(info.instruction_pointer);
+    serial_println("");
     loop {}
 }
 
 pub extern "x86-interrupt" fn generic_handler(_info: &mut StackFrame) {
-    serial_print("EXCEPTION: GENERIC");
+    serial_println("EXCEPTION: GENERIC");
     loop {}
 }
 

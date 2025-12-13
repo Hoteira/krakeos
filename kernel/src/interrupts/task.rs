@@ -10,8 +10,9 @@ use alloc::vec::Vec;
 use alloc::boxed::Box;
 
 #[derive(Copy, Clone, Debug)]
-#[repr(C)]
+#[repr(C, align(16))]
 pub struct Task {
+    pub fpu_state: [u8; 512],
     pub kernel_stack: u64,
     pub stack: u64,
     pub cpu_state_ptr: u64,
@@ -53,6 +54,7 @@ pub struct CPUState {
 }
 
 static NULL_TASK: Task = Task {
+    fpu_state: [0; 512],
     stack: 0,
     kernel_stack: 0,
     cpu_state_ptr: 0,
@@ -63,14 +65,21 @@ static NULL_TASK: Task = Task {
 impl Task {
     pub fn init(&mut self, entry_point: u64, args: Option<&[u64]>) {
         self.state = TaskState::Ready;
+        self.fpu_state = [0; 512];
+        // Set default FCW (0x037F)
+        self.fpu_state[0] = 0x7F;
+        self.fpu_state[1] = 0x03;
+        // Set default MXCSR (0x1F80)
+        self.fpu_state[24] = 0x80;
+        self.fpu_state[25] = 0x1F;
         
         unsafe {
              self.pml4_phys = (*(&raw const crate::boot::BOOT_INFO)).pml4;
         }
 
-        self.stack = pmm::allocate_frame().expect("Task init: OOM");
+        self.stack = pmm::allocate_frames(16, 0).expect("Task init: OOM");
         
-        let stack_top = self.stack + 4096;
+        let stack_top = self.stack + 4096 * 16;
         self.kernel_stack = stack_top; 
 
         let state_size = core::mem::size_of::<CPUState>();
@@ -102,16 +111,23 @@ impl Task {
     #[allow(dead_code)]
     pub fn init_user(&mut self, entry_point: u64, pml4_phys: u64, args: Option<&[u64]>) {
         self.state = TaskState::Ready;
+        self.fpu_state = [0; 512];
+        // Set default FCW (0x037F)
+        self.fpu_state[0] = 0x7F;
+        self.fpu_state[1] = 0x03;
+        // Set default MXCSR (0x1F80)
+        self.fpu_state[24] = 0x80;
+        self.fpu_state[25] = 0x1F;
 
         self.pml4_phys = pml4_phys;
 
-        let k_frame = pmm::allocate_frame().expect("Task init_user: OOM (kstack)");
-        self.kernel_stack = k_frame + 4096;
+        let k_frame = pmm::allocate_frames(16, 0).expect("Task init_user: OOM (kstack)");
+        self.kernel_stack = k_frame + 4096 * 16;
 
-        let u_frame = pmm::allocate_frame().expect("Task init_user: OOM (ustack)");
+        let u_frame = pmm::allocate_frames(16, 0).expect("Task init_user: OOM (ustack)");
         self.stack = u_frame; 
         
-        let u_stack_top = u_frame + 4096; 
+        let u_stack_top = u_frame + 4096 * 16; 
 
         let state_size = core::mem::size_of::<CPUState>();
         let state_ptr = (self.kernel_stack - state_size as u64) as *mut CPUState;
@@ -144,7 +160,7 @@ impl Task {
 pub struct TaskManager {
     pub tasks: [Task; MAX_TASKS],
     task_count: usize,
-    current_task: isize,
+    pub(crate) current_task: isize,
 }
 
 #[allow(dead_code)]
@@ -194,8 +210,13 @@ impl TaskManager {
             if self.tasks[self.current_task as usize].state == TaskState::Zombie {
                 let task = &mut self.tasks[self.current_task as usize];
                 
-                let k_frame = task.kernel_stack - 4096;
+                let k_frame = task.kernel_stack - 4096 * 16;
                 if k_frame != task.stack {
+                     // Assuming we have a way to free multiple frames, but pmm currently only has free_frame (single).
+                     // Ideally pmm should have free_frames(base, count).
+                     // For now, we loop or ignore. But since we use allocate_frames, we should free them.
+                     // The pmm allocation is tracked as a block. `remove_allocation` removes the whole block by start address.
+                     // So calling free_frame(addr) which calls remove_allocation(addr) works for the whole block!
                      pmm::free_frame(k_frame);
                 }
                 pmm::free_frame(task.stack);
@@ -313,8 +334,25 @@ pub extern "C" fn timer_handler() {
 pub extern "C" fn switch(rsp: u64) -> u64 {
     unsafe {
         let mut tm = TASK_MANAGER.lock();
+        
+        // Save old task's FPU state
+        if tm.current_task >= 0 {
+            let index = tm.current_task as usize;
+            let task_ptr = &mut tm.tasks[index] as *mut Task;
+            let fpu_ptr = (*task_ptr).fpu_state.as_mut_ptr();
+            asm!("fxsave [{}]", in(reg) fpu_ptr);
+        }
+
         let (new_state, k_stack, _pml4_phys) = tm.schedule(rsp as *mut CPUState);
         
+        // Restore new task's FPU state
+        if tm.current_task >= 0 {
+            let index = tm.current_task as usize;
+            let task_ptr = &tm.tasks[index] as *const Task;
+            let fpu_ptr = (*task_ptr).fpu_state.as_ptr();
+            asm!("fxrstor [{}]", in(reg) fpu_ptr);
+        }
+
         if k_stack != 0 {
              crate::tss::set_tss(k_stack);
              KERNEL_STACK_PTR = k_stack;

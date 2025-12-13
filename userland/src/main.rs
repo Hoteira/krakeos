@@ -1,8 +1,8 @@
 #![no_std]
 #![no_main]
 
-use std::{print, println};
-use std::graphics::{Window, Color, add_window, update_window, get_screen_width, get_screen_height, malloc};
+use inkui::{Window, Widget, Color, Size};
+use std::println;
 
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
@@ -11,55 +11,47 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
-    println!("Initializing Graphics (Userland)...");
+    unsafe { core::arch::asm!("and rsp, -16"); } // Align stack to 16 bytes for SSE
 
-    let screen_width = get_screen_width();
-    let screen_height = get_screen_height();
-    
-    println!("Screen Resolution: {}x{}", screen_width, screen_height);
+    let heap_size = 1024 * 1024;
+    let heap_ptr = std::graphics::malloc(heap_size);
+    std::memory::heap::init_heap(heap_ptr as *mut u8, heap_size);
 
-    let width = 200;
-    let height = 200;
-    let buffer_size = width * height * 4; 
+    let x = 0.2311111111111111;
+    let y = 33423.34243243;
 
-    let buffer_ptr = malloc(buffer_size);
-    
-    if buffer_ptr == 0 {
-        println!("Failed to allocate window buffer!");
-        loop { std::os::yield_task(); }
-    }
-    
-    let buffer = unsafe { core::slice::from_raw_parts_mut(buffer_ptr as *mut u32, width * height) };
+    println!("Starting Movable Window App... {}", x * y);
 
-    let blue = Color::rgb(0, 0, 255).to_u32();
-    for pixel in buffer.iter_mut() {
-        *pixel = blue;
-    }
+    /*let mut win = Window::new("Movable Window", 400, 300);
+    win.can_move = true; 
+    win.can_resize = false;
 
-    let red = Color::rgb(255, 0, 0).to_u32();
-    let square_size = 50;
-    let start_x = (width - square_size) / 2;
-    let start_y = (height - square_size) / 2;
+    let mut root = Widget::frame(1)
+        .width(Size::Relative(100))
+        .height(Size::Relative(100))
+        .background_color(Color::rgb(220, 220, 220));
 
-    for y in start_y..(start_y + square_size) {
-        for x in start_x..(start_x + square_size) {
-            buffer[y * width + x] = red;
-        }
-    }
+    let title_bar = Widget::frame(2)
+        .width(Size::Relative(100))
+        .height(Size::Absolute(25))
+        .background_color(Color::rgb(50, 50, 150));
 
-    let mut window = Window::new(width, height, buffer_ptr);
-    window.x = (screen_width - width) / 2;
-    window.y = (screen_height - height) / 2;
-    
-    let window_id = add_window(&window);
-    window.id = window_id;
-    
-    println!("Window created with ID: {}", window_id);
+    let square = Widget::button(3, "")
+        .x(Size::Absolute(100))
+        .y(Size::Absolute(100))
+        .width(Size::Absolute(50))
+        .height(Size::Absolute(50))
+        .background_color(Color::rgb(200, 50, 50))
+        .set_border_radius(Size::Relative(50));
 
-    update_window(&window);
+    root = root.add_child(title_bar).add_child(square);
+    win.children.push(root);
 
-    println!("Entering event loop...");
+    win.show();*/
+
+    println!("Window created!");
+
     loop {
-        std::os::yield_task(); 
+        std::os::yield_task();
     }
 }

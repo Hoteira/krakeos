@@ -167,15 +167,15 @@ unsafe fn unlock_pmm() {
 
 // --- Public API ---
 
-pub fn allocate_frame() -> Option<u64> {
-    allocate_frames(1)
+pub fn allocate_frame(pid: u64) -> Option<u64> {
+    allocate_frames(1, pid)
 }
 
-pub fn allocate_frames(count: usize) -> Option<u64> {
-    allocate_memory(count * PAGE_SIZE as usize)
+pub fn allocate_frames(count: usize, pid: u64) -> Option<u64> {
+    allocate_memory(count * PAGE_SIZE as usize, pid)
 }
 
-pub fn allocate_memory(bytes: usize) -> Option<u64> {
+pub fn allocate_memory(bytes: usize, pid: u64) -> Option<u64> {
     let pages = (bytes + PAGE_SIZE as usize - 1) / PAGE_SIZE as usize;
     if pages == 0 { return None; }
 
@@ -252,7 +252,7 @@ pub fn allocate_memory(bytes: usize) -> Option<u64> {
         }
 
         if found {
-            if add_allocation(0, found_addr, pages) {
+            if add_allocation(pid, found_addr, pages) {
                 unlock_pmm();
                 return Some(found_addr);
             }

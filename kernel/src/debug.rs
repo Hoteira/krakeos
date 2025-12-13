@@ -35,6 +35,7 @@ impl SerialDebug {
         for byte in s.bytes() {
             match byte {
                 0x20..=0x7e | b'\n' => self.write_byte(byte),
+                b'\r' => {}, // Ignore carriage return
                 _ => self.write_byte(0xfe),
             }
         }
@@ -46,6 +47,7 @@ impl SerialDebug {
                 0x20..=0x7e | b'\n' => {
                     self.write_byte(byte);
                 }
+                b'\r' => {}, // Ignore carriage return
 
                 _ => {
                     self.write_byte(0xfe);
@@ -60,6 +62,10 @@ impl fmt::Write for SerialDebug {
         self.write_string(s);
         Ok(())
     }
+}
+
+pub fn serial_print_str(s: &str) {
+    SerialDebug::new().write_string(s);
 }
 
 #[doc(hidden)]

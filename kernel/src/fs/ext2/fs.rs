@@ -20,7 +20,7 @@ pub struct Ext2 {
 impl Ext2 {
     pub fn new(disk_id: u8, base_lba: u64) -> Result<Box<Self>, String> {
         let mut superblock = unsafe { core::mem::zeroed::<Superblock>() };
-        let mut buf = [0u8; 1024];
+        let mut buf = alloc::vec![0u8; 1024];
         
         disk::read(base_lba + 2, disk_id, &mut buf[0..512]);
         disk::read(base_lba + 3, disk_id, &mut buf[512..1024]);
@@ -28,9 +28,13 @@ impl Ext2 {
         unsafe {
             core::ptr::copy_nonoverlapping(buf.as_ptr(), &mut superblock as *mut _ as *mut u8, size_of::<Superblock>());
         }
+        
+        let magic = unsafe { *(buf.as_ptr().add(56) as *const u16) };
 
-        if superblock.magic != 0xEF53 {
-            return Err(alloc::format!("Invalid Ext2 Magic: {:#x} (Expected 0xEF53).", superblock.magic + 0));
+        core::mem::forget(buf); // Leak the buffer to prevent DMA from corrupting other data if it writes late
+
+        if magic != 0xEF53 {
+            return Err(alloc::format!("Invalid Ext2 Magic: {:#x} (Expected 0xEF53).", magic));
         }
 
         let block_size = 1024 << superblock.log_block_size;
@@ -52,10 +56,10 @@ impl Ext2 {
         let mut current_lba = start_lba;
         let mut bytes_read = 0;
         let total_bytes = buffer.len();
-        let mut sector_buf = [0u8; 512];
-
+        let mut sector_buf = alloc::vec![0u8; 512]; // Heap allocated
+        
         while bytes_read < total_bytes {
-            disk::read(current_lba, self.disk_id, &mut sector_buf);
+            disk::read(current_lba, self.disk_id, &mut sector_buf); // DMA writes to this heap buffer
             
             let start_index = if current_lba == start_lba { offset_in_sector } else { 0 };
             let remaining_in_sector = 512 - start_index;
@@ -66,6 +70,7 @@ impl Ext2 {
             bytes_read += to_copy;
             current_lba += 1;
         }
+        core::mem::forget(sector_buf); // Leak the buffer
     }
 
     pub fn read_block_group_descriptor(&self, group_idx: u32) -> BlockGroupDescriptor {
@@ -74,16 +79,19 @@ impl Ext2 {
         
         let offset = (bgdt_start_block as u64 * self.block_size) + (group_idx as u64 * desc_size);
         
+        let mut buf = alloc::vec![0u8; size_of::<BlockGroupDescriptor>()]; // Heap allocated
+        self.read_disk_data(offset, &mut buf);
+
         let mut desc = unsafe { core::mem::zeroed::<BlockGroupDescriptor>() };
         unsafe {
-            let slice = core::slice::from_raw_parts_mut(&mut desc as *mut _ as *mut u8, size_of::<BlockGroupDescriptor>());
-            self.read_disk_data(offset, slice);
+            core::ptr::copy_nonoverlapping(buf.as_ptr(), &mut desc as *mut _ as *mut u8, size_of::<BlockGroupDescriptor>());
         }
+        core::mem::forget(buf); // Leak the buffer
         desc
     }
 
     pub fn read_inode(&self, inode_idx: u32) -> Inode {
-
+        crate::debugln!("Reading Inode {}", inode_idx);
         let group = (inode_idx - 1) / self.inodes_per_group;
         let index_in_group = (inode_idx - 1) % self.inodes_per_group;
         
@@ -99,11 +107,14 @@ impl Ext2 {
 
         let inode_offset = inode_table_offset + (index_in_group as u64 * inode_size as u64);
         
+        let mut buf = alloc::vec![0u8; size_of::<Inode>()]; // Heap allocated
+        self.read_disk_data(inode_offset, &mut buf);
+
         let mut inode = unsafe { core::mem::zeroed::<Inode>() };
         unsafe {
-            let slice = core::slice::from_raw_parts_mut(&mut inode as *mut _ as *mut u8, size_of::<Inode>());
-            self.read_disk_data(inode_offset, slice);
+            core::ptr::copy_nonoverlapping(buf.as_ptr(), &mut inode as *mut _ as *mut u8, size_of::<Inode>());
         }
+        core::mem::forget(buf); // Leak the buffer
         inode
     }
 
@@ -165,6 +176,7 @@ pub struct Ext2Node {
 
 impl FileSystem for Ext2 {
     fn root(&mut self) -> Result<Box<dyn VfsNode>, String> {
+        crate::debugln!("Ext2::root called");
         let inode = self.read_inode(2); 
         Ok(Box::new(Ext2Node {
             fs: self as *mut _,
@@ -195,6 +207,7 @@ impl VfsNode for Ext2Node {
     }
 
     fn read(&mut self, offset: u64, buffer: &mut [u8]) -> Result<usize, String> {
+        crate::debugln!("Reading file content: offset={}, size={}", offset, buffer.len());
         let fs = unsafe { &*self.fs };
         let mut bytes_read = 0;
         let mut current_offset = offset;
@@ -236,6 +249,7 @@ impl VfsNode for Ext2Node {
     }
 
     fn children(&mut self) -> Result<Vec<Box<dyn VfsNode>>, String> {
+        crate::debugln!("Listing children of inode {}", self.inode_idx);
         if self.kind() != FileType::Directory {
             return Err(String::from("Not a directory"));
         }
@@ -280,6 +294,7 @@ impl VfsNode for Ext2Node {
     }
 
     fn find(&mut self, name: &str) -> Result<Box<dyn VfsNode>, String> {
+        crate::debugln!("Finding file: {}", name);
         let children = self.children()?;
         for child in children {
             if child.name() == name {

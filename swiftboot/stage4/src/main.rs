@@ -7,7 +7,7 @@ use crate::debug::debug;
 mod debug;
 mod disk;
 
-const STACK_ADDR: u64 = 0x30_0000;
+const STACK_ADDR: u64 = 0x200_0000;
 
 pub const NEXT_STAGE_LBA: u64 = 6144;
 pub const KERNEL_RAM: u32 = 0x10_0000;
@@ -33,7 +33,7 @@ pub extern "C" fn _start() -> ! {
 
     }
 
-    disk::read(NEXT_STAGE_LBA, 2048, KERNEL_RAM as *mut u8);
+    disk::read(NEXT_STAGE_LBA, 16384, KERNEL_RAM as *mut u8);
 
     unsafe {
         asm!(

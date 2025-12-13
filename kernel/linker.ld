@@ -3,8 +3,6 @@ ENTRY(_start)
 SECTIONS {
     . = 0x00100000;
 
-    KERNEL_START = .;
-
     .start : {
         *(.start)
     }
@@ -30,11 +28,5 @@ SECTIONS {
     }
     .eh_frame_hdr : {
         *(.eh_frame_hdr .eh_frame_hdr.*)
-    }
-
-    . = KERNEL_START + 0x00100000 - 2;
-
-    .phony : {
-        SHORT(0xFFFF);
     }
 }

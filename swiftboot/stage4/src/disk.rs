@@ -1,40 +1,40 @@
 use core::arch::asm;
 
 pub fn read<T>(lba: u64, sectors: u16, target: *mut T) {
-    while is_busy() {}
+    let mut current_lba = lba;
+    let mut current_target = target as *mut u8;
 
-    outb(0x3f6, 0b00000010);
+    for _ in 0..sectors {
+        while is_busy() {}
 
-    outb(0x1F1, 0x00);
-    outb(0x1F2, sectors as u8);
-    outb(0x1F3, lba as u8);
-    outb(0x1F4, (lba >> 8) as u8);
-    outb(0x1F5, (lba >> 16) as u8);
-    outb(0x1F6, (0xE0 | ((lba >> 24) & 0x0F)) as u8);
+        outb(0x3f6, 0b00000010);
 
-    outb(0x1F7, 0x20);
+        outb(0x1F1, 0x00);
+        outb(0x1F2, 1);
+        outb(0x1F3, current_lba as u8);
+        outb(0x1F4, (current_lba >> 8) as u8);
+        outb(0x1F5, (current_lba >> 16) as u8);
+        outb(0x1F6, (0xE0 | ((current_lba >> 24) & 0x0F)) as u8);
 
-    let mut sectors_left = sectors;
-    let mut target_pointer = target;
+        outb(0x1F7, 0x20);
 
-    while sectors_left > 0 {
+        while is_busy() {}
+        while !is_ready() {}
+
         for _ in 0..256 {
-            while is_busy() {}
-            while !is_ready() {}
-
             let bytes_16 = inw(0x1F0);
 
             unsafe {
-                core::ptr::write_unaligned(target_pointer as *mut u8, (bytes_16 & 0xFF) as u8);
-                target_pointer = target_pointer.byte_add(1);
+                core::ptr::write_unaligned(current_target, (bytes_16 & 0xFF) as u8);
+                current_target = current_target.add(1);
                 core::ptr::write_unaligned(
-                    target_pointer as *mut u8,
+                    current_target,
                     ((bytes_16 >> 8) & 0xFF) as u8,
                 );
-                target_pointer = target_pointer.byte_add(1);
+                current_target = current_target.add(1);
             }
         }
-        sectors_left -= 1;
+        current_lba += 1;
     }
 
     reset();

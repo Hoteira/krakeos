@@ -14,10 +14,14 @@ pub mod composer;
 
 extern crate alloc;
 
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
 use crate::boot::{BootInfo, BOOT_INFO};
 use crate::fs::vfs::FileSystem; 
 use crate::fs::ext2::fs::Ext2; // Added Ext2 for font loading
 use core::arch::asm;
+use crate::memory::pmm;
 
 // MSRs for SYSCALL/SYSRET and PAT
 const EFER_MSR: u32 = 0xC0000080; // Extended Feature Enable Register
@@ -37,15 +41,25 @@ pub extern "C" fn _start(bootinfo_ptr: *const BootInfo) -> ! {
         *(&raw mut BOOT_INFO) = bootinfo_ptr.read();
     };
 
+    // Load IDT early to catch exceptions
+    load_idt();
+
     // Initialize Memory Subsystem
     memory::init();
+    
+    // Allocate heap memory from PMM
+    let heap_size = 0x100_0000; // 16MB
+    let heap_pages = heap_size / 4096;
+    let heap_phys_addr = pmm::allocate_frames(heap_pages, 0 /* kernel pid */)
+        .expect("Failed to allocate heap memory from PMM");
+    
+    // Move heap to allocated physical address
+    std::memory::heap::init_heap(heap_phys_addr as *mut u8, heap_size);
     
     // Configure PAT for Write-Combining on PAT4
     init_pat();
 
     fs::dma::init();
-    // Move heap to 48MB to avoid collision with PMM Bitmap (10MB-43MB)
-    std::memory::heap::init_heap(0x03000000 as *mut u8, 0x100_0000);
     
     crate::fs::vfs::init();
 
@@ -66,101 +80,223 @@ pub extern "C" fn _start(bootinfo_ptr: *const BootInfo) -> ! {
 
     drivers::periferics::mouse::init_mouse();
 
-
-    crate::fs::vfs::mount(0xE0, Ext2::new(0xE0, 16384).unwrap());
-
-    let path = crate::fs::vfs::Path::new("@0xE0/user").unwrap();
-    let mut node = crate::fs::vfs::open(&path).unwrap();
-    let mut buf = alloc::vec![0u8; node.size() as usize];
-    let n = node.read(0, &mut buf).unwrap();
-
-    unsafe {
-        let pml4 = memory::vmm::new_user_pml4();
-        let entry = crate::fs::elf::load_elf(&buf[0..n], pml4).unwrap();
-        let _ = interrupts::task::TASK_MANAGER.lock().add_user_task(entry, pml4, None);
+    crate::debugln!("Mounting Ext2...");
+    match Ext2::new(0xE0, 16384) {
+        Ok(fs) => crate::fs::vfs::mount(0xE0, fs),
+        Err(e) => {
+            crate::debugln!("Failed to mount Ext2: {}", e);
+            loop {}
+        }
     }
 
+    crate::debugln!("Opening user file...");
+    let mut node = match crate::fs::vfs::open(0xE0, "user") {
+        Ok(node) => {
+            crate::debugln!("File opened! Size: {}", node.size());
+            node
+        },
+        Err(e) => {
+            crate::debugln!("Failed to open file: {}", e);
+            loop {}
+        }
+    };
+    
+    let size = node.size() as usize;
+    let pages = (size + 4095) / 4096;
+    let phys_addr = memory::pmm::allocate_frames(pages, 0).expect("Failed to allocate PMM for ELF");
 
-    load_idt();
+        unsafe {
 
-    init_syscall_msrs(); // Initialize SYSCALL MSRs
+            let buf = core::slice::from_raw_parts_mut(phys_addr as *mut u8, size);
 
-    // Enable interrupts only AFTER all drivers are initialized
-    unsafe { asm!("sti"); }
+            let n = node.read(0, buf).unwrap();
 
-    loop {}
-}
+    
 
-fn init_pat() {
-    unsafe {
-        let mut pat = rdmsr(PAT_MSR);
+            let pml4 = memory::vmm::new_user_pml4();
 
-        // PAT Layout: 8 entries of 1 byte each (bits 0-2 are memory type, others reserved/0).
-        // We want Index 4 (Bits 32-39) to be Write-Combining (0x01).
-        // Clear index 4
-        pat &= !(0xFFu64 << 32);
-        // Set index 4 to 0x01 (WC)
-        pat |= (0x01u64 << 32);
+            
 
-        wrmsr(PAT_MSR, pat);
+            match crate::fs::elf::load_elf(&buf[0..n], pml4) {
 
-        // Flush TLB to ensure new attributes take effect
-        let cr3: u64;
-        asm!("mov {}, cr3", out(reg) cr3);
-        asm!("mov cr3, {}", in(reg) cr3);
+                Ok(entry) => {
+
+                    crate::debugln!("ELF loaded successfully. Entry: {:#x}", entry);
+
+                    memory::pmm::free_frame(phys_addr);
+
+                    let _ = interrupts::task::TASK_MANAGER.lock().add_user_task(entry, pml4, None);
+
+                },
+
+                Err(e) => {
+
+                    crate::debugln!("Failed to load ELF: {}", e);
+
+                    loop {}
+
+                }
+
+            }
+
+        }
+
+        init_syscall_msrs(); // Initialize SYSCALL MSRs
+
+        crate::debugln!("Kernel initialized, entering idle loop...");
+
+        unsafe { asm!("sti"); }
+
+        loop {}
+
     }
-}
 
-/// Reads an MSR.
-unsafe fn rdmsr(msr: u32) -> u64 {
-    let (low, high): (u32, u32);
-    unsafe { asm!("rdmsr", in("ecx") msr, out("eax") low, out("edx") high) };
-    ((high as u64) << 32) | (low as u64)
-}
+    
 
-/// Writes an MSR.
-unsafe fn wrmsr(msr: u32, value: u64) {
-    let low = value as u32;
-    let high = (value >> 32) as u32;
-    unsafe { asm!("wrmsr", in("ecx") msr, in("eax") low, in("edx") high) };
-}
+    fn init_pat() {
 
-fn init_syscall_msrs() {
-    unsafe {
-        // 1. Enable SYSCALL/SYSRET in EFER MSR
-        let mut efer = rdmsr(EFER_MSR);
-        efer |= 1;
-        wrmsr(EFER_MSR, efer);
+        unsafe {
 
-        let sysret_cs_base = 0x20;
+            let mut pat = rdmsr(PAT_MSR);
 
-        let syscall_cs_base = 0x28;
+    
 
-        let star_value = ((sysret_cs_base as u64) << 48) | ((syscall_cs_base as u64) << 32);
-        wrmsr(STAR_MSR, star_value);
-        wrmsr(LSTAR_MSR, interrupts::syscalls::syscall_entry as u64);
+            // PAT Layout: 8 entries of 1 byte each (bits 0-2 are memory type, others reserved/0).
 
-        let rflags_mask = (1 << 9) | (1 << 8); // IF and TF
-        wrmsr(SFMASK_MSR, rflags_mask);
+            // We want Index 4 (Bits 32-39) to be Write-Combining (0x01).
+
+            // Clear index 4
+
+            pat &= !(0xFFu64 << 32);
+
+            // Set index 4 to 0x01 (WC)
+
+            pat |= (0x01u64 << 32);
+
+    
+
+            wrmsr(PAT_MSR, pat);
+
+    
+
+            // Flush TLB to ensure new attributes take effect
+
+            let cr3: u64;
+
+            asm!("mov {}, cr3", out(reg) cr3);
+
+            asm!("mov cr3, {}", in(reg) cr3);
+
+        }
+
     }
-}
 
+    
 
-pub fn load_idt() {
-    unsafe {
-        (*(&raw mut interrupts::idt::IDT)).init();
+    /// Reads an MSR.
 
-        (*(&raw mut interrupts::idt::IDT)).processor_exceptions();
-        (*(&raw mut interrupts::idt::IDT)).hardware_interrupts();
+    unsafe fn rdmsr(msr: u32) -> u64 {
 
-        // 3. Load the IDT into the CPU
+        let (low, high): (u32, u32);
 
-        (*(&raw mut interrupts::idt::IDT)).load();
-        (*(&raw mut interrupts::pic::PICS)).init();
+        unsafe { asm!("rdmsr", in("ecx") msr, out("eax") low, out("edx") high) };
+
+        ((high as u64) << 32) | (low as u64)
+
     }
-}
 
-#[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-    loop {}
-}
+    
+
+    /// Writes an MSR.
+
+    unsafe fn wrmsr(msr: u32, value: u64) {
+
+        let low = value as u32;
+
+        let high = (value >> 32) as u32;
+
+        unsafe { asm!("wrmsr", in("ecx") msr, in("eax") low, in("edx") high) };
+
+    }
+
+    
+
+    fn init_syscall_msrs() {
+
+        unsafe {
+
+            // 1. Enable SYSCALL/SYSRET in EFER MSR
+
+            let mut efer = rdmsr(EFER_MSR);
+
+            efer |= 1;
+
+            wrmsr(EFER_MSR, efer);
+
+    
+
+            let sysret_cs_base = 0x20;
+
+    
+
+            let syscall_cs_base = 0x8;
+
+    
+
+            let star_value = ((sysret_cs_base as u64) << 48) | ((syscall_cs_base as u64) << 32);
+
+            wrmsr(STAR_MSR, star_value);
+
+            wrmsr(LSTAR_MSR, interrupts::syscalls::syscall_entry as u64);
+
+    
+
+            let rflags_mask = (1 << 9) | (1 << 8); // IF and TF
+
+            wrmsr(SFMASK_MSR, rflags_mask);
+
+        }
+
+    }
+
+    
+
+    
+
+    pub fn load_idt() {
+
+        unsafe {
+
+            (*(&raw mut interrupts::idt::IDT)).init();
+
+    
+
+            (*(&raw mut interrupts::idt::IDT)).processor_exceptions();
+
+            (*(&raw mut interrupts::idt::IDT)).hardware_interrupts();
+
+    
+
+            // 3. Load the IDT into the CPU
+
+    
+
+            (*(&raw mut interrupts::idt::IDT)).load();
+
+            (*(&raw mut interrupts::pic::PICS)).init();
+
+        }
+
+    }
+
+    
+
+    #[panic_handler]
+
+    fn panic(info: &core::panic::PanicInfo) -> ! {
+
+        crate::debugln!("KERNEL PANIC: {}", info);
+
+        loop {}
+
+    }

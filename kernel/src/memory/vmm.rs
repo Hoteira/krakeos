@@ -28,7 +28,7 @@ pub fn map_page(virt: u64, phys: u64, flags: u64, target_pml4_phys: Option<u64>)
 
         let mut p3_entry = pml4_table.entries[p4_idx as usize];
         if p3_entry & paging::PAGE_PRESENT == 0 {
-            let frame = pmm::allocate_frame().expect("VMM: OOM for PDPT");
+            let frame = pmm::allocate_frame(0).expect("VMM: OOM for PDPT");
             
             p3_entry = frame | paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER;
             pml4_table.entries[p4_idx as usize] = p3_entry;
@@ -51,7 +51,7 @@ pub fn map_page(virt: u64, phys: u64, flags: u64, target_pml4_phys: Option<u64>)
         }
 
         if p2_entry & paging::PAGE_PRESENT == 0 {
-            let frame = pmm::allocate_frame().expect("VMM: OOM for PD");
+            let frame = pmm::allocate_frame(0).expect("VMM: OOM for PD");
 
             p2_entry = frame | paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER;
             p3.entries[p3_idx as usize] = p2_entry;
@@ -74,7 +74,7 @@ pub fn map_page(virt: u64, phys: u64, flags: u64, target_pml4_phys: Option<u64>)
 
         let mut p1_entry = p2.entries[p2_idx as usize];
         if p1_entry & paging::PAGE_PRESENT == 0 {
-            let frame = pmm::allocate_frame().expect("VMM: OOM for PT");
+            let frame = pmm::allocate_frame(0).expect("VMM: OOM for PT");
 
             p1_entry = frame | paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER;
             p2.entries[p2_idx as usize] = p1_entry;

@@ -1,4 +1,4 @@
-pub mod pci;
+pub mod video;
 pub mod periferics;
 pub mod port;
-pub mod video;
+pub mod pci;

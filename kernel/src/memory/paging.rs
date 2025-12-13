@@ -7,6 +7,7 @@ pub const PAGE_WRITE_THROUGH: u64 = 1 << 3;
 pub const PAGE_NO_CACHE: u64 = 1 << 4;
 pub const PAGE_ACCESSED: u64 = 1 << 5;
 pub const PAGE_DIRTY: u64 = 1 << 6;
+pub const PAGE_PAT: u64 = 1 << 7; // Index 4 in PAT if PCD/PWT=0
 pub const PAGE_HUGE: u64 = 1 << 7;
 pub const PAGE_GLOBAL: u64 = 1 << 8;
 pub const PAGE_NO_EXECUTE: u64 = 1 << 63;
