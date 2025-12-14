@@ -62,3 +62,54 @@ impl Color {
         [self.r, self.g, self.b, self.a]
     }
 }
+
+
+#[derive(Debug, Copy, Clone)]
+pub enum GradientDirection {
+    Horizontal,
+    Vertical,
+    Diagonal,
+    DiagonalAlt,
+    Custom { angle: f32 },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct LinearGradient {
+    pub start_color: Color,
+    pub end_color: Color,
+    pub direction: GradientDirection,
+}
+
+impl LinearGradient {
+    pub const fn new(start: Color, end: Color, direction: GradientDirection) -> Self {
+        Self {
+            start_color: start,
+            end_color: end,
+            direction,
+        }
+    }
+
+    pub const fn horizontal(start: Color, end: Color) -> Self {
+        Self::new(start, end, GradientDirection::Horizontal)
+    }
+
+    pub const fn vertical(start: Color, end: Color) -> Self {
+        Self::new(start, end, GradientDirection::Vertical)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum BackgroundStyle {
+    Solid(Color),
+    Gradient(LinearGradient),
+}
+
+impl BackgroundStyle {
+    pub const fn solid(color: Color) -> Self {
+        BackgroundStyle::Solid(color)
+    }
+
+    pub const fn gradient(gradient: LinearGradient) -> Self {
+        BackgroundStyle::Gradient(gradient)
+    }
+}

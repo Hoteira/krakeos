@@ -20,7 +20,7 @@ pub struct Ext2 {
 impl Ext2 {
     pub fn new(disk_id: u8, base_lba: u64) -> Result<Box<Self>, String> {
         let mut superblock = unsafe { core::mem::zeroed::<Superblock>() };
-        let mut buf = alloc::vec![0u8; 1024];
+        let mut buf = [0u8; 1024];
         
         disk::read(base_lba + 2, disk_id, &mut buf[0..512]);
         disk::read(base_lba + 3, disk_id, &mut buf[512..1024]);
@@ -30,8 +30,6 @@ impl Ext2 {
         }
         
         let magic = unsafe { *(buf.as_ptr().add(56) as *const u16) };
-
-        core::mem::forget(buf); // Leak the buffer to prevent DMA from corrupting other data if it writes late
 
         if magic != 0xEF53 {
             return Err(alloc::format!("Invalid Ext2 Magic: {:#x} (Expected 0xEF53).", magic));
@@ -52,14 +50,20 @@ impl Ext2 {
         let abs_offset = offset + (self.base_lba * 512);
         let start_lba = abs_offset / 512;
         let offset_in_sector = (abs_offset % 512) as usize;
+
+        // Optimization: If aligned and reading whole sectors, read directly
+        if offset_in_sector == 0 && (buffer.len() % 512) == 0 {
+            disk::read(start_lba, self.disk_id, buffer);
+            return;
+        }
         
         let mut current_lba = start_lba;
         let mut bytes_read = 0;
         let total_bytes = buffer.len();
-        let mut sector_buf = alloc::vec![0u8; 512]; // Heap allocated
+        let mut sector_buf = [0u8; 512]; 
         
         while bytes_read < total_bytes {
-            disk::read(current_lba, self.disk_id, &mut sector_buf); // DMA writes to this heap buffer
+            disk::read(current_lba, self.disk_id, &mut sector_buf); 
             
             let start_index = if current_lba == start_lba { offset_in_sector } else { 0 };
             let remaining_in_sector = 512 - start_index;
@@ -70,7 +74,6 @@ impl Ext2 {
             bytes_read += to_copy;
             current_lba += 1;
         }
-        core::mem::forget(sector_buf); // Leak the buffer
     }
 
     pub fn read_block_group_descriptor(&self, group_idx: u32) -> BlockGroupDescriptor {
@@ -79,14 +82,13 @@ impl Ext2 {
         
         let offset = (bgdt_start_block as u64 * self.block_size) + (group_idx as u64 * desc_size);
         
-        let mut buf = alloc::vec![0u8; size_of::<BlockGroupDescriptor>()]; // Heap allocated
+        let mut buf = [0u8; size_of::<BlockGroupDescriptor>()];
         self.read_disk_data(offset, &mut buf);
 
         let mut desc = unsafe { core::mem::zeroed::<BlockGroupDescriptor>() };
         unsafe {
             core::ptr::copy_nonoverlapping(buf.as_ptr(), &mut desc as *mut _ as *mut u8, size_of::<BlockGroupDescriptor>());
         }
-        core::mem::forget(buf); // Leak the buffer
         desc
     }
 
@@ -107,14 +109,13 @@ impl Ext2 {
 
         let inode_offset = inode_table_offset + (index_in_group as u64 * inode_size as u64);
         
-        let mut buf = alloc::vec![0u8; size_of::<Inode>()]; // Heap allocated
+        let mut buf = [0u8; size_of::<Inode>()];
         self.read_disk_data(inode_offset, &mut buf);
 
         let mut inode = unsafe { core::mem::zeroed::<Inode>() };
         unsafe {
             core::ptr::copy_nonoverlapping(buf.as_ptr(), &mut inode as *mut _ as *mut u8, size_of::<Inode>());
         }
-        core::mem::forget(buf); // Leak the buffer
         inode
     }
 
@@ -207,40 +208,94 @@ impl VfsNode for Ext2Node {
     }
 
     fn read(&mut self, offset: u64, buffer: &mut [u8]) -> Result<usize, String> {
-        crate::debugln!("Reading file content: offset={}, size={}", offset, buffer.len());
-        let fs = unsafe { &*self.fs };
+        let fs = unsafe { &mut *self.fs };
+        let total_size = self.size();
+        if offset >= total_size { return Ok(0); }
+
         let mut bytes_read = 0;
         let mut current_offset = offset;
+        let mut buf_offset = 0;
+        let len = core::cmp::min(buffer.len() as u64, total_size - offset) as usize;
         
+        let block_size = fs.block_size as u64;
+        let mut bounce_buf = alloc::vec![0u8; fs.block_size as usize];
 
-
-        while bytes_read < buffer.len() && current_offset < self.size() {
-            let block_idx = (current_offset / fs.block_size) as u32;
-            let block_offset = (current_offset % fs.block_size) as usize;
+        // 1. Handle Start (Unaligned)
+        let start_block_offset = (current_offset % block_size) as usize;
+        if start_block_offset != 0 {
+            let block_idx = (current_offset / block_size) as u32;
+            let phys = fs.get_block_address(&self.inode, block_idx);
             
-
-
-            let physical_block = fs.get_block_address(&self.inode, block_idx);
-            
-
-
-            let mut block_buf = alloc::vec![0u8; fs.block_size as usize];
-            
-            if physical_block != 0 {
-                fs.read_disk_data(physical_block as u64 * fs.block_size, &mut block_buf);
+            if phys != 0 {
+                fs.read_disk_data(phys as u64 * block_size, &mut bounce_buf);
             } else {
+                bounce_buf.fill(0);
             }
             
-            let available = fs.block_size as usize - block_offset;
-            let to_copy = core::cmp::min(buffer.len() - bytes_read, available);
-            let to_copy = core::cmp::min(to_copy, (self.size() - current_offset) as usize);
-            
-            buffer[bytes_read..bytes_read+to_copy].copy_from_slice(&block_buf[block_offset..block_offset+to_copy]);
+            let to_copy = core::cmp::min(len, (block_size as usize) - start_block_offset);
+            buffer[0..to_copy].copy_from_slice(&bounce_buf[start_block_offset..start_block_offset+to_copy]);
             
             bytes_read += to_copy;
             current_offset += to_copy as u64;
+            buf_offset += to_copy;
         }
-        
+
+        // 2. Handle Middle (Aligned Full Blocks) - Coalesced
+        while (len - bytes_read) >= block_size as usize {
+            let start_block_idx = (current_offset / block_size) as u32;
+            let start_phys = fs.get_block_address(&self.inode, start_block_idx);
+            
+            // Check for contiguous run
+            let mut count = 1;
+            let max_blocks = core::cmp::min(32, (len - bytes_read) / block_size as usize); // Cap at 32 blocks (128KB) due to DMA u8 limit
+            
+            if start_phys != 0 {
+                while count < max_blocks {
+                    let next_phys = fs.get_block_address(&self.inode, start_block_idx + count as u32);
+                    if next_phys == start_phys + count as u32 {
+                        count += 1;
+                    } else {
+                        break;
+                    }
+                }
+                
+                let chunk_size = count * block_size as usize;
+                let dest_slice = &mut buffer[buf_offset .. buf_offset + chunk_size];
+                fs.read_disk_data(start_phys as u64 * block_size, dest_slice);
+                
+                bytes_read += chunk_size;
+                current_offset += chunk_size as u64;
+                buf_offset += chunk_size;
+            } else {
+                // Sparse block (0), fill with zeros. 
+                // Sparse runs could also be coalesced, but keeping it simple.
+                let chunk_size = block_size as usize;
+                let dest_slice = &mut buffer[buf_offset .. buf_offset + chunk_size];
+                dest_slice.fill(0);
+                
+                bytes_read += chunk_size;
+                current_offset += chunk_size as u64;
+                buf_offset += chunk_size;
+            }
+        }
+
+        // 3. Handle End (Unaligned)
+        if bytes_read < len {
+            let block_idx = (current_offset / block_size) as u32;
+            let phys = fs.get_block_address(&self.inode, block_idx);
+            
+            if phys != 0 {
+                fs.read_disk_data(phys as u64 * block_size, &mut bounce_buf);
+            } else {
+                bounce_buf.fill(0);
+            }
+            
+            let to_copy = len - bytes_read;
+            buffer[buf_offset..buf_offset+to_copy].copy_from_slice(&bounce_buf[0..to_copy]);
+            
+            bytes_read += to_copy;
+        }
+
         Ok(bytes_read)
     }
 

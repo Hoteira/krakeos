@@ -12,6 +12,6 @@ pub mod window;
 
 pub use window::Window;
 pub use widget::Widget;
-pub use types::{Color, Size, Align};
 pub use layout::{Display, FlexDirection};
 pub use event::Event;
+pub use types::{Color, Size, Align, LinearGradient, GradientDirection, BackgroundStyle};

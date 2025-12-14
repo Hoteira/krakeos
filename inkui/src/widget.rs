@@ -88,46 +88,44 @@ impl WidgetGeometry {
     }
 }
 
+use crate::types::BackgroundStyle;
+
 #[derive(Debug, Clone)]
 pub enum Widget {
     Frame {
         geometry: WidgetGeometry,
         children: Vec<Widget>,
         display: Display,
-        background_color: Color,
+        background: BackgroundStyle,
     },
 
     Button {
         geometry: WidgetGeometry,
         text: Text,
-        background_color: Color,
+        background: BackgroundStyle,
         on_click: Option<EventHandler>,
     },
 
     Label {
         geometry: WidgetGeometry,
         text: Text,
-        background_color: Color,
+        background: BackgroundStyle,
         writable: bool,
     },
 
     Canvas {
         geometry: WidgetGeometry,
         framebuffer: Vec<u32>,
-        background_color: Color,
+        background: BackgroundStyle,
     },
-
-    // Image support removed for now
 }
-
-
 impl Widget {
     pub fn frame(id: WidgetId) -> Self {
         Widget::Frame {
             geometry: WidgetGeometry::new(id),
             children: Vec::new(),
             display: Display::None,
-            background_color: Color::rgb(255, 255, 255),
+            background: BackgroundStyle::solid(Color::rgb(255, 255, 255)),
         }
     }
 
@@ -135,7 +133,7 @@ impl Widget {
         Widget::Button {
             geometry: WidgetGeometry::new(id),
             text: Text::new(text),
-            background_color: Color::rgb(200, 200, 200),
+            background: BackgroundStyle::solid(Color::rgb(200, 200, 200)),
             on_click: None,
         }
     }
@@ -144,7 +142,7 @@ impl Widget {
         Widget::Label {
             geometry: WidgetGeometry::new(id),
             text: Text::new(text),
-            background_color: Color::rgb(255, 255, 255),
+            background: BackgroundStyle::solid(Color::rgb(255, 255, 255)),
             writable: false,
         }
     }
@@ -153,8 +151,33 @@ impl Widget {
         Widget::Canvas {
             geometry: WidgetGeometry::new(id),
             framebuffer: Vec::new(),
-            background_color: Color::rgb(100, 100, 100),
+            background: BackgroundStyle::solid(Color::rgb(100, 100, 100)),
         }
+    }
+
+    // UPDATE background_color method
+    pub fn background_color(mut self, color: Color) -> Self {
+        match &mut self {
+            Widget::Frame { background, .. } |
+            Widget::Button { background, .. } |
+            Widget::Label { background, .. } |
+            Widget::Canvas { background, .. } => {
+                *background = BackgroundStyle::solid(color);    
+            }
+        }
+        self
+    }
+
+    pub fn background_gradient(mut self, gradient: LinearGradient) -> Self {
+        match &mut self {
+            Widget::Frame { background, .. } |
+            Widget::Button { background, .. } |
+            Widget::Label { background, .. } |
+            Widget::Canvas { background, .. } => {
+                *background = BackgroundStyle::gradient(gradient);
+            }
+        }
+        self
     }
 
     // Fluent API
@@ -185,18 +208,6 @@ impl Widget {
 
     pub fn y(mut self, y: Size) -> Self {
         self.geometry_mut().user_y = y;
-        self
-    }
-
-    pub fn background_color(mut self, color: Color) -> Self {
-        match &mut self {
-            Widget::Frame { background_color, .. } |
-            Widget::Button { background_color, .. } |
-            Widget::Label { background_color, .. } |
-            Widget::Canvas { background_color, .. } => {
-                *background_color = color;
-            }
-        }
         self
     }
 
@@ -527,17 +538,18 @@ impl Widget {
 }
 
 use titanf::TrueTypeFont;
+use crate::LinearGradient;
 
 impl Widget {
     // ... existing methods ...
     pub fn draw(&self, framebuffer: &mut [u32], buffer_width: usize, font: &mut Option<TrueTypeFont>) {
         if buffer_width == 0 { return; }
-        
+
         let geometry = self.geometry();
-        
+
         match self {
-            Widget::Frame { background_color, .. } => {
-                crate::graphics::primitives::draw_square(
+            Widget::Frame { background, .. } => {
+                crate::graphics::primitives::draw_background_style(
                     framebuffer,
                     buffer_width,
                     geometry.x + geometry.margin,
@@ -545,11 +557,11 @@ impl Widget {
                     geometry.width,
                     geometry.height,
                     geometry.border_radius,
-                    *background_color
+                    background
                 );
             },
-            Widget::Button { background_color, text, .. } => {
-                crate::graphics::primitives::draw_square(
+            Widget::Button { background, text, .. } => {
+                crate::graphics::primitives::draw_background_style(
                     framebuffer,
                     buffer_width,
                     geometry.x + geometry.margin,
@@ -557,15 +569,15 @@ impl Widget {
                     geometry.width,
                     geometry.height,
                     geometry.border_radius,
-                    *background_color
+                    background
                 );
-                
+
                 if let Some(font) = font {
                     if !text.text.is_empty() {
-                         crate::graphics::primitives::draw_text(
+                        crate::graphics::primitives::draw_text(
                             framebuffer,
                             buffer_width,
-                            geometry.x + geometry.margin + geometry.padding + 5, // Simple padding
+                            geometry.x + geometry.margin + geometry.padding + 5,
                             geometry.y + geometry.margin + geometry.padding + 5,
                             &text.text,
                             font,
@@ -575,9 +587,15 @@ impl Widget {
                     }
                 }
             },
-            Widget::Label { background_color, text, .. } => {
-                if background_color.a > 0 {
-                    crate::graphics::primitives::draw_square(
+            Widget::Label { background, text, .. } => {
+                // Only draw background if it's not fully transparent
+                let should_draw_bg = match background {
+                    BackgroundStyle::Solid(c) => c.a > 0,
+                    BackgroundStyle::Gradient(g) => g.start_color.a > 0 || g.end_color.a > 0,
+                };
+
+                if should_draw_bg {
+                    crate::graphics::primitives::draw_background_style(
                         framebuffer,
                         buffer_width,
                         geometry.x + geometry.margin,
@@ -585,13 +603,13 @@ impl Widget {
                         geometry.width,
                         geometry.height,
                         geometry.border_radius,
-                        *background_color
+                        background
                     );
                 }
-                
+
                 if let Some(font) = font {
                     if !text.text.is_empty() {
-                         crate::graphics::primitives::draw_text(
+                        crate::graphics::primitives::draw_text(
                             framebuffer,
                             buffer_width,
                             geometry.x + geometry.margin + geometry.padding,
@@ -613,7 +631,6 @@ impl Widget {
                         let src_end = src_start + geometry.width;
 
                         if dest_end <= framebuffer.len() && src_end <= widget_buffer.len() {
-                            // Blending is not applied here (direct copy), maybe improve later
                             framebuffer[dest_start..dest_end].copy_from_slice(&widget_buffer[src_start..src_end]);
                         }
                     }

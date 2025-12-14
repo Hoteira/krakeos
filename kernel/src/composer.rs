@@ -4,6 +4,9 @@ use crate::display::{Color, DisplayServer, Mouse, State};
 use core::sync::atomic::{AtomicU16, Ordering};
 use std::os::print;
 use crate::{debugln, println};
+use crate::drivers::video::virtio;
+
+pub static mut VIRTIO_ACTIVE: bool = false;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 #[repr(C)]
@@ -65,7 +68,7 @@ pub static mut DISPLAY_SERVER: DisplayServer = DisplayServer {
     width: 0,
     height: 0,
     pitch: 0,
-    depth: 8,
+    depth: 32,
 
     framebuffer: 0,
     double_buffer: 0,
@@ -139,10 +142,10 @@ impl DisplayServer {
         self.width = vbe.width as u64;
         self.pitch = vbe.pitch as u64;
         self.height = vbe.height as u64;
-        self.depth = vbe.bpp as usize;
+        self.depth = 32; // Always force 32-bit
 
         unsafe {
-            crate::display::DEPTH = vbe.bpp;
+            crate::display::DEPTH = 32;
         }
 
         // Remap Framebuffer to Write-Combining (WC)
@@ -175,6 +178,27 @@ impl DisplayServer {
         unsafe {
             if let Some(buffer) = crate::memory::pmm::allocate_frames(pages, 0) {
                 self.double_buffer = buffer;
+                
+                // Debug: Fill with Red to verify VirtIO Flush
+                // core::ptr::write_bytes takes u8, so we can't use it for 0xFF0000FF pattern.
+                let count = (self.width * self.height) as usize;
+                let ptr = buffer as *mut u32;
+                for i in 0..count {
+                    core::ptr::write(ptr.add(i), 0xFF0000FF);
+                }
+
+                // Initialize VirtIO GPU using the double buffer as backing store
+                virtio::init();
+                if virtio::queue::VIRT_QUEUES[0].is_some() {
+                    virtio::start_gpu(self.width as u32, self.height as u32, self.double_buffer);
+                    VIRTIO_ACTIVE = true;
+                    // VirtIO expects tightly packed buffer (W * 4). VBE pitch might include padding.
+                    // Since we control the backing buffer, we enforce the standard stride.
+                    self.pitch = self.width * 4;
+                    println!("DisplayServer: VirtIO GPU activated.");
+                } else {
+                    println!("DisplayServer: VirtIO GPU not found or failed. Fallback to VBE.");
+                }
             } else {
                 panic!("[DisplayServer] Failed to allocate double buffer!");
             }
@@ -182,22 +206,22 @@ impl DisplayServer {
     }
 
     pub fn copy(&self) {
-        let buffer_size = self.pitch as u64 * self.height as u64;
         unsafe {
-            core::ptr::copy(
-                self.double_buffer as *const u8,
-                self.framebuffer as *mut u8,
-                buffer_size as usize,
-            );
+            if VIRTIO_ACTIVE {
+                virtio::flush(self.width as u32, self.height as u32);
+            } else {
+                let buffer_size = self.pitch as u64 * self.height as u64;
+                core::ptr::copy(
+                    self.double_buffer as *const u8,
+                    self.framebuffer as *mut u8,
+                    buffer_size as usize,
+                );
+            }
         }
     }
 
     pub fn copy_to_fb(&self, x: u32, y: u32, width: u32, height: u32) {
-        let bytes_per_pixel = match self.depth {
-            32 => 4,
-            24 => 3,
-            _  => return,
-        };
+        let bytes_per_pixel = 4; // Always 32-bit
 
         let max_x = (self.width as u32).min(x + width);
         let max_y = (self.height as u32).min(y + height);
@@ -214,31 +238,37 @@ impl DisplayServer {
         let pitch = self.pitch as u32;
 
         unsafe {
-            for row in 0..copy_height {
-                let line_start = (y + row as u32) * pitch;
-                let offset = line_start + x * bytes_per_pixel;
+            if VIRTIO_ACTIVE {
+                // If VirtIO is active, we just need to flush the region.
+                // But flush command takes full screen update or rect?
+                // `virtio::flush` implementation sends TRANSFER_TO_HOST + RESOURCE_FLUSH for the whole screen.
+                // We could optimize to partial flush, but the `flush` function I wrote takes full width/height.
+                // For now, call full flush.
+                virtio::flush(self.width as u32, self.height as u32);
+            } else {
+                for row in 0..copy_height {
+                    let line_start = (y + row as u32) * pitch;
+                    let offset = line_start + x * bytes_per_pixel;
 
-                core::ptr::copy(
-                    src.add(offset as usize),
-                    dst.add(offset as usize),
-                    copy_width * bytes_per_pixel as usize,
-                );
+                    core::ptr::copy(
+                        src.add(offset as usize),
+                        dst.add(offset as usize),
+                        copy_width * bytes_per_pixel as usize,
+                    );
+                }
             }
         }
     }
 
     pub fn copy_to_db(&self, width: u32, height: u32, buffer: usize, x: u32, y: u32) {
+        crate::debugln!("copy_to_db: w={}, h={}, x={}, y={}", width, height, x, y);
         let dst_bpp = self.depth;
         if dst_bpp != 32 && dst_bpp != 24 {
             return;
         }
-
-        // Source is always 32-bit RGBA/BGRA
-        const SRC_BYTES_PER_PIXEL: usize = 4;
-        let dst_bytes_per_pixel = if dst_bpp == 32 { 4 } else { 3 };
-
+        
         let dst_pitch = self.pitch as usize;
-        let src_pitch = (width as usize) * SRC_BYTES_PER_PIXEL;
+        let src_pitch = (width as usize) * 4;
 
         let max_x = (self.width as u32).min(x + width);
         let max_y = (self.height as u32).min(y + height);
@@ -251,77 +281,43 @@ impl DisplayServer {
         let copy_height = (max_y - y) as usize;
 
         unsafe {
-            let src_ptr = buffer as *const u8;
-            let dst_ptr = self.double_buffer as *mut u8;
+            let src_base = buffer as *const u8;
+            let dst_base = self.double_buffer as *mut u8;
 
-            if dst_bpp == 32 {
-                for row in 0..copy_height {
-                    for col in 0..copy_width {
-                        let src_offset = row * src_pitch + col * SRC_BYTES_PER_PIXEL;
-                        let dst_offset = (y as usize + row) * dst_pitch + (x as usize + col) * 4;
+            for row in 0..copy_height {
+                let src_row_ptr = src_base.add(row * src_pitch);
+                let dst_row_ptr = dst_base.add((y as usize + row) * dst_pitch + (x as usize) * 4);
 
-                        let src_a = *src_ptr.add(src_offset + 3);
+                for col in 0..copy_width {
+                    let offset = col * 4;
+                    let src_ptr = src_row_ptr.add(offset);
+                    let dst_ptr = dst_row_ptr.add(offset);
 
-                        if src_a == 0 {
-                            continue; // Transparent
-                        } else if src_a == 255 {
-                            // Opaque
-                            core::ptr::copy(
-                                src_ptr.add(src_offset),
-                                dst_ptr.add(dst_offset),
-                                4,
-                            );
-                        } else {
-                            // Blend
-                            let alpha = src_a as u32;
-                            let inv_alpha = 255 - alpha;
+                    let src_a = *src_ptr.add(3);
 
-                            let src_r = *src_ptr.add(src_offset) as u32;
-                            let src_g = *src_ptr.add(src_offset + 1) as u32;
-                            let src_b = *src_ptr.add(src_offset + 2) as u32;
+                    if src_a == 255 {
+                        // Opaque - direct copy 4 bytes (u32)
+                        *(dst_ptr as *mut u32) = *(src_ptr as *const u32);
+                    } else if src_a == 0 {
+                        // Transparent - skip
+                        continue;
+                    } else {
+                        // Blend
+                        let alpha = src_a as u32;
+                        let inv_alpha = 255 - alpha;
 
-                            let dst_r = *dst_ptr.add(dst_offset) as u32;
-                            let dst_g = *dst_ptr.add(dst_offset + 1) as u32;
-                            let dst_b = *dst_ptr.add(dst_offset + 2) as u32;
+                        let src_r = *src_ptr as u32;
+                        let src_g = *src_ptr.add(1) as u32;
+                        let src_b = *src_ptr.add(2) as u32;
 
-                            *dst_ptr.add(dst_offset) = ((src_r * alpha + dst_r * inv_alpha) / 255) as u8;
-                            *dst_ptr.add(dst_offset + 1) = ((src_g * alpha + dst_g * inv_alpha) / 255) as u8;
-                            *dst_ptr.add(dst_offset + 2) = ((src_b * alpha + dst_b * inv_alpha) / 255) as u8;
-                            *dst_ptr.add(dst_offset + 3) = 255;
-                        }
-                    }
-                }
-            } else {
-                for row in 0..copy_height {
-                    for col in 0..copy_width {
-                        let src_offset = row * src_pitch + col * SRC_BYTES_PER_PIXEL;
-                        let dst_offset = (y as usize + row) * dst_pitch + (x as usize + col) * 3;
+                        let dst_r = *dst_ptr as u32;
+                        let dst_g = *dst_ptr.add(1) as u32;
+                        let dst_b = *dst_ptr.add(2) as u32;
 
-                        let src_a = *src_ptr.add(src_offset + 3);
-
-                        if src_a == 0 {
-                            continue;
-                        } else if src_a == 255 {
-                            *dst_ptr.add(dst_offset) = *src_ptr.add(src_offset);
-                            *dst_ptr.add(dst_offset + 1) = *src_ptr.add(src_offset + 1);
-                            *dst_ptr.add(dst_offset + 2) = *src_ptr.add(src_offset + 2);
-                        } else {
-                            // Blend
-                            let alpha = src_a as u32;
-                            let inv_alpha = 255 - alpha;
-
-                            let src_r = *src_ptr.add(src_offset) as u32;
-                            let src_g = *src_ptr.add(src_offset + 1) as u32;
-                            let src_b = *src_ptr.add(src_offset + 2) as u32;
-
-                            let dst_r = *dst_ptr.add(dst_offset) as u32;
-                            let dst_g = *dst_ptr.add(dst_offset + 1) as u32;
-                            let dst_b = *dst_ptr.add(dst_offset + 2) as u32;
-
-                            *dst_ptr.add(dst_offset) = ((src_r * alpha + dst_r * inv_alpha) / 255) as u8;
-                            *dst_ptr.add(dst_offset + 1) = ((src_g * alpha + dst_g * inv_alpha) / 255) as u8;
-                            *dst_ptr.add(dst_offset + 2) = ((src_b * alpha + dst_b * inv_alpha) / 255) as u8;
-                        }
+                        *dst_ptr = ((src_r * alpha + dst_r * inv_alpha) / 255) as u8;
+                        *dst_ptr.add(1) = ((src_g * alpha + dst_g * inv_alpha) / 255) as u8;
+                        *dst_ptr.add(2) = ((src_b * alpha + dst_b * inv_alpha) / 255) as u8;
+                        *dst_ptr.add(3) = 255;
                     }
                 }
             }
@@ -330,16 +326,11 @@ impl DisplayServer {
 
 
     pub fn copy_to_fb_a(&self, width: u32, height: u32, buffer: usize, x: u32, y: u32) {
-        let dst_bpp = self.depth;
-        if dst_bpp != 32 && dst_bpp != 24 {
-            return;
-        }
-
-        const SRC_BYTES_PER_PIXEL: usize = 4;
-        let dst_bytes_per_pixel = if dst_bpp == 32 { 4 } else { 3 };
+        // Optimized 32-bit -> 32-bit copy with alpha
+        const BYTES_PER_PIXEL: usize = 4;
 
         let dst_pitch = self.pitch as usize;
-        let src_pitch = (width as usize) * SRC_BYTES_PER_PIXEL;
+        let src_pitch = (width as usize) * BYTES_PER_PIXEL;
 
         let max_x = (self.width as u32).min(x + width);
         let max_y = (self.height as u32).min(y + height);
@@ -352,72 +343,45 @@ impl DisplayServer {
         let copy_height = (max_y - y) as usize;
 
         unsafe {
-            let src_ptr = buffer as *const u8;
-            let dst_ptr = self.framebuffer as *mut u8;
+            let src_base = buffer as *const u8;
+            let dst_base = self.framebuffer as *mut u8;
 
             for row in 0..copy_height {
+                let src_row_ptr = src_base.add(row * src_pitch);
+                let dst_row_ptr = dst_base.add((y as usize + row) * dst_pitch + (x as usize) * 4);
+
                 for col in 0..copy_width {
-                    let src_offset = row * src_pitch + col * SRC_BYTES_PER_PIXEL;
-                    let dst_offset = (y as usize + row) * dst_pitch + (x as usize + col) * dst_bytes_per_pixel;
+                    let offset = col * 4;
+                    let src_ptr = src_row_ptr.add(offset);
+                    let dst_ptr = dst_row_ptr.add(offset);
 
-                    let src_r = *src_ptr.add(src_offset);
-                    let src_g = *src_ptr.add(src_offset + 1);
-                    let src_b = *src_ptr.add(src_offset + 2);
-                    let src_a = *src_ptr.add(src_offset + 3);
+                    let src_a = *src_ptr.add(3);
 
-                    if dst_bpp == 32 {
-                        // 32-bit destination with alpha blending
-                        if src_a == 255 {
-                            // Fully opaque: direct copy (optimization)
-                            *dst_ptr.add(dst_offset) = src_r;
-                            *dst_ptr.add(dst_offset + 1) = src_g;
-                            *dst_ptr.add(dst_offset + 2) = src_b;
-                            *dst_ptr.add(dst_offset + 3) = src_a;
-                        } else if src_a == 0 {
-                            // Fully transparent: skip (optimization)
-                            continue;
-                        } else {
-                            // Alpha blending required
-                            let alpha = src_a as u32;
-                            let inv_alpha = 255 - alpha;
-
-                            // Read destination pixel
-                            let dst_r = *dst_ptr.add(dst_offset) as u32;
-                            let dst_g = *dst_ptr.add(dst_offset + 1) as u32;
-                            let dst_b = *dst_ptr.add(dst_offset + 2) as u32;
-
-                            // Blend and write back
-                            *dst_ptr.add(dst_offset) = ((src_r as u32 * alpha + dst_r * inv_alpha) / 255) as u8;
-                            *dst_ptr.add(dst_offset + 1) = ((src_g as u32 * alpha + dst_g * inv_alpha) / 255) as u8;
-                            *dst_ptr.add(dst_offset + 2) = ((src_b as u32 * alpha + dst_b * inv_alpha) / 255) as u8;
-                            // Keep destination alpha or set to opaque
-                            *dst_ptr.add(dst_offset + 3) = 255;
-                        }
+                    if src_a == 255 {
+                        // Fully opaque: direct copy u32
+                        *(dst_ptr as *mut u32) = *(src_ptr as *const u32);
+                    } else if src_a == 0 {
+                        // Fully transparent: skip
+                        continue;
                     } else {
-                        // 24-bit destination: convert RGBA to RGB
-                        if src_a == 0 {
-                            // Fully transparent: skip
-                            continue;
-                        } else if src_a == 255 {
-                            // Fully opaque: direct copy RGB channels
-                            *dst_ptr.add(dst_offset) = src_r;
-                            *dst_ptr.add(dst_offset + 1) = src_g;
-                            *dst_ptr.add(dst_offset + 2) = src_b;
-                        } else {
-                            // Alpha blending with 24-bit destination
-                            let alpha = src_a as u32;
-                            let inv_alpha = 255 - alpha;
+                        // Alpha blending
+                        let alpha = src_a as u32;
+                        let inv_alpha = 255 - alpha;
 
-                            // Read destination RGB
-                            let dst_r = *dst_ptr.add(dst_offset) as u32;
-                            let dst_g = *dst_ptr.add(dst_offset + 1) as u32;
-                            let dst_b = *dst_ptr.add(dst_offset + 2) as u32;
+                        let src_r = *src_ptr as u32;
+                        let src_g = *src_ptr.add(1) as u32;
+                        let src_b = *src_ptr.add(2) as u32;
 
-                            // Blend and write back RGB only
-                            *dst_ptr.add(dst_offset) = ((src_r as u32 * alpha + dst_r * inv_alpha) / 255) as u8;
-                            *dst_ptr.add(dst_offset + 1) = ((src_g as u32 * alpha + dst_g * inv_alpha) / 255) as u8;
-                            *dst_ptr.add(dst_offset + 2) = ((src_b as u32 * alpha + dst_b * inv_alpha) / 255) as u8;
-                        }
+                        // Read destination
+                        let dst_r = *dst_ptr as u32;
+                        let dst_g = *dst_ptr.add(1) as u32;
+                        let dst_b = *dst_ptr.add(2) as u32;
+
+                        // Blend and write back
+                        *dst_ptr = ((src_r * alpha + dst_r * inv_alpha) / 255) as u8;
+                        *dst_ptr.add(1) = ((src_g * alpha + dst_g * inv_alpha) / 255) as u8;
+                        *dst_ptr.add(2) = ((src_b * alpha + dst_b * inv_alpha) / 255) as u8;
+                        *dst_ptr.add(3) = 255;
                     }
                 }
             }
@@ -427,25 +391,8 @@ impl DisplayServer {
     pub fn write_pixel(&self, row: u32, col: u32, color: Color) {
         if col < self.width as u32 && row < self.height as u32 {
             unsafe {
-                let offset = (row as u64 * self.pitch + col as u64 * (self.depth as u64 / 8)) as usize;
-                match self.depth {
-                    16 => {
-                        *((self.framebuffer as *mut u8).add(offset) as *mut u16) = color.to_u16();
-                    },
-
-                    24 => {
-                        let color = color.to_u24();
-                        *((self.framebuffer as *mut u8).add(offset)) = color[0];
-                        *((self.framebuffer as *mut u8).add(offset + 1)) = color[1];
-                        *((self.framebuffer as *mut u8).add(offset + 2)) = color[2];
-                    }
-
-                    32 => {
-                        *((self.framebuffer as *mut u8).add(offset) as *mut u32) = color.to_u32();
-                    }
-
-                    _ => {}
-                }
+                let offset = (row as u64 * self.pitch + col as u64 * 4) as usize;
+                *((self.framebuffer as *mut u8).add(offset) as *mut u32) = color.to_u32();
             }
         }
     }
@@ -453,25 +400,9 @@ impl DisplayServer {
     pub fn draw_mouse(&self, x: u16, y: u16) {
         use crate::drivers::periferics::mouse::{CURSOR_BUFFER, CURSOR_WIDTH, CURSOR_HEIGHT};
 
-        // Fallback for non-32bpp or weird pitch
-        if self.depth != 32 {
-            unsafe {
-                for i in 0..CURSOR_HEIGHT {
-                    for j in 0..CURSOR_WIDTH {
-                        let color = CURSOR_BUFFER[i * CURSOR_WIDTH + j];
-                        if color != 0 {
-                            self.write_pixel(y.wrapping_add(i as u16) as u32, x.wrapping_add(j as u16) as u32, Color::from_u32(color));
-                        }
-                    }
-                }
-            }
-            return;
-        }
-
         // Optimized 32bpp path
         let mut temp_buf: [u32; 1024] = [0; 1024];
         let pitch_bytes = self.pitch as usize;
-        // let db_ptr = self.double_buffer as *const u8; // Unused, we read from FB
         let fb_ptr = self.framebuffer as *mut u8;
         let screen_w = self.width as usize;
         let screen_h = self.height as usize;

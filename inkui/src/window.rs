@@ -253,6 +253,7 @@ fn find_interactive_widget_recursive(widget: &Widget, x: usize, y: usize) -> Opt
     }
 }
 
+
 pub fn draw_recursive(
     buffer: &mut [u32],
     width0: usize,
@@ -265,8 +266,10 @@ pub fn draw_recursive(
     _parent_margin: usize,
     font: &mut Option<TrueTypeFont>,
 ) {
-
+    // Update layout first
     widget.update_layout(parent_x, parent_y, parent_width, parent_height, parent_padding, _parent_margin, &Display::None);
+
+    // Draw the current widget
     widget.draw(buffer, width0, font);
 
     let widget_x = widget.get_x();
@@ -274,22 +277,21 @@ pub fn draw_recursive(
     let widget_width = widget.get_width();
     let widget_height = widget.get_height();
     let widget_padding = widget.get_padding();
-    let widget_margin = widget.get_margin(); // Use widget.get_margin() here
+    let widget_margin = widget.get_margin();
 
     let display = widget.get_display();
 
     if let Some(children) = widget.get_children_mut() {
         match display {
             Display::Flex { direction, wrap } => {
-                let _content_x = widget_x + widget_padding; // Renamed
-                let _content_y = widget_y + widget_padding; // Renamed
+                let content_x = widget_x + widget_padding;
+                let content_y = widget_y + widget_padding;
                 let content_width = widget_width.saturating_sub(widget_padding * 2);
                 let content_height = widget_height.saturating_sub(widget_padding * 2);
 
                 let mut child_info = Vec::new();
                 for child in children.iter_mut() {
-                    // Pass current widget's margin as parent_margin to children
-                    child.update_layout(_content_x, _content_y, content_width, content_height, 0, widget_margin, &Display::None);
+                    child.update_layout(content_x, content_y, content_width, content_height, 0, widget_margin, &Display::None);
                     let child_geom = child.geometry();
                     child_info.push((child_geom.width + child_geom.margin * 2, child_geom.height + child_geom.margin * 2));
                 }
@@ -308,8 +310,8 @@ pub fn draw_recursive(
                                 current_y += line_height;
                                 line_height = 0;
                             }
-                            let x = _content_x + current_x;
-                            let y = _content_y + current_y;
+                            let x = content_x + current_x;
+                            let y = content_y + current_y;
                             let w = child_total_w.min(content_width - current_x);
                             let h = child_total_h.min(content_height - current_y);
                             current_x += child_total_w;
@@ -322,8 +324,8 @@ pub fn draw_recursive(
                                 current_x += line_width;
                                 line_width = 0;
                             }
-                            let x = _content_x + current_x;
-                            let y = _content_y + current_y;
+                            let x = content_x + current_x;
+                            let y = content_y + current_y;
                             let w = child_total_w.min(content_width - current_x);
                             let h = child_total_h.min(content_height - current_y);
                             current_y += child_total_h;
@@ -352,13 +354,18 @@ pub fn draw_recursive(
                 }
             },
             Display::None => {
-                let _content_x = widget_x + widget_padding; // Renamed
-                let _content_y = widget_y + widget_padding; // Renamed
+                // FIX: We need to actually draw the children!
+                let content_x = widget_x + widget_padding;
+                let content_y = widget_y + widget_padding;
                 let content_width = widget_width.saturating_sub(widget_padding * 2);
                 let content_height = widget_height.saturating_sub(widget_padding * 2);
+
+                // Take children temporarily to avoid borrow issues
                 let children_vec = core::mem::take(children);
+
                 for mut child in children_vec.into_iter() {
-                    child.update_layout(_content_x, _content_y, content_width, content_height, 0, widget_margin, &Display::None);
+                    // Recursively draw each child
+                    draw_recursive(buffer, width0, &mut child, content_x, content_y, content_width, content_height, 0, widget_margin, font);
                     children.push(child);
                 }
             }

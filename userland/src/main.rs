@@ -6,6 +6,7 @@ use std::println;
 use std::fs::File;
 use alloc::vec::Vec;
 use alloc::boxed::Box;
+use alloc::format;
 
 extern crate alloc;
 
@@ -26,6 +27,7 @@ pub extern "C" fn _start() -> ! {
     win.can_move = true; 
     win.can_resize = false;
 
+    /*
     // Load font
     if let Ok(mut file) = File::open("@0xE0/sys/fonts/CaskaydiaNerd.ttf") {
         
@@ -58,9 +60,12 @@ pub extern "C" fn _start() -> ! {
         println!("Failed to open font file");
     }
 
+     */
+
     let mut root = Widget::frame(1)
         .width(Size::Relative(100))
         .height(Size::Relative(100))
+        .set_border_radius(Size::Absolute(5))
         .background_color(Color::rgb(100, 220, 100));
 
     // Add a label to test text
@@ -74,14 +79,16 @@ pub extern "C" fn _start() -> ! {
         .set_text_color(Color::rgb(0, 0, 0));
 
     // Add button
-    let button = Widget::button(3, "Click Me")
+    let str = format!("Hello #[35pt] #[0xFFFF0000]World {}", char::from_u32(0xf015).unwrap());
+    let button = Widget::button(3, str.as_str())
         .width(Size::Absolute(120))
         .height(Size::Absolute(40))
         .y(Size::Absolute(120))
         .x(Size::Absolute(140))
+        .set_text_size(24)
         .background_color(Color::rgb(200, 200, 255));
 
-    root = root.add_child(button).add_child(label);
+    root = root.add_child(button);
     win.children.push(root);
 
     if win.font.is_some() {
