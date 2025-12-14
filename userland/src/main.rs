@@ -58,9 +58,7 @@ pub extern "C" fn _start() -> ! {
         }
     } else {
         println!("Failed to open font file");
-    }
-
-     */
+    }*/
 
     let mut root = Widget::frame(1)
         .width(Size::Relative(100))

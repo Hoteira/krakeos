@@ -106,7 +106,6 @@ pub extern "x86-interrupt" fn page_fault(info: &mut StackFrame, error_code: u64)
 
 pub extern "x86-interrupt" fn generic_handler(_info: &mut StackFrame) {
     serial_println("EXCEPTION: GENERIC");
-    loop {}
 }
 
 

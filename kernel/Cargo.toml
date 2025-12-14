@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 std = { path="../std" }
 elfic = { path="../elfic" }
+log = "0.4.29"

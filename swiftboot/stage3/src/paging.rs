@@ -47,10 +47,10 @@ pub(crate) fn setup_paging(fb_addr: u64, fb_size: u64) {
                 
                 let mut flags = 0b10000111; // Huge + User + RW + Present
                 
-                if (phys < fb_end) && (page_end > fb_addr) {
+                /*if (phys < fb_end) && (page_end > fb_addr) {
                     // Overlap! Set PAT bit (Bit 12)
                     flags |= 0x1000;
-                }
+                }*/
                 
                 (*pd).entries[i] = phys | flags;
             }

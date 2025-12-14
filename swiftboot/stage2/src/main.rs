@@ -29,10 +29,10 @@ pub const NEXT_STAGE_LBA: u64 = 3072;
 pub const MAX_BPP: u8 = 32;
 pub const MIN_BPP: u8 = 32;
 
-pub const MAX_WIDTH: u16 = u16::MAX; //to get the biggest sire just set it to u16::MAX
-pub const MIN_WIDTH: u16 = 0;
-pub const MAX_HEIGHT: u16 = u16::MAX;
-pub const MIN_HEIGHT: u16 = 0;
+pub const MAX_WIDTH: u16 = 1280; //to get the biggest sire just set it to u16::MAX
+pub const MIN_WIDTH: u16 = 1280;
+pub const MAX_HEIGHT: u16 = 720;
+pub const MIN_HEIGHT: u16 = 720;
 
 pub const MODE: u16 = 0x1; // 0 => VGA, 1 => VBE
 

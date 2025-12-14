@@ -210,8 +210,9 @@ pub unsafe fn start_gpu(width: u32, height: u32, phys_buffer: u64) {
     println!("VirtIO GPU: Started. Scanout set to Resource 1.");
 }
 
-pub unsafe fn flush(width: u32, height: u32) {
-    println!("VirtIO: Flushing...");
+pub unsafe fn flush(x: u32, y: u32, width: u32, height: u32, screen_width: u32) {
+    let offset = (y as u64 * screen_width as u64 + x as u64) * 4;
+    
     let req_transfer = VirtioGpuTransferToHost2d {
         hdr: VirtioGpuCtrlHeader {
             type_: VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D,
@@ -220,8 +221,8 @@ pub unsafe fn flush(width: u32, height: u32) {
             ctx_id: 0,
             padding: 0,
         },
-        r: VirtioGpuRect { x: 0, y: 0, width, height },
-        offset: 0,
+        r: VirtioGpuRect { x, y, width, height },
+        offset,
         resource_id: 1,
         padding: 0,
     };
@@ -233,7 +234,6 @@ pub unsafe fn flush(width: u32, height: u32) {
         &resp_transfer as *const _ as u64,
         core::mem::size_of_val(&resp_transfer) as u32,
     );
-    println!("VirtIO: Transfer done (Resp: {:#x})", resp_transfer.type_);
 
     let req_flush = VirtioGpuResourceFlush {
         hdr: VirtioGpuCtrlHeader {
@@ -243,7 +243,7 @@ pub unsafe fn flush(width: u32, height: u32) {
             ctx_id: 0,
             padding: 0,
         },
-        r: VirtioGpuRect { x: 0, y: 0, width, height },
+        r: VirtioGpuRect { x, y, width, height },
         resource_id: 1,
         padding: 0,
     };
@@ -255,5 +255,4 @@ pub unsafe fn flush(width: u32, height: u32) {
         &resp_flush as *const _ as u64,
         core::mem::size_of_val(&resp_flush) as u32,
     );
-    println!("VirtIO: Flush done (Resp: {:#x})", resp_flush.type_);
 }

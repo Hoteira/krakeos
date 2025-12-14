@@ -58,7 +58,7 @@ pub extern "C" fn _start(bootinfo_ptr: *const BootInfo) -> ! {
     std::memory::heap::init_heap(heap_phys_addr as *mut u8, heap_size);
     
     // Configure PAT for Write-Combining on PAT4
-    init_pat();
+    //init_pat();
 
     fs::dma::init();
     

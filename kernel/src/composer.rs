@@ -2,6 +2,7 @@ use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use crate::display::{Color, DisplayServer, Mouse, State};
 use core::sync::atomic::{AtomicU16, Ordering};
+use log::debug;
 use std::os::print;
 use crate::{debugln, println};
 use crate::drivers::video::virtio;
@@ -150,24 +151,21 @@ impl DisplayServer {
                 let size_bytes = (self.pitch * self.height) as usize;
                 let pages = (size_bytes + 4095) / 4096;
 
-                if let Some(buffer) = crate::memory::pmm::allocate_frames(pages, 0) {
-                    self.double_buffer = buffer;
+                let db = crate::memory::pmm::allocate_frames(pages, 0).expect("Failed to allocate double buffer");
+                let fb = crate::memory::pmm::allocate_frames(pages, 0).expect("Failed to allocate framebuffer");
 
-                    // Clear to black
-                    core::ptr::write_bytes(buffer as *mut u8, 0, size_bytes);
+                core::ptr::write_bytes(db as *mut u8, 0, size_bytes);
+                core::ptr::write_bytes(fb as *mut u8, 0, size_bytes);
 
-                    // Initialize VirtIO with our buffer as backing store
-                    virtio::start_gpu(self.width as u32, self.height as u32, self.double_buffer);
-                    VIRTIO_ACTIVE = true;
 
-                    // Framebuffer not used with VirtIO
-                    self.framebuffer = self.double_buffer;
+                self.double_buffer = db;
+                self.framebuffer = fb;
 
-                    println!("DisplayServer: VirtIO GPU active at {}x{}", self.width, self.height);
-                    return;
-                } else {
-                    println!("DisplayServer: Failed to allocate buffer for VirtIO");
-                }
+                virtio::start_gpu(self.width as u32, self.height as u32, self.framebuffer);
+                VIRTIO_ACTIVE = true;
+
+                println!("DisplayServer: VirtIO GPU active at {}x{}", self.width, self.height);
+                return;
             }
         }
 
@@ -217,15 +215,15 @@ impl DisplayServer {
 
     pub fn copy(&self) {
         unsafe {
+            let buffer_size = self.pitch as u64 * self.height as u64;
+            core::ptr::copy(
+                self.double_buffer as *const u8,
+                self.framebuffer as *mut u8,
+                buffer_size as usize,
+            );
+
             if VIRTIO_ACTIVE {
-                virtio::flush(self.width as u32, self.height as u32);
-            } else {
-                let buffer_size = self.pitch as u64 * self.height as u64;
-                core::ptr::copy(
-                    self.double_buffer as *const u8,
-                    self.framebuffer as *mut u8,
-                    buffer_size as usize,
-                );
+                virtio::flush(0, 0, self.width as u32, self.height as u32, self.width as u32);
             }
         }
     }
@@ -249,18 +247,7 @@ impl DisplayServer {
 
         unsafe {
             if VIRTIO_ACTIVE {
-                virtio::flush(self.width as u32, self.height as u32);
-            } else {
-                for row in 0..copy_height {
-                    let line_start = (y + row as u32) * pitch;
-                    let offset = line_start + x * bytes_per_pixel;
-
-                    core::ptr::copy(
-                        src.add(offset as usize),
-                        dst.add(offset as usize),
-                        copy_width * bytes_per_pixel as usize,
-                    );
-                }
+                virtio::flush(x, y, width, height, self.width as u32);
             }
         }
     }
@@ -392,10 +379,15 @@ impl DisplayServer {
         let mut temp_buf: [u32; 1024] = [0; 1024];
         let pitch_bytes = self.pitch as usize;
         let fb_ptr = self.framebuffer as *mut u8;
+        let db_ptr = self.double_buffer as *const u8;
         let screen_w = self.width as usize;
         let screen_h = self.height as usize;
         let mx = x as usize;
         let my = y as usize;
+
+        // If dragging, read from FB (contains window). Else read from DB (clean).
+        let is_dragging = unsafe { (*(&raw mut DRAGGING_WINDOW)).load(Ordering::Relaxed) != 0 };
+        let bg_src = if is_dragging { fb_ptr as *const u8 } else { db_ptr };
 
         unsafe {
             for row in 0..CURSOR_HEIGHT {
@@ -410,7 +402,7 @@ impl DisplayServer {
 
                     let pixel_offset = row_byte_offset + screen_x * 4;
 
-                    let bg_color = *(fb_ptr.add(pixel_offset) as *const u32);
+                    let bg_color = *(bg_src.add(pixel_offset) as *const u32);
                     let cursor_color = CURSOR_BUFFER[row * CURSOR_WIDTH + col];
 
                     if cursor_color != 0 {
@@ -439,6 +431,10 @@ impl DisplayServer {
                     copy_w * 4
                 );
             }
+
+            if VIRTIO_ACTIVE {
+                virtio::flush(x as u32, y as u32, 32, 32, self.width as u32);
+            }
         }
     }
 }
@@ -448,6 +444,7 @@ pub static mut DRAGS: u8 = 0;
 pub static mut DRAG: bool = false;
 pub static mut DRAGGING_WINDOW: AtomicU16 = AtomicU16::new(0);
 pub static mut RESIZING_WINDOW: AtomicU16 = AtomicU16::new(0);
+pub static mut CLICK_STARTED_IN_TITLEBAR: bool = false;
 pub static mut W_WIDTH: usize = 0;
 pub static mut W_HEIGHT: usize = 0;
 
@@ -481,6 +478,22 @@ impl Mouse {
         let scroll_val = data[3] as i8;
         let x_vec = x_rel;
         let y_vec = y_rel;
+
+        // Check for click start
+        if self.left && !prev_left {
+            let w = unsafe { (*(&raw mut COMPOSER)).find_window(self.x as usize, self.y as usize) };
+            if let Some(ws) = w {
+                if ws.can_move && self.y as usize >= ws.y && self.y as usize <= ws.y + 25 {
+                    unsafe { CLICK_STARTED_IN_TITLEBAR = true; }
+                } else {
+                    unsafe { CLICK_STARTED_IN_TITLEBAR = false; }
+                }
+            } else {
+                unsafe { CLICK_STARTED_IN_TITLEBAR = false; }
+            }
+        } else if !self.left {
+            unsafe { CLICK_STARTED_IN_TITLEBAR = false; }
+        }
 
         unsafe {
             if self.left {
@@ -638,7 +651,8 @@ impl Mouse {
             let mut handled_drag = false;
             if self.left {
                 if ws.can_move && self.y as usize >= ws.y && self.y as usize <= ws.y + 25 {
-                    if unsafe { DRAG == true } {
+                    // Start dragging ONLY if we clicked in the titlebar
+                    if unsafe { DRAG == true && CLICK_STARTED_IN_TITLEBAR } {
                         if unsafe { (*(&raw mut DRAGGING_WINDOW)).load(Ordering::Relaxed) == 0 } {
                             unsafe {
                                 (*(&raw mut DRAGGING_WINDOW)).store(ws.id as u16, Ordering::Relaxed);
