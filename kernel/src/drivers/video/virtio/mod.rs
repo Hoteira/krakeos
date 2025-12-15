@@ -112,11 +112,13 @@ pub unsafe fn start_gpu(width: u32, height: u32, phys_buffer: u64) {
         flags: 0,
         fence_id: 0,
         ctx_id: 0,
-        padding: 0,
+        ring_idx: 0,
+        padding: [0; 3],
     };
     let mut resp_info: VirtioGpuRespDisplayInfo = core::mem::zeroed();
 
-    send_command_simple(
+    send_command(
+        0, // Control Queue
         &req_info as *const _ as u64,
         core::mem::size_of_val(&req_info) as u32,
         &resp_info as *const _ as u64,
@@ -131,7 +133,8 @@ pub unsafe fn start_gpu(width: u32, height: u32, phys_buffer: u64) {
             flags: 0,
             fence_id: 0,
             ctx_id: 0,
-            padding: 0,
+            ring_idx: 0,
+            padding: [0; 3],
         },
         resource_id: 1,
         format: 1,
@@ -140,7 +143,8 @@ pub unsafe fn start_gpu(width: u32, height: u32, phys_buffer: u64) {
     };
     let mut resp_create: VirtioGpuCtrlHeader = core::mem::zeroed();
 
-    send_command_simple(
+    send_command(
+        0, // Control Queue
         &req_create as *const _ as u64,
         core::mem::size_of_val(&req_create) as u32,
         &resp_create as *const _ as u64,
@@ -163,7 +167,8 @@ pub unsafe fn start_gpu(width: u32, height: u32, phys_buffer: u64) {
                 flags: 0,
                 fence_id: 0,
                 ctx_id: 0,
-                padding: 0,
+                ring_idx: 0,
+                padding: [0; 3],
             },
             resource_id: 1,
             nr_entries: 1,
@@ -176,7 +181,8 @@ pub unsafe fn start_gpu(width: u32, height: u32, phys_buffer: u64) {
     };
     let mut resp_attach: VirtioGpuCtrlHeader = core::mem::zeroed();
 
-    send_command_simple(
+    send_command(
+        0, // Control Queue
         &req_attach as *const _ as u64,
         core::mem::size_of_val(&req_attach) as u32,
         &resp_attach as *const _ as u64,
@@ -191,7 +197,8 @@ pub unsafe fn start_gpu(width: u32, height: u32, phys_buffer: u64) {
             flags: 0,
             fence_id: 0,
             ctx_id: 0,
-            padding: 0,
+            ring_idx: 0,
+            padding: [0; 3],
         },
         r: VirtioGpuRect { x: 0, y: 0, width, height },
         scanout_id: 0,
@@ -199,7 +206,8 @@ pub unsafe fn start_gpu(width: u32, height: u32, phys_buffer: u64) {
     };
     let mut resp_scanout: VirtioGpuCtrlHeader = core::mem::zeroed();
 
-    send_command_simple(
+    send_command(
+        0, // Control Queue
         &req_scanout as *const _ as u64,
         core::mem::size_of_val(&req_scanout) as u32,
         &resp_scanout as *const _ as u64,
@@ -219,7 +227,8 @@ pub unsafe fn flush(x: u32, y: u32, width: u32, height: u32, screen_width: u32) 
             flags: 0,
             fence_id: 0,
             ctx_id: 0,
-            padding: 0,
+            ring_idx: 0,
+            padding: [0; 3],
         },
         r: VirtioGpuRect { x, y, width, height },
         offset,
@@ -228,7 +237,8 @@ pub unsafe fn flush(x: u32, y: u32, width: u32, height: u32, screen_width: u32) 
     };
     let mut resp_transfer: VirtioGpuCtrlHeader = core::mem::zeroed();
 
-    send_command_simple(
+    send_command(
+        0, // Control Queue
         &req_transfer as *const _ as u64,
         core::mem::size_of_val(&req_transfer) as u32,
         &resp_transfer as *const _ as u64,
@@ -241,7 +251,8 @@ pub unsafe fn flush(x: u32, y: u32, width: u32, height: u32, screen_width: u32) 
             flags: 0,
             fence_id: 0,
             ctx_id: 0,
-            padding: 0,
+            ring_idx: 0,
+            padding: [0; 3],
         },
         r: VirtioGpuRect { x, y, width, height },
         resource_id: 1,
@@ -249,7 +260,8 @@ pub unsafe fn flush(x: u32, y: u32, width: u32, height: u32, screen_width: u32) 
     };
     let mut resp_flush: VirtioGpuCtrlHeader = core::mem::zeroed();
 
-    send_command_simple(
+    send_command(
+        0, // Control Queue
         &req_flush as *const _ as u64,
         core::mem::size_of_val(&req_flush) as u32,
         &resp_flush as *const _ as u64,
@@ -258,31 +270,46 @@ pub unsafe fn flush(x: u32, y: u32, width: u32, height: u32, screen_width: u32) 
 }
 
 pub unsafe fn setup_cursor(width: u32, height: u32, phys_buffer: u64, hot_x: u32, hot_y: u32) {
+    println!("VirtIO Debug: setup_cursor called with w={} h={} phys={:#x} hot={},{}", width, height, phys_buffer, hot_x, hot_y);
+    
+    let cursor_w = 64;
+    let cursor_h = 64;
+    println!("VirtIO Debug: Forcing cursor size to {}x{}", cursor_w, cursor_h);
+
     // 1. Create Cursor Resource (ID 2)
+    println!("VirtIO Debug: Sending RESOURCE_CREATE_2D (ID 2)...");
     let req_create = VirtioGpuResourceCreate2d {
         hdr: VirtioGpuCtrlHeader {
             type_: VIRTIO_GPU_CMD_RESOURCE_CREATE_2D,
             flags: 0,
             fence_id: 0,
             ctx_id: 0,
-            padding: 0,
+            ring_idx: 0,
+            padding: [0; 3],
         },
         resource_id: 2, // ID 2 for Cursor
         format: 1,      // B8G8R8A8
-        width,
-        height,
+        width: cursor_w,
+        height: cursor_h,
     };
     let mut resp_create: VirtioGpuCtrlHeader = core::mem::zeroed();
     
-    send_command_simple(
+    send_command(
+        0, // Control Queue
         &req_create as *const _ as u64,
         core::mem::size_of_val(&req_create) as u32,
         &resp_create as *const _ as u64,
         core::mem::size_of_val(&resp_create) as u32,
     );
-    println!("VirtIO Cursor Create: {:#x}", resp_create.type_);
+    println!("VirtIO Debug: Create 2D Resp Type: {:#x}", resp_create.type_);
+
+    if resp_create.type_ != VIRTIO_GPU_RESP_OK_NODATA {
+        println!("VirtIO Debug: Create 2D Failed!");
+        return;
+    }
 
     // 2. Attach Backing
+    println!("VirtIO Debug: Sending RESOURCE_ATTACH_BACKING (ID 2, Addr {:#x})...", phys_buffer);
     #[repr(C)]
     struct AttachRequest {
         hdr: VirtioGpuResourceAttachBacking,
@@ -296,82 +323,124 @@ pub unsafe fn setup_cursor(width: u32, height: u32, phys_buffer: u64, hot_x: u32
                 flags: 0,
                 fence_id: 0,
                 ctx_id: 0,
-                padding: 0,
+                ring_idx: 0,
+                padding: [0; 3],
             },
             resource_id: 2,
             nr_entries: 1,
         },
         entry: VirtioGpuMemEntry {
             addr: phys_buffer,
-            length: width * height * 4,
+            length: cursor_w * cursor_h * 4, // 16KB
             padding: 0,
         },
     };
     let mut resp_attach: VirtioGpuCtrlHeader = core::mem::zeroed();
 
-    send_command_simple(
+    send_command(
+        0, // Control Queue
         &req_attach as *const _ as u64,
         core::mem::size_of_val(&req_attach) as u32,
         &resp_attach as *const _ as u64,
         core::mem::size_of_val(&resp_attach) as u32,
     );
-    println!("VirtIO Cursor Attach: {:#x}", resp_attach.type_);
+    println!("VirtIO Debug: Attach Backing Resp Type: {:#x}", resp_attach.type_);
 
     // 3. Transfer Data (Upload)
+    println!("VirtIO Debug: Sending TRANSFER_TO_HOST_2D (ID 2)...");
     let req_transfer = VirtioGpuTransferToHost2d {
         hdr: VirtioGpuCtrlHeader {
             type_: VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D,
             flags: 0,
             fence_id: 0,
             ctx_id: 0,
-            padding: 0,
+            ring_idx: 0,
+            padding: [0; 3],
         },
-        r: VirtioGpuRect { x: 0, y: 0, width, height },
+        r: VirtioGpuRect { x: 0, y: 0, width: cursor_w, height: cursor_h },
         offset: 0,
         resource_id: 2,
         padding: 0,
     };
     let mut resp_transfer: VirtioGpuCtrlHeader = core::mem::zeroed();
 
-    send_command_simple(
+    send_command(
+        0, // Control Queue
         &req_transfer as *const _ as u64,
         core::mem::size_of_val(&req_transfer) as u32,
         &resp_transfer as *const _ as u64,
         core::mem::size_of_val(&resp_transfer) as u32,
     );
-    println!("VirtIO Cursor Transfer: {:#x}", resp_transfer.type_);
+    println!("VirtIO Debug: Transfer Resp Type: {:#x}", resp_transfer.type_);
 
     // 3.5. Flush Cursor Resource
+    println!("VirtIO Debug: Sending RESOURCE_FLUSH (ID 2)...");
     let req_flush = VirtioGpuResourceFlush {
         hdr: VirtioGpuCtrlHeader {
             type_: VIRTIO_GPU_CMD_RESOURCE_FLUSH,
             flags: 0,
             fence_id: 0,
             ctx_id: 0,
-            padding: 0,
+            ring_idx: 0,
+            padding: [0; 3],
         },
-        r: VirtioGpuRect { x: 0, y: 0, width, height },
+        r: VirtioGpuRect { x: 0, y: 0, width: cursor_w, height: cursor_h },
         resource_id: 2,
         padding: 0,
     };
     let mut resp_flush: VirtioGpuCtrlHeader = core::mem::zeroed();
 
-    send_command_simple(
+    send_command(
+        0, // Control Queue
         &req_flush as *const _ as u64,
         core::mem::size_of_val(&req_flush) as u32,
         &resp_flush as *const _ as u64,
         core::mem::size_of_val(&resp_flush) as u32,
     );
-    println!("VirtIO Cursor Flush: {:#x}", resp_flush.type_);
+    println!("VirtIO Debug: Flush Resp Type: {:#x}", resp_flush.type_);
+
+    // 3.6. Test Disable Cursor (Verify Command Struct)
+    println!("VirtIO Debug: Testing UPDATE_CURSOR (Disable ID 0)...");
+    let req_disable = VirtioGpuUpdateCursor {
+        hdr: VirtioGpuCtrlHeader {
+            type_: VIRTIO_GPU_CMD_UPDATE_CURSOR,
+            flags: 0,
+            fence_id: 0,
+            ctx_id: 0,
+            ring_idx: 0,
+            padding: [0; 3],
+        },
+        pos: VirtioGpuCursorPos {
+            scanout_id: 0,
+            x: 0,
+            y: 0,
+            padding: 0,
+        },
+        resource_id: 0, // DISABLE
+        hot_x: 0,
+        hot_y: 0,
+        padding: 0,
+    };
+    let mut resp_disable: VirtioGpuCtrlHeader = core::mem::zeroed();
+    send_command(
+        0, // REVERTED TO QUEUE 0
+        &req_disable as *const _ as u64,
+        core::mem::size_of_val(&req_disable) as u32,
+        &resp_disable as *const _ as u64,
+        core::mem::size_of_val(&resp_disable) as u32,
+    );
+    println!("VirtIO Debug: Disable Cursor Resp: {:#x} (Struct Size: {})", resp_disable.type_, core::mem::size_of_val(&req_disable));
 
     // 4. Update Cursor (Enable it)
+    println!("VirtIO Debug: Sending UPDATE_CURSOR (ID 2, Pos 500,500)...");
     let req_update = VirtioGpuUpdateCursor {
         hdr: VirtioGpuCtrlHeader {
             type_: VIRTIO_GPU_CMD_UPDATE_CURSOR,
             flags: 0,
             fence_id: 0,
             ctx_id: 0,
-            padding: 0,
+            ring_idx: 0,
+            padding: [0; 3],
         },
         pos: VirtioGpuCursorPos {
             scanout_id: 0,
@@ -386,13 +455,24 @@ pub unsafe fn setup_cursor(width: u32, height: u32, phys_buffer: u64, hot_x: u32
     };
     let mut resp_update: VirtioGpuCtrlHeader = core::mem::zeroed();
 
-    send_command_simple(
+    send_command(
+        0, // REVERTED TO QUEUE 0
         &req_update as *const _ as u64,
         core::mem::size_of_val(&req_update) as u32,
         &resp_update as *const _ as u64,
         core::mem::size_of_val(&resp_update) as u32,
     );
-    println!("VirtIO Cursor Update: {:#x}", resp_update.type_);
+    
+    println!("VirtIO Debug: Update Resp Type: {:#x}", resp_update.type_);
+    match resp_update.type_ {
+        VIRTIO_GPU_RESP_OK_NODATA => println!("VirtIO Cursor Update: OK"),
+        VIRTIO_GPU_RESP_ERR_UNSPEC => println!("VirtIO Cursor Update: ERR_UNSPEC (0x1200) - Generic Error (Check memory/size/alignment)"),
+        VIRTIO_GPU_RESP_ERR_OUT_OF_MEMORY => println!("VirtIO Cursor Update: ERR_OUT_OF_MEMORY"),
+        VIRTIO_GPU_RESP_ERR_INVALID_SCANOUT_ID => println!("VirtIO Cursor Update: ERR_INVALID_SCANOUT_ID"),
+        VIRTIO_GPU_RESP_ERR_INVALID_RESOURCE_ID => println!("VirtIO Cursor Update: ERR_INVALID_RESOURCE_ID"),
+        VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER => println!("VirtIO Cursor Update: ERR_INVALID_PARAMETER"),
+        _ => println!("VirtIO Cursor Update: Unknown Response {:#x}", resp_update.type_),
+    }
     
     println!("VirtIO GPU: Hardware Cursor setup complete.");
 }
@@ -407,7 +487,8 @@ pub unsafe fn test_cursor(width: u32, height: u32, phys_buffer: u64) {
             flags: 0,
             fence_id: 0,
             ctx_id: 0,
-            padding: 0,
+            ring_idx: 0,
+            padding: [0; 3],
         },
         resource_id: 2,
         format: 1, // B8G8R8A8
@@ -416,7 +497,8 @@ pub unsafe fn test_cursor(width: u32, height: u32, phys_buffer: u64) {
     };
     let mut resp_create: VirtioGpuCtrlHeader = core::mem::zeroed();
     
-    send_command_simple(
+    send_command(
+        0, // Control Queue
         &req_create as *const _ as u64,
         core::mem::size_of_val(&req_create) as u32,
         &resp_create as *const _ as u64,
@@ -438,7 +520,8 @@ pub unsafe fn test_cursor(width: u32, height: u32, phys_buffer: u64) {
                 flags: 0,
                 fence_id: 0,
                 ctx_id: 0,
-                padding: 0,
+                ring_idx: 0,
+                padding: [0; 3],
             },
             resource_id: 2,
             nr_entries: 1,
@@ -451,7 +534,8 @@ pub unsafe fn test_cursor(width: u32, height: u32, phys_buffer: u64) {
     };
     let mut resp_attach: VirtioGpuCtrlHeader = core::mem::zeroed();
 
-    send_command_simple(
+    send_command(
+        0, // Control Queue
         &req_attach as *const _ as u64,
         core::mem::size_of_val(&req_attach) as u32,
         &resp_attach as *const _ as u64,
@@ -466,7 +550,8 @@ pub unsafe fn test_cursor(width: u32, height: u32, phys_buffer: u64) {
             flags: 0,
             fence_id: 0,
             ctx_id: 0,
-            padding: 0,
+            ring_idx: 0,
+            padding: [0; 3],
         },
         r: VirtioGpuRect { x: 0, y: 0, width, height },
         offset: 0,
@@ -475,7 +560,8 @@ pub unsafe fn test_cursor(width: u32, height: u32, phys_buffer: u64) {
     };
     let mut resp_transfer: VirtioGpuCtrlHeader = core::mem::zeroed();
 
-    send_command_simple(
+    send_command(
+        0, // Control Queue
         &req_transfer as *const _ as u64,
         core::mem::size_of_val(&req_transfer) as u32,
         &resp_transfer as *const _ as u64,
@@ -492,7 +578,8 @@ pub unsafe fn test_cursor(width: u32, height: u32, phys_buffer: u64) {
             flags: 0,
             fence_id: 0,
             ctx_id: 0,
-            padding: 0,
+            ring_idx: 0,
+            padding: [0; 3],
         },
         pos: VirtioGpuCursorPos {
             scanout_id: 0,
@@ -506,7 +593,8 @@ pub unsafe fn test_cursor(width: u32, height: u32, phys_buffer: u64) {
         padding: 0,
     };
     let mut resp_move: VirtioGpuCtrlHeader = core::mem::zeroed();
-    send_command_simple(
+    send_command(
+        0, // REVERTED TO QUEUE 0
         &req_move as *const _ as u64,
         core::mem::size_of_val(&req_move) as u32,
         &resp_move as *const _ as u64,
@@ -521,7 +609,8 @@ pub unsafe fn test_cursor(width: u32, height: u32, phys_buffer: u64) {
             flags: 0,
             fence_id: 0,
             ctx_id: 0,
-            padding: 0,
+            ring_idx: 0,
+            padding: [0; 3],
         },
         pos: VirtioGpuCursorPos {
             scanout_id: 0,
@@ -535,7 +624,8 @@ pub unsafe fn test_cursor(width: u32, height: u32, phys_buffer: u64) {
         padding: 0,
     };
     let mut resp_disable: VirtioGpuCtrlHeader = core::mem::zeroed();
-    send_command_simple(
+    send_command(
+        0, // REVERTED TO QUEUE 0
         &req_disable as *const _ as u64,
         core::mem::size_of_val(&req_disable) as u32,
         &resp_disable as *const _ as u64,
@@ -550,7 +640,8 @@ pub unsafe fn test_cursor(width: u32, height: u32, phys_buffer: u64) {
             flags: 0,
             fence_id: 0,
             ctx_id: 0,
-            padding: 0,
+            ring_idx: 0,
+            padding: [0; 3],
         },
         pos: VirtioGpuCursorPos {
             scanout_id: 0,
@@ -565,7 +656,8 @@ pub unsafe fn test_cursor(width: u32, height: u32, phys_buffer: u64) {
     };
     let mut resp_update: VirtioGpuCtrlHeader = core::mem::zeroed();
 
-    send_command_simple(
+    send_command(
+        0, // REVERTED TO QUEUE 0
         &req_update as *const _ as u64,
         core::mem::size_of_val(&req_update) as u32,
         &resp_update as *const _ as u64,
@@ -581,7 +673,8 @@ pub unsafe fn move_cursor(x: u32, y: u32) {
             flags: 0,
             fence_id: 0,
             ctx_id: 0,
-            padding: 0,
+            ring_idx: 0,
+            padding: [0; 3],
         },
         pos: VirtioGpuCursorPos {
             scanout_id: 0,
@@ -596,10 +689,15 @@ pub unsafe fn move_cursor(x: u32, y: u32) {
     };
     let mut resp_move: VirtioGpuCtrlHeader = core::mem::zeroed();
 
-    send_command_simple(
+    send_command(
+        0, // REVERTED TO QUEUE 0
         &req_move as *const _ as u64,
         core::mem::size_of_val(&req_move) as u32,
         &resp_move as *const _ as u64,
         core::mem::size_of_val(&resp_move) as u32,
     );
+    
+    if resp_move.type_ != VIRTIO_GPU_RESP_OK_NODATA {
+        println!("VirtIO Debug: Move Cursor Failed! Type: {:#x}", resp_move.type_);
+    }
 }

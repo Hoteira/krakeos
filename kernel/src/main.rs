@@ -9,19 +9,15 @@ mod fs;
 mod memory;
 mod tss;
 pub mod debug;
-pub mod display;
-pub mod composer;
+pub mod window_manager;
 
 extern crate alloc;
 
-use alloc::boxed::Box;
-use alloc::string::String;
-use alloc::vec::Vec;
 use crate::boot::{BootInfo, BOOT_INFO};
 use crate::fs::vfs::FileSystem; 
 use crate::fs::ext2::fs::Ext2; // Added Ext2 for font loading
 use core::arch::asm;
-use crate::drivers::video::virtio;
+use window_manager::display::DISPLAY_SERVER;
 use crate::memory::pmm;
 
 // MSRs for SYSCALL/SYSRET and PAT
@@ -68,7 +64,7 @@ pub extern "C" fn _start(bootinfo_ptr: *const BootInfo) -> ! {
 
     interrupts::task::TASK_MANAGER.lock().init();
     
-    unsafe { (*(&raw mut composer::DISPLAY_SERVER)).init(); }
+    unsafe { (*(&raw mut DISPLAY_SERVER)).init(); }
 
     let first_user_task = interrupts::task::TASK_MANAGER.lock()
         .tasks.iter()

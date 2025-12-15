@@ -13,7 +13,8 @@ pub struct VirtioGpuCtrlHeader {
     pub flags: u32,
     pub fence_id: u64,
     pub ctx_id: u32,
-    pub padding: u32,
+    pub ring_idx: u8,
+    pub padding: [u8; 3],
 }
 
 #[repr(C)]

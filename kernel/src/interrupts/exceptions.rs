@@ -1,6 +1,7 @@
 use crate::debugln;
 use crate::drivers::port::{inb, outb};
 use crate::drivers::periferics::keyboard::KEYBOARD_BUFFER;
+use crate::window_manager::input::MOUSE;
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
@@ -153,7 +154,7 @@ pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
                 MOUSE_PACKET[3] = 0;
             }
             
-            (*(&raw mut crate::composer::MOUSE)).cursor(MOUSE_PACKET);
+            (*(&raw mut MOUSE)).cursor(MOUSE_PACKET);
             MOUSE_IDX = 0;
         }
 

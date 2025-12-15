@@ -61,8 +61,8 @@ pub unsafe fn setup_queue(common_cfg: *mut u8, index: u16, notify_base: u64, not
     }
 }
 
-pub unsafe fn send_command_simple(req_phys: u64, req_len: u32, resp_phys: u64, resp_len: u32) {
-    let vq = match &mut VIRT_QUEUES[0] { 
+pub unsafe fn send_command(queue_idx: usize, req_phys: u64, req_len: u32, resp_phys: u64, resp_len: u32) {
+    let vq = match &mut VIRT_QUEUES[queue_idx] { 
         Some(v) => v,
         None => return,
     };

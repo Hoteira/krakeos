@@ -5,8 +5,11 @@ use crate::interrupts::task::CPUState;
 use crate::debugln;
 use crate::drivers::periferics::keyboard::KEYBOARD_BUFFER; 
 use crate::memory::paging::{self, PAGE_USER, PAGE_WRITABLE};
-use crate::composer::Window;
+use crate::window_manager::display::DISPLAY_SERVER;
 use crate::fs::vfs::FileSystem;
+use crate::window_manager::composer::COMPOSER;
+use crate::window_manager::input::MOUSE;
+use crate::window_manager::window::{Items, Window};
 
 // Syscall Numbers
 pub const SYS_READ: u64 = 0;
@@ -142,7 +145,7 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
             let window_ptr = context.rdi as *const Window;
             unsafe {
                 let w = *window_ptr;
-                context.rax = (*(&raw mut crate::composer::COMPOSER)).add_window(w) as u64;
+                context.rax = (*(&raw mut COMPOSER)).add_window(w) as u64;
             }
         }
 
@@ -150,38 +153,38 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
             let window_ptr = context.rdi as *const Window;
             unsafe {
                 let w = *window_ptr;
-                (*(&raw mut crate::composer::COMPOSER)).resize_window(w);
+                (*(&raw mut COMPOSER)).resize_window(w);
                 
                 // Force redraw
-                for j in (0..(*(&raw mut crate::composer::COMPOSER)).windows.len()).rev() {
-                    match (*(&raw mut crate::composer::COMPOSER)).windows[j].w_type {
-                        crate::composer::Items::Null => {}
+                for j in (0..(*(&raw mut COMPOSER)).windows.len()).rev() {
+                    match (*(&raw mut COMPOSER)).windows[j].w_type {
+                        Items::Null => {}
                         _ => {
-                            (*(&raw mut crate::composer::DISPLAY_SERVER)).copy_to_db(
-                                (*(&raw mut crate::composer::COMPOSER)).windows[j].width as u32,
-                                (*(&raw mut crate::composer::COMPOSER)).windows[j].height as u32,
-                                (*(&raw mut crate::composer::COMPOSER)).windows[j].buffer,
-                                (*(&raw mut crate::composer::COMPOSER)).windows[j].x as u32,
-                                (*(&raw mut crate::composer::COMPOSER)).windows[j].y as u32,
+                            (*(&raw mut DISPLAY_SERVER)).copy_to_db(
+                                (*(&raw mut COMPOSER)).windows[j].width as u32,
+                                (*(&raw mut COMPOSER)).windows[j].height as u32,
+                                (*(&raw mut COMPOSER)).windows[j].buffer,
+                                (*(&raw mut COMPOSER)).windows[j].x as u32,
+                                (*(&raw mut COMPOSER)).windows[j].y as u32,
                             );
                         }
                     }
                 }
-                (*(&raw mut crate::composer::DISPLAY_SERVER)).copy();
+                (*(&raw mut DISPLAY_SERVER)).copy();
             }
             context.rax = 1;
         }
 
         SYS_GET_WIDTH => {
             unsafe {
-                context.rax = (*(&raw mut crate::composer::DISPLAY_SERVER)).width;
+                context.rax = (*(&raw mut DISPLAY_SERVER)).width;
             }
         }
 
 
         SYS_GET_HEIGHT => {
             unsafe {
-                context.rax = (*(&raw mut crate::composer::DISPLAY_SERVER)).height;
+                context.rax = (*(&raw mut DISPLAY_SERVER)).height;
             }
         }
         
@@ -247,7 +250,7 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
 
         53 => { // SYS_GET_MOUSE_POS
             unsafe {
-                let mouse = &*(&raw const crate::composer::MOUSE);
+                let mouse = &*(&raw const MOUSE);
                 context.rax = ((mouse.x as u64) << 32) | (mouse.y as u64);
             }
         }
