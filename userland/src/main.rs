@@ -27,7 +27,6 @@ pub extern "C" fn _start() -> ! {
     win.can_move = true; 
     win.can_resize = false;
 
-    /*
     // Load font
     if let Ok(mut file) = File::open("@0xE0/sys/fonts/CaskaydiaNerd.ttf") {
         
@@ -58,7 +57,7 @@ pub extern "C" fn _start() -> ! {
         }
     } else {
         println!("Failed to open font file");
-    }*/
+    }
 
     let mut root = Widget::frame(1)
         .width(Size::Relative(100))
@@ -86,7 +85,7 @@ pub extern "C" fn _start() -> ! {
         .set_text_size(24)
         .background_color(Color::rgb(200, 200, 255));
 
-    root = root.add_child(button);
+    root = root.add_child(button).add_child(label);
     win.children.push(root);
 
     if win.font.is_some() {

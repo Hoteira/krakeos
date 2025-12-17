@@ -60,11 +60,11 @@ pub extern "C" fn _start() -> ! {
 
         unsafe {
             asm!(
-                "push {1:e}",
-                "call {0:e}",
-                in(reg) KERNEL_RAM,
-                in(reg) ebx,
-                options(nostack),
+            "push {1:e}",
+            "call {0:e}",
+            in(reg) KERNEL_RAM,
+            in(reg) ebx,
+            options(nostack),
             );
         }
     } else if BOOT_MODE == 64 {
@@ -78,13 +78,13 @@ pub extern "C" fn _start() -> ! {
             let h = (*bootinfo).mode.height as u64;
             let p = (*bootinfo).mode.pitch as u64;
             let size = h * p;
-            
+
             debug("[+] FB Addr: ");
             crate::debug::print_hex(fb as u64);
             debug("\n[+] FB Size: ");
             crate::debug::print_hex(size);
             debug("\n");
-            
+
             paging::setup_paging(fb as u64, size);
         }
 
@@ -104,10 +104,10 @@ pub extern "C" fn _start() -> ! {
 
             // Set LME bit in EFER MSR
             asm!(
-                "mov ecx, 0xC0000080",
-                "rdmsr",
-                "or eax, 1 << 8",
-                "wrmsr",
+            "mov ecx, 0xC0000080",
+            "rdmsr",
+            "or eax, 1 << 8",
+            "wrmsr",
             );
 
             // Enable paging, Set MP, Clear EM
