@@ -8,4 +8,5 @@ edition.workspace = true
 
 std = { path = "../std" }
 
-titanf = "2.3.2"
+titanf = { version="2.3.2", default-features = false }
+asvgard = { version="0.2.3", default-features = false }

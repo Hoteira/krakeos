@@ -19,28 +19,28 @@ pub extern "C" fn _start() -> ! {
 
     unsafe {
         asm!(
-            "mov ax, 0x10",
-            "mov ds, ax",
-            "mov es, ax",
-            "mov fs, ax",
-            "mov gs, ax",
-            "mov ss, ax",
-            "mov rsp, {0}",
-            in(reg) STACK_ADDR,
-            options(nostack),
-            out("rdi") rdi,
+        "mov ax, 0x10",
+        "mov ds, ax",
+        "mov es, ax",
+        "mov fs, ax",
+        "mov gs, ax",
+        "mov ss, ax",
+        "mov rsp, {0}",
+        in(reg) STACK_ADDR,
+        options(nostack),
+        out("rdi") rdi,
         );
 
     }
 
-    disk::read(NEXT_STAGE_LBA, 16384, KERNEL_RAM as *mut u8);
+    //disk::read(NEXT_STAGE_LBA, 16384, KERNEL_RAM as *mut u8);
 
     unsafe {
         asm!(
-            "call {0:r}",
-            in(reg) KERNEL_RAM,
-            in("rdi") rdi,
-            options(nostack),
+        "call {0:r}",
+        in(reg) KERNEL_RAM,
+        in("rdi") rdi,
+        options(nostack),
         );
     }
 

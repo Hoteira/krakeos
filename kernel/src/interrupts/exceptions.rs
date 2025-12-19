@@ -120,8 +120,26 @@ pub const KEYBOARD_INT: u8 = 33;
 pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
     let scancode: u8 = inb(0x60);
 
-    if let Some(character) = crate::drivers::periferics::keyboard::handle_scancode(scancode) {
-        KEYBOARD_BUFFER.lock().push_back(character); 
+    if let Some(key) = crate::drivers::periferics::keyboard::handle_scancode(scancode) {
+        crate::debugln!("Key pressed: {}", key);
+        
+        // 1. CLI Buffer
+        KEYBOARD_BUFFER.lock().push_back(key);
+
+        // 2. GUI Event Dispatch
+        unsafe {
+            let active_window_id = crate::window_manager::input::CLICKED_WINDOW_ID;
+            if active_window_id != 0 {
+                use crate::window_manager::events::{GLOBAL_EVENT_QUEUE, Event, KeyboardEvent};
+                
+                let event = Event::Keyboard(KeyboardEvent {
+                    wid: active_window_id as u32,
+                    key,
+                });
+
+                (*(&raw mut GLOBAL_EVENT_QUEUE)).add_event(event);
+            }
+        }
     }
 
     unsafe {
@@ -141,7 +159,7 @@ pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
     let data = inb(0x60);
 
     unsafe {
-        if MOUSE_IDX == 0 && (data & 0x08) == 0 {
+        if MOUSE_IDX == 0 && ((data & 0x08) == 0 || data == 0xFF) {
             (*(&raw const crate::interrupts::pic::PICS)).end_interrupt(MOUSE_INT);
             return;
         }

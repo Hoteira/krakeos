@@ -6,13 +6,11 @@ pub static mut MOUSE_PACKET: [u8; 4] = [0; 4];
 pub static mut MOUSE_IDX: usize = 0;
 pub static mut MOUSE_PACKET_SIZE: usize = 3; 
 
-// Commands
 const CMD_ENABLE_AUX: u8 = 0xA8;
 const CMD_GET_COMPAQ_STATUS: u8 = 0x20;
 const CMD_SET_COMPAQ_STATUS: u8 = 0x60;
 const CMD_WRITE_AUX: u8 = 0xD4;
 
-// Mouse Commands
 const MOUSE_RESET: u8 = 0xFF;
 const MOUSE_SET_DEFAULTS: u8 = 0xF6;
 const MOUSE_ENABLE_STREAMING: u8 = 0xF4;
@@ -22,11 +20,9 @@ const MOUSE_SET_SAMPLE_RATE: u8 = 0xF3;
 pub fn init_mouse() {
     println!("Mouse: Initializing PS/2 Mouse...");
 
-    // 1. Enable AUX Port
     wait_write();
     outb(0x64, CMD_ENABLE_AUX);
 
-    // 2. Enable IRQ12 (Compac Status)
     wait_write();
     outb(0x64, CMD_GET_COMPAQ_STATUS);
     wait_read();
@@ -38,38 +34,26 @@ pub fn init_mouse() {
     wait_write();
     outb(0x60, status);
 
-    // 3. Reset Mouse
     mouse_write(MOUSE_RESET);
     let _r1 = mouse_read();
     let _r2 = mouse_read(); 
-    // Expect 0xFA (ACK) then 0xAA (BAT Successful) then 0x00 (ID) usually
     
-    // 4. Set Defaults
     mouse_write(MOUSE_SET_DEFAULTS);
     let _ack = mouse_read();
 
-    // 5. Enable Scroll Wheel (Magic Sequence)
-    // Set sample rate 200, 100, 80
     mouse_write(MOUSE_SET_SAMPLE_RATE); let _ = mouse_read(); mouse_write(200); let _ = mouse_read();
     mouse_write(MOUSE_SET_SAMPLE_RATE); let _ = mouse_read(); mouse_write(100); let _ = mouse_read();
     mouse_write(MOUSE_SET_SAMPLE_RATE); let _ = mouse_read(); mouse_write(80);  let _ = mouse_read();
 
-    // 6. Get ID
     mouse_write(MOUSE_GET_ID);
     let _ack = mouse_read();
     let id = mouse_read();
     
     unsafe {
-        if id == 3 || id == 4 {
-            MOUSE_PACKET_SIZE = 4;
-            println!("Mouse: Detected Scroll Wheel (ID: {})", id);
-        } else {
-            MOUSE_PACKET_SIZE = 3;
-            println!("Mouse: Standard 3-Button (ID: {})", id);
-        }
+        MOUSE_PACKET_SIZE = 4;
+        println!("Mouse: ID: {}. Forcing 4-byte packet mode (Scroll Enabled).", id);
     }
 
-    // 7. Enable Streaming
     mouse_write(MOUSE_ENABLE_STREAMING);
     let _ack = mouse_read();
 
@@ -104,7 +88,6 @@ fn wait_read() {
     }
 }
 
-// Ensure the cursor buffer is exported for display server
 const O: u32 = 0x0000_0000;
 const B: u32 = 0xFF00_0000;
 const T: u32 = 0xFFFF_FFFF;

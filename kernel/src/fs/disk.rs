@@ -5,6 +5,11 @@ use crate::drivers::port::*;
 #[allow(dead_code)]
 pub fn read(lba: u64, disk: u8, buffer: &mut [u8]) {
 
+    if crate::fs::virtio::is_active() {
+        crate::fs::virtio::read(lba, disk, buffer);
+        return;
+    }
+
     if crate::fs::dma::is_active() {
         crate::fs::dma::read(lba, disk, buffer);
         return;
@@ -60,6 +65,11 @@ pub fn read(lba: u64, disk: u8, buffer: &mut [u8]) {
 
 #[allow(dead_code)]
 pub fn write(lba: u64, disk: u8, buffer: &[u8]) {
+    if crate::fs::virtio::is_active() {
+        crate::fs::virtio::write(lba, disk, buffer);
+        return;
+    }
+
     if crate::fs::dma::is_active() {
         crate::fs::dma::write(lba, disk, buffer);
         return;

@@ -1,7 +1,8 @@
 use crate::graphics::{draw_pixel, draw_u32};
 use crate::types::{Color, Size};
-use crate::math::sqrt_f64;
+use crate::math::{sqrt_f64, ceil_f32};
 use titanf::TrueTypeFont;
+use alloc::vec::Vec;
 
 pub fn draw_line(buffer: &mut [u32], width0: usize, x0: usize, y0: usize, x1: usize, y1: usize, color: Color, width: usize) {
     let dx = (x1 as isize - x0 as isize).abs();
@@ -83,58 +84,69 @@ pub fn draw_square_alpha(
     let end_y = (y + height).min(buffer.len() / buffer_width);
     let end_x = (x + width).min(buffer_width);
 
-    // Optimizations
     let is_opaque = color.a == 255;
     let color_u32 = color.to_u32();
 
-    for row in y..end_y {
-        let ly = (row - y) as f32 + 0.5; // Center of pixel y
-        
-        for col in x..end_x {
-            let lx = (col - x) as f32 + 0.5; // Center of pixel x
-            
-            // Check corners
-            let mut dist = 0.0;
-            let mut in_corner = false;
+    let r_sq = r * r;
+    let r_ceil = ceil_f32(r) as usize;
 
-            if ly < r {
-                // Top row
-                if lx < r {
-                    // Top-Left
-                    let dx = r - lx;
-                    let dy = r - ly;
-                    dist = sqrt_f64((dx*dx + dy*dy) as f64) as f32;
+    let inner_x_start = x + r_ceil;
+    let inner_x_end = if x + width > r_ceil { x + width - r_ceil } else { x };
+    let inner_y_start = y + r_ceil;
+    let inner_y_end = if y + height > r_ceil { y + height - r_ceil } else { y };
+
+    for row in y..end_y {
+        let ly = (row - y) as f32 + 0.5;
+        let is_top_row = row < inner_y_start;
+        let is_bottom_row = row >= inner_y_end;
+        let check_corners = is_top_row || is_bottom_row;
+
+        for col in x..end_x {
+            if !check_corners && col >= inner_x_start && col < inner_x_end {
+                if is_opaque {
+                    draw_u32(buffer, buffer_width, col, row, color_u32);
+                } else {
+                    draw_pixel(buffer, buffer_width, col, row, color);
+                }
+                continue;
+            }
+
+            let lx = (col - x) as f32 + 0.5;
+            let mut in_corner = false;
+            let mut dx = 0.0;
+            let mut dy = 0.0;
+
+            if is_top_row {
+                if col < inner_x_start {
+                    dx = r - lx;
+                    dy = r - ly;
                     in_corner = true;
-                } else if lx > (width as f32 - r) {
-                    // Top-Right
-                    let dx = lx - (width as f32 - r);
-                    let dy = r - ly;
-                    dist = sqrt_f64((dx*dx + dy*dy) as f64) as f32;
+                } else if col >= inner_x_end {
+                    dx = lx - (width as f32 - r);
+                    dy = r - ly;
                     in_corner = true;
                 }
-            } else if ly > (height as f32 - r) {
-                // Bottom row
-                if lx < r {
-                    // Bottom-Left
-                    let dx = r - lx;
-                    let dy = ly - (height as f32 - r);
-                    dist = sqrt_f64((dx*dx + dy*dy) as f64) as f32;
+            } else if is_bottom_row {
+                if col < inner_x_start {
+                    dx = r - lx;
+                    dy = ly - (height as f32 - r);
                     in_corner = true;
-                } else if lx > (width as f32 - r) {
-                    // Bottom-Right
-                    let dx = lx - (width as f32 - r);
-                    let dy = ly - (height as f32 - r);
-                    dist = sqrt_f64((dx*dx + dy*dy) as f64) as f32;
+                } else if col >= inner_x_end {
+                    dx = lx - (width as f32 - r);
+                    dy = ly - (height as f32 - r);
                     in_corner = true;
                 }
             }
 
             if in_corner {
-                if dist > r {
-                    continue; // Skip
+                let dist_sq = dx*dx + dy*dy;
+                if dist_sq > r_sq {
+                     continue;
                 }
-                if dist > r - 1.0 {
-                    // AA
+                
+                let r_inner = r - 1.0;
+                if r_inner > 0.0 && dist_sq > r_inner * r_inner {
+                    let dist = sqrt_f64(dist_sq as f64) as f32;
                     let alpha_factor = (r - dist).clamp(0.0, 1.0);
                     let mut final_color = color;
                     final_color.a = (color.a as f32 * alpha_factor) as u8;
@@ -143,7 +155,6 @@ pub fn draw_square_alpha(
                 }
             }
 
-            // Solid draw
             if is_opaque {
                 draw_u32(buffer, buffer_width, col, row, color_u32);
             } else {
@@ -152,9 +163,6 @@ pub fn draw_square_alpha(
         }
     }
 }
-
-// Add to inkui/src/graphics/primitives.rs
-use alloc::vec::Vec;
 
 #[derive(Debug, Clone, Copy)]
 struct TextSegment {
@@ -174,9 +182,8 @@ fn parse_format_tags(text: &str, default_color: Color, default_size: f32) -> (Ve
 
     while let Some(c) = chars.next() {
         if c == '#' && chars.peek() == Some(&'[') {
-            chars.next(); // consume '['
+            chars.next();
 
-            // Parse tag content
             let mut tag = alloc::string::String::new();
             let mut valid_tag = false;
 
@@ -189,9 +196,7 @@ fn parse_format_tags(text: &str, default_color: Color, default_size: f32) -> (Ve
             }
 
             if valid_tag {
-                // Parse color: #[0xAARRGGBB], #[0xRRGGBB], or #[0xRRGGBB,AA]
                 if tag.starts_with("0x") {
-                    // Check for separate alpha: 0xRRGGBB,AA
                     if let Some(comma_pos) = tag.find(',') {
                         let color_part = &tag[2..comma_pos];
                         let alpha_part = &tag[comma_pos+1..];
@@ -214,9 +219,7 @@ fn parse_format_tags(text: &str, default_color: Color, default_size: f32) -> (Ve
                             current_color = Color::from_u32((hex_val as u32) | 0xFF000000);
                         }
                     }
-                }
-                // Parse size: #[13pt] or #[13]
-                else if tag.ends_with("pt") {
+                } else if tag.ends_with("pt") {
                     if let Ok(size) = tag[..tag.len()-2].parse::<f32>() {
                         current_size = size;
                     }
@@ -256,22 +259,31 @@ pub fn draw_text_formatted(
     font: &mut TrueTypeFont,
     default_size: f32,
     default_color: Color,
+    max_width: usize,
+    scroll_y: usize,
+    max_height: usize,
+    clip_y: usize,
 ) {
     if buffer_width == 0 {
         return;
     }
-
+    
     let (segments, clean_text) = parse_format_tags(text, default_color, default_size);
 
     let mut current_x = x;
-    let baseline_y = y;
+    let start_y_isize = y as isize - scroll_y as isize;
+    let mut current_baseline_isize = start_y_isize;
 
     let chars: Vec<char> = clean_text.chars().collect();
+    let mut i = 0;
+    
+    let limit_y = clip_y + max_height;
 
-    for (idx, &c) in chars.iter().enumerate() {
-        // Find segment for this character
+    while i < chars.len() {
+        let c = chars[i];
+        
         let segment = segments.iter()
-            .find(|s| idx >= s.start && idx < s.end)
+            .find(|s| i >= s.start && i < s.end)
             .copied()
             .unwrap_or(TextSegment {
                 start: 0,
@@ -280,23 +292,56 @@ pub fn draw_text_formatted(
                 size: default_size,
             });
 
+        if c == '\n' {
+            current_x = x;
+            let line_height = (segment.size * 1.2) as usize;
+            current_baseline_isize += line_height as isize;
+            i += 1;
+            continue;
+        }
+
         let (metrics, bitmap) = font.get_char::<true>(c, segment.size);
+        
+        let next_x_end = (current_x as isize + metrics.left_side_bearing + metrics.advance_width as isize) as usize;
+        let line_height = (segment.size * 1.2) as usize;
+
+        if max_width > 0 && next_x_end >= x + max_width {
+             current_x = x;
+             current_baseline_isize += line_height as isize;
+        }
+
+        let glyph_y_start = (current_baseline_isize + metrics.base_line as isize) as isize;
+        
+        if glyph_y_start + (metrics.height as isize) < clip_y as isize {
+             current_x += metrics.advance_width;
+             i += 1;
+             continue;
+        }
+        
+        if glyph_y_start > limit_y as isize {
+             break; 
+        }
 
         let glyph_x = (current_x as isize + metrics.left_side_bearing) as usize;
-        let glyph_y = (baseline_y as isize + metrics.base_line) as usize;
 
         for row in 0..metrics.height {
-            let dest_y = glyph_y + row;
+            let dest_y_isize = glyph_y_start + row as isize;
+            
+            if dest_y_isize < clip_y as isize { continue; }
+            
+            let dest_y = dest_y_isize as usize;
+            
+            if max_height > 0 && dest_y >= clip_y + max_height { continue; }
             if dest_y >= buffer.len() / buffer_width { continue; }
 
             for col in 0..metrics.width {
                 let dest_x = glyph_x + col;
                 if dest_x >= buffer_width { continue; }
+                if max_width > 0 && dest_x >= x + max_width { continue; } // Pixel Clip
 
                 let bitmap_alpha = bitmap[row * metrics.width + col];
                 if bitmap_alpha > 0 {
                     let mut pixel_color = segment.color;
-                    // Multiply color alpha with bitmap alpha
                     pixel_color.a = ((pixel_color.a as u16 * bitmap_alpha as u16) / 255) as u8;
                     draw_pixel(buffer, buffer_width, dest_x, dest_y, pixel_color);
                 }
@@ -304,10 +349,10 @@ pub fn draw_text_formatted(
         }
 
         current_x += metrics.advance_width;
+        i += 1;
     }
 }
 
-// Keep the old draw_text but make it call the formatted version
 pub fn draw_text(
     buffer: &mut [u32],
     buffer_width: usize,
@@ -318,7 +363,7 @@ pub fn draw_text(
     size: f32,
     color: Color,
 ) {
-    draw_text_formatted(buffer, buffer_width, x, y, text, font, size, color);
+    draw_text_formatted(buffer, buffer_width, x, y, text, font, size, color, 0, 0, 9999, y);
 }
 
 fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
@@ -371,7 +416,6 @@ pub fn draw_square_gradient(
         for col in x..end_x {
             let lx = (col - x) as f32 + 0.5;
 
-            // Check rounded corners
             let mut dist = 0.0;
             let mut in_corner = false;
 
@@ -405,7 +449,6 @@ pub fn draw_square_gradient(
                 continue;
             }
 
-            // Calculate gradient position
             let t = match gradient.direction {
                 GradientDirection::Horizontal => lx / w_f,
                 GradientDirection::Vertical => ly / h_f,
@@ -428,7 +471,6 @@ pub fn draw_square_gradient(
 
             let mut color = lerp_color(gradient.start_color, gradient.end_color, t);
 
-            // Apply corner antialiasing
             if in_corner && dist > r - 1.0 {
                 let alpha_factor = (r - dist).max(0.0).min(1.0);
                 color.a = (color.a as f32 * alpha_factor) as u8;

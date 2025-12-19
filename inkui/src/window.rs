@@ -51,8 +51,6 @@ pub struct Window {
     pub w_type: Items,
     pub focus: WidgetId,
 
-    // Font support
-    // We store the data as a static slice (leaked) to satisfy TrueTypeFont lifetime
     pub font: Option<TrueTypeFont>,
 }
 
@@ -99,18 +97,22 @@ impl Window {
             can_resize: self.can_resize,
             min_width: self.min_width,
             min_height: self.min_height,
-            event_handler: 1, // Enable event handling
+            event_handler: 1, 
             w_type: self.w_type,
         };
 
         if self.id == 0 {
             self.id = graphics::add_window(&std_window);
+            std::println!("Window ID assigned: {}", self.id);
         } else {
             graphics::update_window(&std_window);
         }
         
+        std::println!("Show: calling draw()...");
         self.draw();
+        std::println!("Show: calling update()...");
         self.update();
+        std::println!("Show: done.");
     }
 
     pub fn draw(&mut self) {
@@ -126,9 +128,22 @@ impl Window {
             )
         };
         
+        buffer.fill(0);
+        
+        std::println!("Draw: Layout pass starting...");
         for child in &mut self.children {
-            draw_recursive(buffer, self.width, child, 0, 0, self.width, self.height, 0, 0, &mut self.font);
+            child.update_layout(0, 0, self.width, self.height, 0, 0, &Display::None);
         }
+
+        std::println!("Draw: Paint pass starting...");
+        for child in &mut self.children {
+            paint_recursive(buffer, self.width, child, &mut self.font);
+        }
+        std::println!("Draw: Paint pass complete.");
+    }
+
+    pub fn draw_widget(&mut self, _id: WidgetId) {
+        self.draw();
     }
 
     pub fn update(&mut self) {
@@ -163,13 +178,49 @@ impl Window {
         self.update();
     }
 
+    pub fn focus_next(&mut self) {
+        let mut ids = Vec::new();
+        for child in &self.children {
+            collect_focusable_widgets(child, &mut ids);
+        }
+        
+        if ids.is_empty() { return; }
+        
+        let current_idx = ids.iter().position(|&id| id == self.focus);
+        
+        let next_id = match current_idx {
+            Some(idx) => ids[(idx + 1) % ids.len()],
+            None => ids[0],
+        };
+
+        let old_focus = self.focus;
+        if old_focus != next_id {
+            if old_focus != 0 {
+                if let Some(w) = self.find_widget_by_id_mut(old_focus) {
+                    w.set_focused(false);
+                }
+                self.draw_widget(old_focus);
+            }
+            
+            self.focus = next_id;
+            if let Some(w) = self.find_widget_by_id_mut(self.focus) {
+                w.set_focused(true);
+            }
+            self.draw_widget(self.focus);
+            self.update();
+        }
+    }
+
     pub fn event_loop(&mut self) {
         let mut key_buffer = String::with_capacity(64);
         let mut events: [Event; 64] = [Event::None; 64];
 
-        // Syscall 52: SYS_GET_EVENTS
         unsafe {
             syscall(52, self.id as u64, events.as_mut_ptr() as u64, 64);
+        }
+
+        if events[0] != Event::None {
+             std::println!("Raw Event[0]: {:?}", events[0]);
         }
 
         for event in events.iter() {
@@ -180,24 +231,115 @@ impl Window {
                     }
                 },
                 Event::Mouse(e) => {
-                    let btn = self.find_interactive_widget_at(e.x, e.y);
-                    if let Some(btn) = btn {
-                        if let Some(handler) = btn.get_event_handler() {
-                            let btn_id = btn.get_id();
-                            handler(self, btn_id);
+                    let target_id = if let Some(widget) = self.find_interactive_widget_at(e.x, e.y) {
+                        Some(widget.get_id())
+                    } else {
+                        None
+                    };
+
+                    if e.scroll != 0 {
+                        let scroll_target = if self.focus != 0 {
+                             Some(self.focus)
                         } else {
-                            self.focus = btn.get_id();
+                             target_id
+                        };
+
+                        if let Some(id) = scroll_target {
+                            if let Some(w) = self.find_widget_by_id_mut(id) {
+                                w.handle_scroll(e.scroll);
+                                self.draw_widget(id);
+                                self.update();
+                            }
+                        }
+                    }
+
+                    if let Some(new_id) = target_id {
+                        if self.focus != new_id {
+                            if self.focus != 0 {
+                                if let Some(old_w) = self.find_widget_by_id_mut(self.focus) {
+                                    old_w.set_focused(false);
+                                }
+                            }
+                            
+                            self.focus = new_id;
+                            std::println!("Focus set to: {}", new_id);
+                            if let Some(new_w) = self.find_widget_by_id_mut(self.focus) {
+                                new_w.set_focused(true);
+                                self.draw_widget(self.focus);
+                                self.update();
+                            }
+                        }
+                    }
+
+                    if e.buttons[0] { 
+                        if let Some(id) = target_id {
+                            let mut handler_opt = None;
+                            if let Some(w) = self.find_widget_by_id(id) {
+                                handler_opt = w.get_event_handler();
+                            }
+
+                            if let Some(handler) = handler_opt {
+                                handler(self, id);
+                            }
                         }
                     }
                 },
                 Event::Keyboard(e) => {
-                    // Simple keyboard handling
-                    if e.char == '\x08' { // Backspace
-                        if !key_buffer.is_empty() {
-                            key_buffer.pop();
-                        }
+                    let char_opt = if e.key < 0x110000 {
+                        core::char::from_u32(e.key)
                     } else {
-                        key_buffer.push(e.char);
+                        None
+                    };
+
+                    if e.key == 9 { 
+                        self.focus_next();
+                        return;
+                    }
+
+                    if self.focus != 0 {
+                        let mut needs_redraw = false;
+                        let mut click_handler: Option<fn(&mut Window, WidgetId)> = None;
+
+                        if let Some(widget) = self.find_widget_by_id_mut(self.focus) {
+                            match widget {
+                                Widget::Button { on_click, .. } => {
+                                    if e.key == 13 || e.key == 32 { 
+                                        click_handler = *on_click;
+                                    }
+                                },
+                                Widget::TextInput { on_submit, .. } => {
+                                    if e.key == 13 || e.key == 10 { 
+                                        click_handler = *on_submit;
+                                    } else if let Some(c) = char_opt {
+                                        widget.handle_key(c);
+                                        needs_redraw = true;
+                                    }
+                                },
+                                _ => {
+                                    if let Some(c) = char_opt {
+                                        widget.handle_key(c);
+                                        needs_redraw = true;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if needs_redraw {
+                            self.draw_widget(self.focus);
+                            self.update();
+                        }
+
+                        if let Some(handler) = click_handler {
+                            handler(self, self.focus);
+                        }
+                    }
+                    
+                    if let Some(c) = char_opt {
+                        if c == '\x08' {
+                            if !key_buffer.is_empty() { key_buffer.pop(); }
+                        } else {
+                            key_buffer.push(c);
+                        }
                     }
                 },
                 _ => {},
@@ -233,6 +375,21 @@ impl Window {
     }
 }
 
+fn collect_focusable_widgets(widget: &Widget, ids: &mut Vec<WidgetId>) {
+    match widget {
+        Widget::Button { .. } | Widget::TextInput { .. } => {
+            ids.push(widget.get_id());
+        },
+        _ => {}
+    }
+    
+    if let Some(children) = widget.get_children() {
+        for child in children {
+            collect_focusable_widgets(child, ids);
+        }
+    }
+}
+
 fn find_interactive_widget_recursive(widget: &Widget, x: usize, y: usize) -> Option<&Widget> {
     let geometry = widget.geometry();
 
@@ -254,121 +411,17 @@ fn find_interactive_widget_recursive(widget: &Widget, x: usize, y: usize) -> Opt
 }
 
 
-pub fn draw_recursive(
+pub fn paint_recursive(
     buffer: &mut [u32],
     width0: usize,
     widget: &mut Widget,
-    parent_x: usize,
-    parent_y: usize,
-    parent_width: usize,
-    parent_height: usize,
-    parent_padding: usize,
-    _parent_margin: usize,
     font: &mut Option<TrueTypeFont>,
 ) {
-    // Update layout first
-    widget.update_layout(parent_x, parent_y, parent_width, parent_height, parent_padding, _parent_margin, &Display::None);
-
-    // Draw the current widget
     widget.draw(buffer, width0, font);
 
-    let widget_x = widget.get_x();
-    let widget_y = widget.get_y();
-    let widget_width = widget.get_width();
-    let widget_height = widget.get_height();
-    let widget_padding = widget.get_padding();
-    let widget_margin = widget.get_margin();
-
-    let display = widget.get_display();
-
     if let Some(children) = widget.get_children_mut() {
-        match display {
-            Display::Flex { direction, wrap } => {
-                let content_x = widget_x + widget_padding;
-                let content_y = widget_y + widget_padding;
-                let content_width = widget_width.saturating_sub(widget_padding * 2);
-                let content_height = widget_height.saturating_sub(widget_padding * 2);
-
-                let mut child_info = Vec::new();
-                for child in children.iter_mut() {
-                    child.update_layout(content_x, content_y, content_width, content_height, 0, widget_margin, &Display::None);
-                    let child_geom = child.geometry();
-                    child_info.push((child_geom.width + child_geom.margin * 2, child_geom.height + child_geom.margin * 2));
-                }
-
-                let mut current_x = 0;
-                let mut current_y = 0;
-                let mut line_height = 0;
-                let mut line_width = 0;
-
-                for (i, child) in children.iter_mut().enumerate() {
-                    let (child_total_w, child_total_h) = child_info[i];
-                    let (child_x, child_y, child_w, child_h) = match direction {
-                        FlexDirection::Row => {
-                            if wrap && current_x + child_total_w > content_width && current_x > 0 {
-                                current_x = 0;
-                                current_y += line_height;
-                                line_height = 0;
-                            }
-                            let x = content_x + current_x;
-                            let y = content_y + current_y;
-                            let w = child_total_w.min(content_width - current_x);
-                            let h = child_total_h.min(content_height - current_y);
-                            current_x += child_total_w;
-                            line_height = line_height.max(child_total_h);
-                            (x, y, w, h)
-                        },
-                        FlexDirection::Column => {
-                            if wrap && current_y + child_total_h > content_height && current_y > 0 {
-                                current_y = 0;
-                                current_x += line_width;
-                                line_width = 0;
-                            }
-                            let x = content_x + current_x;
-                            let y = content_y + current_y;
-                            let w = child_total_w.min(content_width - current_x);
-                            let h = child_total_h.min(content_height - current_y);
-                            current_y += child_total_h;
-                            line_width = line_width.max(child_total_w);
-                            (x, y, w, h)
-                        }
-                    };
-                    draw_recursive(buffer, width0, child, child_x, child_y, child_w, child_h, 0, widget_margin, font);
-                }
-            },
-            Display::Grid { rows, cols } => {
-                if rows > 0 && cols > 0 {
-                    let content_width = widget_width.saturating_sub(widget_padding * 2);
-                    let content_height = widget_height.saturating_sub(widget_padding * 2);
-                    let cell_width = content_width / cols;
-                    let cell_height = content_height / rows;
-
-                    for (i, child) in children.iter_mut().enumerate() {
-                        let row = i / cols;
-                        let col = i % cols;
-                        if row >= rows { break; }
-                        let child_x = widget_x + widget_padding + col * cell_width;
-                        let child_y = widget_y + widget_padding + row * cell_height;
-                        draw_recursive(buffer, width0, child, child_x, child_y, cell_width, cell_height, 0, widget_margin, font);
-                    }
-                }
-            },
-            Display::None => {
-                // FIX: We need to actually draw the children!
-                let content_x = widget_x + widget_padding;
-                let content_y = widget_y + widget_padding;
-                let content_width = widget_width.saturating_sub(widget_padding * 2);
-                let content_height = widget_height.saturating_sub(widget_padding * 2);
-
-                // Take children temporarily to avoid borrow issues
-                let children_vec = core::mem::take(children);
-
-                for mut child in children_vec.into_iter() {
-                    // Recursively draw each child
-                    draw_recursive(buffer, width0, &mut child, content_x, content_y, content_width, content_height, 0, widget_margin, font);
-                    children.push(child);
-                }
-            }
+        for child in children {
+            paint_recursive(buffer, width0, child, font);
         }
     }
 }

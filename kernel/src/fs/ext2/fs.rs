@@ -15,6 +15,8 @@ pub struct Ext2 {
     pub superblock: Superblock,
     block_size: u64,
     inodes_per_group: u32,
+    cache_lba: Option<u64>,
+    cache_data: [u8; 512],
 }
 
 impl Ext2 {
@@ -36,6 +38,7 @@ impl Ext2 {
         }
 
         let block_size = 1024 << superblock.log_block_size;
+        crate::debugln!("Ext2: Mounted. Block Size: {}", block_size);
 
         Ok(Box::new(Ext2 {
             disk_id,
@@ -43,16 +46,19 @@ impl Ext2 {
             superblock,
             block_size: block_size as u64,
             inodes_per_group: superblock.inodes_per_group,
+            cache_lba: None,
+            cache_data: [0; 512],
         }))
     }
 
-    fn read_disk_data(&self, offset: u64, buffer: &mut [u8]) {
+    fn read_disk_data(&mut self, offset: u64, buffer: &mut [u8]) {
         let abs_offset = offset + (self.base_lba * 512);
         let start_lba = abs_offset / 512;
         let offset_in_sector = (abs_offset % 512) as usize;
 
-        // Optimization: If aligned and reading whole sectors, read directly
-        if offset_in_sector == 0 && (buffer.len() % 512) == 0 {
+        // Optimization: If aligned and reading whole sectors, read directly (bypass cache for large reads)
+        if offset_in_sector == 0 && (buffer.len() % 512) == 0 && buffer.len() >= 512 {
+            // crate::debugln!("Ext2: Direct Read LBA {}, sectors {}", start_lba, buffer.len()/512);
             disk::read(start_lba, self.disk_id, buffer);
             return;
         }
@@ -60,23 +66,27 @@ impl Ext2 {
         let mut current_lba = start_lba;
         let mut bytes_read = 0;
         let total_bytes = buffer.len();
-        let mut sector_buf = [0u8; 512]; 
         
         while bytes_read < total_bytes {
-            disk::read(current_lba, self.disk_id, &mut sector_buf); 
+            // Check cache
+            if self.cache_lba != Some(current_lba) {
+                // crate::debugln!("Ext2: Cache Miss LBA {}", current_lba);
+                disk::read(current_lba, self.disk_id, &mut self.cache_data);
+                self.cache_lba = Some(current_lba);
+            }
             
             let start_index = if current_lba == start_lba { offset_in_sector } else { 0 };
             let remaining_in_sector = 512 - start_index;
             let to_copy = core::cmp::min(total_bytes - bytes_read, remaining_in_sector);
             
-            buffer[bytes_read..bytes_read + to_copy].copy_from_slice(&sector_buf[start_index..start_index + to_copy]);
+            buffer[bytes_read..bytes_read + to_copy].copy_from_slice(&self.cache_data[start_index..start_index + to_copy]);
             
             bytes_read += to_copy;
             current_lba += 1;
         }
     }
 
-    pub fn read_block_group_descriptor(&self, group_idx: u32) -> BlockGroupDescriptor {
+    pub fn read_block_group_descriptor(&mut self, group_idx: u32) -> BlockGroupDescriptor {
         let bgdt_start_block = if self.block_size == 1024 { 2 } else { 1 };
         let desc_size = size_of::<BlockGroupDescriptor>() as u64;
         
@@ -92,8 +102,8 @@ impl Ext2 {
         desc
     }
 
-    pub fn read_inode(&self, inode_idx: u32) -> Inode {
-        crate::debugln!("Reading Inode {}", inode_idx);
+    pub fn read_inode(&mut self, inode_idx: u32) -> Inode {
+        // crate::debugln!("Reading Inode {}", inode_idx);
         let group = (inode_idx - 1) / self.inodes_per_group;
         let index_in_group = (inode_idx - 1) % self.inodes_per_group;
         
@@ -119,7 +129,7 @@ impl Ext2 {
         inode
     }
 
-    pub fn get_block_address(&self, inode: &Inode, logical_block: u32) -> u32 {
+    pub fn get_block_address(&mut self, inode: &Inode, logical_block: u32) -> u32 {
         let ptrs_per_block = self.block_size / 4; 
 
         if logical_block < 12 {
@@ -129,11 +139,13 @@ impl Ext2 {
         let mut indirect_idx = logical_block - 12;
 
         if indirect_idx < ptrs_per_block as u32 {
+            // crate::debugln!("Ext2: Indirect Access LogicBlock: {}", logical_block);
             return self.read_indirect_pointer(inode.block[12], indirect_idx);
         }
         indirect_idx -= ptrs_per_block as u32;
 
         if indirect_idx < (ptrs_per_block * ptrs_per_block) as u32 {
+            //crate::debugln!("Ext2: Dbl-Indirect Access LogicBlock: {}", logical_block);
             let first_idx = indirect_idx / ptrs_per_block as u32;
             let second_idx = indirect_idx % ptrs_per_block as u32;
             let first_block = self.read_indirect_pointer(inode.block[13], first_idx);
@@ -155,7 +167,7 @@ impl Ext2 {
         return self.read_indirect_pointer(second_block, third_idx);
     }
 
-    fn read_indirect_pointer(&self, block_addr: u32, offset: u32) -> u32 {
+    fn read_indirect_pointer(&mut self, block_addr: u32, offset: u32) -> u32 {
         if block_addr == 0 { return 0; }
         
         let read_offset = (block_addr as u64 * self.block_size) + (offset as u64 * 4);
@@ -212,6 +224,8 @@ impl VfsNode for Ext2Node {
         let total_size = self.size();
         if offset >= total_size { return Ok(0); }
 
+        crate::debugln!("Ext2Node::read: Off={}, BufLen={}", offset, buffer.len());
+
         let mut bytes_read = 0;
         let mut current_offset = offset;
         let mut buf_offset = 0;
@@ -223,6 +237,7 @@ impl VfsNode for Ext2Node {
         // 1. Handle Start (Unaligned)
         let start_block_offset = (current_offset % block_size) as usize;
         if start_block_offset != 0 {
+            crate::debugln!("  Start unaligned read");
             let block_idx = (current_offset / block_size) as u32;
             let phys = fs.get_block_address(&self.inode, block_idx);
             
@@ -243,11 +258,13 @@ impl VfsNode for Ext2Node {
         // 2. Handle Middle (Aligned Full Blocks) - Coalesced
         while (len - bytes_read) >= block_size as usize {
             let start_block_idx = (current_offset / block_size) as u32;
+            
+            // Check logic - maybe redundant reads here
             let start_phys = fs.get_block_address(&self.inode, start_block_idx);
             
             // Check for contiguous run
             let mut count = 1;
-            let max_blocks = core::cmp::min(32, (len - bytes_read) / block_size as usize); // Cap at 32 blocks (128KB) due to DMA u8 limit
+            let max_blocks = core::cmp::min(32, (len - bytes_read) / block_size as usize); 
             
             if start_phys != 0 {
                 while count < max_blocks {
@@ -259,6 +276,8 @@ impl VfsNode for Ext2Node {
                     }
                 }
                 
+                //crate::debugln!("  Mid Aligned: Block {}, Phys {}, Count {}", start_block_idx, start_phys, count);
+
                 let chunk_size = count * block_size as usize;
                 let dest_slice = &mut buffer[buf_offset .. buf_offset + chunk_size];
                 fs.read_disk_data(start_phys as u64 * block_size, dest_slice);
@@ -267,8 +286,7 @@ impl VfsNode for Ext2Node {
                 current_offset += chunk_size as u64;
                 buf_offset += chunk_size;
             } else {
-                // Sparse block (0), fill with zeros. 
-                // Sparse runs could also be coalesced, but keeping it simple.
+                crate::debugln!("  Mid Aligned: Sparse Block {}", start_block_idx);
                 let chunk_size = block_size as usize;
                 let dest_slice = &mut buffer[buf_offset .. buf_offset + chunk_size];
                 dest_slice.fill(0);
@@ -281,6 +299,7 @@ impl VfsNode for Ext2Node {
 
         // 3. Handle End (Unaligned)
         if bytes_read < len {
+            crate::debugln!("  End unaligned read");
             let block_idx = (current_offset / block_size) as u32;
             let phys = fs.get_block_address(&self.inode, block_idx);
             
@@ -296,6 +315,7 @@ impl VfsNode for Ext2Node {
             bytes_read += to_copy;
         }
 
+        crate::debugln!("Ext2Node::read done. Bytes read: {}", bytes_read);
         Ok(bytes_read)
     }
 
@@ -309,7 +329,7 @@ impl VfsNode for Ext2Node {
             return Err(String::from("Not a directory"));
         }
         
-        let fs = unsafe { &*self.fs };
+        let fs = unsafe { &mut *self.fs };
         let mut entries = Vec::new();
         let mut buf = alloc::vec![0u8; self.size() as usize];
         

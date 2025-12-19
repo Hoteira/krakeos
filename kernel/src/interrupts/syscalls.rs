@@ -15,6 +15,8 @@ use crate::window_manager::window::{Items, Window};
 pub const SYS_READ: u64 = 0;
 pub const SYS_PRINT: u64 = 1;
 pub const SYS_MALLOC: u64 = 5;
+pub const SYS_FREE: u64 = 6;
+pub const SYS_REALLOC: u64 = 9;
 pub const SYS_COPY_TO_DB: u64 = 8;
 pub const SYS_ADD_WINDOW: u64 = 22;
 pub const SYS_REMOVE_WINDOW: u64 = 23;
@@ -96,10 +98,10 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
             let mut keyboard_buffer = KEYBOARD_BUFFER.lock();
             
             while bytes_written_to_user < user_len {
-                if let Some(char_code) = keyboard_buffer.pop_front() {
+                if let Some(keycode) = keyboard_buffer.pop_front() {
                     unsafe {
-                        // Direct write since identity mapped
-                        *user_ptr.add(bytes_written_to_user) = char_code as u8;
+                        // Direct write since identity mapped. Cast u32 to u8 (ASCII mostly)
+                        *user_ptr.add(bytes_written_to_user) = keycode as u8;
                     }
                     bytes_written_to_user += 1;
                 } else {
@@ -141,6 +143,33 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
             }
         }
 
+        SYS_REALLOC => {
+            let old_ptr = context.rdi;
+            let old_size = context.rsi as usize;
+            let new_size = context.rdx as usize;
+            
+            let pid = {
+                let tm = crate::interrupts::task::TASK_MANAGER.lock();
+                if tm.current_task >= 0 {
+                    tm.current_task as u64
+                } else {
+                    0
+                }
+            };
+
+            if let Some(addr) = unsafe { crate::memory::pmm::realloc_memory(old_ptr, old_size, new_size, pid) } {
+                context.rax = addr;
+            } else {
+                context.rax = 0;
+            }
+        }
+
+        SYS_FREE => {
+             let ptr = context.rdi;
+             crate::memory::pmm::free_frame(ptr);
+             context.rax = 0;
+        }
+
         SYS_ADD_WINDOW => {
             let window_ptr = context.rdi as *const Window;
             unsafe {
@@ -155,22 +184,32 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
                 let w = *window_ptr;
                 (*(&raw mut COMPOSER)).resize_window(w);
                 
-                // Force redraw
-                for j in (0..(*(&raw mut COMPOSER)).windows.len()).rev() {
-                    match (*(&raw mut COMPOSER)).windows[j].w_type {
-                        Items::Null => {}
-                        _ => {
-                            (*(&raw mut DISPLAY_SERVER)).copy_to_db(
-                                (*(&raw mut COMPOSER)).windows[j].width as u32,
-                                (*(&raw mut COMPOSER)).windows[j].height as u32,
-                                (*(&raw mut COMPOSER)).windows[j].buffer,
-                                (*(&raw mut COMPOSER)).windows[j].x as i32,
-                                (*(&raw mut COMPOSER)).windows[j].y as i32,
-                            );
-                        }
+                // Optimized redraw: only recompose the window's dirty area
+                (*(&raw mut COMPOSER)).update_window_area(w.id);
+            }
+            context.rax = 1;
+        }
+
+        // SYS_GET_EVENTS
+        52 => {
+            let wid = context.rdi as u32;
+            let buf_ptr = context.rsi as *mut crate::window_manager::events::Event;
+            let max_events = context.rdx as usize;
+            
+            unsafe {
+                use crate::window_manager::events::GLOBAL_EVENT_QUEUE;
+                let events = (*(&raw mut GLOBAL_EVENT_QUEUE)).get_and_remove_events(wid, max_events);
+                
+                if !events.is_empty() {
+                    // crate::debugln!("Syscall: Get events for wid {}, count {}", wid, events.len());
+                }
+
+                let user_slice = core::slice::from_raw_parts_mut(buf_ptr, max_events);
+                for (i, evt) in events.into_iter().enumerate() {
+                    if i < max_events {
+                        user_slice[i] = evt;
                     }
                 }
-                (*(&raw mut DISPLAY_SERVER)).copy();
             }
             context.rax = 1;
         }
@@ -227,10 +266,12 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
              let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr, len) };
              
              if let Some(handle) = crate::fs::vfs::get_file(fd) {
+                  debugln!("Syscall: Reading file fd {}, len {}", fd, len);
                   match handle.node.read(handle.offset, buf) {
                       Ok(n) => {
                           handle.offset += n as u64;
                           context.rax = n as u64;
+                          debugln!("Syscall: Read done, returned {} bytes", n);
                       },
                       Err(_) => context.rax = u64::MAX,
                   }

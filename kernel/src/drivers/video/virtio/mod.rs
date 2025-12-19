@@ -168,6 +168,35 @@ fn check_features(common_cfg: *mut u8) {
     }
 }
 
+pub fn get_display_info() -> Option<(u32, u32)> {
+    let req_info = VirtioGpuCtrlHeader {
+        type_: VIRTIO_GPU_CMD_GET_DISPLAY_INFO,
+        flags: 0,
+        fence_id: 0,
+        ctx_id: 0,
+        ring_idx: 0,
+        padding: [0; 3],
+    };
+    let mut resp_info: VirtioGpuRespDisplayInfo = unsafe { core::mem::zeroed() };
+
+    send_command_queue(
+        0,
+        &[&req_info as *const _ as u64],
+        &[core::mem::size_of_val(&req_info) as u32],
+        &[&resp_info as *const _ as u64],
+        &[core::mem::size_of_val(&resp_info) as u32],
+    );
+    
+    if resp_info.hdr.type_ == VIRTIO_GPU_RESP_OK_DISPLAY_INFO {
+        let pmode = resp_info.pmodes[0];
+        // Even if not 'enabled', width/height often contain the preferred resolution
+        if pmode.r.width > 0 && pmode.r.height > 0 {
+             return Some((pmode.r.width, pmode.r.height));
+        }
+    }
+    None
+}
+
 pub fn start_gpu(width: u32, height: u32, phys_buf1: u64, phys_buf2: u64) {
     let req_info = VirtioGpuCtrlHeader {
         type_: VIRTIO_GPU_CMD_GET_DISPLAY_INFO,

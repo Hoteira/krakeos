@@ -53,7 +53,7 @@ impl Composer {
         let mx = x as isize;
         let my = y as isize;
         
-        for i in 0..self.windows.len() {
+        for i in (0..self.windows.len()).rev() {
             if mx >= self.windows[i].x
                 && mx <= (self.windows[i].x + self.windows[i].width as isize)
                 && my >= self.windows[i].y
@@ -159,6 +159,67 @@ impl Composer {
                     }
                 }
             }
+        }
+    }
+
+    pub fn update_window_area(&mut self, id: usize) {
+        let (dirty_x, dirty_y, dirty_w, dirty_h) = {
+            let mut found = None;
+            for i in 0..self.windows.len() {
+                if self.windows[i].id == id {
+                    let w = &self.windows[i];
+                    found = Some((w.x as i32, w.y as i32, w.width as u32, w.height as u32));
+                    break;
+                }
+            }
+            match found {
+                Some(rect) => rect,
+                None => return,
+            }
+        };
+
+        unsafe {
+            let display_server = &mut *(&raw mut DISPLAY_SERVER);
+            
+            if display_server.double_buffer != 0 {
+                let db_ptr = display_server.double_buffer as *mut u32;
+                let pitch_u32 = (display_server.pitch / 4) as usize;
+                let height = display_server.height as i32;
+                let width = display_server.width as i32;
+
+                let start_x = dirty_x.max(0);
+                let start_y = dirty_y.max(0);
+                let end_x = (dirty_x + dirty_w as i32).min(width);
+                let end_y = (dirty_y + dirty_h as i32).min(height);
+
+                if end_x > start_x && end_y > start_y {
+                    for y in start_y..end_y {
+                        let row_offset = y as usize * pitch_u32;
+                        let start_ptr = db_ptr.add(row_offset + start_x as usize);
+                        let count = (end_x - start_x) as usize;
+                        core::ptr::write_bytes(start_ptr, 0, count * 4);
+                    }
+                }
+            }
+            
+            for i in (0..self.windows.len()).rev() {
+                match self.windows[i].w_type {
+                    Items::Null => {}
+                    _ => {
+                        let w = &self.windows[i];
+                        display_server.copy_to_db_clipped(
+                            w.width as u32,
+                            w.height as u32,
+                            w.buffer,
+                            w.x as i32,
+                            w.y as i32,
+                            dirty_x, dirty_y, dirty_w, dirty_h
+                        );
+                    }
+                }
+            }
+
+            display_server.present_rect(dirty_x, dirty_y, dirty_w, dirty_h);
         }
     }
 

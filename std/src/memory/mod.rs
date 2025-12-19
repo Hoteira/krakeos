@@ -7,6 +7,10 @@ pub fn malloc(size: usize) -> usize {
     unsafe { syscall(5, size as u64, 0, 0) as usize }
 }
 
+pub fn realloc(ptr: usize, old_size: usize, new_size: usize) -> usize {
+    unsafe { syscall(9, ptr as u64, old_size as u64, new_size as u64) as usize }
+}
+
 pub fn free(base: usize, pid: u64) {
     let main_pid = (pid >> 32);
     let child_pid = pid & 0xFFFFFFFF;

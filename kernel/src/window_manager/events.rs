@@ -14,7 +14,7 @@ pub struct MouseEvent {
 #[repr(C)]
 pub struct KeyboardEvent {
     pub wid: u32,
-    pub char: char,
+    pub key: u32,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -93,13 +93,20 @@ impl EventQueue {
     }
 
     pub fn add_event(&mut self, event: Event) {
-        if self.queue.len() >= 1000 {
-            self.reset_queue();
+        if self.queue.len() >= self.queue.capacity() {
+            // Prevent allocation in interrupt context: Drop event if full
+            // Optionally, we could remove the oldest event?
+            // For now, just drop to avoid crash/deadlock.
+            return;
         }
         self.queue.push(event);
     }
 
     pub fn reset_queue(&mut self) {
         self.queue.clear();
+    }
+    
+    pub fn init(&mut self) {
+        self.queue.reserve(2048);
     }
 }

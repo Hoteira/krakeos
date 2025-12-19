@@ -5,7 +5,15 @@ use alloc::collections::VecDeque;
 use std::sync::Mutex;
 
 #[allow(dead_code)]
-pub static KEYBOARD_BUFFER: Mutex<VecDeque<char>> = Mutex::new(VecDeque::new());
+pub static KEYBOARD_BUFFER: Mutex<VecDeque<u32>> = Mutex::new(VecDeque::new());
+
+// Keycodes for special keys
+pub const KEY_LEFT: u32 = 0x110001;
+pub const KEY_RIGHT: u32 = 0x110002;
+pub const KEY_UP: u32 = 0x110003;
+pub const KEY_DOWN: u32 = 0x110004;
+pub const KEY_BACKSPACE: u32 = 0x08;
+pub const KEY_ENTER: u32 = 0x0A;
 
 // PS/2 Controller Ports
 #[allow(dead_code)]
@@ -69,6 +77,7 @@ const SCANCODE_MAP_UPPERCASE: [char; 128] = [
 
 // State to track shift key status
 static mut SHIFT_ACTIVE: bool = false;
+static mut E0_ACTIVE: bool = false;
 
 fn wait_for_read() -> bool {
     let mut timeout = 100000;
@@ -137,8 +146,16 @@ pub fn init() {
 }
 
 #[allow(dead_code)]
-pub fn handle_scancode(scancode: u8) -> Option<char> {
+pub fn handle_scancode(scancode: u8) -> Option<u32> {
     unsafe {
+        if scancode == 0xE0 {
+            E0_ACTIVE = true;
+            return None;
+        }
+
+        let is_e0 = E0_ACTIVE;
+        E0_ACTIVE = false;
+
         match scancode {
             // Shift keys (make codes)
             0x2A | 0x36 => { // Left Shift, Right Shift
@@ -151,11 +168,17 @@ pub fn handle_scancode(scancode: u8) -> Option<char> {
                 None
             },
             // Special keys (make codes)
-            0x0E => Some('\x08'), // Backspace
-            0x1C => Some('\n'), // Enter
-            0x39 => Some(' '), // Space
-            0x01 => Some('\x1B'), // ESC (Escape)
-            0x0F => Some('\t'), // Tab
+            0x0E => Some(KEY_BACKSPACE), // Backspace
+            0x1C => Some(KEY_ENTER), // Enter
+            0x39 => Some(' ' as u32), // Space
+            0x01 => Some('\x1B' as u32), // ESC (Escape)
+            0x0F => Some('\t' as u32), // Tab
+            
+            // Arrow Keys (Extended)
+            0x4B if is_e0 => Some(KEY_LEFT),
+            0x4D if is_e0 => Some(KEY_RIGHT),
+            0x48 if is_e0 => Some(KEY_UP),
+            0x50 if is_e0 => Some(KEY_DOWN),
 
             // Regular keys (make codes)
             0x02..=0x0D | // 1-0, -, =
@@ -165,9 +188,11 @@ pub fn handle_scancode(scancode: u8) -> Option<char> {
             0x3A => {
                 if scancode < 128 {
                     if SHIFT_ACTIVE {
-                        Some(SCANCODE_MAP_UPPERCASE[scancode as usize])
+                        let c = SCANCODE_MAP_UPPERCASE[scancode as usize];
+                        if c != '\0' { Some(c as u32) } else { None }
                     } else {
-                        Some(SCANCODE_MAP_LOWERCASE[scancode as usize])
+                        let c = SCANCODE_MAP_LOWERCASE[scancode as usize];
+                        if c != '\0' { Some(c as u32) } else { None }
                     }
                 } else {
                     None

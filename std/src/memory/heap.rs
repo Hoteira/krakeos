@@ -50,8 +50,13 @@ impl Used {
 static HEAP_START: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());
 static HEAP_END: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());
 
+const BIN_COUNT: usize = 8;
+const MIN_BLOCK_SIZE: usize = 32; 
+const MAX_BIN_SIZE: usize = 4096;
+
 pub struct Allocator {
     first_free: AtomicPtr<Free>,
+    bins: [AtomicPtr<Free>; BIN_COUNT],
     lock: AtomicBool,
 }
 
@@ -59,6 +64,16 @@ impl Allocator {
     pub const fn new() -> Self {
         Self {
             first_free: AtomicPtr::new(core::ptr::null_mut()),
+            bins: [
+                AtomicPtr::new(core::ptr::null_mut()),
+                AtomicPtr::new(core::ptr::null_mut()),
+                AtomicPtr::new(core::ptr::null_mut()),
+                AtomicPtr::new(core::ptr::null_mut()),
+                AtomicPtr::new(core::ptr::null_mut()),
+                AtomicPtr::new(core::ptr::null_mut()),
+                AtomicPtr::new(core::ptr::null_mut()),
+                AtomicPtr::new(core::ptr::null_mut()),
+            ],
             lock: AtomicBool::new(false),
         }
     }
@@ -76,6 +91,55 @@ impl Allocator {
     fn unlock(&self) {
         self.lock.store(false, Ordering::Release);
     }
+    
+    unsafe fn fixup_allocator(&self, offset: isize) {
+         let ff = self.first_free.load(Ordering::Relaxed);
+         if !ff.is_null() {
+             self.first_free.store(ff.offset(offset), Ordering::Relaxed);
+         }
+         
+         for i in 0..BIN_COUNT {
+             let b = self.bins[i].load(Ordering::Relaxed);
+             if !b.is_null() {
+                 self.bins[i].store(b.offset(offset), Ordering::Relaxed);
+             }
+         }
+         
+         let mut current = self.first_free.load(Ordering::Relaxed);
+         while !current.is_null() {
+             let next_old = (*current).next;
+             if !next_old.is_null() {
+                 let next_new = (next_old as *mut u8).offset(offset) as *mut Free;
+                 (*current).next = next_new;
+             }
+             current = (*current).next;
+         }
+         
+         for i in 0..BIN_COUNT {
+             let mut current = self.bins[i].load(Ordering::Relaxed);
+             while !current.is_null() {
+                 let next_old = (*current).next;
+                 if !next_old.is_null() {
+                     let next_new = (next_old as *mut u8).offset(offset) as *mut Free;
+                     (*current).next = next_new;
+                 }
+                 current = (*current).next;
+             }
+         }
+    }
+}
+
+fn get_bin_index(total_size: usize) -> Option<usize> {
+    if total_size < MIN_BLOCK_SIZE || total_size > MAX_BIN_SIZE {
+        return None;
+    }
+    if (total_size & (total_size - 1)) != 0 {
+        return None;
+    }
+    
+    let idx = (usize::BITS - total_size.leading_zeros()) as usize - 1;
+    if idx < 5 { return None; }
+    Some(idx - 5)
 }
 
 #[inline(always)]
@@ -150,27 +214,20 @@ fn find_header_for_allocation(seg: &Free, layout: &Layout) -> Option<*mut u8> {
         return None;
     }
 
-    let max_payload = seg_end - payload_size;
-    let min_payload = seg_start + header_size;
-
-    if max_payload < min_payload {
-        return None;
-    }
-
-    let mut payload_candidate = align_down(max_payload, req_align);
-
-    while payload_candidate >= min_payload {
-        let header_addr = payload_candidate - header_size;
-        if header_addr % align_of::<Used>() == 0 {
-            if payload_candidate + payload_size <= seg_end {
-                return Some(payload_candidate as *mut u8);
+    let min_payload_addr = seg_start + header_size;
+    
+    let payload_candidate = align_up(min_payload_addr, req_align);
+    
+    if payload_candidate + payload_size <= seg_end {
+        let used_align = align_of::<Used>();
+        let mut p = payload_candidate;
+        while p + payload_size <= seg_end {
+            let h = p - header_size;
+            if h >= seg_start && h % used_align == 0 {
+                return Some(p as *mut u8);
             }
+            p += req_align;
         }
-
-        if payload_candidate < req_align {
-            break;
-        }
-        payload_candidate -= req_align;
     }
 
     None
@@ -187,47 +244,126 @@ unsafe impl GlobalAlloc for Allocator {
         }
 
         self.lock();
-        let mut prev_ptr: *mut Free = core::ptr::null_mut();
-        let mut cur_ptr = self.first_free.load(Ordering::Acquire);
 
-        unsafe {
-            while !cur_ptr.is_null() {
-                let cur = &mut *cur_ptr;
-                if let Some(payload_ptr) = find_header_for_allocation(cur, &layout) {
-                    let header_ptr = get_used_header(payload_ptr);
-                    let old_end = cur.end();
+        let needed_total = size_of::<Used>() + layout.size();
+        let aligned_total = if needed_total < MIN_BLOCK_SIZE {
+            MIN_BLOCK_SIZE
+        } else {
+            needed_total.next_power_of_two()
+        };
 
-                    
-                    cur.set_end(header_ptr as *mut u8);
-
-                    (*header_ptr).magic = MAGIC_USED;
-                    (*header_ptr).size = layout.size();
-                    
-                    let allocated_end = payload_ptr.add(layout.size());
-                    if (allocated_end as usize) < old_end as usize {
-                        let remaining = old_end as usize - allocated_end as usize;
-                        if remaining >= size_of::<Free>() {
-                            let new_free = allocated_end as *mut Free;
-                            (*new_free).size = remaining - size_of::<Free>();
-                            (*new_free).next = cur.next;
-                            cur.next = new_free;
-                        }
+        loop {
+            if layout.align() <= 16 && aligned_total <= MAX_BIN_SIZE {
+                if let Some(idx) = get_bin_index(aligned_total) {
+                    let bin_head = self.bins[idx].load(Ordering::Relaxed);
+                    if !bin_head.is_null() {
+                        let next = (*bin_head).next;
+                        self.bins[idx].store(next, Ordering::Relaxed);
+                        
+                        let used = bin_head as *mut Used;
+                        (*used).magic = MAGIC_USED;
+                        (*used).size = aligned_total - size_of::<Used>(); 
+                        
+                        self.unlock();
+                        return (used as *mut u8).add(size_of::<Used>());
                     }
-
-                    if cur.size < size_of::<Free>() {
-                        if prev_ptr.is_null() {
-                            self.first_free.store(cur.next, Ordering::Release);
-                        } else {
-                            (*prev_ptr).next = cur.next;
-                        }
-                    }
-
-                    self.unlock();
-                    return payload_ptr;
                 }
+            }
 
-                prev_ptr = cur_ptr;
-                cur_ptr = (*cur_ptr).next;
+            let alloc_layout = if layout.align() <= 16 && aligned_total <= MAX_BIN_SIZE {
+                 Layout::from_size_align(aligned_total - size_of::<Used>(), layout.align()).unwrap()
+            } else {
+                 layout
+            };
+
+            let mut prev_ptr: *mut Free = core::ptr::null_mut();
+            let mut cur_ptr = self.first_free.load(Ordering::Acquire);
+            let mut allocated_ptr: *mut u8 = core::ptr::null_mut();
+
+            unsafe {
+                while !cur_ptr.is_null() {
+                    let cur = &mut *cur_ptr;
+                    if let Some(payload_ptr) = find_header_for_allocation(cur, &alloc_layout) {
+                        let header_ptr = get_used_header(payload_ptr);
+                        let old_end = cur.end();
+
+                        
+                        cur.set_end(header_ptr as *mut u8);
+
+                        (*header_ptr).magic = MAGIC_USED;
+                        (*header_ptr).size = alloc_layout.size();
+                        
+                        let allocated_end = payload_ptr.add(alloc_layout.size());
+                        let allocated_end_addr = allocated_end as usize;
+                        let aligned_end_addr = (allocated_end_addr + align_of::<Free>() - 1) & !(align_of::<Free>() - 1);
+                        let allocated_end = aligned_end_addr as *mut u8;
+
+                        if (allocated_end as usize) < old_end as usize {
+                            let remaining = old_end as usize - allocated_end as usize;
+                            if remaining >= size_of::<Free>() {
+                                let new_free = allocated_end as *mut Free;
+                                (*new_free).size = remaining - size_of::<Free>();
+                                (*new_free).next = cur.next;
+                                cur.next = new_free;
+                            }
+                        }
+
+                        if cur.size < size_of::<Free>() {
+                            if prev_ptr.is_null() {
+                                self.first_free.store(cur.next, Ordering::Release);
+                            } else {
+                                (*prev_ptr).next = cur.next;
+                            }
+                        }
+                        
+                        allocated_ptr = payload_ptr;
+                        break;
+                    }
+
+                    prev_ptr = cur_ptr;
+                    cur_ptr = (*cur_ptr).next;
+                }
+            }
+            
+            if !allocated_ptr.is_null() {
+                self.unlock();
+                return allocated_ptr;
+            }
+            
+            let start = HEAP_START.load(Ordering::SeqCst) as usize;
+            let end = HEAP_END.load(Ordering::SeqCst) as usize;
+            let current_size = end - start;
+            
+            let mut new_size = current_size * 2;
+            let min_req = current_size + aligned_total + 4096;
+            if new_size < min_req { new_size = min_req; }
+            
+            new_size = (new_size + 4095) & !4095;
+            
+            let new_ptr = crate::memory::realloc(start, current_size, new_size);
+            
+            if new_ptr != 0 {
+                 let offset = new_ptr as isize - start as isize;
+                 
+                 HEAP_START.store(new_ptr as *mut u8, Ordering::SeqCst);
+                 HEAP_END.store((new_ptr + new_size) as *mut u8, Ordering::SeqCst);
+                 
+                 if offset != 0 {
+                      self.fixup_allocator(offset);
+                 }
+                 
+                 let extension_start = new_ptr + current_size;
+                 let extension_size = new_size - current_size;
+                 
+                 if extension_size >= size_of::<Free>() {
+                     let new_free = extension_start as *mut Free;
+                     (*new_free).size = extension_size - size_of::<Free>();
+                     
+                     (*new_free).next = self.first_free.load(Ordering::Relaxed);
+                     self.first_free.store(new_free, Ordering::Relaxed);
+                 }
+            } else {
+                break;
             }
         }
 
@@ -261,9 +397,19 @@ unsafe impl GlobalAlloc for Allocator {
             }
 
             (*hdr).magic = 0;
-
+            
+            let total_size = (*hdr).size + size_of::<Used>();
             let free_block = hdr as *mut Free;
             (*free_block).size = (*hdr).size;
+            
+            if let Some(idx) = get_bin_index(total_size) {
+                let current_head = self.bins[idx].load(Ordering::Relaxed);
+                (*free_block).next = current_head;
+                self.bins[idx].store(free_block, Ordering::Relaxed);
+                self.unlock();
+                return;
+            }
+
             (*free_block).next = core::ptr::null_mut();
 
             let mut prev: *mut Free = core::ptr::null_mut();

@@ -12,7 +12,7 @@ pub struct MouseEvent {
 #[repr(C)]
 pub struct KeyboardEvent {
     pub wid: u32,
-    pub char: char,
+    pub key: u32,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]

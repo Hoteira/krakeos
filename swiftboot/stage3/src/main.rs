@@ -32,18 +32,18 @@ pub extern "C" fn _start() -> ! {
 
     unsafe {
         asm!(
-            "mov {0:e}, 0x10",
-            "mov ds, {0:e}",
-            "mov es, {0:e}",
-            "mov ss, {0:e}",
+        "mov {0:e}, 0x10",
+        "mov ds, {0:e}",
+        "mov es, {0:e}",
+        "mov ss, {0:e}",
 
-            "mov esp, {1:e}",
+        "mov esp, {1:e}",
 
-            out(reg) _,
-            in(reg) STACK_ADDRESS as u32,
-            out("ebx") ebx,
+        out(reg) _,
+        in(reg) STACK_ADDRESS as u32,
+        out("ebx") ebx,
 
-            options(nostack),
+        options(nostack),
         );
     }
 
@@ -70,8 +70,6 @@ pub extern "C" fn _start() -> ! {
     } else if BOOT_MODE == 64 {
         debug("[+] Jumping to long mode ...\n");
 
-        disk::read(NEXT_STAGE_LBA, 1024, NEXT_STAGE_RAM as *mut u8);
-
         unsafe {
             let fb = (*bootinfo).mode.framebuffer;
             let w = (*bootinfo).mode.width as u64;
@@ -91,15 +89,15 @@ pub extern "C" fn _start() -> ! {
         unsafe {
 
             asm!(
-                "mov cr3, {0:e}",
-                in(reg) 0x2_0000,
+            "mov cr3, {0:e}",
+            in(reg) 0x2_0000,
             );
 
             // Enable PAE (CR4.PAE = 1) + SSE (OSFXSR = 1, OSXMMEXCPT = 1)
             asm!(
-                "mov eax, cr4",
-                "or eax, 0x620", // (1 << 5) | (1 << 9) | (1 << 10)
-                "mov cr4, eax",
+            "mov eax, cr4",
+            "or eax, 0x620", // (1 << 5) | (1 << 9) | (1 << 10)
+            "mov cr4, eax",
             );
 
             // Set LME bit in EFER MSR
@@ -112,10 +110,10 @@ pub extern "C" fn _start() -> ! {
 
             // Enable paging, Set MP, Clear EM
             asm!(
-                "mov eax, cr0",
-                "and eax, 0xFFFFFFFB", // Clear EM (bit 2)
-                "or eax, 0x80000002",  // Set PG (bit 31) | MP (bit 1)
-                "mov cr0, eax",
+            "mov eax, cr0",
+            "and eax, 0xFFFFFFFB", // Clear EM (bit 2)
+            "or eax, 0x80000002",  // Set PG (bit 31) | MP (bit 1)
+            "mov cr0, eax",
             );
 
             (*(&raw mut GDT)).write_tss();

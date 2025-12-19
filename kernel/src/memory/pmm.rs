@@ -19,7 +19,7 @@ pub struct FrameAllocation {
     pub used: bool,
 }
 
-const MAX_ALLOCS: usize = 512;
+const MAX_ALLOCS: usize = 4096;
 
 pub struct StructPmm {
     allocations: [FrameAllocation; MAX_ALLOCS],
@@ -58,7 +58,6 @@ pub fn init() {
 unsafe fn add_allocation(pid: u64, start: u64, count: usize) -> bool {
     let pmm_ptr = &raw mut PMM;
     
-    // Check for free slot
     let mut count_used = 0;
     for i in 0..MAX_ALLOCS {
         if (*pmm_ptr).allocations[i].used {
@@ -111,7 +110,6 @@ unsafe fn remove_allocation(start: u64) {
     }
 
     if found_idx != MAX_ALLOCS {
-        // Shift left
         for i in found_idx..(count_used - 1) {
             (*pmm_ptr).allocations[i] = (*pmm_ptr).allocations[i+1];
         }
@@ -131,7 +129,7 @@ unsafe fn is_overlap(start: u64, count: usize) -> bool {
                 return true;
             }
         } else {
-            break; // Since sorted and packed
+            break; 
         }
     }
     false
@@ -165,8 +163,6 @@ unsafe fn unlock_pmm() {
     (*pmm_ptr).lock.store(false, Ordering::Release);
 }
 
-// --- Public API ---
-
 pub fn allocate_frame(pid: u64) -> Option<u64> {
     allocate_frames(1, pid)
 }
@@ -195,38 +191,24 @@ pub fn allocate_memory(bytes: usize, pid: u64) -> Option<u64> {
         let mut found_addr = 0;
         let mut found = false;
 
-        // 1. Check gap before first allocation (starting from 10MB safe threshold)
-        // Note: init() reserves 0-10MB, so allocations[0] should cover 0-10MB.
-        // We look for gaps AFTER allocations[0].
-        // Or if allocation[0] is missing (impossible after init), use 10MB.
-        
-        // Iterate through sorted allocations to find a gap
-        // If allocations are: [0-10MB], [20-30MB], ...
-        // Gap 1: 10MB to 20MB.
-        
         let mut prev_end = 0;
         
         if count_used > 0 {
             prev_end = (*pmm_ptr).allocations[0].start + ((*pmm_ptr).allocations[0].count as u64 * PAGE_SIZE);
         } else {
-            // Should not happen if init called, but fallback
             prev_end = 0xA00000;
         }
 
-        // Optimization: if prev_end < 10MB, force it to 10MB (safety)
         if prev_end < 0xA00000 {
             prev_end = 0xA00000;
         }
 
-        // Try to fit between allocations
         for i in 0..count_used {
-            // Gap is between prev_end and current.start
             let current = (*pmm_ptr).allocations[i];
             
             if current.start > prev_end {
                 let gap_size = current.start - prev_end;
                 if gap_size >= (pages as u64 * PAGE_SIZE) {
-                    // Found gap
                     if is_valid_ram(prev_end, pages) {
                         found_addr = prev_end;
                         found = true;
@@ -241,7 +223,6 @@ pub fn allocate_memory(bytes: usize, pid: u64) -> Option<u64> {
             }
         }
 
-        // Check after last allocation if not found
         if !found {
             if prev_end + (pages as u64 * PAGE_SIZE) <= (*pmm_ptr).total_ram {
                 if is_valid_ram(prev_end, pages) {
@@ -261,6 +242,53 @@ pub fn allocate_memory(bytes: usize, pid: u64) -> Option<u64> {
         unlock_pmm();
         None
     }
+}
+
+pub unsafe fn realloc_memory(old_addr: u64, old_bytes: usize, new_bytes: usize, pid: u64) -> Option<u64> {
+    if new_bytes <= old_bytes { return Some(old_addr); }
+    
+    let old_pages = (old_bytes + PAGE_SIZE as usize - 1) / PAGE_SIZE as usize;
+    let new_pages = (new_bytes + PAGE_SIZE as usize - 1) / PAGE_SIZE as usize;
+    
+    if old_pages == new_pages { return Some(old_addr); }
+
+    lock_pmm();
+    let pmm_ptr = &raw mut PMM;
+    
+    let mut alloc_idx = MAX_ALLOCS;
+    for i in 0..MAX_ALLOCS {
+        if (*pmm_ptr).allocations[i].used && (*pmm_ptr).allocations[i].start == old_addr {
+            alloc_idx = i;
+            break;
+        }
+    }
+    
+    if alloc_idx == MAX_ALLOCS {
+        unlock_pmm();
+        return None;
+    }
+    
+    let current_alloc = (*pmm_ptr).allocations[alloc_idx];
+    let extension_start = current_alloc.start + (current_alloc.count as u64 * PAGE_SIZE);
+    let needed_extra = new_pages - current_alloc.count;
+    
+    if is_valid_ram(extension_start, needed_extra) {
+         if !is_overlap(extension_start, needed_extra) {
+             (*pmm_ptr).allocations[alloc_idx].count = new_pages;
+             unlock_pmm();
+             return Some(old_addr);
+         }
+    }
+    
+    unlock_pmm();
+    
+    if let Some(new_addr) = allocate_memory(new_bytes, pid) {
+        core::ptr::copy_nonoverlapping(old_addr as *const u8, new_addr as *mut u8, old_bytes);
+        free_frame(old_addr);
+        return Some(new_addr);
+    }
+
+    None
 }
 
 pub fn reserve_frame(addr: u64) -> bool {

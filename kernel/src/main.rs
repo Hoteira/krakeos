@@ -57,8 +57,13 @@ pub extern "C" fn _start(bootinfo_ptr: *const BootInfo) -> ! {
     //init_pat();
 
     fs::dma::init();
+    crate::fs::virtio::init();
     
     crate::fs::vfs::init();
+    
+    unsafe {
+        (*(&raw mut window_manager::events::GLOBAL_EVENT_QUEUE)).init();
+    }
 
     tss::init_ists();
 

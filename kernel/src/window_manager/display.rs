@@ -40,8 +40,17 @@ impl DisplayServer {
         unsafe {
             virtio::init();
             if virtio::queue::VIRT_QUEUES[0].is_some() {
-                self.width = 1280;
-                self.height = 720;
+                
+                if let Some((w, h)) = virtio::get_display_info() {
+                    self.width = w as u64;
+                    self.height = h as u64;
+                    debugln!("DisplayServer: Detected resolution {}x{}", w, h);
+                } else {
+                    self.width = 1280;
+                    self.height = 720;
+                    debugln!("DisplayServer: Could not detect resolution, defaulting to 1280x720");
+                }
+
                 self.pitch = self.width * 4;
                 self.depth = 32;
 
@@ -260,6 +269,83 @@ impl DisplayServer {
         }
     }
 
+    pub fn copy_to_db_clipped(&self, width: u32, height: u32, buffer: usize, x: i32, y: i32, clip_x: i32, clip_y: i32, clip_w: u32, clip_h: u32) {
+        let dst_pitch = self.pitch as usize / 4; // Pitch in u32
+        let src_pitch = width as usize;          // Pitch in u32
+        let screen_w = self.width as i32;
+        let screen_h = self.height as i32;
+
+        // 1. Calculate Intersection of Window and Clip Rect
+        let win_x = x;
+        let win_y = y;
+        let win_w = width as i32;
+        let win_h = height as i32;
+
+        let cx = clip_x;
+        let cy = clip_y;
+        let cw = clip_w as i32;
+        let ch = clip_h as i32;
+
+        let intersect_x = win_x.max(cx).max(0);
+        let intersect_y = win_y.max(cy).max(0);
+        let intersect_end_x = (win_x + win_w).min(cx + cw).min(screen_w);
+        let intersect_end_y = (win_y + win_h).min(cy + ch).min(screen_h);
+
+        if intersect_end_x <= intersect_x || intersect_end_y <= intersect_y {
+            return;
+        }
+
+        let copy_width = (intersect_end_x - intersect_x) as usize;
+        let copy_height = (intersect_end_y - intersect_y) as usize;
+
+        // 2. Calculate Offsets
+        let src_off_x = (intersect_x - win_x) as usize;
+        let src_off_y = (intersect_y - win_y) as usize;
+
+        unsafe {
+            let src_base = buffer as *const u32;
+            let dst_base = self.double_buffer as *mut u32;
+
+            for row in 0..copy_height {
+                // Source pointer: window_buffer[ (src_y + row) * width + src_x ]
+                let src_row_ptr = src_base.add((src_off_y + row) * src_pitch + src_off_x);
+                
+                // Dest pointer:   db[ (dst_y + row) * pitch + dst_x ]
+                // intersect_y is absolute screen Y
+                let dst_row_ptr = dst_base.add((intersect_y as usize + row) * dst_pitch + (intersect_x as usize));
+
+                for col in 0..copy_width {
+                    let src_pixel = *src_row_ptr.add(col);
+                    let alpha = (src_pixel >> 24) & 0xFF;
+
+                    if alpha == 255 {
+                        *dst_row_ptr.add(col) = src_pixel;
+                    } else if alpha == 0 {
+                        continue;
+                    } else {
+                        let dst_pixel = *dst_row_ptr.add(col);
+                        
+                        let inv_alpha = 255 - alpha;
+
+                        let src_r = (src_pixel >> 16) & 0xFF;
+                        let src_g = (src_pixel >> 8) & 0xFF;
+                        let src_b = src_pixel & 0xFF;
+
+                        let dst_r = (dst_pixel >> 16) & 0xFF;
+                        let dst_g = (dst_pixel >> 8) & 0xFF;
+                        let dst_b = dst_pixel & 0xFF;
+
+                        let r = (src_r * alpha + dst_r * inv_alpha) >> 8;
+                        let g = (src_g * alpha + dst_g * inv_alpha) >> 8;
+                        let b = (src_b * alpha + dst_b * inv_alpha) >> 8;
+
+                        *dst_row_ptr.add(col) = (0xFF << 24) | (r << 16) | (g << 8) | b;
+                    }
+                }
+            }
+        }
+    }
+
     pub fn copy_to_fb_a(&self, width: u32, height: u32, buffer: usize, x: i32, y: i32) {
         let dst_pitch = self.pitch as usize / 4;
         let src_pitch = width as usize;
@@ -324,6 +410,43 @@ impl DisplayServer {
             unsafe {
                 let offset = (row as u64 * self.pitch + col as u64 * 4) as usize;
                 *((self.framebuffer as *mut u8).add(offset) as *mut u32) = color.to_u32();
+            }
+        }
+    }
+
+    pub fn present_rect(&self, x: i32, y: i32, w: u32, h: u32) {
+        let sx = x.max(0) as u32;
+        let sy = y.max(0) as u32;
+        let sw = w.min(self.width as u32 - sx);
+        let sh = h.min(self.height as u32 - sy);
+
+        unsafe {
+            if VIRTIO_ACTIVE {
+                // For partial updates, we flush directly to the active resource
+                // This assumes we are drawing into the backing memory of active_resource_id
+                // Wait, copy_to_db writes to self.double_buffer.
+                // If double_buffer != framebuffer (active), we are writing to the back buffer.
+                // If we flush the BACK buffer, it won't show up if scanout is on FRONT buffer.
+                
+                // FORCE: For dirty rects, we must copy DB -> FB (RAM copy) then Flush FB -> GPU.
+                // Or, simple mode: Just copy DB -> FB and flush.
+                
+                let bpp = 4;
+                let pitch = self.pitch as usize;
+                let src = self.double_buffer as *const u8;
+                let dst = self.framebuffer as *mut u8; // Active buffer
+                
+                // 1. Sync RAM (DB -> FB) for this rect
+                for row in 0..sh {
+                    let offset = ((sy + row) as usize * pitch + sx as usize * bpp);
+                    core::ptr::copy_nonoverlapping(src.add(offset), dst.add(offset), (sw * bpp as u32) as usize);
+                }
+                
+                // 2. Flush to GPU
+                virtio::flush(sx, sy, sw, sh, self.width as u32, self.active_resource_id);
+            } else {
+                // VBE: Copy DB -> FB
+                self.copy_to_fb(x, y, w, h);
             }
         }
     }

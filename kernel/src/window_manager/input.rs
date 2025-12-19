@@ -45,11 +45,9 @@ pub fn handle_mouse_update() {
 
 impl Mouse {
     pub fn cursor(&mut self, data: [u8; 4]) {
-        // Store old position
         let old_x = self.x;
         let old_y = self.y;
 
-        // Calculate relative movement
         let mut x_rel = data[1] as i16;
         let mut y_rel = data[2] as i16;
 
@@ -61,14 +59,11 @@ impl Mouse {
             y_rel |= 0xFF00u16 as i16;
         }
 
-        // Update mouse position
         self.x = self.clamp_mx(x_rel);
         self.y = self.clamp_my(-y_rel);
 
-        // Store previous button state
         let prev_left = self.left;
 
-        // Update button states
         self.left = (data[0] & 0b00000001) != 0;
         self.right = (data[0] & 0b00000010) != 0;
         self.center = (data[0] & 0b00000100) != 0;
@@ -79,7 +74,6 @@ impl Mouse {
 
         let scroll_val = data[3] as i8;
 
-        // Check for click start in titlebar
         if self.left && !prev_left {
             let w = unsafe { (*(&raw mut COMPOSER)).find_window(self.x as usize, self.y as usize) };
             if let Some(ws) = w {
@@ -98,7 +92,6 @@ impl Mouse {
             unsafe { CLICK_STARTED_IN_TITLEBAR = false; }
         }
 
-        // Handle drag state
         unsafe {
             if self.left {
                 DRAGS = DRAGS.wrapping_add(1);
@@ -109,7 +102,6 @@ impl Mouse {
                 DRAGS = 0;
                 DRAG = false;
 
-                // Handle resize completion
                 if (*(&raw mut RESIZING_WINDOW)).load(Ordering::Relaxed) != 0 {
                     let w = (*(&raw mut COMPOSER))
                         .find_window_id((*(&raw mut RESIZING_WINDOW)).load(Ordering::Relaxed) as usize)
@@ -128,27 +120,21 @@ impl Mouse {
                     W_WIDTH = 0;
                     W_HEIGHT = 0;
 
-                // Handle drag completion - window released
                 } else if (*(&raw mut DRAGGING_WINDOW)).load(Ordering::Relaxed) != 0 {
                     let wid = (*(&raw mut DRAGGING_WINDOW)).load(Ordering::Relaxed) as usize;
                     let composer = &mut *(&raw mut COMPOSER);
                     let display_server = &mut *(&raw mut DISPLAY_SERVER);
 
-                    // Get window info
                     let w = composer.find_window_id(wid).unwrap();
                     let win_x = w.x;
                     let win_y = w.y;
                     let win_width = w.width;
                     let win_height = w.height;
 
-                    // Copy window to double buffer at its new position
                     composer.copy_window(wid);
 
-                    // Clear and restore the old cursor area from DB
-                    // Note: copy_to_fb now in display_server
                     display_server.copy_to_fb(old_x as i32, old_y as i32, 32, 32);
 
-                    // Copy window from DB to FB
                     display_server.copy_to_fb(win_x as i32, win_y as i32, win_width as u32, win_height as u32);
 
                     display_server.draw_mouse(self.x, self.y, false);
@@ -163,8 +149,6 @@ impl Mouse {
             }
         }
 
-        // Global Drag Initiation Check
-        // Check this BEFORE finding window under mouse, because mouse might have moved OFF the window
         unsafe {
             if DRAG && CLICK_STARTED_IN_TITLEBAR {
                 if (*(&raw mut DRAGGING_WINDOW)).load(Ordering::Relaxed) == 0 {
@@ -177,7 +161,6 @@ impl Mouse {
 
         let w = unsafe { (*(&raw mut COMPOSER)).find_window(self.x as usize, self.y as usize) };
 
-        // Handle active resize
         if unsafe { (*(&raw mut RESIZING_WINDOW)).load(Ordering::Relaxed) != 0 } {
             let x_vec = x_rel;
             let y_vec = y_rel;
@@ -230,7 +213,6 @@ impl Mouse {
             }
             return;
 
-        // Handle active drag - window being moved
         } else if unsafe { (*(&raw mut DRAGGING_WINDOW)).load(Ordering::Relaxed) != 0 } {
             let composer = unsafe { &mut *(&raw mut COMPOSER) };
             let display_server = unsafe { &mut *(&raw mut DISPLAY_SERVER) };
@@ -239,7 +221,6 @@ impl Mouse {
             let x_vec = x_rel;
             let y_vec = y_rel;
 
-            // Get window info and calculate new position
             let window_opt = composer.find_window_id(wid);
             let w = match window_opt {
                 Some(w) => w,
@@ -253,16 +234,12 @@ impl Mouse {
             let id = w.id;
             let buffer = w.buffer;
 
-            // Calculate target position based on raw mouse delta
-            // BIDIRECTIONAL CLAMPING:
-            // 1. Constrain mouse movement to extended screen bounds (screen + 50px buffer).
             let target_mx = old_x as i32 + x_vec as i32;
             let target_my = old_y as i32 - y_vec as i32;
             
             let screen_w = display_server.width as i32;
             let screen_h = display_server.height as i32;
             
-            // Allow cursor to go slightly off-screen (buffer zone) to enable deep window sinking
             let mouse_limit_w = screen_w + 50;
             let mouse_limit_h = screen_h + 50;
 
@@ -272,15 +249,11 @@ impl Mouse {
             let mouse_dx = clamped_mx - old_x as i32;
             let mouse_dy = clamped_my - old_y as i32;
 
-            // 2. Apply constrained mouse delta to window
             let target_win_x = old_win_x as i32 + mouse_dx;
             let target_win_y = old_win_y as i32 + mouse_dy; 
 
-            // Constraints
-            let margin = 3; // Amount of window that must remain visible (3px)
+            let margin = 3; 
 
-            // Clamp Window Position
-            // Allow dragging off-screen to left/top/right/bottom, keeping 'margin' visible.
             let min_visible_x = -(width as i32) + margin;
             let max_visible_x = screen_w - margin;
             let min_visible_y = -(height as i32) + margin;
@@ -289,20 +262,15 @@ impl Mouse {
             let clamped_win_x = target_win_x.max(min_visible_x).min(max_visible_x);
             let clamped_win_y = target_win_y.max(min_visible_y).min(max_visible_y);
 
-            // Calculate the ACTUAL delta the window made
             let allowed_dx = clamped_win_x - old_win_x as i32;
             let allowed_dy = clamped_win_y - old_win_y as i32;
 
-            // Lock Mouse to Window:
-            // Revert the raw mouse update done earlier and apply ONLY the allowed delta.
             self.x = (old_x as i32 + allowed_dx).max(0).min(mouse_limit_w - 1) as u16;
             self.y = (old_y as i32 + allowed_dy).max(0).min(mouse_limit_h - 1) as u16;
 
-            // Update window position
             let new_x = clamped_win_x as isize;
             let new_y = clamped_win_y as isize;
 
-            // Update the window coordinates in the composer
             for i in 0..composer.windows.len() {
                 if composer.windows[i].id == id {
                     composer.windows[i].x = new_x;
@@ -311,32 +279,10 @@ impl Mouse {
                 }
             }
 
-            // Erase old window position by copying clean background from DB to FB
-            // Note: copy_to_fb now handles negative coordinates (clipping internally)
-            let src = display_server.double_buffer as *const u8;
-            let dst = display_server.framebuffer as *mut u8;
-            let pitch = display_server.pitch as usize;
-            
-            // We use copy_to_fb to restore the background at the OLD window position
-            // But display_server.copy_to_fb takes a source of "double_buffer" implicitly.
-            // Since we are moving the window, we want to restore the background where the window WAS.
-            // The "old" window pixels are on the FB, we want to overwrite them with DB pixels.
-            // display_server.copy_to_fb(old_x, old_y, w, h) does exactly that (copies DB -> FB).
-            
-            // Wait, previously we had an optimization "Fast path" / "Slow path" using raw pointers.
-            // Since copy_to_fb now supports clipping and i32, we can just use it!
-            // It is much cleaner and less error prone.
-            
             display_server.copy_to_fb(old_win_x as i32, old_win_y as i32, width as u32, height as u32);
 
-            // Draw window from its buffer at new position directly to FB
-            // We can't use copy_to_fb for this because copy_to_fb sources from double_buffer.
-            // We need to source from `buffer` (the window's buffer).
-            // So we call copy_to_fb_a (which sources from a specific buffer).
-            
             display_server.copy_to_fb_a(width as u32, height as u32, buffer, new_x as i32, new_y as i32);
 
-            // Calculate flush rect (Union of: Old Window, New Window, New Cursor)
             let old_x_clamped = (old_win_x as i32).max(0) as u32;
             let old_y_clamped = (old_win_y as i32).max(0) as u32;
             let new_x_clamped = (new_x as i32).max(0) as u32;
@@ -364,12 +310,10 @@ impl Mouse {
             let flush_w = max_x.saturating_sub(min_x);
             let flush_h = max_y.saturating_sub(min_y);
 
-            // Draw cursor at new position
             unsafe {
                 display_server.draw_mouse(self.x, self.y, true);
             }
 
-            // SINGLE FLUSH TO VIRTIO for both old and new positions
             unsafe {
                 if VIRTIO_ACTIVE && flush_w > 0 && flush_h > 0 {
                     virtio::flush(flush_x, flush_y, flush_w, flush_h, display_server.width as u32, display_server.active_resource_id);
@@ -378,16 +322,13 @@ impl Mouse {
             return;
         }
 
-        // Normal case (not dragging) - erase old cursor by copying from DB to FB
         unsafe {
             let display_server = &mut *(&raw mut DISPLAY_SERVER);
             display_server.copy_to_fb(old_x as i32, old_y as i32, 32, 32);
             
-            // Draw new cursor (no flush inside)
             display_server.draw_mouse(self.x, self.y, false);
 
             if VIRTIO_ACTIVE {
-                 // Calculate union of Old and New cursor positions for ATOMIC flush
                  let u_old_x = old_x as u32;
                  let u_old_y = old_y as u32;
                  let u_new_x = self.x as u32;
@@ -409,6 +350,37 @@ impl Mouse {
                  if flush_w > 0 && flush_h > 0 {
                     virtio::flush(flush_x, flush_y, flush_w, flush_h, screen_w, display_server.active_resource_id);
                  }
+            }
+
+            if self.left {
+                crate::debugln!("Input: Click at {},{}", self.x, self.y);
+            }
+
+            if let Some(w) = (*(&raw mut COMPOSER)).find_window(self.x as usize, self.y as usize) {
+                if self.left {
+                    crate::debugln!("Input: Found window ID {} at {},{}", w.id, w.x, w.y);
+                }
+
+                if w.event_handler != 0 {
+                    let local_x = (self.x as isize - w.x).max(0) as usize;
+                    let local_y = (self.y as isize - w.y).max(0) as usize;
+
+                    use crate::window_manager::events::{GLOBAL_EVENT_QUEUE, Event, MouseEvent};
+                    let event = Event::Mouse(MouseEvent {
+                        wid: w.id as u32,
+                        x: local_x,
+                        y: local_y,
+                        buttons: [self.left, self.right, self.center],
+                        scroll: scroll_val,
+                    });
+                    
+                    (*(&raw mut GLOBAL_EVENT_QUEUE)).add_event(event);
+                    
+                    if self.left {
+                        crate::debugln!("Input: Dispatching Mouse Event to {}", w.id);
+                        CLICKED_WINDOW_ID = w.id;
+                    }
+                }
             }
         };
     }
