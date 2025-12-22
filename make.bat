@@ -18,11 +18,14 @@ cargo build --package=shell --target=bits64pie.json --release
 
 cargo build --package=tmap --target=bits64pie.json --release
 
+cargo build --package=cat --target=bits64pie.json --release
+
 copy "target\bits64pie\release\userland" "tree\user.elf"
 mkdir "tree\sys\bin" 2>nul
 copy "target\bits64pie\release\term" "tree\sys\bin\term.elf"
 copy "target\bits64pie\release\shell" "tree\sys\bin\shell.elf"
 copy "target\bits64pie\release\tmap" "tree\sys\bin\tmap.elf"
+copy "target\bits64pie\release\cat" "tree\sys\bin\cat.elf"
 
 wsl dd if=build/kernel.bin of=build/disk.img seek=6144 bs=512 conv=notrunc
 

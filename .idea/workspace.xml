@@ -5,6 +5,9 @@
   </component>
   <component name="CargoProjects">
     <cargoProject FILE="$PROJECT_DIR$/Cargo.toml">
+      <package file="$PROJECT_DIR$/apps/cat">
+        <feature name="default" enabled="true" />
+      </package>
       <package file="$PROJECT_DIR$/elfic">
         <feature name="default" enabled="true" />
       </package>
@@ -53,34 +56,16 @@
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Cargo.lock" beforeDir="false" afterPath="$PROJECT_DIR$/Cargo.lock" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/Cargo.toml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/inkui/src/event.rs" beforeDir="false" afterPath="$PROJECT_DIR$/inkui/src/event.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/inkui/src/graphics/primitives.rs" beforeDir="false" afterPath="$PROJECT_DIR$/inkui/src/graphics/primitives.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/inkui/src/math.rs" beforeDir="false" afterPath="$PROJECT_DIR$/inkui/src/math.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/inkui/src/widget.rs" beforeDir="false" afterPath="$PROJECT_DIR$/inkui/src/widget.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/inkui/src/window.rs" beforeDir="false" afterPath="$PROJECT_DIR$/inkui/src/window.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/kernel/src/drivers/periferics/keyboard.rs" beforeDir="false" afterPath="$PROJECT_DIR$/kernel/src/drivers/periferics/keyboard.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/kernel/src/drivers/periferics/mouse.rs" beforeDir="false" afterPath="$PROJECT_DIR$/kernel/src/drivers/periferics/mouse.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/kernel/src/fs/elf.rs" beforeDir="false" afterPath="$PROJECT_DIR$/kernel/src/fs/elf.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/apps/shell/src/main.rs" beforeDir="false" afterPath="$PROJECT_DIR$/apps/shell/src/main.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/kernel/src/drivers/mod.rs" beforeDir="false" afterPath="$PROJECT_DIR$/kernel/src/drivers/mod.rs" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/kernel/src/fs/ext2/fs.rs" beforeDir="false" afterPath="$PROJECT_DIR$/kernel/src/fs/ext2/fs.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/kernel/src/fs/mod.rs" beforeDir="false" afterPath="$PROJECT_DIR$/kernel/src/fs/mod.rs" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/kernel/src/fs/vfs.rs" beforeDir="false" afterPath="$PROJECT_DIR$/kernel/src/fs/vfs.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/kernel/src/interrupts/exceptions.rs" beforeDir="false" afterPath="$PROJECT_DIR$/kernel/src/interrupts/exceptions.rs" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/kernel/src/interrupts/syscalls.rs" beforeDir="false" afterPath="$PROJECT_DIR$/kernel/src/interrupts/syscalls.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/kernel/src/interrupts/task.rs" beforeDir="false" afterPath="$PROJECT_DIR$/kernel/src/interrupts/task.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/kernel/src/main.rs" beforeDir="false" afterPath="$PROJECT_DIR$/kernel/src/main.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/kernel/src/memory/pmm.rs" beforeDir="false" afterPath="$PROJECT_DIR$/kernel/src/memory/pmm.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/kernel/src/window_manager/composer.rs" beforeDir="false" afterPath="$PROJECT_DIR$/kernel/src/window_manager/composer.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/kernel/src/window_manager/events.rs" beforeDir="false" afterPath="$PROJECT_DIR$/kernel/src/window_manager/events.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/kernel/src/window_manager/input.rs" beforeDir="false" afterPath="$PROJECT_DIR$/kernel/src/window_manager/input.rs" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/make.bat" beforeDir="false" afterPath="$PROJECT_DIR$/make.bat" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/std/src/fs/mod.rs" beforeDir="false" afterPath="$PROJECT_DIR$/std/src/fs/mod.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/std/src/memory/heap.rs" beforeDir="false" afterPath="$PROJECT_DIR$/std/src/memory/heap.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/std/src/memory/mod.rs" beforeDir="false" afterPath="$PROJECT_DIR$/std/src/memory/mod.rs" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/std/src/os.rs" beforeDir="false" afterPath="$PROJECT_DIR$/std/src/os.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/std/src/sync.rs" beforeDir="false" afterPath="$PROJECT_DIR$/std/src/sync.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tree/sys/fonts/CaskaydiaNerd.ttf" beforeDir="false" afterPath="$PROJECT_DIR$/tree/sys/fonts/CaskaydiaNerd.ttf" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tree/user" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/userland/src/main.rs" beforeDir="false" afterPath="$PROJECT_DIR$/userland/src/main.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tree/sys/bin/shell.elf" beforeDir="false" afterPath="$PROJECT_DIR$/tree/sys/bin/shell.elf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tree/sys/bin/tmap.elf" beforeDir="false" afterPath="$PROJECT_DIR$/tree/sys/bin/tmap.elf" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -261,7 +246,7 @@
       <workItem from="1766317013838" duration="7417000" />
       <workItem from="1766343501154" duration="15000" />
       <workItem from="1766386113109" duration="6990000" />
-      <workItem from="1766395123007" duration="3914000" />
+      <workItem from="1766395123007" duration="5836000" />
     </task>
     <task id="LOCAL-00001" summary=".">
       <option name="closed" value="true" />
@@ -479,7 +464,15 @@
       <option name="project" value="LOCAL" />
       <updated>1766158707372</updated>
     </task>
-    <option name="localTasksCounter" value="28" />
+    <task id="LOCAL-00028" summary=".">
+      <option name="closed" value="true" />
+      <created>1766401331672</created>
+      <option name="number" value="00028" />
+      <option name="presentableId" value="LOCAL-00028" />
+      <option name="project" value="LOCAL" />
+      <updated>1766401331672</updated>
+    </task>
+    <option name="localTasksCounter" value="29" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">

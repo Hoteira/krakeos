@@ -7,6 +7,7 @@ use alloc::string::ToString;
 // This assumes a recent Rust compiler supporting inline const expressions or relaxed array initialization.
 pub static mut FILESYSTEMS: [Option<Box<dyn FileSystem>>; 256] = [const { None }; 256];
 pub static mut OPEN_FILES: [Option<FileHandle>; 256] = [const { None }; 256];
+pub static mut GLOBAL_FILE_REFCOUNT: [u16; 256] = [0; 256];
 
 pub enum FileHandle {
     File { node: Box<dyn VfsNode>, offset: u64 },
@@ -16,10 +17,9 @@ pub enum FileHandle {
 pub fn init() {
     unsafe {
         crate::debugln!("FILESYSTEMS at {:p}", core::ptr::addr_of!(FILESYSTEMS));
-        // Zero out FILESYSTEMS because .bss is not zeroed by bootloader
-        // If we don't do this, 'mount' will try to drop garbage "previous" values.
         core::ptr::write_bytes(core::ptr::addr_of_mut!(FILESYSTEMS), 0, 1);
         core::ptr::write_bytes(core::ptr::addr_of_mut!(OPEN_FILES), 0, 1);
+        core::ptr::write_bytes(core::ptr::addr_of_mut!(GLOBAL_FILE_REFCOUNT), 0, 1);
     }
 }
 
@@ -36,6 +36,7 @@ pub fn open_file(disk_id: u8, path_str: &str) -> Result<usize, String> {
         for i in 3..256 {
             if OPEN_FILES[i].is_none() {
                 OPEN_FILES[i] = Some(FileHandle::File { node, offset: 0 });
+                GLOBAL_FILE_REFCOUNT[i] = 1;
                 return Ok(i);
             }
         }
@@ -55,9 +56,25 @@ pub fn get_file(fd: usize) -> Option<&'static mut FileHandle> {
 
 pub fn close_file(fd: usize) {
     unsafe {
-         if fd > 2 && fd < 256 {
-             OPEN_FILES[fd] = None;
+         if fd < 256 {
+             if GLOBAL_FILE_REFCOUNT[fd] > 0 {
+                 GLOBAL_FILE_REFCOUNT[fd] -= 1;
+                 if GLOBAL_FILE_REFCOUNT[fd] == 0 {
+                     if let Some(FileHandle::Pipe { pipe }) = &OPEN_FILES[fd] {
+                         pipe.close();
+                     }
+                     OPEN_FILES[fd] = None;
+                 }
+             }
          }
+    }
+}
+
+pub fn increment_ref(fd: usize) {
+    unsafe {
+        if fd < 256 && OPEN_FILES[fd].is_some() {
+            GLOBAL_FILE_REFCOUNT[fd] += 1;
+        }
     }
 }
 

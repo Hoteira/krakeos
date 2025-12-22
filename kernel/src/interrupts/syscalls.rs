@@ -27,6 +27,8 @@ pub const SYS_EXIT: u64 = 60;
 pub const SYS_POLL: u64 = 70;
 pub const SYS_CREATE_FILE: u64 = 71;
 pub const SYS_CREATE_DIR: u64 = 72;
+pub const SYS_REMOVE: u64 = 73;
+pub const SYS_RENAME: u64 = 74;
 
 static mut NEXT_LOAD_BASE: u64 = 0x08000000; // Start second process at 128MB
 
@@ -472,7 +474,7 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
             if fds_ptr.is_null() { context.rax = u64::MAX; return; }
             
             unsafe {
-                use crate::fs::vfs::{OPEN_FILES, FileHandle};
+                use crate::fs::vfs::{OPEN_FILES, GLOBAL_FILE_REFCOUNT, FileHandle};
                 use crate::fs::pipe::Pipe;
                 
                 let mut g1 = -1;
@@ -516,6 +518,8 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
                         let pipe = Pipe::new();
                         OPEN_FILES[g1 as usize] = Some(FileHandle::Pipe { pipe: pipe.clone() });
                         OPEN_FILES[g2 as usize] = Some(FileHandle::Pipe { pipe });
+                        GLOBAL_FILE_REFCOUNT[g1 as usize] = 1;
+                        GLOBAL_FILE_REFCOUNT[g2 as usize] = 1;
                         
                         let task = &mut tm.tasks[current as usize];
                         task.fd_table[l1 as usize] = g1 as i16;
@@ -542,13 +546,30 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
             }
         }
 
+        54 => { // SYS_GET_TIME
+            let (h, m, s) = crate::drivers::rtc::get_time();
+            context.rax = ((h as u64) << 16) | ((m as u64) << 8) | (s as u64);
+        }
+
         SYS_EXIT => {
             let exit_code = context.rdi;
             debugln!("[Syscall] Process exited with code {}", exit_code);
             {
-                                    let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();                let current = tm.current_task;
+                // Clean up FDs for this task
+                let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();                
+                let current = tm.current_task;
                 if current >= 0 {
-                    tm.tasks[current as usize].state = crate::interrupts::task::TaskState::Zombie;
+                    let task = &mut tm.tasks[current as usize];
+                    task.state = crate::interrupts::task::TaskState::Zombie;
+                    
+                    // Close all open FDs
+                    for i in 0..16 {
+                        let global = task.fd_table[i];
+                        if global != -1 {
+                             crate::fs::vfs::close_file(global as usize);
+                             task.fd_table[i] = -1;
+                        }
+                    }
                 }
             }
             // Yield to schedule the next task
@@ -639,6 +660,13 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
                      }
                      drop(tm); // Unlock before calling add_user_task (which locks)
 
+                     // INCREMENT REF COUNTS FOR INHERITED FDS
+                     for &g_fd in new_fd_table.iter() {
+                         if g_fd != -1 {
+                             crate::fs::vfs::increment_ref(g_fd as usize);
+                         }
+                     }
+
                      // 7. Create Task
                      // Re-lock is handled by add_user_task? No, add_user_task is a method on TaskManager structure, 
                      // but TASK_MANAGER is the mutex. 
@@ -661,6 +689,73 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
         }
 
         67 => { // SYS_CLOSE
+            let local_fd = context.rdi as usize;
+            
+            let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+            let current = tm.current_task;
+            if current >= 0 {
+                let task = &mut tm.tasks[current as usize];
+                if local_fd < 16 {
+                    let global = task.fd_table[local_fd];
+                    if global != -1 {
+                        crate::fs::vfs::close_file(global as usize);
+                        task.fd_table[local_fd] = -1;
+                        context.rax = 0;
+                    } else {
+                        context.rax = u64::MAX; // EBADF
+                    }
+                } else {
+                    context.rax = u64::MAX;
+                }
+            } else {
+                context.rax = u64::MAX;
+            }
+        }
+        
+        75 => { // SYS_SEEK
+             let local_fd = context.rdi as usize;
+             let offset = context.rsi as i64;
+             let whence = context.rdx as usize; // 0: SET, 1: CUR, 2: END
+             
+             let global_fd_opt = {
+                 let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+                 let current = tm.current_task;
+                 if current >= 0 && local_fd < 16 {
+                     let g = tm.tasks[current as usize].fd_table[local_fd];
+                     if g != -1 { Some(g as usize) } else { None }
+                 } else {
+                     None
+                 }
+             };
+
+             if let Some(fd) = global_fd_opt {
+                 if let Some(handle) = crate::fs::vfs::get_file(fd) {
+                      use crate::fs::vfs::FileHandle;
+                      match handle {
+                          FileHandle::File { node, offset: current_offset } => {
+                              let size = node.size() as i64;
+                              let new_offset = match whence {
+                                  0 => offset, // SEEK_SET
+                                  1 => (*current_offset as i64) + offset, // SEEK_CUR
+                                  2 => size + offset, // SEEK_END
+                                  _ => -1,
+                              };
+                              
+                              if new_offset >= 0 {
+                                  *current_offset = new_offset as u64;
+                                  context.rax = new_offset as u64;
+                              } else {
+                                  context.rax = u64::MAX; // EINVAL
+                              }
+                          },
+                          FileHandle::Pipe { .. } => context.rax = u64::MAX, // ESPIPE
+                      }
+                 } else {
+                     context.rax = u64::MAX;
+                 }
+             } else {
+                 context.rax = u64::MAX;
+             }
         }
 
         68 => { //SYS_WAIT_PID
@@ -812,6 +907,101 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
                  } else {
                      context.rax = u64::MAX;
                  }
+             }
+        }
+
+        73 => { // SYS_REMOVE
+             let ptr = context.rdi as *const u8;
+             let len = context.rsi as usize;
+             let s = unsafe { core::slice::from_raw_parts(ptr, len) };
+             let path_str_full = String::from_utf8_lossy(s);
+             
+             let path_parts: Vec<&str> = path_str_full.split('/').collect();
+             if path_parts.len() < 1 || !path_parts[0].starts_with('@') { context.rax = u64::MAX; return; }
+
+             let disk_part = &path_parts[0][1..];
+             let disk_id = if disk_part.starts_with("0x") || disk_part.starts_with("0X") {
+                 u8::from_str_radix(&disk_part[2..], 16).unwrap_or(0xFF)
+             } else {
+                 disk_part.parse::<u8>().unwrap_or(0xFF)
+             };
+
+             let actual_path = if path_parts.len() > 1 { path_parts[1..].join("/") } else { String::from("") };
+             
+             if let Some(last_slash) = actual_path.rfind('/') {
+                 let parent_path = &actual_path[..last_slash];
+                 let name = &actual_path[last_slash+1..];
+                 
+                 if let Ok(mut parent) = crate::fs::vfs::open(disk_id, parent_path) {
+                     match parent.remove(name) {
+                         Ok(_) => context.rax = 0,
+                         Err(_) => context.rax = u64::MAX,
+                     }
+                 } else { context.rax = u64::MAX; }
+             } else {
+                 if let Ok(mut root) = crate::fs::vfs::open(disk_id, "") {
+                     match root.remove(&actual_path) {
+                         Ok(_) => context.rax = 0,
+                         Err(_) => context.rax = u64::MAX,
+                     }
+                 } else { context.rax = u64::MAX; }
+             }
+        }
+
+        74 => { // SYS_RENAME
+             let old_ptr = context.rdi as *const u8;
+             let old_len = context.rsi as usize;
+             let new_ptr = context.rdx as *const u8;
+             let new_len = context.r10 as usize;
+             
+             let s_old = unsafe { core::slice::from_raw_parts(old_ptr, old_len) };
+             let s_new = unsafe { core::slice::from_raw_parts(new_ptr, new_len) };
+             let path_old = String::from_utf8_lossy(s_old);
+             let path_new = String::from_utf8_lossy(s_new);
+             
+             // Simplification: Assume same disk and same parent for now
+             let parts_old: Vec<&str> = path_old.split('/').collect();
+             if parts_old.len() < 1 || !parts_old[0].starts_with('@') { context.rax = u64::MAX; return; }
+             
+             let disk_part = &parts_old[0][1..];
+             let disk_id = if disk_part.starts_with("0x") || disk_part.starts_with("0X") {
+                 u8::from_str_radix(&disk_part[2..], 16).unwrap_or(0xFF)
+             } else {
+                 disk_part.parse::<u8>().unwrap_or(0xFF)
+             };
+             
+             let actual_old = if parts_old.len() > 1 { parts_old[1..].join("/") } else { String::from("") };
+             
+             // Parse New (assuming absolute for now)
+             let parts_new: Vec<&str> = path_new.split('/').collect();
+             let actual_new = if parts_new.len() > 1 { parts_new[1..].join("/") } else { String::from("") };
+
+             // Extract parents
+             let (parent_old, name_old) = if let Some(idx) = actual_old.rfind('/') {
+                 (&actual_old[..idx], &actual_old[idx+1..])
+             } else {
+                 ("", actual_old.as_str())
+             };
+
+             let (parent_new, name_new) = if let Some(idx) = actual_new.rfind('/') {
+                 (&actual_new[..idx], &actual_new[idx+1..])
+             } else {
+                 ("", actual_new.as_str())
+             };
+             
+             if parent_old != parent_new {
+                 debugln!("SYS_RENAME: Moving between directories not supported yet");
+                 context.rax = u64::MAX; 
+                 return;
+             }
+             
+             if let Ok(mut parent) = crate::fs::vfs::open(disk_id, parent_old) {
+                 match parent.rename(name_old, name_new) {
+                     Ok(_) => context.rax = 0,
+                     Err(_) => context.rax = u64::MAX,
+                 }
+             } else {
+                 context.rax = u64::MAX;
              }
         }
         

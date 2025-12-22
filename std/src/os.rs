@@ -74,6 +74,12 @@ pub fn file_write(fd: usize, buffer: &[u8]) -> usize {
     }
 }
 
+pub fn file_seek(fd: usize, offset: i64, whence: usize) -> u64 {
+    unsafe {
+        syscall(75, fd as u64, offset as u64, whence as u64)
+    }
+}
+
 pub fn pipe(fds: &mut [i32; 2]) -> i32 {
     unsafe {
         syscall(42, fds.as_mut_ptr() as u64, 0, 0) as i32
@@ -143,4 +149,12 @@ pub fn poll(fds: &mut [PollFd], timeout: i32) -> i32 {
     unsafe {
         syscall(70, fds.as_mut_ptr() as u64, fds.len() as u64, timeout as u64) as i32
     }
+}
+
+pub fn get_time() -> (u8, u8, u8) {
+    let res = unsafe { syscall(54, 0, 0, 0) };
+    let h = ((res >> 16) & 0xFF) as u8;
+    let m = ((res >> 8) & 0xFF) as u8;
+    let s = (res & 0xFF) as u8;
+    (h, m, s)
 }

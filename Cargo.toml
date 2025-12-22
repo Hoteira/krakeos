@@ -2,6 +2,7 @@
 members = ["apps/term",
     "apps/shell",
     "apps/tmap",
+    "apps/cat",
     "elfic",
     "inkui",
     "kernel",

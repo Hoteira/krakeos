@@ -234,6 +234,106 @@ impl Ext2 {
         return self.read_indirect_pointer(second_block, third_idx);
     }
 
+    pub fn set_block_address(&mut self, inode: &mut Inode, logical_block: u32, phys: u32) -> Result<(), String> {
+        let ptrs_per_block = self.block_size / 4;
+
+        if logical_block < 12 {
+            inode.block[logical_block as usize] = phys;
+            return Ok(());
+        }
+
+        let mut indirect_idx = logical_block - 12;
+
+        if indirect_idx < ptrs_per_block as u32 {
+            if inode.block[12] == 0 {
+                let new_block = self.alloc_block();
+                if new_block == 0 { return Err(String::from("No space for indirect block")); }
+                inode.block[12] = new_block;
+                // Zero it? yes.
+                let zero = alloc::vec![0u8; self.block_size as usize];
+                self.write_disk_data(new_block as u64 * self.block_size, &zero);
+                inode.blocks += self.block_size as u32 / 512;
+            }
+            self.write_indirect_pointer(inode.block[12], indirect_idx, phys);
+            return Ok(());
+        }
+        indirect_idx -= ptrs_per_block as u32;
+
+        if indirect_idx < (ptrs_per_block * ptrs_per_block) as u32 {
+            let first_idx = indirect_idx / ptrs_per_block as u32;
+            let second_idx = indirect_idx % ptrs_per_block as u32;
+            
+            if inode.block[13] == 0 {
+                let new_block = self.alloc_block();
+                if new_block == 0 { return Err(String::from("No space for dbl-indirect block")); }
+                inode.block[13] = new_block;
+                let zero = alloc::vec![0u8; self.block_size as usize];
+                self.write_disk_data(new_block as u64 * self.block_size, &zero);
+                inode.blocks += self.block_size as u32 / 512;
+            }
+            
+            let first_block = inode.block[13];
+            let mut second_block = self.read_indirect_pointer(first_block, first_idx);
+            
+            if second_block == 0 {
+                second_block = self.alloc_block();
+                if second_block == 0 { return Err(String::from("No space for dbl-indirect L2")); }
+                self.write_indirect_pointer(first_block, first_idx, second_block);
+                let zero = alloc::vec![0u8; self.block_size as usize];
+                self.write_disk_data(second_block as u64 * self.block_size, &zero);
+                // Note: We don't update inode.blocks here because it's data usage? 
+                // Actually Ext2 counts metadata blocks in i_blocks (512-byte sectors).
+                inode.blocks += self.block_size as u32 / 512;
+            }
+            
+            self.write_indirect_pointer(second_block, second_idx, phys);
+            return Ok(());
+        }
+        indirect_idx -= (ptrs_per_block * ptrs_per_block) as u32;
+
+        // Triple Indirect (Block 14)
+        // Max index check? Ext2 usually implies limits by file size field (u32), but logically it goes on.
+        let first_idx = indirect_idx / (ptrs_per_block * ptrs_per_block) as u32;
+        let rem = indirect_idx % (ptrs_per_block * ptrs_per_block) as u32;
+        let second_idx = rem / ptrs_per_block as u32;
+        let third_idx = rem % ptrs_per_block as u32;
+
+        if inode.block[14] == 0 {
+            let new_block = self.alloc_block();
+            if new_block == 0 { return Err(String::from("No space for triple-indirect L1")); }
+            inode.block[14] = new_block;
+            let zero = alloc::vec![0u8; self.block_size as usize];
+            self.write_disk_data(new_block as u64 * self.block_size, &zero);
+            inode.blocks += self.block_size as u32 / 512;
+        }
+
+        let first_block = inode.block[14];
+        let mut second_block = self.read_indirect_pointer(first_block, first_idx);
+
+        if second_block == 0 {
+            second_block = self.alloc_block();
+            if second_block == 0 { return Err(String::from("No space for triple-indirect L2")); }
+            self.write_indirect_pointer(first_block, first_idx, second_block);
+            let zero = alloc::vec![0u8; self.block_size as usize];
+            self.write_disk_data(second_block as u64 * self.block_size, &zero);
+            inode.blocks += self.block_size as u32 / 512;
+        }
+
+        let mut third_block = self.read_indirect_pointer(second_block, second_idx);
+
+        if third_block == 0 {
+            third_block = self.alloc_block();
+            if third_block == 0 { return Err(String::from("No space for triple-indirect L3")); }
+            self.write_indirect_pointer(second_block, second_idx, third_block);
+            let zero = alloc::vec![0u8; self.block_size as usize];
+            self.write_disk_data(third_block as u64 * self.block_size, &zero);
+            inode.blocks += self.block_size as u32 / 512;
+        }
+
+        self.write_indirect_pointer(third_block, third_idx, phys);
+        Ok(())
+    }
+
     fn read_indirect_pointer(&mut self, block_addr: u32, offset: u32) -> u32 {
         if block_addr == 0 { return 0; }
         
@@ -527,11 +627,9 @@ impl VfsNode for Ext2Node {
                 if phys == 0 { return Err(String::from("No free blocks")); }
                 
                 // Link block to inode
-                if block_idx < 12 {
-                    self.inode.block[block_idx as usize] = phys;
-                } else {
-                    // Indirect blocks not implemented in write yet
-                    return Err(String::from("File too large (indirect write not impl)"));
+                if let Err(e) = fs.set_block_address(&mut self.inode, block_idx, phys) {
+                    // TODO: Free allocated block on error?
+                    return Err(e);
                 }
                 
                 self.inode.blocks += (block_size / 512) as u32;
@@ -636,6 +734,192 @@ impl VfsNode for Ext2Node {
 
     fn create_dir(&mut self, name: &str) -> Result<Box<dyn VfsNode>, String> {
         self.create_node(name, 0x41ED) // Directory | 0755 (rwxr-xr-x)
+    }
+
+    fn remove(&mut self, name: &str) -> Result<(), String> {
+        let fs = unsafe { &mut *self.fs };
+        
+        let mut buf = alloc::vec![0u8; fs.block_size as usize];
+        let mut offset = 0;
+        let total_size = self.size();
+        
+        while offset < total_size {
+            let block_off = offset - (offset % fs.block_size as u64);
+            let block_addr = fs.get_block_address(&self.inode, (block_off / fs.block_size as u64) as u32);
+            let read_off = block_addr as u64 * fs.block_size as u64;
+            
+            fs.read_disk_data(read_off, &mut buf);
+            
+            let mut block_pos = 0;
+            let mut prev_rec_len = 0;
+            let mut prev_pos = 0;
+            
+            while block_pos < fs.block_size as usize {
+                let ptr = unsafe { buf.as_ptr().add(block_pos) };
+                let entry = unsafe { &mut *(ptr as *mut DirectoryEntry) };
+                
+                if entry.rec_len == 0 { break; } 
+                
+                let name_len = entry.name_len as usize;
+                let name_ptr = unsafe { ptr.add(8) };
+                let entry_name = unsafe { core::slice::from_raw_parts(name_ptr, name_len) };
+                
+                if entry_name == name.as_bytes() {
+                    // Found it! Remove by merging with previous or clearing inode if first?
+                    // Simplified: If first in block, just set inode to 0 (unused).
+                    // If not first, extend previous entry's rec_len.
+                    
+                    let inode_to_free = entry.inode;
+                    
+                    if prev_rec_len > 0 {
+                        // Merge with previous
+                        let prev_ptr = unsafe { buf.as_mut_ptr().add(prev_pos) };
+                        let prev_entry = unsafe { &mut *(prev_ptr as *mut DirectoryEntry) };
+                        prev_entry.rec_len += entry.rec_len;
+                    } else {
+                        // First entry in block. Just invalidate inode? 
+                        // Or make it a dummy entry?
+                        // Standard way: inode = 0 indicates unused.
+                        entry.inode = 0;
+                    }
+                    
+                    // Write back
+                    fs.write_disk_data(read_off, &buf);
+                    
+                    // Decrement link count / free inode
+                    let mut target_inode = fs.read_inode(inode_to_free);
+                    
+                    let is_dir = (target_inode.mode & 0xF000) == 0x4000;
+                    if is_dir {
+                        // Check if empty
+                        // In Ext2, empty dir has links_count 2 (from parent and self 'dot')
+                        // But strictly we should check content.
+                        // Or check hard link count? Subdirs increment parent link count.
+                        // If directory has subdirs, its link count > 2?
+                        // Actually, if it has files, link count stays 2.
+                        // So we MUST read the directory content to check if empty.
+                        
+                        let mut check_buf = alloc::vec![0u8; fs.block_size as usize];
+                        let mut has_entries = false;
+                        
+                        // We need a temporary node to reuse `children` logic or manual scan?
+                        // Manual scan of first block is usually enough to see if > 2 entries.
+                        // Just check first block.
+                        if target_inode.block[0] != 0 {
+                            fs.read_disk_data(target_inode.block[0] as u64 * fs.block_size as u64, &mut check_buf);
+                            let mut check_pos = 0;
+                            let mut entries_count = 0;
+                            while check_pos < fs.block_size as usize {
+                                let c_ptr = unsafe { check_buf.as_ptr().add(check_pos) };
+                                let c_entry = unsafe { &*(c_ptr as *const DirectoryEntry) };
+                                if c_entry.rec_len == 0 { break; }
+                                if c_entry.inode != 0 {
+                                    entries_count += 1;
+                                }
+                                check_pos += c_entry.rec_len as usize;
+                            }
+                            // . and .. are 2 entries.
+                            if entries_count > 2 {
+                                return Err(String::from("Directory not empty"));
+                            }
+                        }
+                    }
+
+                    if target_inode.links_count > 0 {
+                        target_inode.links_count -= 1;
+                        if target_inode.links_count == 0 {
+                            // Free data blocks
+                            for i in 0..12 {
+                                if target_inode.block[i] != 0 {
+                                    fs.free_block(target_inode.block[i]);
+                                    target_inode.block[i] = 0;
+                                }
+                            }
+                            // TODO: Indirect blocks freeing
+                            
+                            fs.write_inode(inode_to_free, &target_inode);
+                            fs.free_inode(inode_to_free);
+                        } else {
+                            fs.write_inode(inode_to_free, &target_inode);
+                        }
+                    }
+                    
+                    return Ok(());
+                }
+                
+                prev_pos = block_pos;
+                prev_rec_len = entry.rec_len;
+                block_pos += entry.rec_len as usize;
+            }
+            offset += fs.block_size as u64;
+        }
+        Err(String::from("File not found"))
+    }
+
+    fn rename(&mut self, old_name: &str, new_name: &str) -> Result<(), String> {
+        // 1. Find inode of old_name
+        let child = self.find(old_name)?;
+        // We need the inode ID. `Ext2Node` doesn't expose it publicly via VfsNode, 
+        // but we are in Ext2Node impl so we can cast if we knew the concrete type of child.
+        // Actually, `find` returns `Box<dyn VfsNode>`.
+        // We can re-implement find logic to get inode ID or add `get_inode_id` to VfsNode (bad for abstraction?).
+        // Better: Scan directory again (duplicate effort but safe).
+        
+        let fs = unsafe { &mut *self.fs };
+        let mut buf = alloc::vec![0u8; fs.block_size as usize];
+        let mut offset = 0;
+        let total_size = self.size();
+        let mut target_inode = 0;
+        let mut file_type = 0;
+        
+        // Find Loop
+        while offset < total_size {
+            let block_off = offset - (offset % fs.block_size as u64);
+            let block_addr = fs.get_block_address(&self.inode, (block_off / fs.block_size as u64) as u32);
+            let read_off = block_addr as u64 * fs.block_size as u64;
+            
+            fs.read_disk_data(read_off, &mut buf);
+            let mut block_pos = 0;
+            while block_pos < fs.block_size as usize {
+                let ptr = unsafe { buf.as_ptr().add(block_pos) };
+                let entry = unsafe { &*(ptr as *const DirectoryEntry) };
+                if entry.rec_len == 0 { break; }
+                let name_len = entry.name_len as usize;
+                let name_ptr = unsafe { ptr.add(8) };
+                let entry_name = unsafe { core::slice::from_raw_parts(name_ptr, name_len) };
+                
+                if entry_name == old_name.as_bytes() {
+                    target_inode = entry.inode;
+                    file_type = entry.file_type;
+                    break;
+                }
+                block_pos += entry.rec_len as usize;
+            }
+            if target_inode != 0 { break; }
+            offset += fs.block_size as u64;
+        }
+        
+        if target_inode == 0 { return Err(String::from("Old file not found")); }
+        
+        // 2. Link new_name to inode
+        self.add_directory_entry(target_inode, new_name, file_type)?;
+        
+        // 3. Unlink old_name (but don't free inode!)
+        // My `remove` frees inode if links=0. 
+        // We effectively just added a link (conceptually, though Ext2 directory entries aren't hard links in the inode count sense unless we inc it).
+        // Standard `rename` is: link new, unlink old.
+        // But `add_directory_entry` doesn't increment `links_count`.
+        // So if I call `remove(old_name)`, it will decrement `links_count`.
+        // If it was 1, it becomes 0 and gets freed. Oops.
+        // We MUST increment `links_count` on the inode first!
+        
+        let mut inode = fs.read_inode(target_inode);
+        inode.links_count += 1;
+        fs.write_inode(target_inode, &inode);
+        
+        self.remove(old_name)?; // This will decrement links_count back to original.
+        
+        Ok(())
     }
 }
 
