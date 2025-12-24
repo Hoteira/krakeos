@@ -41,13 +41,16 @@ pub fn load_elf(data: &[u8], target_pml4_phys: u64, explicit_load_base: u64) -> 
     let elf = Elf64::new(data).map_err(|e| alloc::format!("ELF Parse Error: {:?}", e))?;
     let header_e_type = elf.header.e_type;
 
+    // Enforce PIE
+    if header_e_type != 3 {
+        panic!("Security Violation: Attempted to load non-PIE executable (Type {})! All user programs must be Position Independent.", header_e_type);
+    }
+
     // Use explicit base if provided, otherwise default logic (though caller should manage this for PIE)
     let load_base: u64 = if explicit_load_base > 0 {
         explicit_load_base
-    } else if elf.header.e_type == 3 { 
-        0x04000000 
     } else { 
-        0 
+        0x04000000 
     };
 
     if load_base > 0 {
