@@ -53,7 +53,9 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="bf366474-e9be-4fff-b610-ea6d6eb6be02" name="Changes" comment=".">
-      <change beforePath="$PROJECT_DIR$/kernel/src/drivers/rtc.rs" beforeDir="false" afterPath="$PROJECT_DIR$/kernel/src/drivers/rtc.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/kernel/src/interrupts/exceptions.rs" beforeDir="false" afterPath="$PROJECT_DIR$/kernel/src/interrupts/exceptions.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/kernel/src/interrupts/syscalls.rs" beforeDir="false" afterPath="$PROJECT_DIR$/kernel/src/interrupts/syscalls.rs" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />

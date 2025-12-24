@@ -32,6 +32,90 @@ pub const SYS_RENAME: u64 = 74;
 
 static mut NEXT_LOAD_BASE: u64 = 0x08000000; // Start second process at 128MB
 
+pub fn spawn_process(path: &str, fd_inheritance: Option<&[(u8, u8)]>) -> Result<u64, String> {
+    // 1. Parse Path
+    let path_parts: Vec<&str> = path.split('/').collect();
+    if path_parts.len() < 1 || !path_parts[0].starts_with('@') {
+        return Err(String::from("Invalid path format"));
+    }
+
+    let disk_part = &path_parts[0][1..];
+    let disk_id = if disk_part.starts_with("0x") || disk_part.starts_with("0X") {
+        u8::from_str_radix(&disk_part[2..], 16).unwrap_or(0xFF)
+    } else {
+        disk_part.parse::<u8>().unwrap_or(0xFF)
+    };
+
+    let actual_path = if path_parts.len() > 1 { path_parts[1..].join("/") } else { String::from("") };
+
+    // 2. Read File
+    let mut file_buf = Vec::new();
+    if let Ok(mut node) = crate::fs::vfs::open(disk_id, &actual_path) {
+        let size = node.size();
+        if size > 0 {
+            file_buf.resize(size as usize, 0);
+            if let Err(_) = node.read(0, &mut file_buf) {
+                return Err(String::from("Failed to read file"));
+            }
+        } else {
+            return Err(String::from("File empty"));
+        }
+    } else {
+        return Err(String::from("File not found"));
+    }
+
+    // 3. Determine Load Base
+    let load_base = unsafe {
+        let base = NEXT_LOAD_BASE;
+        NEXT_LOAD_BASE += 0x01000000; // Increment by 16MB
+        base
+    };
+    
+    // 4. Get PML4 (Shared for now)
+    let pml4_phys = unsafe { (*(&raw const crate::boot::BOOT_INFO)).pml4 };
+
+    // 5. Load ELF
+    match crate::fs::elf::load_elf(&file_buf, pml4_phys, load_base) {
+        Ok(entry_point) => {
+            // 6. Prepare FD Table
+            let mut new_fd_table = [-1i16; 16];
+            
+            let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+            if tm.current_task >= 0 {
+                let current_fds = tm.tasks[tm.current_task as usize].fd_table;
+                
+                if let Some(map) = fd_inheritance {
+                    for &(child_fd, parent_fd) in map {
+                        if (parent_fd as usize) < 16 && (child_fd as usize) < 16 {
+                            new_fd_table[child_fd as usize] = current_fds[parent_fd as usize];
+                        }
+                    }
+                } else {
+                    // Inherit all if no map provided
+                    new_fd_table = current_fds;
+                }
+            }
+            drop(tm); 
+
+            // INCREMENT REF COUNTS FOR INHERITED FDS
+            for &g_fd in new_fd_table.iter() {
+                if g_fd != -1 {
+                    crate::fs::vfs::increment_ref(g_fd as usize);
+                }
+            }
+
+            // 7. Create Task
+            let pid = {
+                let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+                tm.add_user_task(entry_point, pml4_phys, None, Some(new_fd_table))
+            };
+            
+            Ok(pid as u64)
+        },
+        Err(e) => Err(e),
+    }
+}
+
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub extern "C" fn syscall_entry() {
@@ -592,100 +676,19 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
             let path_slice = unsafe { core::slice::from_raw_parts(path_ptr, path_len) };
             let path_str = String::from_utf8_lossy(path_slice);
 
-            // 1. Parse Path
-            let path_parts: Vec<&str> = path_str.split('/').collect();
-             if path_parts.len() < 1 || !path_parts[0].starts_with('@') {
-                 context.rax = u64::MAX; 
-                 return;
-             }
+            let fd_map = if !fd_map_ptr.is_null() && fd_map_len > 0 {
+                unsafe { Some(core::slice::from_raw_parts(fd_map_ptr, fd_map_len)) }
+            } else {
+                None
+            };
 
-             let disk_part = &path_parts[0][1..];
-             let disk_id = if disk_part.starts_with("0x") || disk_part.starts_with("0X") {
-                 u8::from_str_radix(&disk_part[2..], 16).unwrap_or(0xFF)
-             } else {
-                 disk_part.parse::<u8>().unwrap_or(0xFF)
-             };
-             
-             let actual_path = if path_parts.len() > 1 { path_parts[1..].join("/") } else { String::from("") };
-
-             // 2. Read File
-             let mut file_buf = Vec::new();
-             if let Ok(mut node) = crate::fs::vfs::open(disk_id, &actual_path) {
-                 let size = node.size();
-                 if size > 0 {
-                     file_buf.resize(size as usize, 0);
-                     if let Ok(_) = node.read(0, &mut file_buf) {
-                         // Loaded.
-                     } else {
-                         context.rax = u64::MAX; return;
-                     }
-                 } else {
-                      context.rax = u64::MAX; return;
-                 }
-             } else {
-                 context.rax = u64::MAX; return;
-             }
-
-             // 3. Determine Load Base
-             let load_base = unsafe {
-                 let base = NEXT_LOAD_BASE;
-                 NEXT_LOAD_BASE += 0x01000000; // Increment by 16MB
-                 base
-             };
-             
-             // 4. Get PML4 (Shared for now)
-             let pml4_phys = unsafe { (*(&raw const crate::boot::BOOT_INFO)).pml4 };
-
-             // 5. Load ELF
-             match crate::fs::elf::load_elf(&file_buf, pml4_phys, load_base) {
-                 Ok(entry_point) => {
-                     // 6. Prepare FD Table
-                     let mut new_fd_table = [-1i16; 16];
-                     
-                     let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
-                     if tm.current_task >= 0 {
-                         let current_fds = tm.tasks[tm.current_task as usize].fd_table;
-                         
-                         if !fd_map_ptr.is_null() && fd_map_len > 0 {
-                             let map = unsafe { core::slice::from_raw_parts(fd_map_ptr, fd_map_len) };
-                             for &(child_fd, parent_fd) in map {
-                                 if (parent_fd as usize) < 16 && (child_fd as usize) < 16 {
-                                      new_fd_table[child_fd as usize] = current_fds[parent_fd as usize];
-                                 }
-                             }
-                         } else {
-                             // Inherit all if no map provided
-                             new_fd_table = current_fds;
-                         }
-                     }
-                     drop(tm); // Unlock before calling add_user_task (which locks)
-
-                     // INCREMENT REF COUNTS FOR INHERITED FDS
-                     for &g_fd in new_fd_table.iter() {
-                         if g_fd != -1 {
-                             crate::fs::vfs::increment_ref(g_fd as usize);
-                         }
-                     }
-
-                     // 7. Create Task
-                     // Re-lock is handled by add_user_task? No, add_user_task is a method on TaskManager structure, 
-                     // but TASK_MANAGER is the mutex. 
-                     // Wait, `add_user_task` is method of `TaskManager`.
-                     // I need to lock `TASK_MANAGER` and call it.
-                     // But I dropped the lock above.
-                     
-                     let pid = {
-                         let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
-                         tm.add_user_task(entry_point, pml4_phys, None, Some(new_fd_table))
-                     };
-                     
-                     context.rax = pid as u64;
-                 },
-                 Err(e) => {
-                     crate::debugln!("Spawn Error: {}", e);
-                     context.rax = u64::MAX;
-                 }
-             }
+            match spawn_process(&path_str, fd_map) {
+                Ok(pid) => context.rax = pid,
+                Err(e) => {
+                    crate::debugln!("Spawn Error: {}", e);
+                    context.rax = u64::MAX;
+                }
+            }
         }
 
         67 => { // SYS_CLOSE

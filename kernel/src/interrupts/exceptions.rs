@@ -166,8 +166,13 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
             // Global Shortcut Interception
             crate::debugln!("Global Shortcut: Super + {}", key);
             
-            // Example: Handle specific shortcuts here
-            // if key == 't' as u32 { spawn_terminal(); }
+            if key == 't' as u32 { 
+                crate::debugln!("Spawning terminal...");
+                match crate::interrupts::syscalls::spawn_process("@0xE0/sys/bin/term.elf", None) {
+                    Ok(pid) => crate::debugln!("Terminal spawned with PID: {}", pid),
+                    Err(e) => crate::debugln!("Failed to spawn terminal: {}", e),
+                }
+            }
             
             // Do NOT forward to userland
         } else {
