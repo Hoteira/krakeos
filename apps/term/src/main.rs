@@ -139,7 +139,7 @@ pub extern "C" fn _start() -> ! {
     win.y = y;
     
     {
-        if let Ok(mut file) = File::open("@0xE0/sys/fonts/CaskaydiaNerd.ttf") {
+        if let Ok(mut file) = File::open("@0xE0/sys/fonts/CaskaydiaMonoNerdFontPropo-Regular.ttf") {
             let size = file.size();
             let buffer_addr = std::memory::malloc(size);
             let buffer = unsafe { core::slice::from_raw_parts_mut(buffer_addr as *mut u8, size) };
