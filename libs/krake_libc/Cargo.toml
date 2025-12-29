@@ -1,0 +1,10 @@
+[package]
+name = "krake_libc"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+std = { path = "../../std" }
+
+[lib]
+crate-type = ["staticlib", "rlib"]

@@ -1,0 +1,7 @@
+[package]
+name = "stage4"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[dependencies]

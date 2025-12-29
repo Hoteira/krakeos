@@ -1,0 +1,11 @@
+[package]
+name = "userland"
+version = "0.1.0"
+edition = "2024"
+
+# No workspace inheritance if not needed, keep it simple for standalone binary
+[dependencies]
+std = { path="../std" }
+inkui = { path="../inkui" }
+asvgard = { version = "0.2.3", default-features = false}
+titanf = { version = "2.3.2", default-features = false}

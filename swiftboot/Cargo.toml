@@ -1,0 +1,38 @@
+[workspace]
+members = [
+    "bootloader",
+    "stage2",
+    "stage3",
+    "stage4",
+    "cargo-compile",
+]
+
+resolver="2"
+
+[workspace.package]
+version = "0.1.0"
+authors = ["Hoteira", ""]
+edition = "2024"
+
+[profile.dev.package.bootloader]
+opt-level = "s"
+codegen-units = 1
+debug = false
+overflow-checks = false
+
+[profile.release.package.bootloader]
+opt-level = "s"
+codegen-units = 1
+debug = false
+overflow-checks = false
+
+[profile.dev]
+panic = "abort"
+opt-level = 1
+lto = false
+
+[profile.release]
+panic = "abort"
+opt-level = 1
+lto = false
+

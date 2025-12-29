@@ -1,0 +1,12 @@
+[package]
+name = "inkui"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[dependencies]
+
+std = { path = "../std" }
+
+titanf = { version="2.3.2", default-features = false }
+asvgard = { version="0.2.3", default-features = false }

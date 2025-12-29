@@ -1,0 +1,74 @@
+
+pub const VIRTIO_CAP_COMMON: u8 = 1;
+pub const VIRTIO_CAP_NOTIFY: u8 = 2;
+pub const VIRTIO_CAP_ISR: u8 = 3;
+pub const VIRTIO_CAP_DEVICE: u8 = 4;
+pub const VIRTIO_CAP_PCI: u8 = 5;
+
+
+
+pub const OFF_DEVICE_FEATURE_SELECT: usize = 0x00;
+pub const OFF_DEVICE_FEATURE: usize = 0x04;
+pub const OFF_DRIVER_FEATURE_SELECT: usize = 0x08;
+pub const OFF_DRIVER_FEATURE: usize = 0x0C;
+pub const OFF_MSIX_CONFIG: usize = 0x10;
+pub const OFF_NUM_QUEUES: usize = 0x12;
+pub const OFF_DEVICE_STATUS: usize = 0x14;
+pub const OFF_CONFIG_GENERATION: usize = 0x15;
+pub const OFF_QUEUE_SELECT: usize = 0x16;
+pub const OFF_QUEUE_SIZE: usize = 0x18;
+pub const OFF_QUEUE_MSIX_VECTOR: usize = 0x1A;
+pub const OFF_QUEUE_ENABLE: usize = 0x1C;
+pub const OFF_QUEUE_NOTIFY_OFF: usize = 0x1E;
+pub const OFF_QUEUE_DESC: usize = 0x20;
+pub const OFF_QUEUE_DRIVER: usize = 0x28;
+pub const OFF_QUEUE_DEVICE: usize = 0x30;
+
+
+pub const STATUS_ACKNOWLEDGE: u8 = 1;
+pub const STATUS_DRIVER: u8 = 2;
+pub const STATUS_DRIVER_OK: u8 = 4;
+pub const STATUS_FEATURES_OK: u8 = 8;
+pub const STATUS_DEVICE_NEEDS_RESET: u8 = 64;
+pub const STATUS_FAILED: u8 = 128;
+
+
+pub const VIRTIO_F_VERSION_1: u64 = 1 << 32;
+pub const VIRTIO_GPU_F_VIRGL: u32 = 0;
+pub const VIRTIO_GPU_F_EDID: u32 = 1;
+
+pub const VIRTIO_GPU_FLAG_FENCE: u32 = 1 << 0;
+
+
+pub const VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM: u32 = 1;
+pub const VIRTIO_GPU_FORMAT_A8R8G8B8_UNORM: u32 = 2;
+
+
+pub const VIRTIO_GPU_CMD_GET_DISPLAY_INFO: u32 = 0x0100;
+pub const VIRTIO_GPU_CMD_RESOURCE_CREATE_2D: u32 = 0x0101;
+pub const VIRTIO_GPU_CMD_RESOURCE_UNREF: u32 = 0x0102;
+pub const VIRTIO_GPU_CMD_SET_SCANOUT: u32 = 0x0103;
+pub const VIRTIO_GPU_CMD_RESOURCE_FLUSH: u32 = 0x0104;
+pub const VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D: u32 = 0x0105;
+pub const VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING: u32 = 0x0106;
+pub const VIRTIO_GPU_CMD_RESOURCE_DETACH_BACKING: u32 = 0x0107;
+pub const VIRTIO_GPU_CMD_GET_CAPSET_INFO: u32 = 0x0108;
+pub const VIRTIO_GPU_CMD_GET_CAPSET: u32 = 0x0109;
+
+
+pub const VIRTIO_GPU_CMD_UPDATE_CURSOR: u32 = 0x0300;
+pub const VIRTIO_GPU_CMD_MOVE_CURSOR: u32 = 0x0301;
+
+
+pub const VIRTIO_GPU_RESP_OK_NODATA: u32 = 0x1100;
+pub const VIRTIO_GPU_RESP_OK_DISPLAY_INFO: u32 = 0x1101;
+pub const VIRTIO_GPU_RESP_OK_CAPSET_INFO: u32 = 0x1102;
+pub const VIRTIO_GPU_RESP_OK_CAPSET: u32 = 0x1103;
+
+
+pub const VIRTIO_GPU_RESP_ERR_UNSPEC: u32 = 0x1200;
+pub const VIRTIO_GPU_RESP_ERR_OUT_OF_MEMORY: u32 = 0x1201;
+pub const VIRTIO_GPU_RESP_ERR_INVALID_SCANOUT_ID: u32 = 0x1202;
+pub const VIRTIO_GPU_RESP_ERR_INVALID_RESOURCE_ID: u32 = 0x1203;
+pub const VIRTIO_GPU_RESP_ERR_INVALID_CONTEXT_ID: u32 = 0x1204;
+pub const VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER: u32 = 0x1205;

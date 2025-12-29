@@ -1,0 +1,33 @@
+[workspace]
+members = [
+    "apps/term",
+    "apps/shell",
+    "apps/term",
+    "apps/tmap",
+    "apps/cat",
+    "apps/taskbar",
+    "libs/krake_libc",
+    "elfic",
+    "inkui",
+    "kernel",
+    "std",
+    "userland",
+]
+
+resolver="2"
+
+[workspace.package]
+version = "0.1.0"
+authors = ["Hoteira"]
+edition = "2024"
+
+[profile.dev]
+panic = "abort"
+opt-level = 2
+lto = false
+
+[profile.release]
+panic = "abort"
+opt-level = 2
+lto = false
+

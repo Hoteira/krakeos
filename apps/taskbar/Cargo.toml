@@ -1,0 +1,8 @@
+[package]
+name = "taskbar"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+std = { path = "../../std" }
+inkui = { path = "../../inkui" }
