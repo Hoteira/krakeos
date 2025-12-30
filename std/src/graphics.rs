@@ -88,6 +88,12 @@ pub fn update_window(window: &Window) {
     }
 }
 
+pub fn update_window_area(wid: usize, x: usize, y: usize, w: usize, h: usize) {
+    unsafe {
+        crate::os::syscall5(56, wid as u64, x as u64, y as u64, w as u64, h as u64);
+    }
+}
+
 pub fn get_screen_width() -> usize {
     unsafe { syscall(44, 0, 0, 0) as usize }
 }

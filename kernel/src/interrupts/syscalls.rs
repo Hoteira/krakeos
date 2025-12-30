@@ -20,6 +20,7 @@ pub const SYS_REMOVE_WINDOW: u64 = 23;
 pub const SYS_GET_WIDTH: u64 = 44;
 pub const SYS_GET_HEIGHT: u64 = 45;
 pub const SYS_UPDATE_WINDOW: u64 = 51;
+pub const SYS_UPDATE_WINDOW_AREA: u64 = 56;
 pub const SYS_EXIT: u64 = 60;
 
 pub const SYS_POLL: u64 = 70;
@@ -255,6 +256,24 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
             unsafe {
                 let w = *window_ptr;
                 (*(&raw mut COMPOSER)).resize_window(w);
+            }
+            context.rax = 1;
+        }
+
+        SYS_UPDATE_WINDOW_AREA => {
+            let wid = context.rdi as usize;
+            let x = context.rsi as i32;
+            let y = context.rdx as i32;
+            let w = context.r10 as u32;
+            let h = context.r8 as u32;
+
+            unsafe {
+                let composer = &mut *(&raw mut COMPOSER);
+                if let Some(win) = composer.find_window_id(wid) {
+                    let global_x = win.x as i32 + x;
+                    let global_y = win.y as i32 + y;
+                    composer.update_window_area_rect(global_x, global_y, w, h);
+                }
             }
             context.rax = 1;
         }

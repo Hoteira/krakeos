@@ -177,6 +177,10 @@ impl Window {
         graphics::update_window(&std_window);
     }
 
+    pub fn update_area(&mut self, x: usize, y: usize, w: usize, h: usize) {
+        graphics::update_window_area(self.id, x, y, w, h);
+    }
+
     pub fn resize(&mut self, width: usize, height: usize, can_move: bool) {
         if !self.can_resize { return; }
         self.width = width;

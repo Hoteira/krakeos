@@ -41,6 +41,28 @@ pub unsafe fn syscall4(num: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64) -> 
     result
 }
 
+pub unsafe fn syscall5(num: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> u64 {
+    let result: u64;
+
+    unsafe {
+        asm!(
+            "syscall",
+            in("rax") num,
+            in("rdi") arg1,
+            in("rsi") arg2,
+            in("rdx") arg3,
+            in("r10") arg4,
+            in("r8") arg5,
+            lateout("rax") result,
+            out("rcx") _,
+            out("r11") _,
+            options(nostack, preserves_flags)
+        );
+    }
+
+    result
+}
+
 pub fn print(s: &str) {
     unsafe {
         syscall(1, s.as_ptr() as u64, s.len() as u64, 0);

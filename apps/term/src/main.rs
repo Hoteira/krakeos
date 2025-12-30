@@ -411,7 +411,33 @@ pub extern "C" fn _start() -> ! {
                 }
             }
             win.draw();
-            win.update();
+            
+            
+            let mut partial_update = false;
+            if let Some(widget) = win.find_widget_by_id(2) {
+                if let inkui::widget::Widget::Label { text, geometry, .. } = widget {
+                    let line_height = (text.size as f32 * 1.2) as usize;
+                    let scroll_y = geometry.scroll_offset_y;
+                    
+                    
+                    let row_y_in_widget = term_buffer.cursor_row * line_height;
+                    
+                    if row_y_in_widget >= scroll_y {
+                        let relative_y = row_y_in_widget - scroll_y;
+                        let screen_y = geometry.y + geometry.padding + relative_y;
+                        
+                        
+                        if screen_y + line_height <= win.height {
+                            win.update_area(0, screen_y, win.width, line_height + 5);
+                            partial_update = true;
+                        }
+                    }
+                }
+            }
+
+            if !partial_update {
+                win.update();
+            }
         }
 
         std::os::yield_task();
