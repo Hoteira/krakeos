@@ -644,31 +644,31 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
             let exit_code = context.rdi;
             debugln!("[Syscall] Process exited with code {}", exit_code);
             {
-                
-                let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();                
+
+                let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
                 let current = tm.current_task;
                 if current >= 0 {
                     let task = &mut tm.tasks[current as usize];
                     task.exit_code = exit_code;
                     task.state = crate::interrupts::task::TaskState::Zombie;
-                    
-                    
+
+
                     unsafe {
                         (*(&raw mut COMPOSER)).remove_windows_by_pid(current as u64);
                     }
 
-                    
+
                     for i in 0..16 {
                         let global = task.fd_table[i];
                         if global != -1 {
-                             crate::fs::vfs::close_file(global as usize);
-                             task.fd_table[i] = -1;
+                            crate::fs::vfs::close_file(global as usize);
+                            task.fd_table[i] = -1;
                         }
                     }
                 }
             }
-            
-            
+
+
             unsafe {
                 core::arch::asm!("sti");
                 loop { core::arch::asm!("hlt"); }
@@ -1042,8 +1042,16 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
              }
         }
         
-        76 => { 
-            
+        76 => {
+            let duration = context.rdi;
+            let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+            let current = tm.current_task;
+
+            if current >= 0 {
+                let task = &mut tm.tasks[current as usize];
+                task.wake_ticks = unsafe { crate::interrupts::task::SYSTEM_TICKS } + duration;
+                task.state = crate::interrupts::task::TaskState::Sleeping;
+            }
         }
 
         _ => {
@@ -1051,7 +1059,6 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
             context.rax = u64::MAX;
         }
     }
-    
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -303,10 +303,4 @@ pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
     }
 }
 
-
-#[allow(dead_code)]
-pub extern "x86-interrupt" fn timer_handler(_info: &mut StackFrame) {
-    unsafe {
-        (*(&raw const crate::interrupts::pic::PICS)).end_interrupt(TIMER_INT);
-    }
-}
+pub const YIELD_INT: u8 = 129;

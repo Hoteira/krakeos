@@ -51,11 +51,13 @@ pub fn sleep(ms: u64) {
     unsafe {
         syscall(76, ms, 0, 0);
     }
+
+    yield_task();
 }
 
 pub fn yield_task() {
     unsafe {
-        asm!("int 0x20");
+        asm!("int 0x81");
     }
 
 }
