@@ -12,7 +12,7 @@ pub type EventHandler = fn(&mut Window, WidgetId);
 #[derive(Debug, Clone)]
 pub struct Text {
     pub text: String,
-    pub size: usize,
+    pub size: f32,
     pub color: Color,
     pub align: Align,
     pub font: String,
@@ -25,7 +25,7 @@ impl Text {
     pub  fn new(text: &str) -> Self {
         Text {
             text: String::from(text),
-            size: 12,
+            size: 12.0,
             color: Color::rgb(0, 0, 0),
             align: Align::Left,
             font: String::from("default"),
@@ -315,7 +315,7 @@ impl Widget {
         self
     }
 
-    pub fn set_text_size(mut self, size: usize) -> Self {
+    pub fn set_text_size(mut self, size: f32) -> Self {
         match &mut self {
             Widget::Button { text, .. } |
             Widget::Label { text, .. } |
@@ -776,7 +776,7 @@ impl Widget {
 
                 if let Some(font) = font {
                     if !text.text.is_empty() {
-                        let text_y = geometry.y + geometry.margin + (geometry.height / 2) + (text.size / 3);
+                        let text_y = geometry.y + geometry.margin + (geometry.height / 2) + (text.size as usize / 3);
                         
                         geometry.content_height = crate::graphics::primitives::draw_text_formatted(
                             framebuffer,
@@ -785,7 +785,7 @@ impl Widget {
                             text_y,
                             &text.text,
                             font,
-                            text.size as f32,
+                            text.size,
                             text.color,
                             geometry.width.saturating_sub(geometry.padding * 2),
                             geometry.scroll_offset_y,
@@ -819,7 +819,7 @@ impl Widget {
                 if let Some(font) = font {
                     if !text.text.is_empty() {
                         
-                        let text_y = geometry.y + geometry.margin + geometry.padding + text.size;
+                        let text_y = geometry.y + geometry.margin + geometry.padding + text.size as usize;
                         
                         geometry.content_height = crate::graphics::primitives::draw_text_formatted(
                             framebuffer,
@@ -828,7 +828,7 @@ impl Widget {
                             text_y, 
                             &text.text,
                             font,
-                            text.size as f32,
+                            text.size,
                             text.color,
                             geometry.width.saturating_sub(geometry.padding * 2),
                             geometry.scroll_offset_y,
@@ -861,7 +861,7 @@ impl Widget {
                         text.text.clone()
                     };
                     
-                    let text_y = geometry.y + geometry.margin + geometry.padding + text.size; 
+                    let text_y = geometry.y + geometry.margin + geometry.padding + text.size as usize; 
 
                     geometry.content_height = crate::graphics::primitives::draw_text_formatted(
                         framebuffer,
@@ -870,7 +870,7 @@ impl Widget {
                         text_y,
                         &display_text,
                         font,
-                        text.size as f32,
+                        text.size,
                         text.color,
                         geometry.width.saturating_sub(geometry.padding * 2),
                         geometry.scroll_offset_y,

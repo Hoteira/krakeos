@@ -184,7 +184,7 @@ pub extern "C" fn _start() -> ! {
         .y(Size::Relative(5))
         .padding(Size::Absolute(10))
         .set_text_color(Color::rgb(255, 255, 255)) 
-        .set_text_size(14)
+        .set_text_size(14.0)
         .background_color(Color::rgba(0, 0, 0, 0));
 
     root = root.add_child(term_display);
