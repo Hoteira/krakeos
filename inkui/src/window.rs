@@ -228,8 +228,8 @@ impl Window {
     }
 
     pub fn event_loop(&mut self) {
-        let mut key_buffer = String::with_capacity(64);
         let mut events: [Event; 64] = [Event::None; 64];
+        let mut any_redraw = false;
 
         unsafe {
             syscall(52, self.id as u64, events.as_mut_ptr() as u64, 64);
@@ -259,8 +259,7 @@ impl Window {
                         if let Some(id) = scroll_target {
                             if let Some(w) = self.find_widget_by_id_mut(id) {
                                 w.handle_scroll(e.scroll);
-                                self.draw_widget(id);
-                                self.update();
+                                any_redraw = true;
                             }
                         }
                     }
@@ -276,8 +275,7 @@ impl Window {
                             self.focus = new_id;
                             if let Some(new_w) = self.find_widget_by_id_mut(self.focus) {
                                 new_w.set_focused(true);
-                                self.draw_widget(self.focus);
-                                self.update();
+                                any_redraw = true;
                             }
                         }
                     }
@@ -291,6 +289,7 @@ impl Window {
 
                             if let Some(handler) = handler_opt {
                                 handler(self, id);
+                                any_redraw = true;
                             }
                         }
                     }
@@ -304,11 +303,10 @@ impl Window {
 
                     if e.key == 9 { 
                         self.focus_next();
-                        return;
+                        continue;
                     }
 
                     if self.focus != 0 {
-                        let mut needs_redraw = false;
                         let mut click_handler: Option<fn(&mut Window, WidgetId)> = None;
 
                         if let Some(widget) = self.find_widget_by_id_mut(self.focus) {
@@ -326,7 +324,7 @@ impl Window {
                                             for _ in 0..e.repeat {
                                                 widget.handle_key(c);
                                             }
-                                            needs_redraw = true;
+                                            any_redraw = true;
                                         }
                                     }
                                 },
@@ -336,35 +334,26 @@ impl Window {
                                             for _ in 0..e.repeat {
                                                 widget.handle_key(c);
                                             }
-                                            needs_redraw = true;
+                                            any_redraw = true;
                                         }
                                     }
                                 }
                             }
                         }
                         
-                        if needs_redraw {
-                            self.draw_widget(self.focus);
-                            self.update();
-                        }
-
                         if let Some(handler) = click_handler {
                             handler(self, self.focus);
-                        }
-                    }
-                    
-                    if let Some(c) = char_opt {
-                        for _ in 0..e.repeat {
-                            if c == '\x08' {
-                                if !key_buffer.is_empty() { key_buffer.pop(); }
-                            } else {
-                                key_buffer.push(c);
-                            }
+                            any_redraw = true;
                         }
                     }
                 },
                 _ => {},
             }
+        }
+
+        if any_redraw {
+            self.draw();
+            self.update();
         }
     }
 

@@ -190,6 +190,8 @@ pub extern "C" fn _start() -> ! {
     root = root.add_child(term_display);
     win.children.push(root);
     win.show();
+    win.draw();
+    win.update();
     
     let mut term_buffer = TerminalBuffer::new();
     let mut pipe_buf = [0u8; 4096];
@@ -234,10 +236,16 @@ pub extern "C" fn _start() -> ! {
             }
         }
 
-        
+        let old_cursor_row = term_buffer.cursor_row;
+        let mut old_scroll_y = 0;
+        if let Some(w) = win.find_widget_by_id(2) {
+            old_scroll_y = w.geometry().scroll_offset_y;
+        }
+
         let n = std::os::file_read(unsafe { TERM_READ_FD }, &mut pipe_buf);
         if n > 0 && n != usize::MAX {
             let mut i = 0;
+            let mut has_newline = false;
             while i < n {
                 let b = pipe_buf[i];
                 if b == 0x08 { 
@@ -245,6 +253,7 @@ pub extern "C" fn _start() -> ! {
                     i += 1;
                 } else if b == b'\n' || b == b'\r' {
                     term_buffer.newline();
+                    has_newline = true;
                     i += 1;
                 } else if b == 0x1B { 
                     if i + 1 < n && pipe_buf[i+1] == b'[' {
@@ -414,22 +423,26 @@ pub extern "C" fn _start() -> ! {
             
             
             let mut partial_update = false;
-            if let Some(widget) = win.find_widget_by_id(2) {
-                if let inkui::widget::Widget::Label { text, geometry, .. } = widget {
-                    let line_height = (text.size as f32 * 1.2) as usize;
-                    let scroll_y = geometry.scroll_offset_y;
-                    
-                    
-                    let row_y_in_widget = term_buffer.cursor_row * line_height;
-                    
-                    if row_y_in_widget >= scroll_y {
-                        let relative_y = row_y_in_widget - scroll_y;
-                        let screen_y = geometry.y + geometry.padding + relative_y;
+            let new_scroll_y = if let Some(w) = win.find_widget_by_id(2) { w.geometry().scroll_offset_y } else { 0 };
+
+            if !has_newline && old_scroll_y == new_scroll_y && old_cursor_row == term_buffer.cursor_row {
+                if let Some(widget) = win.find_widget_by_id(2) {
+                    if let inkui::widget::Widget::Label { text, geometry, .. } = widget {
+                        let line_height = (text.size as f32 * 1.2) as usize;
+                        let scroll_y = geometry.scroll_offset_y;
                         
                         
-                        if screen_y + line_height <= win.height {
-                            win.update_area(0, screen_y, win.width, line_height + 5);
-                            partial_update = true;
+                        let row_y_in_widget = term_buffer.cursor_row * line_height;
+                        
+                        if row_y_in_widget >= scroll_y {
+                            let relative_y = row_y_in_widget - scroll_y;
+                            let screen_y = geometry.y + geometry.padding + relative_y;
+                            
+                            
+                            if screen_y + line_height <= win.height {
+                                win.update_area(0, screen_y, win.width, line_height + 5);
+                                partial_update = true;
+                            }
                         }
                     }
                 }

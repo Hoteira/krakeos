@@ -233,26 +233,54 @@ pub extern "C" fn _start() -> ! {
                              
                         } else {
                             
-                            let prog_path = if parsed.cmd.starts_with('@') {
-                                parsed.cmd.clone()
+                            let mut prog_path = String::new();
+                            let mut found = false;
+
+                            if parsed.cmd.starts_with('@') {
+                                prog_path = parsed.cmd.clone();
+                                found = true;
                             } else {
+                                
                                 let mut p = String::from("@0xE0/sys/bin/");
                                 p.push_str(&parsed.cmd);
                                 if !parsed.cmd.ends_with(".elf") {
                                     p.push_str(".elf");
                                 }
-                                p
-                            };
+                                
+                                if let Ok(_) = std::fs::File::open(&p) {
+                                    prog_path = p;
+                                    found = true;
+                                }
+
+                                
+                                if !found {
+                                    let apps_dir = format!("@0xE0/apps/{}", parsed.cmd);
+                                    if let Ok(entries) = std::fs::read_dir(&apps_dir) {
+                                        for entry in entries {
+                                            if entry.file_type == std::fs::FileType::File && entry.name.ends_with(".elf") {
+                                                prog_path = format!("{}/{}", apps_dir, entry.name);
+                                                found = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             
-                            let map = [
-                                (0, stdin_fd as u8),
-                                (1, stdout_fd as u8),
-                                (2, 2)
-                            ];
-                            
-                            let pid = std::os::spawn_with_fds(&prog_path, &map);
-                            if pid != usize::MAX {
-                                children_pids.push(pid);
+                            if found {
+                                let map = [
+                                    (0, stdin_fd as u8),
+                                    (1, stdout_fd as u8),
+                                    (2, 2)
+                                ];
+                                
+                                let pid = std::os::spawn_with_fds(&prog_path, &map);
+                                if pid != usize::MAX {
+                                    children_pids.push(pid);
+                                } else {
+                                    let err = format!("Failed to spawn: {}\n", prog_path);
+                                    std::os::file_write(STDOUT_FD, err.as_bytes());
+                                }
                             } else {
                                 let err = format!("Command not found: {}\n", parsed.cmd);
                                 std::os::file_write(STDOUT_FD, err.as_bytes());

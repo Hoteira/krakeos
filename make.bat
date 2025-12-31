@@ -38,7 +38,7 @@ cd apps\doomgeneric-master\doomgeneric
 clang -target x86_64-unknown-elf -ffreestanding -fno-stack-protector -fPIC -I ..\..\..\libs\krake_libc\include -c *.c
 cd ..\..\..
 ld.lld -pie --entry _start -o apps\doomgeneric-master\doomgeneric\doom.elf apps\doomgeneric-master\doomgeneric\*.o target\bits64pie\release\libkrake_libc.a
-copy "apps\doomgeneric-master\doomgeneric\doom.elf" "tree\sys\bin\doom.elf"
+copy "apps\doomgeneric-master\doomgeneric\doom.elf" "tree\apps\doom\doom.elf"
 
 wsl dd if=build/kernel.bin of=build/disk.img seek=6144 bs=512 conv=notrunc
 
