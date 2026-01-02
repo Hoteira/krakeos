@@ -185,6 +185,7 @@ pub fn get_display_info() -> Option<(u32, u32)> {
         &[core::mem::size_of_val(&req_info) as u32],
         &[&resp_info as *const _ as u64],
         &[core::mem::size_of_val(&resp_info) as u32],
+        true,
     );
 
     if resp_info.hdr.type_ == VIRTIO_GPU_RESP_OK_DISPLAY_INFO {
@@ -214,6 +215,7 @@ pub fn start_gpu(width: u32, height: u32, phys_buf1: u64, phys_buf2: u64) {
         &[core::mem::size_of_val(&req_info) as u32],
         &[&resp_info as *const _ as u64],
         &[core::mem::size_of_val(&resp_info) as u32],
+        true,
     );
 
     debugln!("VirtIO GPU: Display Info - Enabled: {}, Flags: {}",
@@ -248,6 +250,7 @@ pub fn start_gpu(width: u32, height: u32, phys_buf1: u64, phys_buf2: u64) {
             &[core::mem::size_of_val(&req_create) as u32],
             &[&resp_create as *const _ as u64],
             &[core::mem::size_of_val(&resp_create) as u32],
+            true,
         );
         debugln!("VirtIO GPU: Create Resource {} Resp: {:#x}", id, resp_create.type_);
 
@@ -284,6 +287,7 @@ pub fn start_gpu(width: u32, height: u32, phys_buf1: u64, phys_buf2: u64) {
             &[core::mem::size_of_val(&req_attach) as u32],
             &[&resp_attach as *const _ as u64],
             &[core::mem::size_of_val(&resp_attach) as u32],
+            true,
         );
         debugln!("VirtIO GPU: Attach Resource {} Resp: {:#x}", id, resp_attach.type_);
     };
@@ -314,6 +318,7 @@ pub fn start_gpu(width: u32, height: u32, phys_buf1: u64, phys_buf2: u64) {
         &[core::mem::size_of_val(&req_scanout) as u32],
         &[&resp_scanout as *const _ as u64],
         &[core::mem::size_of_val(&resp_scanout) as u32],
+        true,
     );
     debugln!("VirtIO GPU: Set Scanout (Res 1) Resp: {:#x}", resp_scanout.type_);
 
@@ -343,6 +348,7 @@ pub fn transfer_and_flush(resource_id: u32, width: u32, height: u32) {
         &[core::mem::size_of_val(&req_transfer) as u32],
         &[&resp_transfer as *const _ as u64],
         &[core::mem::size_of_val(&resp_transfer) as u32],
+        false, 
     );
 
     let req_flush = VirtioGpuResourceFlush {
@@ -366,58 +372,78 @@ pub fn transfer_and_flush(resource_id: u32, width: u32, height: u32) {
         &[core::mem::size_of_val(&req_flush) as u32],
         &[&resp_flush as *const _ as u64],
         &[core::mem::size_of_val(&resp_flush) as u32],
+        true, 
     );
 }
+
+pub static mut TRANSFER_REQUESTS: [VirtioGpuTransferToHost2d; 128] = [VirtioGpuTransferToHost2d {
+    hdr: VirtioGpuCtrlHeader { type_: 0, flags: 0, fence_id: 0, ctx_id: 0, ring_idx: 0, padding: [0; 3] },
+    r: VirtioGpuRect { x: 0, y: 0, width: 0, height: 0 },
+    offset: 0, resource_id: 0, padding: 0
+}; 128];
+
+pub static mut FLUSH_REQUESTS: [VirtioGpuResourceFlush; 128] = [VirtioGpuResourceFlush {
+    hdr: VirtioGpuCtrlHeader { type_: 0, flags: 0, fence_id: 0, ctx_id: 0, ring_idx: 0, padding: [0; 3] },
+    r: VirtioGpuRect { x: 0, y: 0, width: 0, height: 0 },
+    resource_id: 0, padding: 0
+}; 128];
+
+pub static mut REQ_IDX: usize = 0;
 
 pub fn flush(x: u32, y: u32, width: u32, height: u32, screen_width: u32, resource_id: u32) {
     let offset = (y as u64 * screen_width as u64 + x as u64) * 4;
 
-    let req_transfer = VirtioGpuTransferToHost2d {
-        hdr: VirtioGpuCtrlHeader {
-            type_: VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D,
-            flags: 0,
-            fence_id: 0,
-            ctx_id: 0,
-            ring_idx: 0,
-            padding: [0; 3],
-        },
-        r: VirtioGpuRect { x, y, width, height },
-        offset,
-        resource_id,
-        padding: 0,
-    };
-    let resp_transfer: VirtioGpuCtrlHeader = unsafe { core::mem::zeroed() };
+    unsafe {
+        let idx = REQ_IDX % 128;
+        REQ_IDX += 1;
 
-    send_command_queue(
-        0,
-        &[&req_transfer as *const _ as u64],
-        &[core::mem::size_of_val(&req_transfer) as u32],
-        &[&resp_transfer as *const _ as u64],
-        &[core::mem::size_of_val(&resp_transfer) as u32],
-    );
+        TRANSFER_REQUESTS[idx] = VirtioGpuTransferToHost2d {
+            hdr: VirtioGpuCtrlHeader {
+                type_: VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D,
+                flags: 0,
+                fence_id: 0,
+                ctx_id: 0,
+                ring_idx: 0,
+                padding: [0; 3],
+            },
+            r: VirtioGpuRect { x, y, width, height },
+            offset,
+            resource_id,
+            padding: 0,
+        };
 
-    let req_flush = VirtioGpuResourceFlush {
-        hdr: VirtioGpuCtrlHeader {
-            type_: VIRTIO_GPU_CMD_RESOURCE_FLUSH,
-            flags: 0,
-            fence_id: 0,
-            ctx_id: 0,
-            ring_idx: 0,
-            padding: [0; 3],
-        },
-        r: VirtioGpuRect { x, y, width, height },
-        resource_id,
-        padding: 0,
-    };
-    let resp_flush: VirtioGpuCtrlHeader = unsafe { core::mem::zeroed() };
+        send_command_queue(
+            0,
+            &[&TRANSFER_REQUESTS[idx] as *const _ as u64],
+            &[core::mem::size_of::<VirtioGpuTransferToHost2d>() as u32],
+            &[],
+            &[],
+            false, 
+        );
 
-    send_command_queue(
-        0,
-        &[&req_flush as *const _ as u64],
-        &[core::mem::size_of_val(&req_flush) as u32],
-        &[&resp_flush as *const _ as u64],
-        &[core::mem::size_of_val(&resp_flush) as u32],
-    );
+        FLUSH_REQUESTS[idx] = VirtioGpuResourceFlush {
+            hdr: VirtioGpuCtrlHeader {
+                type_: VIRTIO_GPU_CMD_RESOURCE_FLUSH,
+                flags: 0,
+                fence_id: 0,
+                ctx_id: 0,
+                ring_idx: 0,
+                padding: [0; 3],
+            },
+            r: VirtioGpuRect { x, y, width, height },
+            resource_id,
+            padding: 0,
+        };
+
+        send_command_queue(
+            0,
+            &[&FLUSH_REQUESTS[idx] as *const _ as u64],
+            &[core::mem::size_of::<VirtioGpuResourceFlush>() as u32],
+            &[],
+            &[],
+            true, // We still wait for flush to ensure frame is visible
+        );
+    }
 }
 
 pub fn set_scanout(resource_id: u32, width: u32, height: u32) {
@@ -442,6 +468,7 @@ pub fn set_scanout(resource_id: u32, width: u32, height: u32) {
         &[core::mem::size_of_val(&req_scanout) as u32],
         &[&resp_scanout as *const _ as u64],
         &[core::mem::size_of_val(&resp_scanout) as u32],
+        true,
     );
 }
 

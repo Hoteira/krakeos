@@ -31,6 +31,7 @@ pub fn setup_cursor(phys_ptr: u64, width: u32, height: u32, x: u32, y: u32) {
         &[core::mem::size_of_val(&req_create) as u32],
         &[&resp_create as *const _ as u64],
         &[core::mem::size_of_val(&resp_create) as u32],
+        true,
     );
 
     
@@ -67,6 +68,7 @@ pub fn setup_cursor(phys_ptr: u64, width: u32, height: u32, x: u32, y: u32) {
         &[core::mem::size_of_val(&req_attach) as u32],
         &[&resp_attach as *const _ as u64],
         &[core::mem::size_of_val(&resp_attach) as u32],
+        true,
     );
 
     
@@ -92,6 +94,7 @@ pub fn setup_cursor(phys_ptr: u64, width: u32, height: u32, x: u32, y: u32) {
         &[core::mem::size_of_val(&req_transfer) as u32],
         &[&resp_transfer as *const _ as u64],
         &[core::mem::size_of_val(&resp_transfer) as u32],
+        true,
     );
 
     
@@ -123,6 +126,7 @@ pub fn setup_cursor(phys_ptr: u64, width: u32, height: u32, x: u32, y: u32) {
         &[core::mem::size_of_val(&req_update) as u32],
         &[], 
         &[],
+        true,
     );
     debugln!("VirtIO GPU: Hardware Cursor Setup & Update Sent (Queue 1).");
 }
@@ -156,5 +160,6 @@ pub fn move_cursor(x: u32, y: u32) {
         &[core::mem::size_of_val(&req_move) as u32],
         &[], 
         &[],
+        true,
     );
 }

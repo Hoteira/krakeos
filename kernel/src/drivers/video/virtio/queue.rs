@@ -13,6 +13,7 @@ pub struct VirtQueue {
     pub num: u16,
     pub free_head: u16,
     pub last_used_idx: u16,
+    pub last_avail_idx: u16,
     pub notify_addr: u64,
 }
 
@@ -25,15 +26,15 @@ pub fn setup_queue(common_cfg: *mut u8, index: u16, notify_base: u64, notify_mul
         let max_size = read_16(common_cfg.add(OFF_QUEUE_SIZE));
         if max_size == 0 { return; }
 
-        let size: u16 = 32;
+        let size: u16 = 128;
         write_16(common_cfg.add(OFF_QUEUE_SIZE), size);
 
         if let Some(frame) = pmm::allocate_frame(0) {
             core::ptr::write_bytes(frame as *mut u8, 0, 4096);
 
             let desc_addr = frame;
-            let avail_addr = desc_addr + 512;
-            let used_addr = (avail_addr + 70 + 3) & !3;
+            let avail_addr = desc_addr + 2048;
+            let used_addr = (avail_addr + 262 + 3) & !3;
 
             let avail_ptr = avail_addr as *mut VirtqAvail;
             (*avail_ptr).flags = 1;
@@ -61,6 +62,7 @@ pub fn setup_queue(common_cfg: *mut u8, index: u16, notify_base: u64, notify_mul
                 num: size,
                 free_head: 0,
                 last_used_idx: 0,
+                last_avail_idx: 0,
                 notify_addr,
             });
             
@@ -69,7 +71,7 @@ pub fn setup_queue(common_cfg: *mut u8, index: u16, notify_base: u64, notify_mul
     }
 }
 
-pub fn send_command_queue(queue_idx: usize, out_phys: &[u64], out_lens: &[u32], in_phys: &[u64], in_lens: &[u32]) -> bool {
+pub fn send_command_queue(queue_idx: usize, out_phys: &[u64], out_lens: &[u32], in_phys: &[u64], in_lens: &[u32], wait: bool) -> bool {
     unsafe {
         let int_enabled = crate::interrupts::idt::interrupts();
         if int_enabled { core::arch::asm!("cli"); }
@@ -125,9 +127,15 @@ pub fn send_command_queue(queue_idx: usize, out_phys: &[u64], out_lens: &[u32], 
 
         core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
         (*avail_ptr).idx = idx.wrapping_add(1);
+        vq.last_avail_idx = vq.last_avail_idx.wrapping_add(1);
 
         write_volatile(vq.notify_addr as *mut u16, vq.queue_index);
         vq.free_head = ((free_head_usize + total_descs) % num_usize) as u16;
+
+        if !wait {
+            if int_enabled { core::arch::asm!("sti"); }
+            return true;
+        }
 
         let used_ptr = vq.used_phys as *mut VirtqUsed;
         let mut timeout = 10_000_000;
@@ -136,9 +144,13 @@ pub fn send_command_queue(queue_idx: usize, out_phys: &[u64], out_lens: &[u32], 
         loop {
             let used_idx = read_volatile(core::ptr::addr_of!((*used_ptr).idx));
             if used_idx != vq.last_used_idx {
-                vq.last_used_idx = vq.last_used_idx.wrapping_add(1);
-                success = true;
-                break;
+                let diff = used_idx.wrapping_sub(vq.last_used_idx);
+                vq.last_used_idx = vq.last_used_idx.wrapping_add(diff);
+                
+                if vq.last_used_idx == vq.last_avail_idx {
+                    success = true;
+                    break;
+                }
             }
             core::hint::spin_loop();
             timeout -= 1;

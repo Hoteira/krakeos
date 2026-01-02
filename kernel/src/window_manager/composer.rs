@@ -184,6 +184,8 @@ impl Composer {
 
         if wtype == Items::Wallpaper {
             w.z = 255;
+            w.transparent = false;
+            w.treat_as_transparent = false;
         } else if wtype == Items::Bar || wtype == Items::Popup {
             w.z = 0;
         } else {
@@ -320,7 +322,25 @@ impl Composer {
                 }
             }
 
-            for i in (0..self.windows.len()).rev() {
+            // Occlusion Culling: Find the front-most window that is opaque and covers the dirty rect.
+            // We only need to draw from that window forward.
+            let mut start_index = self.windows.len().saturating_sub(1);
+            for i in 0..self.windows.len() {
+                let w = &self.windows[i];
+                if w.w_type == Items::Null { continue; }
+                
+                // If window covers the dirty rect and is opaque
+                if !w.treat_as_transparent && 
+                   w.x as i32 <= dirty_x && 
+                   w.y as i32 <= dirty_y && 
+                   (w.x as i32 + w.width as i32) >= (dirty_x + dirty_w as i32) &&
+                   (w.y as i32 + w.height as i32) >= (dirty_y + dirty_h as i32) {
+                    start_index = i;
+                    break;
+                }
+            }
+
+            for i in (0..=start_index).rev() {
                 match self.windows[i].w_type {
                     Items::Null => {}
                     _ => {

@@ -939,40 +939,64 @@ impl DisplayServer {
                 let dst = self.framebuffer as *mut u8; 
                 let fb_len = (self.pitch * self.height) as usize;
 
-                
-                for row in 0..sh {
-                    let offset = (sy + row) as usize * pitch + sx as usize * bpp ;
-                    let end_offset = offset + (sw * bpp as u32) as usize;
+                if sx == 0 && sw == self.width as u32 {
+                    // Contiguous copy for full-width updates
+                    let offset = sy as usize * pitch;
+                    let size = sh as usize * pitch;
+                    if offset + size <= fb_len {
+                        core::ptr::copy_nonoverlapping(src.add(offset), dst.add(offset), size);
+                    }
+                } else {
+                    for row in 0..sh {
+                        let offset = (sy + row) as usize * pitch + sx as usize * bpp ;
+                        let end_offset = offset + (sw * bpp as u32) as usize;
 
-                    if end_offset <= fb_len {
-                        core::ptr::copy_nonoverlapping(src.add(offset), dst.add(offset), (sw * bpp as u32) as usize);
+                        if end_offset <= fb_len {
+                            core::ptr::copy_nonoverlapping(src.add(offset), dst.add(offset), (sw * bpp as u32) as usize);
+                        }
                     }
                 }
 
+                // Draw mouse BEFORE flushing
+                let mx = crate::window_manager::input::MOUSE.x;
+                let my = crate::window_manager::input::MOUSE.y;
+                use crate::drivers::periferics::mouse::{CURSOR_WIDTH, CURSOR_HEIGHT};
+                
+                let mw = CURSOR_WIDTH as u32;
+                let mh = CURSOR_HEIGHT as u32;
+
+                let overlap_x = (mx as u32) < (sx + sw) && (mx as u32 + mw) > sx;
+                let overlap_y = (my as u32) < (sy + sh) && (my as u32 + mh) > sy;
+
+                if overlap_x && overlap_y {
+                    self.draw_mouse(mx, my, false);
+                }
                 
                 virtio::flush(sx, sy, sw, sh, self.width as u32, self.active_resource_id);
+
+                // If mouse sticks out, flush the rest?
+                if overlap_x && overlap_y {
+                     let mouse_inside = (mx as u32) >= sx && (mx as u32 + mw) <= (sx + sw) &&
+                                       (my as u32) >= sy && (my as u32 + mh) <= (sy + sh);
+                    
+                    if !mouse_inside {
+                        virtio::flush(mx as u32, my as u32, mw, mh, self.width as u32, self.active_resource_id);
+                    }
+                }
             } else {
                 
                 self.copy_to_fb(x, y, w, h);
-            }
-
-            
-            
-            let mx = crate::window_manager::input::MOUSE.x;
-            let my = crate::window_manager::input::MOUSE.y;
-            use crate::drivers::periferics::mouse::{CURSOR_WIDTH, CURSOR_HEIGHT};
-            
-            let mw = CURSOR_WIDTH as u32;
-            let mh = CURSOR_HEIGHT as u32;
-
-            let overlap_x = (mx as u32) < (sx + sw) && (mx as u32 + mw) > sx;
-            let overlap_y = (my as u32) < (sy + sh) && (my as u32 + mh) > sy;
-
-            if overlap_x && overlap_y {
-                self.draw_mouse(mx, my, false);
-                if VIRTIO_ACTIVE {
-                    
-                    virtio::flush(mx as u32, my as u32, mw, mh, self.width as u32, self.active_resource_id);
+                
+                // Draw mouse for VBE/No-VirtIO case
+                let mx = crate::window_manager::input::MOUSE.x;
+                let my = crate::window_manager::input::MOUSE.y;
+                use crate::drivers::periferics::mouse::{CURSOR_WIDTH, CURSOR_HEIGHT};
+                let mw = CURSOR_WIDTH as u32;
+                let mh = CURSOR_HEIGHT as u32;
+                let overlap_x = (mx as u32) < (sx + sw) && (mx as u32 + mw) > sx;
+                let overlap_y = (my as u32) < (sy + sh) && (my as u32 + mh) > sy;
+                if overlap_x && overlap_y {
+                    self.draw_mouse(mx, my, false);
                 }
             }
         }

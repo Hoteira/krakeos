@@ -404,18 +404,33 @@ impl Mouse {
                     let local_y = (self.y as isize - w.y).max(0) as usize;
 
                     use crate::window_manager::events::{GLOBAL_EVENT_QUEUE, Event, MouseEvent};
-                    let event = Event::Mouse(MouseEvent {
-                        wid: w.id as u32,
-                        x: local_x,
-                        y: local_y,
-                        buttons: [self.left, self.right, self.center],
-                        scroll: scroll_val,
-                    });
+                    
+                    // Filter: Only send if something actually changed
+                    static mut LAST_X: usize = 9999;
+                    static mut LAST_Y: usize = 9999;
+                    static mut LAST_BTNS: [bool; 3] = [false; 3];
 
-                    GLOBAL_EVENT_QUEUE.int_lock().add_event(event);
+                    let btns = [self.left, self.right, self.center];
+                    if local_x != unsafe { LAST_X } || local_y != unsafe { LAST_Y } || btns != unsafe { LAST_BTNS } || scroll_val != 0 {
+                        unsafe {
+                            LAST_X = local_x;
+                            LAST_Y = local_y;
+                            LAST_BTNS = btns;
+                        }
 
-                    if self.left {
-                        crate::debugln!("Input: Dispatching Mouse Event to {}", w.id);
+                        let event = Event::Mouse(MouseEvent {
+                            wid: w.id as u32,
+                            x: local_x,
+                            y: local_y,
+                            buttons: btns,
+                            scroll: scroll_val,
+                        });
+
+                        GLOBAL_EVENT_QUEUE.int_lock().add_event(event);
+
+                        if self.left {
+                            crate::debugln!("Input: Dispatching Mouse Event to {}", w.id);
+                        }
                     }
                 }
             }
