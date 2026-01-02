@@ -36,12 +36,12 @@ pub const KERNEL_TARGET: u32 = 0x100000;
 pub const MAX_BPP: u8 = 32;
 pub const MIN_BPP: u8 = 32;
 
-pub const MAX_WIDTH: u16 = 1280; 
+pub const MAX_WIDTH: u16 = 1280;
 pub const MIN_WIDTH: u16 = 1280;
 pub const MAX_HEIGHT: u16 = 720;
 pub const MIN_HEIGHT: u16 = 720;
 
-pub const MODE: u16 = 0x1; 
+pub const MODE: u16 = 0x1;
 
 
 #[repr(C, packed)]
@@ -80,18 +80,16 @@ pub extern "C" fn _start() -> ! {
 fn load_kernel() {
     let sectors_per_chunk = 64;
     let bytes_per_chunk = sectors_per_chunk * 512;
-    let total_sectors = 16384; 
+    let total_sectors = 16384;
     let chunks = total_sectors / sectors_per_chunk;
 
     for i in 0..chunks {
         let lba = KERNEL_LBA + (i as u64 * sectors_per_chunk as u64);
         let target = KERNEL_TARGET + (i as u32 * bytes_per_chunk as u32);
 
-        
+
         disk::read(0x8000, 0x0000, lba, sectors_per_chunk as u16);
 
-        
-        
         move_memory_block(0x80000, target, 0x4000);
     }
 }
@@ -168,9 +166,9 @@ fn protected_mode() {
             let best_mode = find_vbe_mode();
 
             asm!(
-                "int 0x10",
-                in("ax") 0x4F02,
-                in("bx") best_mode
+            "int 0x10",
+            in("ax") 0x4F02,
+            in("bx") best_mode
             );
         }
 
