@@ -38,13 +38,23 @@ copy "target\bits64pie\release\cat" "tree\sys\bin\cat.elf"
 cargo build --package=taskbar --target=bits64pie.json --release
 copy "target\bits64pie\release\taskbar" "tree\sys\bin\taskbar.elf"
 
-cargo build --package=krake_libc --target=bits64pie.json --release
+cargo build --package=sleep --target=bits64pie.json --release
+copy "target\bits64pie\release\sleep" "tree\sys\bin\sleep.elf"
+
+cargo build --package=std --target=bits64pie.json --release
+cargo build --package=libc --target=bits64pie.json --release
 
 cd apps\doomgeneric-master\doomgeneric
-clang -target x86_64-unknown-elf -ffreestanding -fno-stack-protector -fPIC -I ..\..\..\libs\krake_libc\include -c *.c
+clang -target x86_64-unknown-elf -ffreestanding -fno-stack-protector -fPIC -I ..\..\..\libs\libc\include -c *.c
 cd ..\..\..
-ld.lld -pie --entry _start -o apps\doomgeneric-master\doomgeneric\doom.elf apps\doomgeneric-master\doomgeneric\*.o target\bits64pie\release\libkrake_libc.a
+ld.lld -pie --entry _start -o apps\doomgeneric-master\doomgeneric\doom.elf apps\doomgeneric-master\doomgeneric\*.o target\bits64pie\release\liblibc.a
 copy "apps\doomgeneric-master\doomgeneric\doom.elf" "tree\apps\doom\doom.elf"
+
+cd apps\nano-master\src
+clang -target x86_64-unknown-elf -ffreestanding -fno-stack-protector -fPIC -I ..\..\..\libs\libc\include -I . -DNANO_TINY -DHAVE_CONFIG_H -c *.c
+cd ..\..\..
+ld.lld -pie --entry _start -o apps\nano-master\src\nano.elf apps\nano-master\src\*.o target\bits64pie\release\liblibc.a
+copy "apps\nano-master\src\nano.elf" "tree\apps\nano\nano.elf"
 
 wsl dd if=build/kernel.bin of=build/disk.img seek=6144 bs=512 conv=notrunc
 

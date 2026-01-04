@@ -4,6 +4,7 @@ use core::{
     sync::atomic::{AtomicBool, AtomicPtr, Ordering},
 };
 use core::ptr::write_bytes;
+use super::malloc;
 
 const MAGIC_USED: u32 = 0xDEAD_BEEF;
 
@@ -48,8 +49,15 @@ impl Used {
     }
 }
 
-static HEAP_START: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());
-static HEAP_END: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());
+#[derive(Copy, Clone)]
+struct Region {
+    start: usize,
+    end: usize,
+}
+
+const MAX_REGIONS: usize = 64;
+static mut HEAP_REGIONS: [Region; MAX_REGIONS] = [Region { start: 0, end: 0 }; MAX_REGIONS];
+static mut REGION_COUNT: usize = 0;
 
 const BIN_COUNT: usize = 8;
 const MIN_BLOCK_SIZE: usize = 32;
@@ -91,6 +99,68 @@ impl Allocator {
 
     fn unlock(&self) {
         self.lock.store(false, Ordering::Release);
+    }
+
+    unsafe fn grow_heap(&self, required_size: usize) -> bool {
+        let mut total_size = 0;
+        for i in 0..REGION_COUNT {
+            total_size += HEAP_REGIONS[i].end - HEAP_REGIONS[i].start;
+        }
+        
+        let mut new_size = total_size; 
+        if new_size < required_size {
+            new_size = required_size.next_power_of_two();
+        }
+        // Minimal allocation
+        if new_size < 4096 { new_size = 4096; }
+
+        crate::println!("\x1B[93m[Allocator] Growing heap by {} bytes...\x1B[0m", new_size);
+
+        let ptr = malloc(new_size);
+        if ptr == 0 { return false; } // OOM
+
+        // Add to regions
+        if REGION_COUNT >= MAX_REGIONS { return false; } // Too many regions
+        
+        // Zero the new memory (malloc syscall usually does this, but to be safe/consistent)
+        write_bytes(ptr as *mut u8, 0, new_size);
+
+        HEAP_REGIONS[REGION_COUNT] = Region { start: ptr, end: ptr + new_size };
+        REGION_COUNT += 1;
+
+        // Construct Free header
+        // We assume malloc returns aligned pointer (page aligned)
+        let region_align = align_of::<Free>().max(align_of::<Used>()).max(8);
+        let ptr_usize = ptr as usize;
+        let aligned_ptr_usize = align_up(ptr_usize, region_align);
+        let adjustment = aligned_ptr_usize - ptr_usize;
+        
+        if adjustment + size_of::<Free>() >= new_size {
+             // Should not happen with reasonable sizes
+             return false;
+        }
+
+        let new_free_ptr = aligned_ptr_usize as *mut Free;
+        (*new_free_ptr).size = new_size - adjustment - size_of::<Free>();
+        (*new_free_ptr).next = core::ptr::null_mut();
+
+        // Insert into sorted free list
+        let mut prev: *mut Free = core::ptr::null_mut();
+        let mut current = self.first_free.load(Ordering::Acquire);
+        
+        while !current.is_null() && (current as usize) < (new_free_ptr as usize) {
+            prev = current;
+            current = (*current).next;
+        }
+        
+        (*new_free_ptr).next = current;
+        if prev.is_null() {
+            self.first_free.store(new_free_ptr, Ordering::Release);
+        } else {
+            (*prev).next = new_free_ptr;
+        }
+        
+        true
     }
 }
 
@@ -135,9 +205,17 @@ pub fn init(base: *mut u8, size: usize) {
     }
 
     let heap_start_ptr = aligned_base_usize as *mut u8;
-    let heap_end_ptr = unsafe { base.add(size) };
-    HEAP_START.store(heap_start_ptr, Ordering::SeqCst);
-    HEAP_END.store(heap_end_ptr, Ordering::SeqCst);
+    
+    // Register the first region
+    unsafe {
+        if REGION_COUNT < MAX_REGIONS {
+            HEAP_REGIONS[REGION_COUNT] = Region {
+                start: aligned_base_usize,
+                end: base_usize + size,
+            };
+            REGION_COUNT += 1;
+        }
+    }
 
     let seg = heap_start_ptr as *mut Free;
     unsafe {
@@ -152,10 +230,15 @@ fn get_used_header(ptr: *mut u8) -> *mut Used {
 }
 
 fn in_heap_bounds(ptr: *const u8) -> bool {
-    let start = HEAP_START.load(Ordering::SeqCst) as usize;
-    let end = HEAP_END.load(Ordering::SeqCst) as usize;
     let p = ptr as usize;
-    p >= start && p < end
+    unsafe {
+        for i in 0..REGION_COUNT {
+            if p >= HEAP_REGIONS[i].start && p < HEAP_REGIONS[i].end {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn find_header_for_allocation(seg: &Free, layout: &Layout) -> Option<*mut u8> {
@@ -240,10 +323,10 @@ unsafe impl GlobalAlloc for Allocator {
             layout
         };
 
-        let mut prev_ptr: *mut Free = core::ptr::null_mut();
-        let mut cur_ptr = self.first_free.load(Ordering::Acquire);
+        loop {
+            let mut prev_ptr: *mut Free = core::ptr::null_mut();
+            let mut cur_ptr = self.first_free.load(Ordering::Acquire);
 
-        unsafe {
             while !cur_ptr.is_null() {
                 let cur = &mut *cur_ptr;
                 if let Some(payload_ptr) = find_header_for_allocation(cur, &alloc_layout) {
@@ -285,6 +368,11 @@ unsafe impl GlobalAlloc for Allocator {
 
                 prev_ptr = cur_ptr;
                 cur_ptr = (*cur_ptr).next;
+            }
+            
+            // If allocation failed, try to grow
+            if !self.grow_heap(needed_total) {
+                break; // OOM
             }
         }
 

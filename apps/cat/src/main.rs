@@ -3,16 +3,8 @@
 
 extern crate alloc;
 
-#[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-    loop {}
-}
-
 #[unsafe(no_mangle)]
-pub extern "C" fn _start() -> ! {
-    let heap_size = 1024 * 1024; 
-    let heap_ptr = std::memory::malloc(heap_size);
-    std::memory::heap::init_heap(heap_ptr as *mut u8, heap_size);
+pub unsafe extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
 
     let mut buf = [0u8; 1024];
     loop {
@@ -21,5 +13,5 @@ pub extern "C" fn _start() -> ! {
         std::os::file_write(1, &buf[0..n]); 
     }
     
-    std::os::exit(0);
+    0
 }

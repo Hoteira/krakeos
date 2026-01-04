@@ -127,11 +127,11 @@ pub extern "C" fn _start(bootinfo_ptr: *const BootInfo) -> ! {
 
                 memory::pmm::free_frame(phys_addr);
 
-                if let Err(_) = interrupts::task::TASK_MANAGER.int_lock().init_user_task(pid_idx, entry, pml4, None, None, "unknown".as_bytes()) {
+                                if let Err(_) = interrupts::task::TASK_MANAGER.int_lock().init_user_task(pid_idx, entry, pml4, None, None, "unknown".as_bytes(), None, None) {
 
-                    panic!("Failed to spawn first user task");
+                                    panic!("Failed to spawn first user task");
 
-                }
+                                }
 
             },
 
@@ -280,13 +280,7 @@ pub fn load_idt() {
         (*(&raw mut interrupts::idt::IDT)).processor_exceptions();
 
         (*(&raw mut interrupts::idt::IDT)).hardware_interrupts();
-
-
-
         
-
-
-
         (*(&raw mut interrupts::idt::IDT)).load();
 
         (*(&raw mut interrupts::pic::PICS)).init();

@@ -8,17 +8,8 @@ use std::graphics::Items;
 
 extern crate alloc;
 
-#[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-    loop {}
-}
-
 #[unsafe(no_mangle)]
-pub extern "C" fn _start() -> ! {
-    let heap_size = 1024 * 1024 * 50;
-    let heap_ptr = std::memory::malloc(heap_size);
-    std::memory::heap::init_heap(heap_ptr as *mut u8, heap_size);
-
+pub unsafe extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
     println!("Starting Userland Shell...");
 
     let width = std::graphics::get_screen_width();
@@ -63,7 +54,6 @@ pub extern "C" fn _start() -> ! {
     std::os::exec("@0xE0/sys/bin/taskbar.elf");
     
     
-    std::os::exec("@0xE0/sys/bin/term.elf");
 
     loop {
         std::os::yield_task();

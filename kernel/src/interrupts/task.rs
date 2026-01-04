@@ -1,3 +1,5 @@
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::arch::{asm, naked_asm};
 
 use crate::memory::pmm;
@@ -8,7 +10,7 @@ const STACK_SIZE: u64 = 64 * 1024;
 pub(crate) const MAX_TASKS: usize = 125;
 
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 #[repr(C, align(16))]
 pub struct Task {
     pub fpu_state: [u8; 512],
@@ -21,6 +23,12 @@ pub struct Task {
     pub exit_code: u64,
     pub wake_ticks: u64,
     pub name: [u8; 32],
+    pub pending_signals: u64,
+    pub signal_handlers: [u64; 64],
+    pub saved_cpu_state: CPUState,
+    pub in_signal_handler: bool,
+    pub env: Vec<String>,
+    pub cwd: String,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -58,7 +66,7 @@ pub struct CPUState {
     pub(crate) ss: u64,
 }
 
-pub(crate) static NULL_TASK: Task = Task {
+pub(crate) const NULL_TASK: Task = Task {
     fpu_state: [0; 512],
     stack: 0,
     kernel_stack: 0,
@@ -69,6 +77,16 @@ pub(crate) static NULL_TASK: Task = Task {
     exit_code: 0,
     wake_ticks: 0,
     name: [0; 32],
+    pending_signals: 0,
+    signal_handlers: [0; 64],
+    saved_cpu_state: CPUState {
+        r15: 0, r14: 0, r13: 0, r12: 0, r11: 0, r10: 0, r9: 0, r8: 0,
+        rdi: 0, rsi: 0, rdx: 0, rcx: 0, rbx: 0, rax: 0, rbp: 0,
+        rip: 0, cs: 0, rflags: 0, rsp: 0, ss: 0,
+    },
+    in_signal_handler: false,
+    env: Vec::new(),
+    cwd: String::new(),
 };
 
 impl Task {
@@ -79,6 +97,11 @@ impl Task {
         self.exit_code = 0;
         self.wake_ticks = 0;
         self.name = [0; 32];
+        self.pending_signals = 0;
+        self.signal_handlers = [0; 64];
+        self.in_signal_handler = false;
+        self.env = Vec::new();
+        self.cwd = String::from("@0xE0/");
         let len = core::cmp::min(name.len(), 32);
         self.name[..len].copy_from_slice(&name[..len]);
         
@@ -124,12 +147,23 @@ impl Task {
     }
 
     #[allow(dead_code)]
-    pub fn init_user(&mut self, entry_point: u64, pml4_phys: u64, args: Option<&[u64]>, pid: u64, fd_table: Option<[i16; 16]>, name: &[u8]) -> Result<(), pmm::FrameError> {
+    pub fn init_user(&mut self, entry_point: u64, pml4_phys: u64, args: Option<Vec<String>>, pid: u64, fd_table: Option<[i16; 16]>, name: &[u8], cwd: Option<String>) -> Result<(), pmm::FrameError> {
         self.fpu_state = [0; 512];
         self.fd_table = fd_table.unwrap_or([-1; 16]);
         self.exit_code = 0;
         self.wake_ticks = 0;
         self.name = [0; 32];
+        self.pending_signals = 0;
+        self.signal_handlers = [0; 64];
+        self.in_signal_handler = false;
+        self.env = Vec::new();
+        
+        self.cwd = if let Some(c) = cwd {
+            c
+        } else {
+            String::from("@0xE0/")
+        };
+
         let len = core::cmp::min(name.len(), 32);
         self.name[..len].copy_from_slice(&name[..len]);
 
@@ -151,32 +185,63 @@ impl Task {
             Some(addr) => addr,
             None => {
                 pmm::free_frame(k_frame); 
-                
-                
-                
-                pmm::free_frame(k_frame);
                 return Err(pmm::FrameError::NoMemory);
             }
         };
         self.stack = u_frame;
 
-        let u_stack_top = u_frame + 4096 * 16;
+        let mut u_stack_top = u_frame + 4096 * 16;
+
+        // --- ARGC/ARGV SETUP ---
+        // We push strings to the top of the stack, then pointers to them.
+        if let Some(argv_strings) = args {
+            let argc = argv_strings.len();
+            let mut arg_ptrs = Vec::new();
+
+            // 1. Push strings
+            for s in argv_strings.iter().rev() {
+                let bytes = s.as_bytes();
+                let len = bytes.len() + 1; // + null terminator
+                u_stack_top -= len as u64;
+                unsafe {
+                    core::ptr::copy_nonoverlapping(bytes.as_ptr(), u_stack_top as *mut u8, bytes.len());
+                    *((u_stack_top + bytes.len() as u64) as *mut u8) = 0;
+                }
+                arg_ptrs.push(u_stack_top);
+            }
+
+            // Align stack to 8 bytes for pointers
+            u_stack_top &= !7;
+
+            // 2. Push NULL terminator for argv
+            u_stack_top -= 8;
+            unsafe { *(u_stack_top as *mut u64) = 0; }
+
+            // 3. Push pointers (in correct order)
+            for ptr in arg_ptrs {
+                u_stack_top -= 8;
+                unsafe { *(u_stack_top as *mut u64) = ptr; }
+            }
+
+            // 4. Push argc
+            u_stack_top -= 8;
+            unsafe { *(u_stack_top as *mut u64) = argc as u64; }
+        } else {
+            // Push argc = 0 if no args
+            u_stack_top -= 8;
+            unsafe { *(u_stack_top as *mut u64) = 0; }
+        }
 
         let state_size = core::mem::size_of::<CPUState>();
         let state_ptr = (self.kernel_stack - state_size as u64) as *mut CPUState;
         self.cpu_state_ptr = state_ptr as u64;
 
-        let mut arg_count = 0;
-        if args.is_some() {
-            arg_count = core::cmp::min(args.unwrap().len(), 4);
-        }
-
         unsafe {
             (*state_ptr).rax = 0;
-            (*state_ptr).rbx = if arg_count > 0 { args.unwrap()[0] } else { 0 };
-            (*state_ptr).rcx = if arg_count > 1 { args.unwrap()[1] } else { 0 };
-            (*state_ptr).rdx = if arg_count > 2 { args.unwrap()[2] } else { 0 };
-            (*state_ptr).rsi = if arg_count > 3 { args.unwrap()[3] } else { 0 };
+            (*state_ptr).rbx = 0;
+            (*state_ptr).rcx = 0;
+            (*state_ptr).rdx = 0;
+            (*state_ptr).rsi = 0;
 
             (*state_ptr).rdi = 0;
             (*state_ptr).rbp = 0;
@@ -184,7 +249,7 @@ impl Task {
             (*state_ptr).rip = entry_point;
             (*state_ptr).cs = 0x33;
             (*state_ptr).rflags = 0x202;
-            (*state_ptr).rsp = u_stack_top - 8;
+            (*state_ptr).rsp = u_stack_top; // Point to argc
             (*state_ptr).ss = 0x23;
         }
 
@@ -248,24 +313,29 @@ impl TaskManager {
         }
     }
 
-    pub fn kill_process(&mut self, pid: u64) {
+    pub fn kill_process(&mut self, pid: u64, sig: i32) {
         if pid < MAX_TASKS as u64 {
             let task = &mut self.tasks[pid as usize];
-            if task.state != TaskState::Null && task.state != TaskState::Zombie && task.state != TaskState::Null {
-                task.exit_code = 0xDEAD; 
-                task.state = TaskState::Zombie;
+            if task.state != TaskState::Null && task.state != TaskState::Zombie {
+                if sig == 9 { // SIGKILL
+                    task.exit_code = 0xDEAD; 
+                    task.state = TaskState::Zombie;
 
-                
-                unsafe {
-                    (*(&raw mut crate::window_manager::composer::COMPOSER)).remove_windows_by_pid(pid);
-                }
+                    unsafe {
+                        (*(&raw mut crate::window_manager::composer::COMPOSER)).remove_windows_by_pid(pid);
+                    }
 
-                
-                for i in 0..16 {
-                    let global = task.fd_table[i];
-                    if global != -1 {
-                        crate::fs::vfs::close_file(global as usize);
-                        task.fd_table[i] = -1;
+                    for i in 0..16 {
+                        let global = task.fd_table[i];
+                        if global != -1 {
+                            crate::fs::vfs::close_file(global as usize);
+                            task.fd_table[i] = -1;
+                        }
+                    }
+                } else if sig > 0 && sig < 64 {
+                    task.pending_signals |= 1 << sig;
+                    if task.state == TaskState::Sleeping {
+                        task.state = TaskState::Ready;
                     }
                 }
             }
@@ -273,12 +343,17 @@ impl TaskManager {
     }
 
     #[allow(dead_code)]
-    pub fn init_user_task(&mut self, slot: usize, entry_point: u64, pml4_phys: u64, args: Option<&[u64]>, fd_table: Option<[i16; 16]>, name: &[u8]) -> Result<(), pmm::FrameError> {
+    pub fn init_user_task(&mut self, slot: usize, entry_point: u64, pml4_phys: u64, args: Option<Vec<String>>, fd_table: Option<[i16; 16]>, name: &[u8], env: Option<Vec<String>>, cwd: Option<String>) -> Result<(), pmm::FrameError> {
         if slot >= MAX_TASKS { return Err(pmm::FrameError::IndexOutOfBounds); }
 
         
-        match self.tasks[slot].init_user(entry_point, pml4_phys, args, slot as u64, fd_table, name) {
-            Ok(_) => Ok(()),
+        match self.tasks[slot].init_user(entry_point, pml4_phys, args, slot as u64, fd_table, name, cwd) {
+            Ok(_) => {
+                if let Some(e) = env {
+                    self.tasks[slot].env = e;
+                }
+                Ok(())
+            },
             Err(e) => {
                 
                 self.tasks[slot].state = TaskState::Null;
@@ -304,6 +379,41 @@ impl TaskManager {
         self.current_task = self.get_next_task();
         if self.current_task < 0 {
             return (cpu_state, 0, 0);
+        }
+
+        let task_idx = self.current_task as usize;
+        
+        // Signal Handling
+        if self.tasks[task_idx].pending_signals != 0 && !self.tasks[task_idx].in_signal_handler {
+            for sig in 1..64 {
+                if (self.tasks[task_idx].pending_signals & (1 << sig)) != 0 {
+                    let handler = self.tasks[task_idx].signal_handlers[sig];
+                    if handler != 0 && handler != 1 { // handler 1 is SIG_IGN, 0 is SIG_DFL
+                        // Save current state
+                        let current_state_ptr = self.tasks[task_idx].cpu_state_ptr as *const CPUState;
+                        unsafe {
+                            self.tasks[task_idx].saved_cpu_state = *current_state_ptr;
+                            
+                            // Redirect to handler
+                            let state_mut = self.tasks[task_idx].cpu_state_ptr as *mut CPUState;
+                            (*state_mut).rip = handler;
+                            (*state_mut).rdi = sig as u64; // First argument: signal number
+                            
+                            // We need to push the return address or something to return from signal?
+                            // For now, let's assume they call a syscall to return.
+                            
+                            self.tasks[task_idx].in_signal_handler = true;
+                            self.tasks[task_idx].pending_signals &= !(1 << sig);
+                        }
+                        break;
+                    } else if handler == 0 {
+                        // Default action for many signals is terminate
+                        if sig == 2 || sig == 15 || sig == 3 { // SIGINT, SIGTERM, SIGQUIT
+                             self.kill_process(task_idx as u64, 9);
+                        }
+                    }
+                }
+            }
         }
 
         (

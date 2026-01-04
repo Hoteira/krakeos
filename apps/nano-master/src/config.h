@@ -1,0 +1,44 @@
+#define PACKAGE "nano"
+#define VERSION "8.0"
+#define NANO_TINY 1
+#define ENABLE_UTF8 1
+#define HAVE_NCURSES_H 1
+#define HAVE_TERMIOS_H 1
+#define HAVE_GETOPT_LONG 1
+#define HAVE_LIBGEN_H 1
+#define HAVE_PWD_H 1
+#define HAVE_LIMITS_H 1
+#define HAVE_SYS_PARAM_H 1
+#define HAVE_STDLIB_H 1
+#define HAVE_STRING_H 1
+#define HAVE_STRINGS_H 1
+#define HAVE_UNISTD_H 1
+#define HAVE_MKSTEMP 1
+#define HAVE_SETLOCALE 1
+#define HAVE_NL_LANGINFO 1
+
+#define NANO_REG_EXTENDED REG_EXTENDED
+
+/* Disable things we don't have yet */
+#undef HAVE_MAGIC_H
+#undef HAVE_LIBMAGIC
+#undef ENABLE_NLS
+#undef ENABLE_WRAPPING
+#undef ENABLE_JUSTIFY
+#undef ENABLE_SPELLER
+#undef ENABLE_COLOR
+#undef ENABLE_MULTIBUFFER
+#undef ENABLE_NANORC
+#undef ENABLE_HISTORIES
+#undef ENABLE_BROWSER
+#undef ENABLE_LINTER
+#undef ENABLE_FORMATTER
+#undef ENABLE_WORDCOMPLETION
+#undef ENABLE_HELP
+#undef ENABLE_EXTRA
+#undef ENABLE_COMMENT
+
+/* Standard constants */
+#define STDIN_FILENO 0
+#define STDOUT_FILENO 1
+#define STDERR_FILENO 2

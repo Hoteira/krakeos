@@ -8,19 +8,16 @@ use alloc::vec::Vec;
 use alloc::string::String;
 use alloc::format;
 
-#[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-    loop {}
-}
-
 static mut TERM_READ_FD: usize = 0;
 static mut TERM_WRITE_FD: usize = 0;
+static mut CHILD_PID: usize = 0;
 
 struct TerminalBuffer {
     lines: Vec<String>,
     alt_lines: Vec<String>,
     is_alt: bool,
     cursor_row: usize,
+    cursor_col: usize,
     cursor_visible: bool,
     
 }
@@ -32,6 +29,7 @@ impl TerminalBuffer {
             alt_lines: Vec::new(),
             is_alt: false,
             cursor_row: 0,
+            cursor_col: 0,
             cursor_visible: true,
         }
     }
@@ -43,6 +41,7 @@ impl TerminalBuffer {
             self.lines.clear();
         }
         self.cursor_row = 0;
+        self.cursor_col = 0;
     }
 
     fn ensure_row(&mut self) {
@@ -53,25 +52,85 @@ impl TerminalBuffer {
     }
 
     fn write_str(&mut self, s: &str) {
-        self.ensure_row();
-        let current = if self.is_alt { &mut self.alt_lines } else { &mut self.lines };
-        current[self.cursor_row].push_str(s);
+        if s.starts_with("\x1B[") {
+             // Pass-through escape sequences for inkui
+             self.ensure_row();
+             let current = if self.is_alt { &mut self.alt_lines } else { &mut self.lines };
+             current[self.cursor_row].push_str(s);
+             return;
+        }
+
+        for c in s.chars() {
+            self.write_char(c);
+        }
     }
     
     fn write_char(&mut self, c: char) {
         self.ensure_row();
         let current = if self.is_alt { &mut self.alt_lines } else { &mut self.lines };
-        current[self.cursor_row].push(c);
+        let line = &mut current[self.cursor_row];
+        
+        let char_count = line.chars().count();
+        if self.cursor_col < char_count {
+            // Replace character
+            let mut new_line = String::with_capacity(line.len());
+            for (i, existing_c) in line.chars().enumerate() {
+                if i == self.cursor_col {
+                    new_line.push(c);
+                } else {
+                    new_line.push(existing_c);
+                }
+            }
+            *line = new_line;
+        } else {
+            // Pad with spaces if needed
+            while line.chars().count() < self.cursor_col {
+                line.push(' ');
+            }
+            line.push(c);
+        }
+        self.cursor_col += 1;
     }
 
     fn newline(&mut self) {
         self.cursor_row += 1;
+        self.cursor_col = 0;
+        self.ensure_row();
+    }
+
+    fn insert_line(&mut self) {
+        let current = if self.is_alt { &mut self.alt_lines } else { &mut self.lines };
+        if self.cursor_row < current.len() {
+            current.insert(self.cursor_row, String::new());
+        } else {
+            self.ensure_row();
+        }
+    }
+
+    fn delete_line(&mut self) {
+        let current = if self.is_alt { &mut self.alt_lines } else { &mut self.lines };
+        if self.cursor_row < current.len() {
+            current.remove(self.cursor_row);
+        }
     }
 
     fn backspace(&mut self) {
-        let current = if self.is_alt { &mut self.alt_lines } else { &mut self.lines };
-        if self.cursor_row < current.len() {
-            current[self.cursor_row].pop();
+        if self.cursor_col > 0 {
+            self.cursor_col -= 1;
+            let current = if self.is_alt { &mut self.alt_lines } else { &mut self.lines };
+            if self.cursor_row < current.len() {
+                let line = &mut current[self.cursor_row];
+                let char_count = line.chars().count();
+                if self.cursor_col < char_count {
+                    let mut new_line = String::with_capacity(line.len());
+                    for (i, c) in line.chars().enumerate() {
+                        if i != self.cursor_col {
+                            new_line.push(c);
+                        }
+                    }
+                    *line = new_line;
+                }
+            }
         }
     }
 
@@ -79,6 +138,7 @@ impl TerminalBuffer {
         let current = if self.is_alt { &mut self.alt_lines } else { &mut self.lines };
         if self.cursor_row < current.len() {
             current[self.cursor_row].clear();
+            self.cursor_col = 0;
         }
     }
 
@@ -87,15 +147,32 @@ impl TerminalBuffer {
         
         let mut size = 0;
         for line in current { size += line.len() + 1; }
-        let mut s = String::with_capacity(size);
-        for (i, line) in current.iter().enumerate() {
-            if i > 0 { s.push('\n'); }
-            s.push_str(line);
+        let mut s = String::with_capacity(size + 10);
+        
+        for (r, line) in current.iter().enumerate() {
+            if r > 0 { s.push('\n'); }
+            
+            if self.cursor_visible && r == self.cursor_row {
+                let mut added = false;
+                let chars: Vec<char> = line.chars().collect();
+                for (c, &ch) in chars.iter().enumerate() {
+                    if c == self.cursor_col {
+                        s.push('\u{2586}'); 
+                        added = true;
+                    }
+                    s.push(ch);
+                }
+                if !added {
+                    for _ in chars.len()..self.cursor_col {
+                        s.push(' ');
+                    }
+                    s.push('\u{2586}');
+                }
+            } else {
+                s.push_str(line);
+            }
         }
         
-        if self.cursor_visible {
-             s.push('\u{2586}'); 
-        }
         s
     }
     
@@ -121,11 +198,7 @@ impl TerminalBuffer {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn _start() -> ! {
-    let heap_size = 1024 * 1024 * 10;
-    let heap_ptr = std::memory::malloc(heap_size);
-    std::memory::heap::init_heap(heap_ptr as *mut u8, heap_size);
-
+pub unsafe extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
     let width = 500;
     let height = 400;
     
@@ -168,7 +241,17 @@ pub extern "C" fn _start() -> ! {
         (2, fds_out[1] as u8),
     ];
     
-    std::os::spawn_with_fds("@0xE0/sys/bin/shell.elf", &fds_map);
+    let args = std::args();
+    let cmd_to_run = if args.len() > 1 {
+        &args[1]
+    } else {
+        "@0xE0/sys/bin/shell.elf"
+    };
+
+    unsafe {
+        let env = ["TERM=xterm"];
+        CHILD_PID = std::os::spawn_with_fds(cmd_to_run, &fds_map, Some(&env));
+    }
     
     
     std::os::file_close(fds_in[0] as usize);
@@ -214,6 +297,13 @@ pub extern "C" fn _start() -> ! {
                         ctrl_pressed = e.pressed;
                     } else if e.pressed {
                         if let Some(c) = core::char::from_u32(e.key) {
+                            if ctrl_pressed && (c == 'c' || c == 'C') {
+                                std::os::file_write(unsafe { TERM_WRITE_FD }, &[0x03]); // Send ETX (Ctrl+C)
+                                win.draw();
+                                win.update();
+                                continue;
+                            }
+
                             for _ in 0..e.repeat {
                                 let mut buf = [0u8; 4];
                                 let bytes_to_write = if ctrl_pressed {
@@ -233,6 +323,8 @@ pub extern "C" fn _start() -> ! {
                                 };
                                 std::os::file_write(unsafe { TERM_WRITE_FD }, bytes_to_write);
                             }
+                            win.draw();
+                            win.update();
                         }
                     }
                 },
@@ -293,30 +385,78 @@ pub extern "C" fn _start() -> ! {
                             let seq = &pipe_buf[i+2..j]; 
                             
                             match cmd {
+                                b'A' => { // Cursor Up
+                                    let n = if seq.is_empty() { 1 } else { 
+                                        unsafe { core::str::from_utf8_unchecked(seq) }.parse::<usize>().unwrap_or(1)
+                                    };
+                                    term_buffer.cursor_row = term_buffer.cursor_row.saturating_sub(n);
+                                },
+                                b'B' => { // Cursor Down
+                                    let n = if seq.is_empty() { 1 } else { 
+                                        unsafe { core::str::from_utf8_unchecked(seq) }.parse::<usize>().unwrap_or(1)
+                                    };
+                                    term_buffer.cursor_row += n;
+                                },
+                                b'C' => { // Cursor Forward
+                                    let n = if seq.is_empty() { 1 } else { 
+                                        unsafe { core::str::from_utf8_unchecked(seq) }.parse::<usize>().unwrap_or(1)
+                                    };
+                                    term_buffer.cursor_col += n;
+                                },
+                                b'D' => { // Cursor Backward
+                                    let n = if seq.is_empty() { 1 } else { 
+                                        unsafe { core::str::from_utf8_unchecked(seq) }.parse::<usize>().unwrap_or(1)
+                                    };
+                                    term_buffer.cursor_col = term_buffer.cursor_col.saturating_sub(n);
+                                },
                                 b'J' => {
                                     
                                     if seq == b"2" {
                                         term_buffer.clear();
                                     }
                                 },
-                                b'H' => {
+                                b'H' | b'f' => { // CUP or HVP
                                     
                                     if seq.is_empty() {
                                         term_buffer.cursor_row = 0;
+                                        term_buffer.cursor_col = 0;
                                     } else {
-                                        
                                         let s = unsafe { core::str::from_utf8_unchecked(seq) };
                                         let parts: Vec<&str> = s.split(';').collect();
-                                        if !parts.is_empty() {
+                                        if parts.len() >= 2 {
+                                            if let Ok(r) = parts[0].parse::<usize>() {
+                                                term_buffer.cursor_row = r.saturating_sub(1);
+                                            }
+                                            if let Ok(c) = parts[1].parse::<usize>() {
+                                                term_buffer.cursor_col = c.saturating_sub(1);
+                                            }
+                                        } else if !parts.is_empty() {
                                             if let Ok(r) = parts[0].parse::<usize>() {
                                                 term_buffer.cursor_row = r.saturating_sub(1);
                                             }
                                         }
-                                        
                                     }
                                 },
                                 b'K' => {
                                     term_buffer.clear_line();
+                                },
+                                b'L' => { // Insert Line
+                                    term_buffer.insert_line();
+                                },
+                                b'M' => { // Delete Line
+                                    term_buffer.delete_line();
+                                },
+                                b'G' => { // CHA - Horizontal Absolute
+                                    let n = if seq.is_empty() { 1 } else { 
+                                        unsafe { core::str::from_utf8_unchecked(seq) }.parse::<usize>().unwrap_or(1)
+                                    };
+                                    term_buffer.cursor_col = n.saturating_sub(1);
+                                },
+                                b'd' => { // VPA - Vertical Absolute
+                                    let n = if seq.is_empty() { 1 } else { 
+                                        unsafe { core::str::from_utf8_unchecked(seq) }.parse::<usize>().unwrap_or(1)
+                                    };
+                                    term_buffer.cursor_row = n.saturating_sub(1);
                                 },
                                 b'm' => {
                                     let seq_full = unsafe { core::str::from_utf8_unchecked(&pipe_buf[i..j+1]) };
@@ -402,7 +542,6 @@ pub extern "C" fn _start() -> ! {
                     
                     let padding = 10; 
                     let width = geometry.width.saturating_sub(padding * 2);
-                    let height = geometry.height.saturating_sub(padding * 2);
                     
                     if width > 0 {
                         
@@ -411,7 +550,8 @@ pub extern "C" fn _start() -> ! {
                             let chars_per_line = width / char_width;
                             let mut visual_lines = 0;
                             
-                            for line in &term_buffer.lines {
+                            let current_lines = if term_buffer.is_alt { &term_buffer.alt_lines } else { &term_buffer.lines };
+                            for line in current_lines {
                                 let len = line.chars().count(); 
                                 if len == 0 {
                                     visual_lines += 1;
@@ -428,10 +568,11 @@ pub extern "C" fn _start() -> ! {
                             
                             
                             
-                            let extra_margin = line_height; 
+                            let extra_margin = line_height * 2; 
                             
-                            if content_height + extra_margin > height {
-                                geometry.scroll_offset_y = (content_height + extra_margin) - height;
+                            let widget_height = geometry.height.saturating_sub(padding * 2);
+                            if content_height + extra_margin > widget_height {
+                                geometry.scroll_offset_y = (content_height + extra_margin) - widget_height;
                             } else {
                                 geometry.scroll_offset_y = 0;
                             }
@@ -465,8 +606,7 @@ pub extern "C" fn _start() -> ! {
                                     break;
                                 }
                                 let len = line.chars().count();
-                                if len == 0 { prev_visual_lines += 1; }
-                                else { prev_visual_lines += (len + chars_per_line - 1) / chars_per_line; }
+                                if len == 0 { prev_visual_lines += 1; } else { prev_visual_lines += (len + chars_per_line - 1) / chars_per_line; }
                             }
                             
                             let current_line = &current_lines[term_buffer.cursor_row];

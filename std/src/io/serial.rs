@@ -1,10 +1,19 @@
 use core::fmt;
 
-struct SyscallWriter;
+struct StdoutWriter;
 
-impl fmt::Write for SyscallWriter {
+impl fmt::Write for StdoutWriter {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         crate::os::print(s);
+        Ok(())
+    }
+}
+
+struct DebugWriter;
+
+impl fmt::Write for DebugWriter {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        crate::os::debug_print(s);
         Ok(())
     }
 }
@@ -20,9 +29,27 @@ macro_rules! println {
     ($($arg:tt)*) => ($crate::print!("{}\n", format_args!($($arg)*)));
 }
 
+#[macro_export]
+macro_rules! debug {
+    ($($arg:tt)*) => ($crate::_debug_print(format_args!($($arg)*)));
+}
+
+#[macro_export]
+macro_rules! debugln {
+    () => ($crate::debug!("\n"));
+    ($($arg:tt)*) => ($crate::debug!("{}\n", format_args!($($arg)*)));
+}
+
 #[doc(hidden)]
 pub fn _print(args: fmt::Arguments) {
     use core::fmt::Write;
-    let mut writer = SyscallWriter;
+    let mut writer = StdoutWriter;
+    let _ = writer.write_fmt(args);
+}
+
+#[doc(hidden)]
+pub fn _debug_print(args: fmt::Arguments) {
+    use core::fmt::Write;
+    let mut writer = DebugWriter;
     let _ = writer.write_fmt(args);
 }

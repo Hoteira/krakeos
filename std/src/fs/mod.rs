@@ -19,6 +19,10 @@ impl File {
         }
     }
 
+    pub fn from_raw_fd(fd: usize) -> Self {
+        Self { fd }
+    }
+
     pub fn create(path: &str) -> Result<Self, String> {
         let res = unsafe {
             syscall(71, path.as_ptr() as u64, path.len() as u64, 0)

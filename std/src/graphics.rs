@@ -52,7 +52,7 @@ impl Window {
             treat_as_transparent: true,
             min_width: 0,
             min_height: 0,
-            event_handler: 0,
+            event_handler: 1,
             w_type: Items::Window,
         }
     }

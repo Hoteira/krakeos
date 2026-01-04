@@ -46,7 +46,7 @@ fn print_hex(n: u64) {
     }
 }
 
-fn kill_current_task() {
+fn kill_current_task(info: &mut StackFrame) {
     let mut pid_to_kill = -1;
     {
         let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
@@ -56,11 +56,37 @@ fn kill_current_task() {
     }
 
     if pid_to_kill != -1 {
-        crate::interrupts::task::TASK_MANAGER.int_lock().kill_process(pid_to_kill as u64);
+        {
+            let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+            tm.kill_process(pid_to_kill as u64, 9);
+        }
         
+        // Immediate Reschedule
         unsafe {
-             core::arch::asm!("sti");
-             loop { core::arch::asm!("hlt"); }
+            // We need to simulate a yield. 
+            // The handler will return to the new task's RSP.
+            core::arch::asm!(
+                "mov rdi, rsp",
+                "call switch_yield",
+                "mov rsp, rax",
+                "pop r15",
+                "pop r14",
+                "pop r13",
+                "pop r12",
+                "pop r11",
+                "pop r10",
+                "pop r9",
+                "pop r8",
+                "pop rdi",
+                "pop rsi",
+                "pop rdx",
+                "pop rcx",
+                "pop rbx",
+                "pop rax",
+                "pop rbp",
+                "iretq",
+                options(noreturn)
+            );
         }
     } else {
         
@@ -76,7 +102,7 @@ pub extern "x86-interrupt" fn div_error(info: &mut StackFrame) {
     serial_println("EXCEPTION: DIV ERROR");
     if (info.code_segment & 3) == 3 {
         serial_println("User mode exception. Terminating task.");
-        kill_current_task();
+        kill_current_task(info);
     } else {
         loop {}
     }
@@ -86,7 +112,7 @@ pub extern "x86-interrupt" fn bounds(info: &mut StackFrame) {
     serial_println("EXCEPTION: BOUNDS");
     if (info.code_segment & 3) == 3 {
         serial_println("User mode exception. Terminating task.");
-        kill_current_task();
+        kill_current_task(info);
     } else {
         loop {}
     }
@@ -100,7 +126,7 @@ pub extern "x86-interrupt" fn invalid_opcode(info: &mut StackFrame) {
 
     if (info.code_segment & 3) == 3 {
         serial_println("User mode exception. Terminating task.");
-        kill_current_task();
+        kill_current_task(info);
     } else {
         loop {}
     }
@@ -123,7 +149,7 @@ pub extern "x86-interrupt" fn general_protection_fault(info: &mut StackFrame, er
 
     if (info.code_segment & 3) == 3 {
         serial_println("User mode GPF. Terminating task.");
-        kill_current_task();
+        kill_current_task(info);
     } else {
         unsafe {
             core::arch::asm!("cli");
@@ -149,7 +175,7 @@ pub extern "x86-interrupt" fn page_fault(info: &mut StackFrame, error_code: u64)
 
     if (info.code_segment & 3) == 3 {
         serial_println("User mode Page Fault. Terminating task.");
-        kill_current_task();
+        kill_current_task(info);
     } else {
         unsafe {
             core::arch::asm!("cli");
@@ -208,7 +234,7 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
 
                             if let Some(pid) = pid_to_kill {
                                 crate::debugln!("Global Shortcut: Killing Process {} associated with Window {}", pid, active_window_id);
-                                crate::interrupts::task::TASK_MANAGER.int_lock().kill_process(pid);
+                                crate::interrupts::task::TASK_MANAGER.int_lock().kill_process(pid, 9);
                             } else {
                                 crate::debugln!("Global Shortcut: No PID found for Window {}", active_window_id);
                             }
@@ -222,10 +248,8 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
 
             
             if pressed {
-                if key == 32 { crate::debugln!("KEY: Space Pressed"); }
                 KEYBOARD_BUFFER.lock().push_back(key);
             } else {
-                if key == 32 { crate::debugln!("KEY: Space Released"); }
             }
 
             

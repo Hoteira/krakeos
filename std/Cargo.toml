@@ -5,3 +5,10 @@ authors.workspace = true
 edition.workspace = true
 
 [dependencies]
+
+[features]
+default = ["userland"]
+userland = []
+
+[lib]
+crate-type = ["rlib"]

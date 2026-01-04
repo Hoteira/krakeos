@@ -48,7 +48,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "krake_libc"
+name = "libc"
 version = "0.1.0"
 dependencies = [
  "std",
@@ -56,6 +56,13 @@ dependencies = [
 
 [[package]]
 name = "shell"
+version = "0.1.0"
+dependencies = [
+ "std",
+]
+
+[[package]]
+name = "sleep"
 version = "0.1.0"
 dependencies = [
  "std",

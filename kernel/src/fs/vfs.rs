@@ -95,6 +95,14 @@ pub fn open(disk_id: u8, path_str: &str) -> Result<Box<dyn VfsNode>, String> {
              crate::debugln!("vfs::open: found fs, calling root()");
              let mut node = fs.root()?;
              for component in components.iter() {
+                 if component == "." {
+                     continue;
+                 }
+                 if component == ".." {
+                     // For now, if we are at root, .. is still root.
+                     // A full implementation would need parent tracking.
+                     continue;
+                 }
                  crate::debugln!("vfs::open: finding component {}", component);
                  node = node.find(&component)?;
              }
