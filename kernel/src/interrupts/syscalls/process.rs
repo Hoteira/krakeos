@@ -5,7 +5,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use log::debug;
 
-pub fn spawn_process(path: &str, fd_inheritance: Option<&[(u8, u8)]>) -> Result<u64, String> {
+pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&[(u8, u8)]>) -> Result<u64, String> {
     let cwd_str = {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         if tm.current_task >= 0 {
@@ -64,7 +64,6 @@ pub fn spawn_process(path: &str, fd_inheritance: Option<&[(u8, u8)]>) -> Result<
 
     match crate::fs::elf::load_elf(&file_buf, pml4_phys, pid) {
         Ok(entry_point) => {
-            crate::debugln!("spawn_process: load_elf success for {} at {:#x}", actual_path, entry_point);
             let mut new_fd_table = [-1i16; 16];
 
             let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
@@ -93,7 +92,7 @@ pub fn spawn_process(path: &str, fd_inheritance: Option<&[(u8, u8)]>) -> Result<
 
             let init_res = {
                 let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
-                tm.init_user_task(pid_idx, entry_point, pml4_phys, None, Some(new_fd_table), process_name_bytes)
+                tm.init_user_task(pid_idx, entry_point, pml4_phys, args, Some(new_fd_table), process_name_bytes)
             };
 
 
@@ -144,9 +143,10 @@ pub fn handle_exit(context: &mut CPUState) {
 pub fn handle_spawn(context: &mut CPUState) {
     let path_ptr = context.rdi as *const u8;
     let path_len = context.rsi as usize;
-    let fd_map_ptr = context.rdx as *const (u8, u8);
-    let fd_map_len = context.r10 as usize;
-    crate::debugln!("[SYS_SPAWN] path_ptr: {:p}, path_len: {}, fd_map_ptr: {:p}, fd_map_len: {}", path_ptr, path_len, fd_map_ptr, fd_map_len);
+    let args_ptr = context.rdx as *const *const u8;
+    let args_len = context.r10 as usize;
+    let fd_map_ptr = context.r8 as *const (u8, u8);
+    let fd_map_len = context.r9 as usize;
 
     if path_ptr.is_null() || path_len == 0 {
         context.rax = u64::MAX;
@@ -156,16 +156,29 @@ pub fn handle_spawn(context: &mut CPUState) {
     let path_slice = unsafe { core::slice::from_raw_parts(path_ptr, path_len) };
     let path_str = String::from_utf8_lossy(path_slice);
 
+    // Parse args
+    let mut args_vec = Vec::new();
+    if !args_ptr.is_null() && args_len > 0 {
+        let args_ptrs = unsafe { core::slice::from_raw_parts(args_ptr, args_len) };
+        for &ptr in args_ptrs {
+            if !ptr.is_null() {
+                let s = unsafe { core::ffi::CStr::from_ptr(ptr as *const i8).to_string_lossy() };
+                args_vec.push(s);
+            }
+        }
+    }
+    
+    let args_refs: Vec<&str> = args_vec.iter().map(|s| s.as_str()).collect();
+    let args_opt = if args_refs.is_empty() { None } else { Some(args_refs.as_slice()) };
+
     let fd_map = if !fd_map_ptr.is_null() && fd_map_len > 0 {
         unsafe { Some(core::slice::from_raw_parts(fd_map_ptr, fd_map_len)) }
     } else {
         None
     };
 
-    match spawn_process(&path_str, fd_map) {
-        Ok(pid) => {
-            context.rax = pid
-        },
+    match spawn_process(&path_str, args_opt, fd_map) {
+        Ok(pid) => context.rax = pid,
         Err(e) => {
             crate::debugln!("Spawn Error: {}", e);
             context.rax = u64::MAX;

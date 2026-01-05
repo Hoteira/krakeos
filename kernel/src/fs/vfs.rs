@@ -14,12 +14,7 @@ pub enum FileHandle {
 }
 
 pub fn init() {
-    unsafe {
-        crate::debugln!("FILESYSTEMS at {:p}", core::ptr::addr_of!(FILESYSTEMS));
-        core::ptr::write_bytes(core::ptr::addr_of_mut!(FILESYSTEMS), 0, 1);
-        core::ptr::write_bytes(core::ptr::addr_of_mut!(OPEN_FILES), 0, 1);
-        core::ptr::write_bytes(core::ptr::addr_of_mut!(GLOBAL_FILE_REFCOUNT), 0, 1);
-    }
+    // Statics are already initialized to None/0 by the compiler.
 }
 
 pub fn mount(disk_id: u8, fs: Box<dyn FileSystem>) {
@@ -30,6 +25,11 @@ pub fn mount(disk_id: u8, fs: Box<dyn FileSystem>) {
 }
 
 pub fn open_file(disk_id: u8, path_str: &str) -> Result<usize, String> {
+    let mut actual_path = String::from(path_str);
+    if !path_str.starts_with('@') && !path_str.starts_with('/') {
+        // Leave as is, resolve_path will handle it? No, open_file bypasses resolve_path.
+    }
+    
     let node = open(disk_id, path_str)?;
     unsafe {
         for i in 3..256 {
@@ -78,24 +78,14 @@ pub fn increment_ref(fd: usize) {
 }
 
 pub fn open(disk_id: u8, path_str: &str) -> Result<Box<dyn VfsNode>, String> {
-    crate::debugln!("vfs::open: start path='{}' (len={})", path_str, path_str.len());
-
-    crate::debugln!("vfs::open: disk_id check...");
-
-
     let components: Vec<String> = path_str.split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
 
     unsafe {
-        crate::debugln!("Accessing FILESYSTEMS at index {}", disk_id);
         if let Some(fs) = &mut FILESYSTEMS[disk_id as usize] {
-            crate::debugln!("FS box ptr: {:p}", fs);
-            crate::debugln!("vfs::open: found fs, calling root()");
             let mut node = fs.root()?;
             for component in components.iter() {
-                crate::debugln!("vfs::open: finding component {}", component);
                 node = node.find(&component)?;
             }
-            crate::debugln!("vfs::open: done");
             Ok(node)
         } else {
             Err(String::from("Disk ID not mounted"))

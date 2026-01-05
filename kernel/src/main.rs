@@ -1,4 +1,5 @@
 #![feature(abi_x86_interrupt)]
+#![feature(str_as_str)]
 #![no_std]
 #![no_main]
 

@@ -49,6 +49,7 @@ pub const SYS_GET_PROCESS_LIST: u64 = 110;
 pub const SYS_GET_PROCESS_MEM: u64 = 111;
 pub const SYS_MALLOC: u64 = 112;
 pub const SYS_FREE: u64 = 113;
+pub const SYS_SPAWN_EXT: u64 = 114;
 pub const SYS_DEBUG_PRINT: u64 = 9;
 pub const SYS_MOUNT: u64 = 165;
 

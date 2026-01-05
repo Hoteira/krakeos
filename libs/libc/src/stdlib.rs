@@ -1,28 +1,30 @@
 use core::alloc::Layout;
 use core::ffi::{c_char, c_int, c_void};
 
-#[repr(C)]
+#[repr(C, align(16))]
 struct Header {
     size: usize,
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
-    let total = size + core::mem::size_of::<Header>();
-    let layout = Layout::from_size_align(total, 8).unwrap();
+    let header_size = core::mem::size_of::<Header>();
+    let total = size + header_size;
+    let layout = Layout::from_size_align(total, 16).unwrap();
     let ptr = alloc::alloc::alloc(layout);
     if ptr.is_null() { return core::ptr::null_mut(); }
     let header = ptr as *mut Header;
     (*header).size = size;
-    ptr.add(core::mem::size_of::<Header>()) as *mut c_void
+    ptr.add(header_size) as *mut c_void
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn free(ptr: *mut c_void) {
     if ptr.is_null() { return; }
-    let real = (ptr as *mut u8).sub(core::mem::size_of::<Header>());
+    let header_size = core::mem::size_of::<Header>();
+    let real = (ptr as *mut u8).sub(header_size);
     let size = (*(real as *mut Header)).size;
-    alloc::alloc::dealloc(real, Layout::from_size_align(size + core::mem::size_of::<Header>(), 8).unwrap());
+    alloc::alloc::dealloc(real, Layout::from_size_align(size + header_size, 16).unwrap());
 }
 
 #[unsafe(no_mangle)]
@@ -83,7 +85,13 @@ pub unsafe extern "C" fn system(_c: *const c_char) -> c_int { 0 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn exit(s: c_int) -> ! { std::os::exit(s as u64) }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn getenv(_n: *const c_char) -> *mut c_char { core::ptr::null_mut() }
+pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
+    let s = core::ffi::CStr::from_ptr(name).to_string_lossy();
+    if s == "TERM" {
+        return b"xterm\0".as_ptr() as *mut c_char;
+    }
+    core::ptr::null_mut()
+}
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn putenv(_string: *mut c_char) -> c_int { 0 }
 
@@ -109,9 +117,9 @@ pub unsafe extern "C" fn realpath(path: *const c_char, resolved_path: *mut c_cha
     let p_str = core::ffi::CStr::from_ptr(path).to_string_lossy();
     let mut resolved = alloc::string::String::new();
 
-    if p_str == "." {
-        resolved = alloc::string::String::from("@0xE0/");
-    } else if !p_str.starts_with('@') {
+    if p_str == "." || p_str.is_empty() {
+        resolved = alloc::string::String::from("/");
+    } else if !p_str.starts_with('@') && !p_str.starts_with('/') {
         resolved = alloc::format!("@0xE0/{}", p_str);
     } else {
         resolved = p_str.into_owned();

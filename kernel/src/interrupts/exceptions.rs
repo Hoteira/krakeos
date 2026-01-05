@@ -183,7 +183,7 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
 
                 if key == 't' as u32 {
                     crate::debugln!("Spawning terminal...");
-                    match crate::interrupts::syscalls::spawn_process("@0xE0/sys/bin/term.elf", None) {
+                    match crate::interrupts::syscalls::spawn_process("@0xE0/sys/bin/term.elf", None, None) {
                         Ok(pid) => crate::debugln!("Terminal spawned with PID: {}", pid),
                         Err(e) => crate::debugln!("Failed to spawn terminal: {}", e),
                     }
@@ -216,10 +216,8 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
             }
         } else {
             if pressed {
-                if key == 32 { crate::debugln!("KEY: Space Pressed"); }
                 KEYBOARD_BUFFER.lock().push_back(key);
             } else {
-                if key == 32 { crate::debugln!("KEY: Space Released"); }
             }
 
 

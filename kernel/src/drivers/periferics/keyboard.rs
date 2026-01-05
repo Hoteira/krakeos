@@ -176,12 +176,12 @@ pub fn handle_scancode(scancode: u8) -> Option<(u32, bool)> {
         let pressed = !is_release;
 
         match scancode_val {
-            // Windows Key
+            // Windows Key (Multi-byte scancode E0 5B / E0 5C)
             0x5B | 0x5C if is_e0 => {
                 SUPER_ACTIVE = pressed;
-                if pressed { crate::debugln!("Global Shortcut: Super Key Pressed"); }
                 None
             }
+
 
             0x38 => {
                 ALT_ACTIVE = pressed;

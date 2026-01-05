@@ -475,7 +475,6 @@ pub struct Ext2Node {
 
 impl FileSystem for Ext2 {
     fn root(&mut self) -> Result<Box<dyn VfsNode>, String> {
-        crate::debugln!("Ext2::root called");
         let inode = self.read_inode(2);
         Ok(Box::new(Ext2Node {
             fs: self as *mut _,

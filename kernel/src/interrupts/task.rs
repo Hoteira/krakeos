@@ -1,3 +1,4 @@
+use alloc::vec::Vec;
 use crate::memory::{paging, pmm};
 use core::arch::{asm, naked_asm};
 
@@ -72,7 +73,7 @@ pub(crate) static NULL_TASK: Task = Task {
 };
 
 impl Task {
-    pub fn init(&mut self, entry_point: u64, args: Option<&[u64]>, name: &[u8]) {
+    pub fn init(&mut self, entry_point: u64, args: Option<&[&str]>, name: &[u8]) {
         self.state = TaskState::Ready;
         self.fpu_state = [0; 512];
         self.fd_table = [-1; 16];
@@ -107,30 +108,55 @@ impl Task {
         let state_ptr = (stack_top - state_size as u64) as *mut CPUState;
         self.cpu_state_ptr = state_ptr as u64;
 
-        let mut arg_count = 0;
-        if args.is_some() {
-            arg_count = core::cmp::min(args.unwrap().len(), 4);
-        }
-
         unsafe {
-            (*state_ptr).rax = 0;
-            (*state_ptr).rbx = if arg_count > 0 { args.unwrap()[0] } else { 0 };
-            (*state_ptr).rcx = if arg_count > 1 { args.unwrap()[1] } else { 0 };
-            (*state_ptr).rdx = if arg_count > 2 { args.unwrap()[2] } else { 0 };
-            (*state_ptr).rsi = if arg_count > 3 { args.unwrap()[3] } else { 0 };
+            let mut current_sp = stack_top;
 
+            // Simple stack setup for kernel-spawned init task (no args usually)
+            // But we should at least push argc=0 if no args, or handle it like init_user
+            let mut arg_ptrs = Vec::new();
+            if let Some(a_list) = args {
+                let mut push_str = |s: &[u8]| {
+                    let len = s.len();
+                    current_sp -= (len + 1) as u64;
+                    let ptr = current_sp as *mut u8;
+                    core::ptr::copy_nonoverlapping(s.as_ptr(), ptr, len);
+                    *ptr.add(len) = 0;
+                    current_sp
+                };
+                for &a in a_list {
+                    arg_ptrs.push(push_str(a.as_bytes()));
+                }
+            }
+
+            current_sp &= !7;
+            current_sp -= 8;
+            *(current_sp as *mut u64) = 0; // envp
+            current_sp -= 8;
+            *(current_sp as *mut u64) = 0; // argv end
+            for &ptr in arg_ptrs.iter().rev() {
+                current_sp -= 8;
+                *(current_sp as *mut u64) = ptr;
+            }
+            current_sp -= 8;
+            *(current_sp as *mut u64) = arg_ptrs.len() as u64;
+
+            (*state_ptr).rax = 0;
+            (*state_ptr).rbx = 0;
+            (*state_ptr).rcx = 0;
+            (*state_ptr).rdx = 0;
+            (*state_ptr).rsi = 0;
             (*state_ptr).rdi = 0;
             (*state_ptr).rbp = 0;
-            (*state_ptr).rsp = stack_top;
+            (*state_ptr).rsp = current_sp;
             (*state_ptr).rip = entry_point;
-            (*state_ptr).cs = 0x28;
+            (*state_ptr).cs = 0x28; // Kernel CS
             (*state_ptr).rflags = 0x202;
-            (*state_ptr).ss = 0x10;
+            (*state_ptr).ss = 0x10; // Kernel SS
         }
     }
 
     #[allow(dead_code)]
-    pub fn init_user(&mut self, entry_point: u64, pml4_phys: u64, args: Option<&[u64]>, pid: u64, fd_table: Option<[i16; 16]>, name: &[u8]) -> Result<(), pmm::FrameError> {
+    pub fn init_user(&mut self, entry_point: u64, pml4_phys: u64, args: Option<&[&str]>, pid: u64, fd_table: Option<[i16; 16]>, name: &[u8]) -> Result<(), pmm::FrameError> {
         self.fpu_state = [0; 512];
         self.fd_table = fd_table.unwrap_or([-1; 16]);
         self.exit_code = 0;
@@ -173,45 +199,78 @@ impl Task {
         let state_ptr = (self.kernel_stack - state_size as u64) as *mut CPUState;
         self.cpu_state_ptr = state_ptr as u64;
 
-        let mut arg_count = 0;
-        if args.is_some() {
-            arg_count = core::cmp::min(args.unwrap().len(), 4);
-        }
-
         unsafe {
-            // Setup a clean stack for System V ABI:
-            // [u_stack_top - 128..u_stack_top] : Program Name (Strings)
-            // [u_stack_top - 160..u_stack_top-128] : argv array pointers
-            // [u_stack_top - 168] : argc (The entry RSP)
+            // System V ABI Stack Setup:
+            // High Addresses
+            // [Strings: name, arg1, arg2, ...]
+            // [envp array: NULL]
+            // [argv array: name_ptr, arg1_ptr, arg2_ptr, ..., NULL]
+            // [argc] <- RSP
+            // Low Addresses
 
-            let name_len = core::cmp::min(name.len(), 63);
-            let name_addr = u_stack_top - 128;
-            let name_ptr = name_addr as *mut u8;
-            core::ptr::copy_nonoverlapping(name.as_ptr(), name_ptr, name_len);
-            *name_ptr.add(name_len) = 0;
+            let mut current_sp = u_stack_top;
 
-            let stack_ptrs = u_stack_top - 160;
-            let stack_ptr_u64 = stack_ptrs as *mut u64;
-            stack_ptr_u64.add(0).write(name_addr); // argv[0]
-            stack_ptr_u64.add(1).write(0);         // argv[1] (NULL)
-            stack_ptr_u64.add(2).write(0);         // envp[0] (NULL)
+            // 1. Copy strings and store their pointers
+            let mut arg_ptrs = Vec::new();
 
-            let argc_addr = u_stack_top - 168;
-            *(argc_addr as *mut u64) = 1;          // argc = 1
+            // Helper to push string to stack
+            let mut push_str = |s: &[u8]| {
+                let len = s.len();
+                current_sp -= (len + 1) as u64;
+                let ptr = current_sp as *mut u8;
+                core::ptr::copy_nonoverlapping(s.as_ptr(), ptr, len);
+                *ptr.add(len) = 0;
+                current_sp
+            };
 
+            // Push name (argv[0])
+            let name_ptr = push_str(name);
+            arg_ptrs.push(name_ptr);
+
+            // Push other args
+            if let Some(a_list) = args {
+                for &a in a_list {
+                    arg_ptrs.push(push_str(a.as_bytes()));
+                }
+            }
+
+            // 2. Align for pointers
+            current_sp &= !7;
+
+            // 3. Push envp (just NULL for now)
+            current_sp -= 8;
+            *(current_sp as *mut u64) = 0;
+            let _envp_ptr = current_sp;
+
+            // 4. Push argv array (NULL terminated)
+            current_sp -= 8;
+            *(current_sp as *mut u64) = 0;
+
+            for &ptr in arg_ptrs.iter().rev() {
+                current_sp -= 8;
+                *(current_sp as *mut u64) = ptr;
+            }
+            let argv_ptr = current_sp;
+
+            // 5. Push argc
+            current_sp -= 8;
+            *(current_sp as *mut u64) = arg_ptrs.len() as u64;
+
+            // Final RSP alignment check (must be 16-byte aligned before call)
+            // But _start does "and rsp, -16", so we just need to be roughly correct here.
+            
             (*state_ptr).rax = 0;
-            (*state_ptr).rbx = if arg_count > 0 { args.unwrap()[0] } else { 0 };
-            (*state_ptr).rcx = if arg_count > 1 { args.unwrap()[1] } else { 0 };
-            (*state_ptr).rdx = if arg_count > 2 { args.unwrap()[2] } else { 0 };
-            (*state_ptr).rsi = if arg_count > 3 { args.unwrap()[3] } else { 0 };
-
+            (*state_ptr).rbx = 0;
+            (*state_ptr).rcx = 0;
+            (*state_ptr).rdx = 0;
+            (*state_ptr).rsi = 0;
             (*state_ptr).rdi = 0;
             (*state_ptr).rbp = 0;
 
             (*state_ptr).rip = entry_point;
             (*state_ptr).cs = 0x33;
             (*state_ptr).rflags = 0x202;
-            (*state_ptr).rsp = argc_addr; // 16n + 8 alignment (since u_stack_top is 4096n)
+            (*state_ptr).rsp = current_sp; 
             (*state_ptr).ss = 0x23;
         }
 
@@ -249,7 +308,7 @@ impl TaskManager {
         self.add_task(idle as u64, None, b"idle");
     }
 
-    pub fn add_task(&mut self, entry_point: u64, args: Option<&[u64]>, name: &[u8]) {
+    pub fn add_task(&mut self, entry_point: u64, args: Option<&[&str]>, name: &[u8]) {
         if self.task_count < MAX_TASKS {
             let free_slot = self.get_free_slot();
             self.tasks[free_slot].init(entry_point, args, name);
@@ -300,7 +359,7 @@ impl TaskManager {
     }
 
     #[allow(dead_code)]
-    pub fn init_user_task(&mut self, slot: usize, entry_point: u64, pml4_phys: u64, args: Option<&[u64]>, fd_table: Option<[i16; 16]>, name: &[u8]) -> Result<(), pmm::FrameError> {
+    pub fn init_user_task(&mut self, slot: usize, entry_point: u64, pml4_phys: u64, args: Option<&[&str]>, fd_table: Option<[i16; 16]>, name: &[u8]) -> Result<(), pmm::FrameError> {
         if slot >= MAX_TASKS { return Err(pmm::FrameError::IndexOutOfBounds); }
 
 

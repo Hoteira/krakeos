@@ -185,30 +185,41 @@ pub unsafe extern "C" fn putc(c: c_int, stream: *mut c_void) -> c_int {
     if fwrite(buf.as_ptr() as *const c_void, 1, 1, stream) == 1 { c } else { -1 }
 }
 
+#[repr(C)]
+struct Stat {
+    st_dev: u64,
+    st_ino: u64,
+    st_mode: u32,
+    _pad1: u32, // Alignment padding
+    st_nlink: u64,
+    st_uid: u32,
+    st_gid: u32,
+    st_rdev: u64,
+    st_size: u64,
+    st_blksize: u64,
+    st_blocks: u64,
+    st_atime: u64,
+    st_mtime: u64,
+    st_ctime: u64,
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn stat(path: *const c_char, buf: *mut c_void) -> c_int {
-    let p_str = core::ffi::CStr::from_ptr(path).to_string_lossy();
+    let mut p_str = core::ffi::CStr::from_ptr(path).to_string_lossy();
+    if p_str.is_empty() {
+        p_str = alloc::borrow::Cow::Borrowed("@0xE0/");
+    }
     if let Ok(file) = std::fs::File::open(&p_str) {
         let size = file.size();
         let is_dir = std::fs::read_dir(&p_str).is_ok();
 
-        let stat_ptr = buf as *mut u8;
-        // struct stat {
-        //   st_dev: 0..8
-        //   st_ino: 8..16
-        //   st_mode: 16..20 (u32)
-        //   st_nlink: 24..32 (u64)
-        //   st_uid: 32..36 (u32)
-        //   st_gid: 36..40 (u32)
-        //   st_rdev: 40..48
-        //   st_size: 48..56 (u64)
-        // }
+        let s = &mut *(buf as *mut Stat);
+        core::ptr::write_bytes(buf as *mut u8, 0, core::mem::size_of::<Stat>());
 
-        core::ptr::write_bytes(stat_ptr, 0, 144); // Clear struct (size guess based on fields)
-
-        let mode: u32 = if is_dir { 0040000 | 0777 } else { 0100000 | 0666 };
-        *((stat_ptr.add(16)) as *mut u32) = mode;
-        *((stat_ptr.add(48)) as *mut u64) = size as u64;
+        s.st_mode = if is_dir { 0040000 | 0777 } else { 0100000 | 0666 };
+        s.st_size = size as u64;
+        s.st_blksize = 1024;
+        s.st_blocks = (size as u64 + 511) / 512;
 
         return 0;
     }

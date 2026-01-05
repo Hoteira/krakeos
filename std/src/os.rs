@@ -64,6 +64,29 @@ pub unsafe fn syscall5(num: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg
     result
 }
 
+pub unsafe fn syscall6(num: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64, arg6: u64) -> u64 {
+    let result: u64;
+
+    unsafe {
+        asm!(
+        "syscall",
+        in("rax") num,
+        in("rdi") arg1,
+        in("rsi") arg2,
+        in("rdx") arg3,
+        in("r10") arg4,
+        in("r8") arg5,
+        in("r9") arg6,
+        lateout("rax") result,
+        out("rcx") _,
+        out("r11") _,
+        options(nostack, preserves_flags)
+        );
+    }
+
+    result
+}
+
 pub fn print(s: &str) {
     unsafe {
         syscall(1, 1, s.as_ptr() as u64, s.len() as u64);
@@ -138,20 +161,40 @@ pub fn exit(code: u64) -> ! {
 }
 
 pub fn exec(path: &str) {
-    unsafe {
-        syscall(59, path.as_ptr() as u64, path.len() as u64, 0);
-    }
+    spawn_ext(path, &[]);
 }
 
 pub fn spawn(path: &str) -> usize {
-    unsafe {
-        syscall(59, path.as_ptr() as u64, path.len() as u64, 0) as usize
-    }
+    spawn_ext(path, &[])
 }
 
-pub fn spawn_with_fds(path: &str, fds: &[(u8, u8)]) -> usize {
+pub fn spawn_ext(path: &str, args: &[&str]) -> usize {
+    spawn_with_fds(path, args, &[])
+}
+
+pub fn spawn_with_fds(path: &str, args: &[&str], fds: &[(u8, u8)]) -> usize {
+    use alloc::vec::Vec;
+    use alloc::string::String;
+
+    // We MUST null-terminate strings for the kernel CStr::from_ptr
+    let mut c_args = Vec::new();
+    for &a in args {
+        let mut s = String::from(a);
+        s.push('\0');
+        c_args.push(s);
+    }
+
+    let arg_ptrs: Vec<*const u8> = c_args.iter().map(|s| s.as_ptr()).collect();
+
     unsafe {
-        syscall4(59, path.as_ptr() as u64, path.len() as u64, fds.as_ptr() as u64, fds.len() as u64) as usize
+        syscall6(59, 
+            path.as_ptr() as u64, 
+            path.len() as u64, 
+            arg_ptrs.as_ptr() as u64, 
+            arg_ptrs.len() as u64, 
+            fds.as_ptr() as u64,
+            fds.len() as u64
+        ) as usize
     }
 }
 

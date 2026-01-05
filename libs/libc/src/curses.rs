@@ -32,7 +32,12 @@ pub unsafe extern "C" fn wgetch(_win: *mut WINDOW) -> c_int {
     // Read 1 byte from stdin (fd 0)
     let mut buf = [0u8; 1];
     let n = std::os::file_read(0, &mut buf);
-    if n == 1 { buf[0] as c_int } else { -1 }
+    if n == 1 { 
+        buf[0] as c_int 
+    } else {
+        std::os::yield_task();
+        -1 
+    }
 }
 
 #[unsafe(no_mangle)]

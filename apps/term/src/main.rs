@@ -150,7 +150,7 @@ pub extern "C" fn main() -> i32 {
         (2, fds_out[1] as u8),
     ];
 
-    std::os::spawn_with_fds("@0xE0/sys/bin/shell.elf", &fds_map);
+    std::os::spawn_with_fds("@0xE0/sys/bin/shell.elf", &[], &fds_map);
 
 
     std::os::file_close(fds_in[0] as usize);

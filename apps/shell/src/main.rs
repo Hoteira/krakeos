@@ -62,14 +62,14 @@ fn resolve_path(cwd: &str, path: &str) -> String {
 }
 
 #[derive(PartialEq)]
-enum RedirectionType {
+enum RedirType {
     None,
     Output(String),
     Append(String),
     Input(String),
 }
 
-struct CommandSegment {
+struct CmdSeg {
     cmd: String,
     args: Vec<String>,
     input_file: Option<String>,
@@ -77,38 +77,40 @@ struct CommandSegment {
     append_mode: bool,
 }
 
-fn parse_segment(segment: &str) -> CommandSegment {
+fn parse_segment(segment: &str) -> CmdSeg {
     let mut parts = segment.split_whitespace();
-    let cmd = parts.next().unwrap_or("").to_string();
+    let mut cmd = String::new();
     let mut args = Vec::new();
     let mut input_file = None;
     let mut output_file = None;
     let mut append_mode = false;
 
-    let mut pending_redirect = RedirectionType::None;
+    let mut pending_redirect = RedirType::None;
 
     for part in parts {
         match pending_redirect {
-            RedirectionType::Output(_) => {
+            RedirType::Output(_) => {
                 output_file = Some(part.to_string());
-                pending_redirect = RedirectionType::None;
+                pending_redirect = RedirType::None;
             }
-            RedirectionType::Append(_) => {
+            RedirType::Append(_) => {
                 output_file = Some(part.to_string());
                 append_mode = true;
-                pending_redirect = RedirectionType::None;
+                pending_redirect = RedirType::None;
             }
-            RedirectionType::Input(_) => {
+            RedirType::Input(_) => {
                 input_file = Some(part.to_string());
-                pending_redirect = RedirectionType::None;
+                pending_redirect = RedirType::None;
             }
-            RedirectionType::None => {
+            RedirType::None => {
                 if part == ">" {
-                    pending_redirect = RedirectionType::Output(String::new());
+                    pending_redirect = RedirType::Output(String::new());
                 } else if part == ">>" {
-                    pending_redirect = RedirectionType::Append(String::new());
+                    pending_redirect = RedirType::Append(String::new());
                 } else if part == "<" {
-                    pending_redirect = RedirectionType::Input(String::new());
+                    pending_redirect = RedirType::Input(String::new());
+                } else if cmd.is_empty() {
+                    cmd = part.to_string();
                 } else {
                     args.push(part.to_string());
                 }
@@ -116,7 +118,7 @@ fn parse_segment(segment: &str) -> CommandSegment {
         }
     }
 
-    CommandSegment { cmd, args, input_file, output_file, append_mode }
+    CmdSeg { cmd, args, input_file, output_file, append_mode }
 }
 
 #[unsafe(no_mangle)]
@@ -124,14 +126,14 @@ pub extern "C" fn main() -> i32 {
     println!("Shell: Started (Pipes & Redirections Enabled)");
     std::os::file_write(STDOUT_FD, "\nWelcome to KrakeOS Shell \u{E8F0} \n> ".as_bytes());
 
-    let mut cwd = String::from("@0xE0");
-    let mut path_env = String::from("@0xE0/sys/bin;@0xE0/apps");
+    let mut cwd = String::from("/");
+    let mut path_env = String::from("/sys/bin;/apps");
     let mut cmd_buffer = String::new();
 
     loop {
         let mut buf = [0u8; 1];
         let n = std::os::file_read(STDIN_FD, &mut buf);
-        if n > 0 {
+        if n > 0 && n != usize::MAX {
             let b = buf[0];
             let c = b as char;
 
@@ -262,7 +264,8 @@ pub extern "C" fn main() -> i32 {
                                     (2, 2)
                                 ];
 
-                                let pid = std::os::spawn_with_fds(&prog_path, &map);
+                                let args_refs: Vec<&str> = parsed.args.iter().map(|s| s.as_str()).collect();
+                                let pid = std::os::spawn_with_fds(&prog_path, &args_refs, &map);
 
                                 if pid != usize::MAX {
                                     children_pids.push(pid);

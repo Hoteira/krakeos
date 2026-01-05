@@ -6,14 +6,21 @@ use alloc::vec::Vec;
 use super::{PollFd, POLLERR, POLLIN, POLLNVAL, POLLOUT};
 
 pub fn resolve_path(cwd: &str, path: &str) -> String {
+    let mut full_path = String::new();
+
     if path.starts_with('@') {
-        return String::from(path);
+        full_path = String::from(path);
+    } else if path.starts_with('/') {
+        // Absolute path from boot disk
+        full_path = alloc::format!("@0xE0{}", path);
+    } else {
+        // Relative path
+        full_path = alloc::format!("{}{}", cwd, path);
     }
 
-    let mut parts: Vec<&str> = cwd.split('/').filter(|s| !s.is_empty()).collect();
-
-    for part in path.split('/') {
-        if part == "." || part.is_empty() {
+    let mut parts: Vec<&str> = Vec::new();
+    for part in full_path.split('/') {
+        if part.is_empty() || part == "." {
             continue;
         } else if part == ".." {
             if parts.len() > 1 {
@@ -24,7 +31,18 @@ pub fn resolve_path(cwd: &str, path: &str) -> String {
         }
     }
 
-    parts.join("/")
+    let mut res = String::new();
+    for (i, p) in parts.iter().enumerate() {
+        if i > 0 { res.push('/'); }
+        res.push_str(p);
+    }
+    
+    // Ensure it starts with the disk identifier
+    if !res.starts_with('@') && !parts.is_empty() {
+        // This shouldn't happen with the logic above, but let's be safe
+    }
+
+    res
 }
 
 pub fn handle_read(context: &mut CPUState) {
@@ -38,18 +56,31 @@ pub fn handle_read(context: &mut CPUState) {
         return;
     }
 
-    let mut keyboard_buffer = KEYBOARD_BUFFER.lock();
-
-    while bytes_written_to_user < user_len {
-        if let Some(keycode) = keyboard_buffer.pop_front() {
-            unsafe {
-                *user_ptr.add(bytes_written_to_user) = keycode as u8;
+    loop {
+        {
+            let mut keyboard_buffer = KEYBOARD_BUFFER.lock();
+            while bytes_written_to_user < user_len {
+                if let Some(keycode) = keyboard_buffer.pop_front() {
+                    unsafe {
+                        *user_ptr.add(bytes_written_to_user) = keycode as u8;
+                    }
+                    bytes_written_to_user += 1;
+                } else {
+                    break;
+                }
             }
-            bytes_written_to_user += 1;
-        } else {
+        }
+
+        if bytes_written_to_user > 0 {
             break;
         }
+
+        // Wait for input
+        unsafe {
+            core::arch::asm!("int 0x81");
+        }
     }
+    
     context.rax = bytes_written_to_user as u64;
 }
 
@@ -410,24 +441,14 @@ pub fn handle_open(context: &mut CPUState) {
 
     let resolved = resolve_path(&cwd_str, &path_str_full);
 
+    // Extract disk_id and path from resolved string
     let path_parts: Vec<&str> = resolved.split('/').collect();
-    if path_parts.len() < 1 || !path_parts[0].starts_with('@') {
-        context.rax = u64::MAX;
-        return;
-    }
-
     let disk_part = &path_parts[0][1..];
     let disk_id = if disk_part.starts_with("0x") || disk_part.starts_with("0X") {
         u8::from_str_radix(&disk_part[2..], 16).unwrap_or(0xFF)
     } else {
         disk_part.parse::<u8>().unwrap_or_else(|_| u8::from_str_radix(disk_part, 16).unwrap_or(0xFF))
     };
-
-    if disk_id == 0xFF {
-        context.rax = u64::MAX;
-        return;
-    }
-
     let actual_path_str = if path_parts.len() > 1 { path_parts[1..].join("/") } else { String::from("") };
 
     match crate::fs::vfs::open_file(disk_id, &actual_path_str) {
