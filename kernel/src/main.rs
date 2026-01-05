@@ -45,7 +45,7 @@ pub extern "C" fn _start(bootinfo_ptr: *const BootInfo) -> ! {
     memory::init();
 
     
-    let heap_size = 0xA0_0000; 
+    let heap_size = 0xA0_0000;
     let heap_pages = heap_size / 4096;
     let heap_phys_addr = pmm::allocate_frames(heap_pages, 0 )
         .expect("Failed to allocate heap memory from PMM");

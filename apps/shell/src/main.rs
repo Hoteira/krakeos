@@ -211,7 +211,7 @@ pub extern "C" fn _start() -> ! {
                         
                         
                         let is_builtin = match parsed.cmd.as_str() {
-                            "cd" | "ls" | "pwd" | "help" | "clear" | "touch" | "mkdir" | "rm" | "mv" | "cp" | "sleep" | "osfetch" => true,
+                            "cd" | "ls" | "pwd" | "help" | "clear" | "touch" | "mkdir" | "rm" | "mv" | "cp" | "sleep" | "osfetch" | "echo" | "cat" => true,
                             _ => false
                         };
                         
@@ -309,7 +309,15 @@ pub extern "C" fn _start() -> ! {
 
 fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, in_fd: usize, out_fd: usize) {
     if cmd == "help" {
-        std::os::file_write(out_fd, b"Available commands: help, clear, ls, cd, pwd, touch, mkdir, rm, mv, cp, cat, sleep, osfetch\n");
+        std::os::file_write(out_fd, b"Available commands: help, clear, ls, cd, pwd, touch, mkdir, rm, mv, cp, cat, sleep, osfetch, echo\n");
+    } else if cmd == "echo" {
+        for (i, arg) in args.iter().enumerate() {
+            if i > 0 {
+                std::os::file_write(out_fd, b" ");
+            }
+            std::os::file_write(out_fd, arg.as_bytes());
+        }
+        std::os::file_write(out_fd, b"\n");
     } else if cmd == "osfetch" {
         let white = "\x1B[97m";
         let blue = "\x1B[94m"; 

@@ -14,9 +14,6 @@ use core::ffi::{c_int, c_char, c_void};
 #[unsafe(no_mangle)] pub unsafe extern "C" fn towlower(c: u32) -> u32 { 
     if c >= 'A' as u32 && c <= 'Z' as u32 { c + 32 } else { c }
 }
-#[unsafe(no_mangle)] pub unsafe extern "C" fn isxdigit(c: u32) -> c_int {
-    if (c >= '0' as u32 && c <= '9' as u32) || (c >= 'a' as u32 && c <= 'f' as u32) || (c >= 'A' as u32 && c <= 'F' as u32) { 1 } else { 0 }
-}
 
 // --- NCURSES stubs ---
 // ...
@@ -68,8 +65,7 @@ use core::ffi::{c_int, c_char, c_void};
 #[unsafe(no_mangle)] pub unsafe extern "C" fn sigaction(_sig: c_int, _act: *const c_void, _oact: *mut c_void) -> c_int { 0 }
 
 // --- LOCALE ---
-#[unsafe(no_mangle)] pub unsafe extern "C" fn setlocale(_category: c_int, _locale: *const c_char) -> *mut c_char { core::ptr::null_mut() }
-#[unsafe(no_mangle)] pub unsafe extern "C" fn nl_langinfo(_item: c_int) -> *mut c_char { b"\0".as_ptr() as *mut c_char }
+// Moved to locale.rs
 
 // --- STDLIB extra ---
 #[unsafe(no_mangle)] pub unsafe extern "C" fn wctomb(s: *mut c_char, wc: u32) -> c_int {
@@ -117,11 +113,7 @@ static mut STD_WIN: WINDOW = WINDOW { _dummy: 0 };
 // We might need more ncurses functions if we want it to work, but these are the ones linker complained about.
 
 // --- UNISTD / SYS stubs ---
-#[unsafe(no_mangle)] pub unsafe extern "C" fn tcsetattr(_fd: c_int, _opt: c_int, _termios: *const c_void) -> c_int { 0 }
-#[unsafe(no_mangle)] pub unsafe extern "C" fn tcgetattr(_fd: c_int, _termios: *mut c_void) -> c_int { 0 }
-#[unsafe(no_mangle)] pub unsafe extern "C" fn geteuid() -> u32 { 0 } // Root
-#[unsafe(no_mangle)] pub unsafe extern "C" fn getpid() -> c_int { 1 } 
-#[unsafe(no_mangle)] pub unsafe extern "C" fn getpwuid(_uid: u32) -> *mut c_void { core::ptr::null_mut() } 
+// Moved to unistd.rs
 
 // --- REGEX stubs ---
 #[unsafe(no_mangle)] pub unsafe extern "C" fn regcomp(_preg: *mut c_void, _regex: *const c_char, _cflags: c_int) -> c_int { 1 } // Fail

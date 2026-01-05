@@ -13,5 +13,9 @@ extern int atoi(const char *nptr);
 extern double atof(const char *nptr);
 extern int abs(int j);
 extern int system(const char *command);
+extern long strtol(const char *nptr, char **endptr, int base);
+extern int mkstemps(char *template, int suffix_len);
+extern int putenv(char *string);
+extern char *realpath(const char *path, char *resolved_path);
 
 #endif

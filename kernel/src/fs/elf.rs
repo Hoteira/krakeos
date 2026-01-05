@@ -15,8 +15,8 @@ pub fn load_elf(data: &[u8], target_pml4_phys: u64, pid: u64) -> Result<u64, all
         panic!("Security Violation: Attempted to load non-PIE executable (Type {})! All user programs must be Position Independent.", header_e_type);
     }
 
+    let mut max_end: u64 = 0;
     let load_base = {
-        let mut max_end: u64 = 0;
         for phdr in elf.program_headers() {
             if ProgramType::from(phdr.p_type) == ProgramType::Load {
                 let end = phdr.p_vaddr + phdr.p_memsz;
@@ -152,6 +152,11 @@ pub fn load_elf(data: &[u8], target_pml4_phys: u64, pid: u64) -> Result<u64, all
                     let r_type = rela.get_type();
                     let r_sym = rela.get_symbol();
                     let target_virt = rela.r_offset + load_base;
+
+                    if rela.r_offset >= max_end {
+                        // crate::debugln!("Relocation out of bounds: {:#x} >= {:#x}", rela.r_offset, max_end);
+                        continue;
+                    }
 
                     let _rela_r_offset = rela.r_offset;
 

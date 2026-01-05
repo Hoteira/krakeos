@@ -4,4 +4,8 @@ version.workspace = true
 authors.workspace = true
 edition.workspace = true
 
+[features]
+default = ["userland"]
+userland = []
+
 [dependencies]

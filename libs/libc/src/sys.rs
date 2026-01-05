@@ -103,3 +103,26 @@ pub unsafe extern "C" fn krake_window_draw(wid: usize) {
     };
     krake_syscall(51, &w as *const _ as u64, 0, 0, 0);
 }
+
+// --- SIGNAL STUBS ---
+#[unsafe(no_mangle)] pub unsafe extern "C" fn kill(pid: c_int, sig: c_int) -> c_int {
+    // Syscall 78 is kill(pid) in kernel, but here we have sig.
+    // If sig == 0, it's a check. If sig == 9 (SIGKILL), we call syscall 78.
+    // For now, only support SIGKILL or ignore.
+    if sig == 9 {
+        krake_syscall(78, pid as u64, 0, 0, 0) as c_int
+    } else {
+        0
+    }
+}
+
+#[unsafe(no_mangle)] pub unsafe extern "C" fn raise(sig: c_int) -> c_int {
+    kill(crate::unistd::getpid(), sig)
+}
+
+#[unsafe(no_mangle)] pub unsafe extern "C" fn sigemptyset(set: *mut u32) -> c_int { *set = 0; 0 }
+#[unsafe(no_mangle)] pub unsafe extern "C" fn sigfillset(set: *mut u32) -> c_int { *set = 0xFFFFFFFF; 0 }
+#[unsafe(no_mangle)] pub unsafe extern "C" fn sigaddset(set: *mut u32, signum: c_int) -> c_int { *set |= 1 << (signum - 1); 0 }
+#[unsafe(no_mangle)] pub unsafe extern "C" fn sigdelset(set: *mut u32, signum: c_int) -> c_int { *set &= !(1 << (signum - 1)); 0 }
+#[unsafe(no_mangle)] pub unsafe extern "C" fn sigismember(set: *const u32, signum: c_int) -> c_int { if (*set & (1 << (signum - 1))) != 0 { 1 } else { 0 } }
+#[unsafe(no_mangle)] pub unsafe extern "C" fn sigprocmask(_how: c_int, _set: *const u32, _oldset: *mut u32) -> c_int { 0 }

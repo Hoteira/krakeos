@@ -118,36 +118,44 @@ fn align_up(addr: usize, align: usize) -> usize {
 }
 
 unsafe fn grow_heap(min_size: usize) -> bool {
-    let mut size = 4096 * 1024; // 4MB increments
-    if min_size > size {
-         size = min_size.next_power_of_two();
-    }
-    
-    if HEAP_REGION_COUNT >= MAX_HEAP_REGIONS {
+    #[cfg(not(feature = "userland"))]
+    {
         return false;
     }
 
-    let ptr = crate::os::syscall(5, size as u64, 0, 0) as *mut u8;
-    if ptr.is_null() {
-        return false;
+    #[cfg(feature = "userland")]
+    {
+        let mut size = 4096 * 1024; // 4MB increments
+        if min_size > size {
+             size = min_size.next_power_of_two();
+        }
+        
+        if HEAP_REGION_COUNT >= MAX_HEAP_REGIONS {
+            return false;
+        }
+
+        let ptr = crate::os::syscall(5, size as u64, 0, 0) as *mut u8;
+        if ptr.is_null() {
+            return false;
+        }
+        
+        // Zero the memory (optional but safe)
+        write_bytes(ptr, 0, size);
+
+        let start = ptr as usize;
+        let end = start + size;
+
+        HEAP_REGIONS[HEAP_REGION_COUNT] = HeapRegion { start, end };
+        HEAP_REGION_COUNT += 1;
+
+        let seg = ptr as *mut Free;
+        (*seg).size = size - size_of::<Free>();
+        
+        (*seg).next = ALLOCATOR.first_free.load(Ordering::Relaxed);
+        ALLOCATOR.first_free.store(seg, Ordering::Relaxed);
+
+        true
     }
-    
-    // Zero the memory (optional but safe)
-    write_bytes(ptr, 0, size);
-
-    let start = ptr as usize;
-    let end = start + size;
-
-    HEAP_REGIONS[HEAP_REGION_COUNT] = HeapRegion { start, end };
-    HEAP_REGION_COUNT += 1;
-
-    let seg = ptr as *mut Free;
-    (*seg).size = size - size_of::<Free>();
-    
-    (*seg).next = ALLOCATOR.first_free.load(Ordering::Relaxed);
-    ALLOCATOR.first_free.store(seg, Ordering::Relaxed);
-
-    true
 }
 
 pub fn init(base: *mut u8, size: usize) {
