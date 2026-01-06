@@ -67,7 +67,7 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
         
         let mut os_line = String::from(p_cyan);
         os_line.push(' ');
-        os_line.push(core::char::from_u32(0xE8F0).unwrap());
+        os_line.push(core::char::from_u32(0xF300).unwrap_or('?')); // Linux icon
         os_line.push_str(" OS: ");
         os_line.push_str(white);
         os_line.push_str("KrakeOS");
@@ -76,7 +76,7 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
 
         let mut kernel_line = String::from(p_green);
         kernel_line.push(' ');
-        kernel_line.push(core::char::from_u32(0xE8F1).unwrap());
+        kernel_line.push(core::char::from_u32(0xE8F1).unwrap_or('?'));
         kernel_line.push_str(" Kernel: ");
         kernel_line.push_str(white);
         kernel_line.push_str("KrakeOS Kernel 0.1.0");
@@ -85,7 +85,7 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
 
         let mut uptime_line = String::from(p_yellow);
         uptime_line.push(' ');
-        uptime_line.push(core::char::from_u32(0xF017).unwrap());
+        uptime_line.push(core::char::from_u32(0xF017).unwrap_or('?'));
         uptime_line.push_str(" Uptime: ");
         uptime_line.push_str(white);
         uptime_line.push_str(&format!("{}:{}:{:02}", h, m, s));
@@ -94,7 +94,7 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
 
         let mut res_line = String::from(p_purple);
         res_line.push(' ');
-        res_line.push(core::char::from_u32(0xF26C).unwrap());
+        res_line.push(core::char::from_u32(0xF26C).unwrap_or('?'));
         res_line.push_str(" Resolution: ");
         res_line.push_str(white);
         res_line.push_str(&format!("{}x{}", screen_w, screen_h));
@@ -103,7 +103,7 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
 
         let mut shell_line = String::from(p_pink);
         shell_line.push(' ');
-        shell_line.push(core::char::from_u32(0xE795).unwrap());
+        shell_line.push(core::char::from_u32(0xE795).unwrap_or('?'));
         shell_line.push_str(" Shell: ");
         shell_line.push_str(white);
         shell_line.push_str("shell");
@@ -112,7 +112,7 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
 
         let mut pgu_line = String::from(p_cyan);
         pgu_line.push(' ');
-        pgu_line.push(core::char::from_u32(0xF2DB).unwrap());
+        pgu_line.push(core::char::from_u32(0xF2DB).unwrap_or('?'));
         pgu_line.push_str(" PGU: ");
         pgu_line.push_str(white);
         pgu_line.push_str("virtIO");
@@ -121,7 +121,7 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
 
         let mut font_line = String::from(p_green);
         font_line.push(' ');
-        font_line.push(core::char::from_u32(0xF031).unwrap());
+        font_line.push(core::char::from_u32(0xF031).unwrap_or('?'));
         font_line.push_str(" Font: ");
         font_line.push_str(white);
         font_line.push_str("Caskaydia Nerd Font");

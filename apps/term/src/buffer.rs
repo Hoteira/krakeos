@@ -166,9 +166,9 @@ impl TerminalBuffer {
                 
                 // Override if cursor
                 if self.cursor_visible && i == self.cursor_row && j == self.cursor_col {
-                    // User requested 3/4 high upward and 1/4 under the baseline.
-                    // U+2588: █
-                    cell.c = '█';
+                    // User requested slightly vertically shorter version.
+                    // U+2587: ▆ (Lower seven eighths block)
+                    cell.c = '▆';
                 }
 
                 // Update Bold

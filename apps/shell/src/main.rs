@@ -20,9 +20,9 @@ const STDOUT_FD: usize = 1;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main() -> i32 {
-    println!("Shell: Started (Pipes & Redirections Enabled)");
-    std::os::file_write(STDOUT_FD, "\nWelcome to KrakeOS Shell  
-> ".as_bytes());
+    let welcome_icon = core::char::from_u32(0xE8F0).unwrap_or(' ');
+    let welcome_msg = format!("\nWelcome to KrakeOS Shell {} \n> ", welcome_icon);
+    std::os::file_write(STDOUT_FD, welcome_msg.as_bytes());
 
     let mut cwd = String::from("/");
     let mut path_env = String::from("/sys/bin;/apps");
