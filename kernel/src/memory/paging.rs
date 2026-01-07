@@ -188,3 +188,8 @@ pub fn get_table_from_phys(phys: u64) -> Option<&'static mut PageTable> {
         Some(&mut *(phys as *mut PageTable))
     }
 }
+
+pub fn phys_to_virt(phys: PhysAddr) -> super::address::VirtAddr {
+    // TODO: Phase 4 - Add HHDM_OFFSET here
+    super::address::VirtAddr::new(phys.as_u64())
+}
