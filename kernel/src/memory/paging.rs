@@ -1,5 +1,10 @@
-use core::arch::asm;
+use super::address::PhysAddr;
+use core::fmt;
+use core::ops::{BitOr, BitOrAssign, BitAnd, BitAndAssign, Not, Index, IndexMut};
 
+pub const PAGE_SIZE: u64 = 4096;
+
+// Legacy constants for compatibility with existing vmm.rs/elf.rs
 pub const PAGE_PRESENT: u64 = 1 << 0;
 pub const PAGE_WRITABLE: u64 = 1 << 1;
 pub const PAGE_USER: u64 = 1 << 2;
@@ -7,109 +12,179 @@ pub const PAGE_WRITE_THROUGH: u64 = 1 << 3;
 pub const PAGE_NO_CACHE: u64 = 1 << 4;
 pub const PAGE_ACCESSED: u64 = 1 << 5;
 pub const PAGE_DIRTY: u64 = 1 << 6;
-pub const PAGE_PAT: u64 = 1 << 7;
 pub const PAGE_HUGE: u64 = 1 << 7;
 pub const PAGE_GLOBAL: u64 = 1 << 8;
 pub const PAGE_NO_EXECUTE: u64 = 1 << 63;
 
-pub const PAGE_SIZE: u64 = 4096;
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct PageTableFlags(u64);
 
-#[repr(C, align(4096))]
+impl PageTableFlags {
+    pub const PRESENT: Self = Self(1 << 0);
+    pub const WRITABLE: Self = Self(1 << 1);
+    pub const USER_ACCESSIBLE: Self = Self(1 << 2);
+    pub const WRITE_THROUGH: Self = Self(1 << 3);
+    pub const NO_CACHE: Self = Self(1 << 4);
+    pub const ACCESSED: Self = Self(1 << 5);
+    pub const DIRTY: Self = Self(1 << 6);
+    pub const HUGE_PAGE: Self = Self(1 << 7);
+    pub const GLOBAL: Self = Self(1 << 8);
+    pub const NO_EXECUTE: Self = Self(1 << 63);
+
+    pub const fn empty() -> Self {
+        Self(0)
+    }
+
+    pub const fn from_bits_truncate(bits: u64) -> Self {
+        Self(bits)
+    }
+
+    pub const fn bits(&self) -> u64 {
+        self.0
+    }
+
+    pub fn contains(&self, other: Self) -> bool {
+        (self.0 & other.0) == other.0
+    }
+
+    pub fn insert(&mut self, other: Self) {
+        self.0 |= other.0;
+    }
+
+    pub fn remove(&mut self, other: Self) {
+        self.0 &= !other.0;
+    }
+}
+
+impl BitOr for PageTableFlags {
+    type Output = Self;
+    fn bitor(self, rhs: Self) -> Self {
+        Self(self.0 | rhs.0)
+    }
+}
+
+impl BitOrAssign for PageTableFlags {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
+}
+
+impl BitAnd for PageTableFlags {
+    type Output = Self;
+    fn bitand(self, rhs: Self) -> Self {
+        Self(self.0 & rhs.0)
+    }
+}
+
+impl BitAndAssign for PageTableFlags {
+    fn bitand_assign(&mut self, rhs: Self) {
+        self.0 &= rhs.0;
+    }
+}
+
+impl Not for PageTableFlags {
+    type Output = Self;
+    fn not(self) -> Self {
+        Self(!self.0)
+    }
+}
+
+impl fmt::Debug for PageTableFlags {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "PageTableFlags({:#x})", self.0)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct PageTableEntry {
+    entry: u64,
+}
+
+impl PageTableEntry {
+    pub fn new() -> Self {
+        PageTableEntry { entry: 0 }
+    }
+
+    pub fn is_unused(&self) -> bool {
+        self.entry == 0
+    }
+
+    pub fn set_unused(&mut self) {
+        self.entry = 0;
+    }
+
+    pub fn flags(&self) -> PageTableFlags {
+        PageTableFlags::from_bits_truncate(self.entry)
+    }
+
+    pub fn addr(&self) -> PhysAddr {
+        PhysAddr::new(self.entry & 0x000F_FFFF_FFFF_F000)
+    }
+
+    pub fn set_addr(&mut self, addr: PhysAddr, flags: PageTableFlags) {
+        self.entry = addr.as_u64() | flags.bits();
+    }
+
+    pub fn set_flags(&mut self, flags: PageTableFlags) {
+        self.entry = self.addr().as_u64() | flags.bits();
+    }
+    
+    // Legacy helper for existing vmm.rs
+    pub fn as_u64(&self) -> u64 {
+        self.entry
+    }
+}
+
+#[repr(align(4096))]
+#[repr(C)]
+#[derive(Clone)]
 pub struct PageTable {
-    pub entries: [u64; 512],
+    entries: [PageTableEntry; 512],
 }
 
 impl PageTable {
+    pub fn new() -> Self {
+        PageTable {
+            entries: [PageTableEntry::new(); 512],
+        }
+    }
+
     pub fn zero(&mut self) {
-        for i in 0..512 {
-            self.entries[i] = 0;
+        for entry in self.entries.iter_mut() {
+            entry.set_unused();
         }
     }
 }
 
-pub unsafe fn active_level_4_table() -> &'static mut PageTable {
-    let cr3: u64;
-    unsafe { asm!("mov {}, cr3", out(reg) cr3) };
-    let phys = cr3 & 0x000FFFFFFFFFF000;
-    unsafe { &mut *(phys as *mut PageTable) }
+impl Index<usize> for PageTable {
+    type Output = PageTableEntry;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.entries[index]
+    }
 }
 
-pub unsafe fn get_table<'a>(entry: u64) -> Option<&'a mut PageTable> {
-    if entry & PAGE_PRESENT == 0 {
-        return None;
+impl IndexMut<usize> for PageTable {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.entries[index]
     }
-    if entry & PAGE_HUGE != 0 {
-        return None;
-    }
-
-    let phys = entry & 0x000FFFFFFFFFF000;
-    Some(unsafe { &mut *(phys as *mut PageTable) })
 }
 
-pub unsafe fn get_entry_ptr(virt: u64) -> Option<*mut u64> {
-    let p4 = unsafe { active_level_4_table() };
-    let p4_idx = (virt >> 39) & 0x1FF;
-
-    let p3_entry = p4.entries[p4_idx as usize];
-    let p3 = unsafe { get_table(p3_entry) }?;
-    let p3_idx = (virt >> 30) & 0x1FF;
-
-    let p2_entry = p3.entries[p3_idx as usize];
-    let p2 = unsafe { get_table(p2_entry) }?;
-    let p2_idx = (virt >> 21) & 0x1FF;
-
-    let p1_entry = p2.entries[p2_idx as usize];
-    let p1 = unsafe { get_table(p1_entry) }?;
-    let p1_idx = (virt >> 12) & 0x1FF;
-
-    Some(&mut p1.entries[p1_idx as usize] as *mut u64)
+// Helper functions for vmm.rs (Identity Map Era)
+pub fn active_level_4_table() -> &'static mut PageTable {
+    unsafe {
+        let cr3: u64;
+        core::arch::asm!("mov {}, cr3", out(reg) cr3);
+        let phys = cr3 & 0x000F_FFFF_FFFF_F000;
+        &mut *(phys as *mut PageTable)
+    }
 }
 
-pub unsafe fn translate_addr(virt: u64) -> Option<u64> {
-    let (phys, _flags) = unsafe { translate_addr_with_entry(virt) }?;
-    Some(phys)
-}
-
-pub unsafe fn translate_addr_with_entry(virt: u64) -> Option<(u64, u64)> {
-    let p4 = unsafe { active_level_4_table() };
-    let p4_idx = (virt >> 39) & 0x1FF;
-
-    let p3_entry = p4.entries[p4_idx as usize];
-    if p3_entry & PAGE_PRESENT == 0 { return None; }
-    if p3_entry & PAGE_HUGE != 0 {
-        let offset = virt & 0x3FFFFFFF;
-        return Some(((p3_entry & 0x000FFFFFC0000000) + offset, p3_entry));
+pub fn get_table_from_phys(phys: u64) -> Option<&'static mut PageTable> {
+    if phys == 0 { return None; }
+    unsafe {
+        Some(&mut *(phys as *mut PageTable))
     }
-
-    let p3 = unsafe { &mut *((p3_entry & 0x000FFFFFFFFFF000) as *mut PageTable) };
-    let p3_idx = (virt >> 30) & 0x1FF;
-
-    let p2_entry = p3.entries[p3_idx as usize];
-    if p2_entry & PAGE_PRESENT == 0 { return None; }
-    if p2_entry & PAGE_HUGE != 0 {
-        let offset = virt & 0x1FFFFF;
-        return Some(((p2_entry & 0x000FFFFFFFE00000) + offset, p2_entry));
-    }
-
-    let p2 = unsafe { &mut *((p2_entry & 0x000FFFFFFFFFF000) as *mut PageTable) };
-    let p2_idx = (virt >> 21) & 0x1FF;
-
-    let p1_entry = p2.entries[p2_idx as usize];
-    if p1_entry & PAGE_PRESENT == 0 { return None; }
-
-    let p1 = unsafe { &mut *((p1_entry & 0x000FFFFFFFFFF000) as *mut PageTable) };
-    let p1_idx = (virt >> 12) & 0x1FF;
-
-    let entry = p1.entries[p1_idx as usize];
-    if entry & PAGE_PRESENT == 0 { return None; }
-
-    let offset = virt & 0xFFF;
-    Some(((entry & 0x000FFFFFFFFFF000) + offset, entry))
-}
-
-pub unsafe fn get_table_from_phys<'a>(phys_addr: u64) -> Option<&'a mut PageTable> {
-    if phys_addr % PAGE_SIZE != 0 {
-        return None;
-    }
-    Some(unsafe { &mut *(phys_addr as *mut PageTable) })
 }

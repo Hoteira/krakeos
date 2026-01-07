@@ -146,6 +146,8 @@ pub fn init() {
     let mut notify_base: u64 = 0;
     let mut notify_multiplier: u32 = 0;
 
+    let mut next_bar_addr = 0xF1000000; // Use a different range than GPU
+
     for cap in caps {
         if cap.id != 0x09 { continue; }
 
@@ -153,15 +155,27 @@ pub fn init() {
         let bar = virtio.read_u8(cap.offset as u32 + 4);
         let offset = virtio.read_u32(cap.offset as u32 + 8);
 
+        let mut bar_base_opt = virtio.get_bar(bar);
+        
+        // If BAR is 0 or suspiciously low (below 1MB), remap it.
+        if bar_base_opt.is_none() || bar_base_opt.unwrap() < 0x100000 {
+            let raw_bar = virtio.read_bar_raw(bar);
+            if (raw_bar & 0xFFFFFFF0) < 0x100000 {
+                debugln!("VirtIO Block: BAR {} is unmapped or low ({:#x}). Remapping to {:#x}", bar, raw_bar, next_bar_addr);
+                virtio.write_bar(bar, next_bar_addr);
+                next_bar_addr += 0x100000;
+                bar_base_opt = virtio.get_bar(bar);
+            }
+        }
 
         if cfg_type == VIRTIO_CAP_COMMON {
-            if let Some(bar_base) = virtio.get_bar(bar) {
+            if let Some(bar_base) = bar_base_opt {
                 let addr = (bar_base as u64) + (offset as u64);
                 common_cfg_ptr = addr as *mut u8;
                 debugln!("VirtIO Block: Common Config found at BAR {} offset {:#x} -> Phys {:#x}", bar, offset, addr);
             }
         } else if cfg_type == VIRTIO_CAP_NOTIFY {
-            if let Some(bar_base) = virtio.get_bar(bar) {
+            if let Some(bar_base) = bar_base_opt {
                 notify_base = (bar_base as u64) + (offset as u64);
                 notify_multiplier = virtio.read_capability_data(cap.offset as u8, 16);
                 debugln!("VirtIO Block: Notify found at BAR {} offset {:#x} -> Phys {:#x}", bar, offset, notify_base);
@@ -175,6 +189,7 @@ pub fn init() {
     }
 
     unsafe {
+        debugln!("VirtIO Block: Negotiating features...");
         write_8(common_cfg_ptr.add(OFF_DEVICE_STATUS), 0);
 
 

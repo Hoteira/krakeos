@@ -36,17 +36,48 @@ pub fn init() {
     let mut common_cfg_ptr: *mut u8 = core::ptr::null_mut();
     let mut notify_base: u64 = 0;
     let mut notify_multiplier: u32 = 0;
+    
+    // Simple bump allocator for remapping BARs (starts at 3.75GB)
+    let mut next_bar_addr = 0xF0000000;
 
     for cap in virtio_caps {
         if cap.cfg_type == VIRTIO_CAP_COMMON {
-            if let Some(bar_base) = virtio.get_bar(cap.bar) {
+            let mut bar_base_opt = virtio.get_bar(cap.bar);
+            
+            // If BAR is 0/unmapped (or just has flags but address 0), try to remap it
+            if bar_base_opt.is_none() || bar_base_opt == Some(0) {
+                let raw_bar = virtio.read_bar_raw(cap.bar);
+                // Check if the address part (upper bits) is zero
+                if (raw_bar & 0xFFFFFFF0) == 0 {
+                    debugln!("VirtIO GPU: BAR {} is unmapped (0x0). Remapping to {:#x}", cap.bar, next_bar_addr);
+                    virtio.write_bar(cap.bar, next_bar_addr);
+                    
+                    next_bar_addr += 0x100000; 
+                    
+                    bar_base_opt = virtio.get_bar(cap.bar);
+                }
+            }
+
+            if let Some(bar_base) = bar_base_opt {
                 let addr = (bar_base as u64) + (cap.offset as u64);
                 common_cfg_ptr = addr as *mut u8;
                 unsafe { COMMON_CFG_ADDR = addr; }
                 debugln!("VirtIO GPU: Common Config found at BAR {} offset {:#x} -> Phys {:#x}", cap.bar, cap.offset, addr);
             }
         } else if cap.cfg_type == VIRTIO_CAP_NOTIFY {
-            if let Some(bar_base) = virtio.get_bar(cap.bar) {
+            let mut bar_base_opt = virtio.get_bar(cap.bar);
+            
+            if bar_base_opt.is_none() || bar_base_opt == Some(0) {
+                let raw_bar = virtio.read_bar_raw(cap.bar);
+                if (raw_bar & 0xFFFFFFF0) == 0 {
+                    debugln!("VirtIO GPU: BAR {} is unmapped (0x0). Remapping to {:#x}", cap.bar, next_bar_addr);
+                    virtio.write_bar(cap.bar, next_bar_addr);
+                    next_bar_addr += 0x100000;
+                    bar_base_opt = virtio.get_bar(cap.bar);
+                }
+            }
+
+            if let Some(bar_base) = bar_base_opt {
                 notify_base = (bar_base as u64) + (cap.offset as u64);
                 notify_multiplier = virtio.read_capability_data(cap.offset as u8, 16);
 

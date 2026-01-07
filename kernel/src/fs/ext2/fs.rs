@@ -24,14 +24,17 @@ impl Ext2 {
         let mut superblock = unsafe { core::mem::zeroed::<Superblock>() };
         let mut buf = [0u8; 1024];
 
+        crate::debugln!("Ext2: Reading superblock...");
         disk::read(base_lba + 2, disk_id, &mut buf[0..512]);
         disk::read(base_lba + 3, disk_id, &mut buf[512..1024]);
+        crate::debugln!("Ext2: Superblock read.");
 
         unsafe {
             core::ptr::copy_nonoverlapping(buf.as_ptr(), &mut superblock as *mut _ as *mut u8, size_of::<Superblock>());
         }
 
         let magic = unsafe { *(buf.as_ptr().add(56) as *const u16) };
+        crate::debugln!("Ext2: Magic: {:#x}", magic);
 
         if magic != 0xEF53 {
             return Err(alloc::format!("Invalid Ext2 Magic: {:#x} (Expected 0xEF53).", magic));

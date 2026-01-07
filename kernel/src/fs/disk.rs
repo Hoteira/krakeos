@@ -14,6 +14,8 @@ pub fn read(lba: u64, disk: u8, buffer: &mut [u8]) {
         return;
     }
 
+    crate::debugln!("disk::read PIO: LBA {} disk {}", lba, disk);
+
     while is_busy() {}
 
     let total_bytes = buffer.len();
