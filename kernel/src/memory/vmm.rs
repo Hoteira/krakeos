@@ -4,11 +4,31 @@ use core::arch::asm;
 
 pub fn init() {
     unsafe {
-        let _pml4_phys = (*(&raw const crate::boot::BOOT_INFO)).pml4;
+        // Allocate a new frame for the Kernel PML4
+        let new_pml4_phys = pmm::allocate_frame(0).expect("VMM: Failed to allocate initial kernel PML4");
+        let new_pml4_addr = PhysAddr::new(new_pml4_phys);
+
+        // Get the current (Bootloader) PML4
+        let old_pml4_phys = (*(&raw const crate::boot::BOOT_INFO)).pml4;
+
+        // Copy the mappings (Identity Map) from the old table to the new one
+        core::ptr::copy_nonoverlapping(
+            old_pml4_phys as *const u8,
+            new_pml4_addr.as_u64() as *mut u8,
+            4096 // paging::PAGE_SIZE
+        );
+
+        // Switch CR3 to the new PML4
+        asm!("mov cr3, {}", in(reg) new_pml4_phys);
+
+        // Update global tracking so new processes inherit this table
+        (*(&raw mut crate::boot::BOOT_INFO)).pml4 = new_pml4_phys;
+
+        crate::debugln!("VMM: Relocated PML4 from {:#x} to {:#x}", old_pml4_phys, new_pml4_phys);
     }
 }
 
-pub fn map_page(virt: u64, phys: u64, flags: u64, target_pml4_phys: Option<u64>) {
+pub fn map_page(virt: u64, phys: PhysAddr, flags: u64, target_pml4_phys: Option<u64>) {
     if (flags & paging::PAGE_USER) != 0 {
         if virt >= 0xFFFF_8000_0000_0000 {
             panic!("VMM: Attempt to map user page at kernel address {:#x}", virt);
@@ -31,10 +51,7 @@ pub fn map_page(virt: u64, phys: u64, flags: u64, target_pml4_phys: Option<u64>)
         if p3_entry.is_unused() {
             let frame = pmm::allocate_frame(0).expect("VMM: OOM for PDPT");
             
-            // Create a temporary entry to write back
             let mut new_entry = paging::PageTableEntry::new();
-            // We use raw flags here because map_page takes raw u64 flags
-            // This is temporary until map_page signature is updated
             let flags = paging::PageTableFlags::from_bits_truncate(paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER);
             new_entry.set_addr(PhysAddr::new(frame), flags);
             pml4_table[p4_idx as usize] = new_entry;
@@ -90,16 +107,10 @@ pub fn map_page(virt: u64, phys: u64, flags: u64, target_pml4_phys: Option<u64>)
 
         let p1 = paging::get_table_from_phys(p1_entry.addr().as_u64()).expect("VMM: Failed to get L1 table from phys");
 
-        // Construct the final entry using raw u64 manipulation to preserve caller flags
-        // Access inner entry via unsafe transmute or just set it if we expose a setter?
-        // PageTableEntry is transparent, so we can just pointer cast if needed, but let's add a raw setter to paging.rs if needed.
-        // Actually I added set_addr which takes flags.
-        
-        // p1.entries[p1_idx as usize] = phys | flags; <--- Old
         let mut final_entry = paging::PageTableEntry::new();
-        // Manually constructing because we don't have a way to set raw u64 flags yet
-        // Let's rely on the fact that PageTableEntry is repr(transparent)
-        *( &mut final_entry as *mut _ as *mut u64 ) = phys | flags;
+        // Construct the final entry using raw u64 manipulation to preserve caller flags (which are u64)
+        // Ideally we would take PageTableFlags in map_page too, but that is a bigger change.
+        *( &mut final_entry as *mut _ as *mut u64 ) = phys.as_u64() | flags;
         
         p1[p1_idx as usize] = final_entry;
 
