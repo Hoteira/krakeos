@@ -95,6 +95,22 @@ pub fn send_command_queue(queue_idx: usize, out_phys: &[u64], out_lens: &[u32], 
             return false;
         }
 
+        
+        let mut timeout = 10_000_000;
+        while vq.last_avail_idx.wrapping_sub(vq.last_used_idx) + total_descs as u16 > vq.num {
+            let used_idx = read_volatile(core::ptr::addr_of!((*( (vq.used_phys + crate::memory::paging::HHDM_OFFSET) as *const VirtqUsed )).idx));
+            if used_idx != vq.last_used_idx {
+                vq.last_used_idx = used_idx;
+            }
+            core::hint::spin_loop();
+            timeout -= 1;
+            if timeout == 0 {
+                if int_enabled { core::arch::asm!("sti"); }
+                debugln!("VirtIO GPU: Queue Full Timeout!");
+                return false;
+            }
+        }
+
         let free_head_usize = vq.free_head as usize;
         let num_usize = vq.num as usize;
         let mut current_desc_idx = free_head_usize;

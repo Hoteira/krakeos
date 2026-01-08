@@ -303,7 +303,7 @@ pub fn transfer_and_flush(resource_id: u32, width: u32, height: u32) {
             resource_id, padding: 0,
         };
         let req_flush_phys = virt_to_phys(req_flush as *const _ as u64);
-        send_command_queue(0, &[req_flush_phys], &[core::mem::size_of::<VirtioGpuResourceFlush>() as u32], &[], &[], true);
+        send_command_queue(0, &[req_flush_phys], &[core::mem::size_of::<VirtioGpuResourceFlush>() as u32], &[], &[], false);
     }
 }
 
@@ -329,7 +329,7 @@ pub fn flush(x: u32, y: u32, width: u32, height: u32, screen_width: u32, resourc
             resource_id, padding: 0,
         };
         let req_flush_phys = virt_to_phys(req_flush as *const _ as u64);
-        send_command_queue(0, &[req_flush_phys], &[core::mem::size_of::<VirtioGpuResourceFlush>() as u32], &[], &[], true);
+        send_command_queue(0, &[req_flush_phys], &[core::mem::size_of::<VirtioGpuResourceFlush>() as u32], &[], &[], false);
     }
 }
 pub fn set_scanout(resource_id: u32, width: u32, height: u32) {
@@ -340,6 +340,6 @@ pub fn set_scanout(resource_id: u32, width: u32, height: u32) {
             r: VirtioGpuRect { x: 0, y: 0, width, height },
             scanout_id: 0, resource_id,
         });
-        send_command_queue(0, &[GPU_CMD_PHYS], &[core::mem::size_of::<VirtioGpuSetScanout>() as u32], &[GPU_CMD_PHYS + 1024], &[24], true);
+        send_command_queue(0, &[GPU_CMD_PHYS], &[core::mem::size_of::<VirtioGpuSetScanout>() as u32], &[GPU_CMD_PHYS + 1024], &[24], false);
     }
 }

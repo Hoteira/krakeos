@@ -189,13 +189,16 @@ impl DisplayServer {
         let pitch = self.pitch as usize;
 
         unsafe {
-            for row in 0..copy_height {
-                let offset = ((dst_y as usize + row) * pitch + dst_x as usize * bytes_per_pixel) as usize;
+            let src_base = self.double_buffer as *const u32;
+            let dst_base = self.framebuffer as *mut u32;
+            let pitch_u32 = self.pitch as usize / 4;
 
+            for row in 0..copy_height {
+                let offset = (dst_y as usize + row) * pitch_u32 + dst_x as usize;
                 core::ptr::copy_nonoverlapping(
-                    src.add(offset),
-                    dst.add(offset),
-                    copy_width * bytes_per_pixel,
+                    src_base.add(offset),
+                    dst_base.add(offset),
+                    copy_width,
                 );
             }
         }
