@@ -15,5 +15,3 @@
 **/target/
 /.idea
 /.idea/*
-*.vdi
-*.qcow2

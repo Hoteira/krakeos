@@ -7,6 +7,7 @@ pub mod os;
 pub mod graphics;
 pub mod sync;
 pub mod fs;
+pub mod math;
 
 #[cfg(feature = "userland")]
 pub mod runtime;
