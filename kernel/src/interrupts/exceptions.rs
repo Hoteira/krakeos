@@ -49,9 +49,11 @@ fn print_hex(n: u64) {
 fn kill_current_task() {
     let mut pid_to_kill = -1;
     {
-        let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         if let Some(current) = tm.current_task_idx() {
-            pid_to_kill = current as i32;
+            if let Some(thread) = tm.tasks[current].as_ref() {
+                pid_to_kill = thread.process.as_ref().expect("Thread has no process").pid as i32;
+            }
         }
     }
 
@@ -159,6 +161,33 @@ pub extern "x86-interrupt" fn page_fault(info: &mut StackFrame, error_code: u64)
 
 pub extern "x86-interrupt" fn generic_handler(_info: &mut StackFrame) {
     serial_println("EXCEPTION: GENERIC");
+}
+
+pub extern "x86-interrupt" fn device_not_available(info: &mut StackFrame) {
+    serial_println("EXCEPTION: DEVICE NOT AVAILABLE (#NM)");
+    if (info.code_segment & 3) == 3 {
+        kill_current_task();
+    } else {
+        loop {}
+    }
+}
+
+pub extern "x86-interrupt" fn fpu_error(info: &mut StackFrame) {
+    serial_println("EXCEPTION: x87 FPU ERROR (#MF)");
+    if (info.code_segment & 3) == 3 {
+        kill_current_task();
+    } else {
+        loop {}
+    }
+}
+
+pub extern "x86-interrupt" fn simd_error(info: &mut StackFrame) {
+    serial_println("EXCEPTION: SIMD FP ERROR (#XM)");
+    if (info.code_segment & 3) == 3 {
+        kill_current_task();
+    } else {
+        loop {}
+    }
 }
 
 

@@ -12,53 +12,58 @@ pub fn handle_brk(context: &mut CPUState) {
         return;
     }
 
-    let task = &mut tm.tasks[current_idx as usize];
-    let current_brk = task.heap_end;
+    if let Some(thread) = tm.tasks[current_idx as usize].as_mut() {
+        let proc = thread.process.as_ref().expect("Thread has no process");
+        let mut heap_end = proc.heap_end.lock();
+        let current_brk = *heap_end;
 
-    
-    if new_brk == 0 {
-        context.rax = current_brk;
-        return;
-    }
-
-    let pml4_phys = task.pml4_phys;
-    let pid = current_idx as u64;
-
-    
-    let aligned_new = (new_brk + 0xFFF) & !0xFFF;
-    let aligned_current = (current_brk + 0xFFF) & !0xFFF;
-
-    if aligned_new > aligned_current {
         
-        let size = aligned_new - aligned_current;
-        let pages = size / 4096;
-        
-        
-        for i in 0..pages {
-            let virt = aligned_current + (i * 4096);
-            if let Some(phys) = pmm::allocate_frame(pid) {
-                
-                let flags = paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER;
-                unsafe {
-                    vmm::map_page(virt, PhysAddr::new(phys), flags, Some(pml4_phys));
-                }
-            } else {
-                
-                context.rax = current_brk;
-                return;
-            }
+        if new_brk == 0 {
+            context.rax = current_brk;
+            return;
         }
+
+        let pml4_phys = proc.pml4_phys;
+        let pid = proc.pid;
+
         
-        task.heap_end = new_brk;
-        context.rax = new_brk;
-    } else if aligned_new < aligned_current {
-        
-        
-        task.heap_end = new_brk;
-        context.rax = new_brk;
+        let aligned_new = (new_brk + 0xFFF) & !0xFFF;
+        let aligned_current = (current_brk + 0xFFF) & !0xFFF;
+
+        if aligned_new > aligned_current {
+            
+            let size = aligned_new - aligned_current;
+            let pages = size / 4096;
+            
+            
+            for i in 0..pages {
+                let virt = aligned_current + (i * 4096);
+                if let Some(phys) = pmm::allocate_frame(pid) {
+                    
+                    let flags = paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER;
+                    unsafe {
+                        vmm::map_page(virt, PhysAddr::new(phys), flags, Some(pml4_phys));
+                    }
+                } else {
+                    
+                    context.rax = current_brk;
+                    return;
+                }
+            }
+            
+            *heap_end = new_brk;
+            context.rax = new_brk;
+        } else if aligned_new < aligned_current {
+            
+            
+            *heap_end = new_brk;
+            context.rax = new_brk;
+        } else {
+            *heap_end = new_brk;
+            context.rax = new_brk;
+        }
     } else {
-        task.heap_end = new_brk;
-        context.rax = new_brk;
+        context.rax = 0;
     }
 }
 
@@ -78,53 +83,58 @@ pub fn handle_mmap(context: &mut CPUState) {
         return;
     }
 
-    let task = &mut tm.tasks[current_idx as usize];
-    let pml4_phys = task.pml4_phys;
-    let pid = current_idx as u64;
+    if let Some(thread) = tm.tasks[current_idx as usize].as_mut() {
+        let proc = thread.process.as_ref().expect("Thread has no process");
+        let pml4_phys = proc.pml4_phys;
+        let pid = proc.pid;
 
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    let target_addr = if addr == 0 {
         
         
-        let old_brk = task.heap_end;
-        let new_brk = old_brk + len;
         
-        let aligned_new = (new_brk + 0xFFF) & !0xFFF;
-        task.heap_end = aligned_new; 
-        old_brk 
-    } else {
-        addr
-    };
-
-    let start_page = target_addr & !0xFFF;
-    let end_page = (target_addr + len + 0xFFF) & !0xFFF;
-    let pages = (end_page - start_page) / 4096;
-
-    for i in 0..pages {
-        let virt = start_page + (i * 4096);
-        if let Some(phys) = pmm::allocate_frame(pid) {
-            let flags = paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER;
-            unsafe {
-                vmm::map_page(virt, PhysAddr::new(phys), flags, Some(pml4_phys));
-            }
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        let target_addr = if addr == 0 {
+            
+            
+            let mut heap_end = proc.heap_end.lock();
+            let old_brk = *heap_end;
+            let new_brk = old_brk + len;
+            
+            let aligned_new = (new_brk + 0xFFF) & !0xFFF;
+            *heap_end = aligned_new; 
+            old_brk 
         } else {
-            context.rax = u64::MAX;
-            return;
-        }
-    }
+            addr
+        };
 
-    context.rax = target_addr;
+        let start_page = target_addr & !0xFFF;
+        let end_page = (target_addr + len + 0xFFF) & !0xFFF;
+        let pages = (end_page - start_page) / 4096;
+
+        for i in 0..pages {
+            let virt = start_page + (i * 4096);
+            if let Some(phys) = pmm::allocate_frame(pid) {
+                let flags = paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER;
+                unsafe {
+                    vmm::map_page(virt, PhysAddr::new(phys), flags, Some(pml4_phys));
+                }
+            } else {
+                context.rax = u64::MAX;
+                return;
+            }
+        }
+
+        context.rax = target_addr;
+    } else {
+        context.rax = u64::MAX;
+    }
 }
 
 pub fn handle_munmap(context: &mut CPUState) {

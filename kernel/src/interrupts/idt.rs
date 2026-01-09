@@ -84,6 +84,7 @@ impl Idt {
         self.entries[0].set(crate::interrupts::exceptions::div_error as u64);
         self.entries[5].set(crate::interrupts::exceptions::bounds as u64);
         self.entries[6].set(crate::interrupts::exceptions::invalid_opcode as u64);
+        self.entries[7].set(crate::interrupts::exceptions::device_not_available as u64);
 
         self.entries[8].set(crate::interrupts::exceptions::double_fault as u64);
         self.entries[8].set_ist(1);
@@ -93,6 +94,9 @@ impl Idt {
 
         self.entries[14].set(crate::interrupts::exceptions::page_fault as u64);
         self.entries[14].set_ist(2);
+
+        self.entries[16].set(crate::interrupts::exceptions::fpu_error as u64);
+        self.entries[19].set(crate::interrupts::exceptions::simd_error as u64);
     }
 
 

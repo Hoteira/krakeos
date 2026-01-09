@@ -5,9 +5,10 @@ use alloc::vec::Vec;
 use std::io::{Read, Write};
 use crate::utils::resolve_path;
 
-pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &mut String, in_fd: usize, out_fd: usize) {
+pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &mut String, in_fd: usize, out_fd: usize) -> i32 {
     if cmd == "help" {
         std::os::file_write(out_fd, b"Available commands: help, clear, ls, cd, pwd, touch, mkdir, rm, mv, cp, cat, sleep, osfetch, echo, export\n");
+        return 0;
     } else if cmd == "export" {
         if !args.is_empty() {
             let arg = &args[0];
@@ -15,6 +16,7 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
                 *path_env = String::from(&arg[5..]);
             }
         }
+        return 0;
     } else if cmd == "echo" {
         for (i, arg) in args.iter().enumerate() {
             if i > 0 {
@@ -23,6 +25,7 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
             std::os::file_write(out_fd, arg.as_bytes());
         }
         std::os::file_write(out_fd, b"\n");
+        return 0;
     } else if cmd == "osfetch" {
         let white = "\x1B[97m";
         let blue = "\x1B[94m";
@@ -63,7 +66,7 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
         let s = total_seconds % 60;
 
         let mut info: Vec<String> = Vec::new();
-        info.push(format!("{}{}@{}krakeos{}", p_pink, white, p_blue, reset));
+        info.push(format!("{}{}user@{}krakeos{}", p_pink, white, p_blue, reset));
         info.push(format!("{}-----------------{}", gray, reset));
         
         let mut os_line = String::from(p_cyan);
@@ -169,12 +172,14 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
             std::os::file_write(out_fd, msg.as_bytes());
         }
         std::os::file_write(out_fd, b"\n");
+        return 0;
     } else if cmd == "sleep" {
         if !args.is_empty() {
             if let Ok(ms) = args[0].parse::<u64>() {
                 std::os::sleep(ms);
             }
         }
+        return 0;
     } else if cmd == "cat" {
         if args.is_empty() {
             let mut buf = [0u8; 1024];
@@ -199,14 +204,18 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
                 } else {
                     let err = format!("cat: {}: No such file\n", path);
                     std::os::file_write(out_fd, err.as_bytes());
+                    return 1;
                 }
             }
         }
+        return 0;
     } else if cmd == "clear" {
         std::os::file_write(out_fd, b"\x1B[2J\x1B[H");
+        return 0;
     } else if cmd == "pwd" {
         std::os::file_write(out_fd, cwd.as_bytes());
         std::os::file_write(out_fd, b"\n");
+        return 0;
     } else if cmd == "ls" {
         let target = if args.is_empty() { cwd.as_str() } else { &args[0] };
         let full_path = resolve_path(cwd, target);
@@ -231,22 +240,27 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
                     }
                     std::os::file_write(out_fd, line.as_bytes());
                 }
+                return 0;
             }
             Err(_) => {
                 let err = format!("ls: cannot access \"{}\": No such file\n", full_path);
                 std::os::file_write(out_fd, err.as_bytes());
+                return 1;
             }
         }
     } else if cmd == "cd" {
         if args.is_empty() {
             *cwd = String::from("@0xE0");
+            return 0;
         } else {
             let new_path = resolve_path(cwd, &args[0]);
             if std::fs::read_dir(&new_path).is_ok() {
                 *cwd = new_path;
+                return 0;
             } else {
                 let err = format!("cd: {}: No such file\n", new_path);
                 std::os::file_write(out_fd, err.as_bytes());
+                return 1;
             }
         }
     } else if cmd == "touch" {
@@ -255,24 +269,30 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
             if let Err(_) = std::fs::File::create(&path) {
                 let err = format!("touch: cannot create \"{}\"\n", path);
                 std::os::file_write(out_fd, err.as_bytes());
+                return 1;
             }
         }
+        return 0;
     } else if cmd == "mkdir" {
         if !args.is_empty() {
             let path = resolve_path(cwd, &args[0]);
             if let Err(_) = std::fs::create_dir(&path) {
                 let err = format!("mkdir: cannot create \"{}\"\n", path);
                 std::os::file_write(out_fd, err.as_bytes());
+                return 1;
             }
         }
+        return 0;
     } else if cmd == "rm" {
         if !args.is_empty() {
             let path = resolve_path(cwd, &args[0]);
             if let Err(_) = std::fs::remove_file(&path) {
                 let err = format!("rm: cannot remove \"{}\"\n", path);
                 std::os::file_write(out_fd, err.as_bytes());
+                return 1;
             }
         }
+        return 0;
     } else if cmd == "mv" {
         if args.len() >= 2 {
             let src = resolve_path(cwd, &args[0]);
@@ -280,8 +300,10 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
             if let Err(_) = std::fs::rename(&src, &dst) {
                 let err = format!("mv: failed\n");
                 std::os::file_write(out_fd, err.as_bytes());
+                return 1;
             }
         }
+        return 0;
     } else if cmd == "cp" {
         if args.len() >= 2 {
             let src_path = resolve_path(cwd, &args[0]);
@@ -296,8 +318,14 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
                             _ => break,
                         }
                     }
+                    return 0;
                 }
             }
+            let err = format!("cp: failed\n");
+            std::os::file_write(out_fd, err.as_bytes());
+            return 1;
         }
+        return 0;
     }
+    0
 }

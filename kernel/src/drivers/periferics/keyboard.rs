@@ -220,7 +220,7 @@ pub fn handle_scancode(scancode: u8) -> Option<(u32, bool)> {
 
             0x02..=0x0D |
             0x10..=0x1B |
-            0x1E..=0x28 |
+            0x1E..=0x29 |
             0x2B..=0x35 |
             0x3A => {
                 if scancode_val < 128 {

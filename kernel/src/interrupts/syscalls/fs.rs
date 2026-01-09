@@ -111,47 +111,50 @@ pub fn handle_poll(context: &mut CPUState) {
         let current = tm.current_task;
 
         if current >= 0 {
-            let task = &tm.tasks[current as usize];
+            if let Some(thread) = tm.tasks[current as usize].as_ref() {
+                let proc = thread.process.as_ref().expect("Thread has no process");
+                let fd_table = proc.fd_table.lock();
 
-            for i in 0..nfds {
-                unsafe {
-                    let pfd = &mut *(fds_ptr.add(i) as *mut PollFd);
-                    pfd.revents = 0;
+                for i in 0..nfds {
+                    unsafe {
+                        let pfd = &mut *(fds_ptr.add(i) as *mut PollFd);
+                        pfd.revents = 0;
 
-                    let fd = pfd.fd;
-                    if fd >= 0 && (fd as usize) < 16 {
-                        let global_fd = task.fd_table[fd as usize];
-                        if global_fd != -1 {
-                            if let Some(handle) = crate::fs::vfs::get_file(global_fd as usize) {
-                                use crate::fs::vfs::FileHandle;
-                                match handle {
-                                    FileHandle::Pipe { pipe } => {
-                                        if (pfd.events & POLLIN) != 0 {
-                                            if pipe.available() > 0 {
-                                                pfd.revents |= POLLIN;
+                        let fd = pfd.fd;
+                        if fd >= 0 && (fd as usize) < 16 {
+                            let global_fd = fd_table[fd as usize];
+                            if global_fd != -1 {
+                                if let Some(handle) = crate::fs::vfs::get_file(global_fd as usize) {
+                                    use crate::fs::vfs::FileHandle;
+                                    match handle {
+                                        FileHandle::Pipe { pipe } => {
+                                            if (pfd.events & POLLIN) != 0 {
+                                                if pipe.available() > 0 {
+                                                    pfd.revents |= POLLIN;
+                                                }
+                                            }
+                                            if (pfd.events & POLLOUT) != 0 {
+                                                pfd.revents |= POLLOUT;
                                             }
                                         }
-                                        if (pfd.events & POLLOUT) != 0 {
-                                            pfd.revents |= POLLOUT;
+                                        FileHandle::File { .. } => {
+                                            if (pfd.events & POLLIN) != 0 { pfd.revents |= POLLIN; }
+                                            if (pfd.events & POLLOUT) != 0 { pfd.revents |= POLLOUT; }
                                         }
                                     }
-                                    FileHandle::File { .. } => {
-                                        if (pfd.events & POLLIN) != 0 { pfd.revents |= POLLIN; }
-                                        if (pfd.events & POLLOUT) != 0 { pfd.revents |= POLLOUT; }
-                                    }
+                                } else {
+                                    pfd.revents = POLLERR;
                                 }
                             } else {
-                                pfd.revents = POLLERR;
+                                pfd.revents = POLLNVAL;
                             }
                         } else {
                             pfd.revents = POLLNVAL;
                         }
-                    } else {
-                        pfd.revents = POLLNVAL;
-                    }
 
-                    if pfd.revents != 0 {
-                        ready_count += 1;
+                        if pfd.revents != 0 {
+                            ready_count += 1;
+                        }
                     }
                 }
             }
@@ -170,9 +173,14 @@ pub fn handle_chdir(context: &mut CPUState) {
     let cwd_str = {
         let tm = crate::interrupts::task::TASK_MANAGER.lock();
         if tm.current_task >= 0 {
-            let task = &tm.tasks[tm.current_task as usize];
-            let cwd_len = task.cwd.iter().position(|&c| c == 0).unwrap_or(task.cwd.len());
-            String::from_utf8_lossy(&task.cwd[..cwd_len]).into_owned()
+            if let Some(thread) = tm.tasks[tm.current_task as usize].as_ref() {
+                let proc = thread.process.as_ref().expect("Thread has no process");
+                let cwd = proc.cwd.lock();
+                let cwd_len = cwd.iter().position(|&c| c == 0).unwrap_or(cwd.len());
+                String::from_utf8_lossy(&cwd[..cwd_len]).into_owned()
+            } else {
+                String::from("@0xE0/")
+            }
         } else {
             String::from("@0xE0/")
         }
@@ -201,17 +209,22 @@ pub fn handle_chdir(context: &mut CPUState) {
             let mut tm = crate::interrupts::task::TASK_MANAGER.lock();
             let current_idx = tm.current_task as usize;
             if tm.current_task >= 0 {
-                let task = &mut tm.tasks[current_idx];
-                task.cwd.fill(0);
-                let bytes = resolved.as_bytes();
-                let len = core::cmp::min(bytes.len(), 127);
-                task.cwd[..len].copy_from_slice(&bytes[..len]);
-                if !resolved.ends_with('/') {
-                    if len < 127 {
-                        task.cwd[len] = b'/';
+                if let Some(thread) = tm.tasks[current_idx].as_mut() {
+                    let proc = thread.process.as_ref().expect("Thread has no process");
+                    let mut cwd = proc.cwd.lock();
+                    cwd.fill(0);
+                    let bytes = resolved.as_bytes();
+                    let len = core::cmp::min(bytes.len(), 127);
+                    cwd[..len].copy_from_slice(&bytes[..len]);
+                    if !resolved.ends_with('/') {
+                        if len < 127 {
+                            cwd[len] = b'/';
+                        }
                     }
+                    context.rax = 0;
+                } else {
+                    context.rax = u64::MAX;
                 }
-                context.rax = 0;
             } else {
                 context.rax = u64::MAX;
             }
@@ -232,9 +245,14 @@ pub fn handle_create(context: &mut CPUState, syscall_num: u64) {
     let cwd_str = {
         let tm = crate::interrupts::task::TASK_MANAGER.lock();
         if tm.current_task >= 0 {
-            let task = &tm.tasks[tm.current_task as usize];
-            let cwd_len = task.cwd.iter().position(|&c| c == 0).unwrap_or(task.cwd.len());
-            String::from_utf8_lossy(&task.cwd[..cwd_len]).into_owned()
+            if let Some(thread) = tm.tasks[tm.current_task as usize].as_ref() {
+                let proc = thread.process.as_ref().expect("Thread has no process");
+                let cwd = proc.cwd.lock();
+                let cwd_len = cwd.iter().position(|&c| c == 0).unwrap_or(cwd.len());
+                String::from_utf8_lossy(&cwd[..cwd_len]).into_owned()
+            } else {
+                String::from("@0xE0/")
+            }
         } else {
             String::from("@0xE0/")
         }
@@ -307,9 +325,14 @@ pub fn handle_remove(context: &mut CPUState) {
     let cwd_str = {
         let tm = crate::interrupts::task::TASK_MANAGER.lock();
         if tm.current_task >= 0 {
-            let task = &tm.tasks[tm.current_task as usize];
-            let cwd_len = task.cwd.iter().position(|&c| c == 0).unwrap_or(task.cwd.len());
-            String::from_utf8_lossy(&task.cwd[..cwd_len]).into_owned()
+            if let Some(thread) = tm.tasks[tm.current_task as usize].as_ref() {
+                let proc = thread.process.as_ref().expect("Thread has no process");
+                let cwd = proc.cwd.lock();
+                let cwd_len = cwd.iter().position(|&c| c == 0).unwrap_or(cwd.len());
+                String::from_utf8_lossy(&cwd[..cwd_len]).into_owned()
+            } else {
+                String::from("@0xE0/")
+            }
         } else {
             String::from("@0xE0/")
         }
@@ -364,9 +387,14 @@ pub fn handle_rename(context: &mut CPUState) {
     let cwd_str = {
         let tm = crate::interrupts::task::TASK_MANAGER.lock();
         if tm.current_task >= 0 {
-            let task = &tm.tasks[tm.current_task as usize];
-            let cwd_len = task.cwd.iter().position(|&c| c == 0).unwrap_or(task.cwd.len());
-            String::from_utf8_lossy(&task.cwd[..cwd_len]).into_owned()
+            if let Some(thread) = tm.tasks[tm.current_task as usize].as_ref() {
+                let proc = thread.process.as_ref().expect("Thread has no process");
+                let cwd = proc.cwd.lock();
+                let cwd_len = cwd.iter().position(|&c| c == 0).unwrap_or(cwd.len());
+                String::from_utf8_lossy(&cwd[..cwd_len]).into_owned()
+            } else {
+                String::from("@0xE0/")
+            }
         } else {
             String::from("@0xE0/")
         }
@@ -429,9 +457,14 @@ pub fn handle_open(context: &mut CPUState) {
     let cwd_str = {
         let tm = crate::interrupts::task::TASK_MANAGER.lock();
         if tm.current_task >= 0 {
-            let task = &tm.tasks[tm.current_task as usize];
-            let cwd_len = task.cwd.iter().position(|&c| c == 0).unwrap_or(task.cwd.len());
-            String::from_utf8_lossy(&task.cwd[..cwd_len]).into_owned()
+            if let Some(thread) = tm.tasks[tm.current_task as usize].as_ref() {
+                let proc = thread.process.as_ref().expect("Thread has no process");
+                let cwd = proc.cwd.lock();
+                let cwd_len = cwd.iter().position(|&c| c == 0).unwrap_or(cwd.len());
+                String::from_utf8_lossy(&cwd[..cwd_len]).into_owned()
+            } else {
+                String::from("@0xE0/")
+            }
         } else {
             String::from("@0xE0/")
         }
@@ -454,19 +487,24 @@ pub fn handle_open(context: &mut CPUState) {
             let mut tm = crate::interrupts::task::TASK_MANAGER.lock();
             let current = tm.current_task;
             if current >= 0 {
-                let task = &mut tm.tasks[current as usize];
+                if let Some(thread) = tm.tasks[current as usize].as_mut() {
+                    let proc = thread.process.as_ref().expect("Thread has no process");
+                    let mut fd_table = proc.fd_table.lock();
 
-                let mut local_fd = -1;
-                for i in 0..16 {
-                    if task.fd_table[i] == -1 {
-                        local_fd = i as i32;
-                        break;
+                    let mut local_fd = -1;
+                    for i in 0..16 {
+                        if fd_table[i] == -1 {
+                            local_fd = i as i32;
+                            break;
+                        }
                     }
-                }
 
-                if local_fd != -1 {
-                    task.fd_table[local_fd as usize] = global_fd as i16;
-                    context.rax = local_fd as u64;
+                    if local_fd != -1 {
+                        fd_table[local_fd as usize] = global_fd as i16;
+                        context.rax = local_fd as u64;
+                    } else {
+                        context.rax = u64::MAX;
+                    }
                 } else {
                     context.rax = u64::MAX;
                 }
@@ -487,14 +525,25 @@ pub fn handle_read_file(context: &mut CPUState) {
         let tm = crate::interrupts::task::TASK_MANAGER.lock();
         let current = tm.current_task;
         if current >= 0 && local_fd < 16 {
-            let g = tm.tasks[current as usize].fd_table[local_fd];
-            if g != -1 { Some(g as usize) } else { None }
+            if let Some(thread) = tm.tasks[current as usize].as_ref() {
+                let proc = thread.process.as_ref().expect("Thread has no process");
+                Some(proc.fd_table.lock()[local_fd])
+            } else { None }
         } else {
             None
         }
     };
 
-    if let Some(fd) = global_fd_opt {
+    if let Some(fd_val) = global_fd_opt {
+        if fd_val == -1 {
+            if local_fd == 0 {
+                handle_read(context);
+                return;
+            }
+            context.rax = u64::MAX;
+            return;
+        }
+        let fd = fd_val as usize;
         let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr, len) };
 
         if let Some(handle) = crate::fs::vfs::get_file(fd) {
@@ -520,11 +569,6 @@ pub fn handle_read_file(context: &mut CPUState) {
         return;
     }
 
-    if local_fd == 0 {
-        handle_read(context);
-        return;
-    }
-
     context.rax = u64::MAX;
 }
 
@@ -537,14 +581,25 @@ pub fn handle_write_file(context: &mut CPUState) {
         let tm = crate::interrupts::task::TASK_MANAGER.lock();
         let current = tm.current_task;
         if current >= 0 && local_fd < 16 {
-            let g = tm.tasks[current as usize].fd_table[local_fd];
-            if g != -1 { Some(g as usize) } else { None }
+            if let Some(thread) = tm.tasks[current as usize].as_ref() {
+                let proc = thread.process.as_ref().expect("Thread has no process");
+                Some(proc.fd_table.lock()[local_fd])
+            } else { None }
         } else {
             None
         }
     };
 
-    if let Some(fd) = global_fd_opt {
+    if let Some(fd_val) = global_fd_opt {
+        if fd_val == -1 {
+            if local_fd == 1 || local_fd == 2 {
+                context.rax = len as u64;
+                return;
+            }
+            context.rax = u64::MAX;
+            return;
+        }
+        let fd = fd_val as usize;
         let buf = unsafe { core::slice::from_raw_parts(buf_ptr, len) };
 
         if let Some(handle) = crate::fs::vfs::get_file(fd) {
@@ -570,12 +625,6 @@ pub fn handle_write_file(context: &mut CPUState) {
         return;
     }
 
-    if local_fd == 1 || local_fd == 2 {
-        
-        context.rax = len as u64;
-        return;
-    }
-
     context.rax = u64::MAX;
 }
 
@@ -593,14 +642,21 @@ pub fn handle_read_dir(context: &mut CPUState) {
         let tm = crate::interrupts::task::TASK_MANAGER.lock();
         let current = tm.current_task;
         if current >= 0 && local_fd < 16 {
-            let g = tm.tasks[current as usize].fd_table[local_fd];
-            if g != -1 { Some(g as usize) } else { None }
+            if let Some(thread) = tm.tasks[current as usize].as_ref() {
+                let proc = thread.process.as_ref().expect("Thread has no process");
+                Some(proc.fd_table.lock()[local_fd])
+            } else { None }
         } else {
             None
         }
     };
 
-    if let Some(fd) = global_fd_opt {
+    if let Some(fd_val) = global_fd_opt {
+        if fd_val == -1 {
+            context.rax = u64::MAX;
+            return;
+        }
+        let fd = fd_val as usize;
         if let Some(handle) = crate::fs::vfs::get_file(fd) {
             use crate::fs::vfs::FileHandle;
             match handle {
@@ -635,14 +691,21 @@ pub fn handle_file_size(context: &mut CPUState) {
         let tm = crate::interrupts::task::TASK_MANAGER.lock();
         let current = tm.current_task;
         if current >= 0 && local_fd < 16 {
-            let g = tm.tasks[current as usize].fd_table[local_fd];
-            if g != -1 { Some(g as usize) } else { None }
+            if let Some(thread) = tm.tasks[current as usize].as_ref() {
+                let proc = thread.process.as_ref().expect("Thread has no process");
+                Some(proc.fd_table.lock()[local_fd])
+            } else { None }
         } else {
             None
         }
     };
 
-    if let Some(fd) = global_fd_opt {
+    if let Some(fd_val) = global_fd_opt {
+        if fd_val == -1 {
+            context.rax = u64::MAX;
+            return;
+        }
+        let fd = fd_val as usize;
         if let Some(handle) = crate::fs::vfs::get_file(fd) {
             use crate::fs::vfs::FileHandle;
             match handle {
@@ -689,33 +752,39 @@ pub fn handle_pipe(context: &mut CPUState) {
             let mut tm = crate::interrupts::task::TASK_MANAGER.lock();
             let current = tm.current_task;
             if current >= 0 {
-                let task = &mut tm.tasks[current as usize];
-                for i in 0..16 {
-                    if task.fd_table[i] == -1 {
-                        if l1 == -1 {
-                            l1 = i as i32;
-                        } else {
-                            l2 = i as i32;
-                            break;
+                if let Some(thread) = tm.tasks[current as usize].as_mut() {
+                    let proc = thread.process.as_ref().expect("Thread has no process");
+                    let mut fd_table = proc.fd_table.lock();
+                    for i in 0..16 {
+                        if fd_table[i] == -1 {
+                            if l1 == -1 {
+                                l1 = i as i32;
+                            } else {
+                                l2 = i as i32;
+                                break;
+                            }
                         }
                     }
+
+                    if l1 != -1 && l2 != -1 {
+                        let pipe = Pipe::new();
+                        OPEN_FILES[g1 as usize] = Some(FileHandle::Pipe { pipe: pipe.clone() });
+                        OPEN_FILES[g2 as usize] = Some(FileHandle::Pipe { pipe });
+                        GLOBAL_FILE_REFCOUNT[g1 as usize] = 1;
+                        GLOBAL_FILE_REFCOUNT[g2 as usize] = 1;
+
+                        fd_table[l1 as usize] = g1 as i16;
+                        fd_table[l2 as usize] = g2 as i16;
+
+                        *fds_ptr.add(0) = l1;
+                        *fds_ptr.add(1) = l2;
+                        context.rax = 0;
+                    } else {
+                        context.rax = u64::MAX;
+                    }
+                } else {
+                    context.rax = u64::MAX;
                 }
-            }
-
-            if l1 != -1 && l2 != -1 {
-                let pipe = Pipe::new();
-                OPEN_FILES[g1 as usize] = Some(FileHandle::Pipe { pipe: pipe.clone() });
-                OPEN_FILES[g2 as usize] = Some(FileHandle::Pipe { pipe });
-                GLOBAL_FILE_REFCOUNT[g1 as usize] = 1;
-                GLOBAL_FILE_REFCOUNT[g2 as usize] = 1;
-
-                let task = &mut tm.tasks[current as usize];
-                task.fd_table[l1 as usize] = g1 as i16;
-                task.fd_table[l2 as usize] = g2 as i16;
-
-                *fds_ptr.add(0) = l1;
-                *fds_ptr.add(1) = l2;
-                context.rax = 0;
             } else {
                 context.rax = u64::MAX;
             }
@@ -731,13 +800,18 @@ pub fn handle_close(context: &mut CPUState) {
     let mut tm = crate::interrupts::task::TASK_MANAGER.lock();
     let current = tm.current_task;
     if current >= 0 {
-        let task = &mut tm.tasks[current as usize];
-        if local_fd < 16 {
-            let global = task.fd_table[local_fd];
-            if global != -1 {
-                crate::fs::vfs::close_file(global as usize);
-                task.fd_table[local_fd] = -1;
-                context.rax = 0;
+        if let Some(thread) = tm.tasks[current as usize].as_mut() {
+            let proc = thread.process.as_ref().expect("Thread has no process");
+            let mut fd_table = proc.fd_table.lock();
+            if local_fd < 16 {
+                let global = fd_table[local_fd];
+                if global != -1 {
+                    crate::fs::vfs::close_file(global as usize);
+                    fd_table[local_fd] = -1;
+                    context.rax = 0;
+                } else {
+                    context.rax = u64::MAX;
+                }
             } else {
                 context.rax = u64::MAX;
             }
@@ -758,14 +832,21 @@ pub fn handle_seek(context: &mut CPUState) {
         let tm = crate::interrupts::task::TASK_MANAGER.lock();
         let current = tm.current_task;
         if current >= 0 && local_fd < 16 {
-            let g = tm.tasks[current as usize].fd_table[local_fd];
-            if g != -1 { Some(g as usize) } else { None }
+            if let Some(thread) = tm.tasks[current as usize].as_ref() {
+                let proc = thread.process.as_ref().expect("Thread has no process");
+                Some(proc.fd_table.lock()[local_fd])
+            } else { None }
         } else {
             None
         }
     };
 
-    if let Some(fd) = global_fd_opt {
+    if let Some(fd_val) = global_fd_opt {
+        if fd_val == -1 {
+            context.rax = u64::MAX;
+            return;
+        }
+        let fd = fd_val as usize;
         if let Some(handle) = crate::fs::vfs::get_file(fd) {
             use crate::fs::vfs::FileHandle;
             match handle {
@@ -815,15 +896,19 @@ pub fn handle_ioctl(context: &mut CPUState) {
         TIOCGWINSZ => {
             let tm = crate::interrupts::task::TASK_MANAGER.lock();
             if tm.current_task >= 0 {
-                let task = &tm.tasks[tm.current_task as usize];
-                if !arg.is_null() {
-                    unsafe {
-                        (*arg).ws_row = task.terminal_height;
-                        (*arg).ws_col = task.terminal_width;
-                        (*arg).ws_xpixel = 0;
-                        (*arg).ws_ypixel = 0;
+                if let Some(thread) = tm.tasks[tm.current_task as usize].as_ref() {
+                    let proc = thread.process.as_ref().expect("Thread has no process");
+                    if !arg.is_null() {
+                        unsafe {
+                            (*arg).ws_row = *proc.terminal_height.lock();
+                            (*arg).ws_col = *proc.terminal_width.lock();
+                            (*arg).ws_xpixel = 0;
+                            (*arg).ws_ypixel = 0;
+                        }
+                        context.rax = 0;
+                    } else {
+                        context.rax = u64::MAX;
                     }
-                    context.rax = 0;
                 } else {
                     context.rax = u64::MAX;
                 }
@@ -835,13 +920,17 @@ pub fn handle_ioctl(context: &mut CPUState) {
             let mut tm = crate::interrupts::task::TASK_MANAGER.lock();
             let current = tm.current_task;
             if current >= 0 {
-                let task = &mut tm.tasks[current as usize];
-                if !arg.is_null() {
-                    unsafe {
-                        task.terminal_height = (*arg).ws_row;
-                        task.terminal_width = (*arg).ws_col;
+                if let Some(thread) = tm.tasks[current as usize].as_mut() {
+                    let proc = thread.process.as_ref().expect("Thread has no process");
+                    if !arg.is_null() {
+                        unsafe {
+                            *proc.terminal_height.lock() = (*arg).ws_row;
+                            *proc.terminal_width.lock() = (*arg).ws_col;
+                        }
+                        context.rax = 0;
+                    } else {
+                        context.rax = u64::MAX;
                     }
-                    context.rax = 0;
                 } else {
                     context.rax = u64::MAX;
                 }

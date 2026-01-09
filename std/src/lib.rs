@@ -1,4 +1,5 @@
 #![no_std]
+#![feature(lang_items)]
 
 extern crate alloc as rust_alloc;
 pub mod io;
@@ -12,6 +13,12 @@ pub mod fs;
 pub mod math;
 pub mod time;
 pub mod thread;
+pub mod env;
+pub mod process;
+pub mod rt;
+pub mod future;
+pub mod task;
+pub mod executor;
 
 #[cfg(feature = "userland")]
 pub mod runtime;

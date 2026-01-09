@@ -8,8 +8,9 @@ mod builtins;
 extern crate alloc;
 use alloc::format;
 use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec::Vec;
-use std::{println};
+use std::println;
 
 use crate::utils::resolve_path;
 use crate::parser::parse_segment;
@@ -40,155 +41,162 @@ pub extern "C" fn main() -> i32 {
                 let line = cmd_buffer.trim();
 
                 if !line.is_empty() {
-                    let segments: Vec<&str> = line.split('|').collect();
-                    let mut prev_pipe_read: Option<i32> = None;
-                    let mut children_pids = Vec::new();
+                    let logical_blocks: Vec<&str> = line.split("&&").collect();
+                    
+                    for block in logical_blocks {
+                        let segments: Vec<&str> = block.split('|').collect();
+                        let mut prev_pipe_read: Option<i32> = None;
+                        let mut children_pids = Vec::new();
+                        let mut last_exit_code = 0;
 
-                    for (i, segment) in segments.iter().enumerate() {
-                        let parsed = parse_segment(segment);
-                        if parsed.cmd.is_empty() { continue; }
+                        for (i, segment) in segments.iter().enumerate() {
+                            let parsed = parse_segment(segment);
+                            if parsed.cmd.is_empty() { continue; }
 
+                            let mut stdin_fd = 0;
+                            let mut close_stdin = false;
 
-                        let mut stdin_fd = 0;
-                        let mut close_stdin = false;
-
-                        if let Some(infile) = parsed.input_file {
-                            let path = resolve_path(&cwd, &infile);
-                            if let Ok(f) = std::fs::File::open(&path) {
-                                stdin_fd = f.as_raw_fd();
-                                core::mem::forget(f);
-                                close_stdin = true;
-                            } else {
-                                let err = format!("Failed to open input: {}\n", path);
-                                std::os::file_write(STDOUT_FD, err.as_bytes());
-                                break;
-                            }
-                        } else if let Some(fd) = prev_pipe_read {
-                            stdin_fd = fd as usize;
-                            close_stdin = true;
-                        }
-
-
-                        let mut stdout_fd = 1;
-                        let mut close_stdout = false;
-                        let mut next_pipe_read = None;
-
-                        if let Some(outfile) = parsed.output_file {
-                            let path = resolve_path(&cwd, &outfile);
-                            let res = if parsed.append_mode {
-                                std::fs::File::open(&path).or_else(|_| std::fs::File::create(&path))
-                            } else {
-                                std::fs::File::create(&path)
-                            };
-
-                            match res {
-                                Ok(f) => {
-                                    stdout_fd = f.as_raw_fd();
-                                    if parsed.append_mode {
-                                        std::os::file_seek(stdout_fd, 0, 2);
-                                    }
+                            if let Some(infile) = parsed.input_file {
+                                let path = resolve_path(&cwd, &infile);
+                                if let Ok(f) = std::fs::File::open(&path) {
+                                    stdin_fd = f.as_raw_fd();
                                     core::mem::forget(f);
-                                    close_stdout = true;
-                                }
-                                Err(_) => {
-                                    let err = format!("Failed to open output: {}\n", path);
+                                    close_stdin = true;
+                                } else {
+                                    let err = format!("Failed to open input: {}\n", path);
                                     std::os::file_write(STDOUT_FD, err.as_bytes());
+                                    last_exit_code = 1;
+                                    break;
+                                }
+                            } else if let Some(fd) = prev_pipe_read {
+                                stdin_fd = fd as usize;
+                                close_stdin = true;
+                            }
+
+                            let mut stdout_fd = 1;
+                            let mut close_stdout = false;
+                            let mut next_pipe_read = None;
+
+                            if let Some(outfile) = parsed.output_file {
+                                let path = resolve_path(&cwd, &outfile);
+                                let res = if parsed.append_mode {
+                                    std::fs::File::open(&path).or_else(|_| std::fs::File::create(&path))
+                                } else {
+                                    std::fs::File::create(&path)
+                                };
+
+                                match res {
+                                    Ok(f) => {
+                                        stdout_fd = f.as_raw_fd();
+                                        if parsed.append_mode {
+                                            std::os::file_seek(stdout_fd, 0, 2);
+                                        }
+                                        core::mem::forget(f);
+                                        close_stdout = true;
+                                    }
+                                    Err(_) => {
+                                        let err = format!("Failed to open output: {}\n", path);
+                                        std::os::file_write(STDOUT_FD, err.as_bytes());
+                                        last_exit_code = 1;
+                                        break;
+                                    }
+                                }
+                            } else if i < segments.len() - 1 {
+                                let mut fds = [0i32; 2];
+                                if std::os::pipe(&mut fds) == 0 {
+                                    stdout_fd = fds[1] as usize;
+                                    next_pipe_read = Some(fds[0]);
+                                    close_stdout = true;
+                                } else {
+                                    std::os::file_write(STDOUT_FD, b"Pipe creation failed\n");
+                                    last_exit_code = 1;
                                     break;
                                 }
                             }
-                        } else if i < segments.len() - 1 {
-                            let mut fds = [0i32; 2];
-                            if std::os::pipe(&mut fds) == 0 {
-                                stdout_fd = fds[1] as usize;
-                                next_pipe_read = Some(fds[0]);
-                                close_stdout = true;
+
+                            let is_builtin = match parsed.cmd.as_str() {
+                                "cd" | "ls" | "pwd" | "help" | "clear" | "touch" | "mkdir" | "rm" | "mv" | "cp" | "sleep" | "osfetch" | "echo" | "cat" | "export" => true,
+                                _ => false
+                            };
+
+                            if is_builtin {
+                                last_exit_code = execute_builtin(&parsed.cmd, &parsed.args, &mut cwd, &mut path_env, stdin_fd, stdout_fd) as usize;
                             } else {
-                                std::os::file_write(STDOUT_FD, b"Pipe creation failed\n");
-                                break;
-                            }
-                        }
+                                let mut prog_path = String::new();
+                                let mut found = false;
 
+                                if parsed.cmd.starts_with('@') || parsed.cmd.contains('/') {
+                                    prog_path = resolve_path(&cwd, &parsed.cmd);
 
-                        let is_builtin = match parsed.cmd.as_str() {
-                            "cd" | "ls" | "pwd" | "help" | "clear" | "touch" | "mkdir" | "rm" | "mv" | "cp" | "sleep" | "osfetch" | "echo" | "cat" | "export" => true,
-                            _ => false
-                        };
-
-                        if is_builtin {
-                            execute_builtin(&parsed.cmd, &parsed.args, &mut cwd, &mut path_env, stdin_fd, stdout_fd);
-                        } else {
-                            let mut prog_path = String::new();
-                            let mut found = false;
-
-                            if parsed.cmd.starts_with('@') || parsed.cmd.contains('/') {
-                                prog_path = resolve_path(&cwd, &parsed.cmd);
-
-                                if let Ok(_) = std::fs::File::open(&prog_path) {
-                                    found = true;
-                                }
-                            } else {
-                                for path_dir in path_env.split(';') {
-                                    let mut p = format!("{}/{}", path_dir, parsed.cmd);
-                                    if !parsed.cmd.ends_with(".elf") {
-                                        p.push_str(".elf");
-                                    }
-
-                                    if let Ok(_) = std::fs::File::open(&p) {
-                                        prog_path = p;
+                                    if let Ok(_) = std::fs::File::open(&prog_path) {
                                         found = true;
-                                        break;
                                     }
+                                } else {
+                                    for path_dir in path_env.split(';') {
+                                        let mut p = format!("{}/{}", path_dir, parsed.cmd);
+                                        if !parsed.cmd.ends_with(".elf") {
+                                            p.push_str(".elf");
+                                        }
 
-                                    if !found && (path_dir.ends_with("/apps") || path_dir == "@0xE0/apps") {
-                                        let apps_dir = format!("{}/{}", path_dir, parsed.cmd);
-                                        if let Ok(entries) = std::fs::read_dir(&apps_dir) {
-                                            for entry in entries {
-                                                if entry.file_type == std::fs::FileType::File && entry.name.ends_with(".elf") {
-                                                    prog_path = format!("{}/{}", apps_dir, entry.name);
-                                                    found = true;
-                                                    break;
+                                        if let Ok(_) = std::fs::File::open(&p) {
+                                            prog_path = p;
+                                            found = true;
+                                            break;
+                                        }
+
+                                        if !found && (path_dir.ends_with("/apps") || path_dir == "@0xE0/apps") {
+                                            let apps_dir = format!("{}/{}", path_dir, parsed.cmd);
+                                            if let Ok(entries) = std::fs::read_dir(&apps_dir) {
+                                                for entry in entries {
+                                                    if entry.file_type == std::fs::FileType::File && entry.name.ends_with(".elf") {
+                                                        prog_path = format!("{}/{}", apps_dir, entry.name);
+                                                        found = true;
+                                                        break;
+                                                    }
                                                 }
                                             }
                                         }
+                                        if found { break; }
                                     }
-                                    if found { break; }
                                 }
-                            }
 
-                            if found {
-                                let map = [
-                                    (0, stdin_fd as u8),
-                                    (1, stdout_fd as u8),
-                                    (2, 2)
-                                ];
+                                if found {
+                                    let map = [
+                                        (0, stdin_fd as u8),
+                                        (1, stdout_fd as u8),
+                                        (2, 2)
+                                    ];
 
-                                let args_refs: Vec<&str> = parsed.args.iter().map(|s| s.as_str()).collect();
-                                let pid = std::os::spawn_with_fds(&prog_path, &args_refs, &map);
+                                    let args_refs: Vec<&str> = parsed.args.iter().map(|s| s.as_str()).collect();
+                                    let pid = std::os::spawn_with_fds(&prog_path, &args_refs, &map);
 
-                                if pid != usize::MAX {
-                                    children_pids.push(pid);
+                                    if pid != usize::MAX {
+                                        children_pids.push(pid);
+                                    } else {
+                                        let err = format!("Failed to spawn: {}\n", prog_path);
+                                        std::os::file_write(STDOUT_FD, err.as_bytes());
+                                        last_exit_code = 1;
+                                    }
                                 } else {
-                                    let err = format!("Failed to spawn: {}\n", prog_path);
+                                    let err = format!("Command not found: {}\n", parsed.cmd);
                                     std::os::file_write(STDOUT_FD, err.as_bytes());
+                                    last_exit_code = 127;
                                 }
-                            } else {
-                                let err = format!("Command not found: {}\n", parsed.cmd);
-                                std::os::file_write(STDOUT_FD, err.as_bytes());
                             }
+
+                            if close_stdin && stdin_fd > 2 { std::os::file_close(stdin_fd); }
+                            if close_stdout && stdout_fd > 2 { std::os::file_close(stdout_fd); }
+
+                            prev_pipe_read = next_pipe_read;
                         }
 
-
-                        if close_stdin && stdin_fd > 2 { std::os::file_close(stdin_fd); }
-                        if close_stdout && stdout_fd > 2 { std::os::file_close(stdout_fd); }
-
-                        prev_pipe_read = next_pipe_read;
-                    }
-
-
-                    for pid in children_pids {
-                        let exit_code = std::os::waitpid(pid);
-                        let msg = format!("\n[{}]\n", exit_code);
-                        std::os::file_write(STDOUT_FD, msg.as_bytes());
+                        for pid in children_pids {
+                            last_exit_code = std::os::waitpid(pid);
+                        }
+                        
+                        if last_exit_code != 0 {
+                            break;
+                        }
                     }
                 }
 
