@@ -335,7 +335,7 @@ impl Widget {
 
     pub fn handle_scroll(&mut self, delta: i8) {
         let geo = self.geometry_mut();
-        let scroll_step = 20;
+        let scroll_step = 60;
 
 
         if delta > 0 {
@@ -344,8 +344,8 @@ impl Widget {
             geo.scroll_offset_y = geo.scroll_offset_y.saturating_sub((delta.abs() as usize) * scroll_step);
         }
 
-
-        let max_scroll = geo.content_height.saturating_sub(geo.height).saturating_add(20);
+        let view_height = geo.height.saturating_sub(geo.padding * 2);
+        let max_scroll = geo.content_height.saturating_sub(view_height).saturating_add(20);
         if geo.scroll_offset_y > max_scroll {
             geo.scroll_offset_y = max_scroll;
         }

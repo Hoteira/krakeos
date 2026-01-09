@@ -55,6 +55,60 @@ pub unsafe extern "C" fn memmove(d: *mut c_void, s: *const c_void, n: usize) -> 
 
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) -> c_int {
+    let p1 = s1 as *const u8;
+    let p2 = s2 as *const u8;
+    for i in 0..n {
+        let a = *p1.add(i);
+        let b = *p2.add(i);
+        if a != b {
+            return (a as c_int) - (b as c_int);
+        }
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
+    let p = s as *const u8;
+    for i in 0..n {
+        if *p.add(i) == c as u8 {
+            return p.add(i) as *mut c_void;
+        }
+    }
+    core::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn strspn(s: *const c_char, accept: *const c_char) -> usize {
+    let mut i = 0;
+    while *s.add(i) != 0 {
+        if strchr(accept, *s.add(i) as c_int).is_null() {
+            return i;
+        }
+        i += 1;
+    }
+    i
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn strcspn(s: *const c_char, reject: *const c_char) -> usize {
+    let mut i = 0;
+    while *s.add(i) != 0 {
+        if !strchr(reject, *s.add(i) as c_int).is_null() {
+            return i;
+        }
+        i += 1;
+    }
+    i
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn strcoll(s1: *const c_char, s2: *const c_char) -> c_int {
+    strcmp(s1, s2)
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
     let mut l = 0;
     while *s.add(l) != 0 { l += 1; }

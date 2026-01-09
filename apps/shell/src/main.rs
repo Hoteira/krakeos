@@ -24,7 +24,7 @@ pub extern "C" fn main() -> i32 {
     let welcome_msg = format!("\nWelcome to KrakeOS Shell {} \n> ", welcome_icon);
     std::os::file_write(STDOUT_FD, welcome_msg.as_bytes());
 
-    let mut cwd = String::from("/");
+    let mut cwd = String::from("@0xE0");
     let mut path_env = String::from("/sys/bin;/apps");
     let mut cmd_buffer = String::new();
 

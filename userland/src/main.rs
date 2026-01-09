@@ -4,6 +4,7 @@
 extern crate alloc;
 use inkui::{Color, Size, Widget, Window};
 use std::fs::File;
+use std::io::Read;
 use std::graphics::Items;
 use std::{debugln, println};
 

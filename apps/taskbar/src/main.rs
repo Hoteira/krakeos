@@ -3,6 +3,8 @@
 
 extern crate alloc;
 use alloc::format;
+use std::io::Read;
+use std::println;
 use inkui::{Color, Display, Size, Widget, Window};
 use std::fs::File;
 

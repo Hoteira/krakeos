@@ -191,6 +191,11 @@ pub unsafe extern "C" fn sigismember(set: *const u32, signum: c_int) -> c_int { 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sigprocmask(_how: c_int, _set: *const u32, _oldset: *mut u32) -> c_int { 0 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn signal(_signum: c_int, _handler: *const c_void) -> *const c_void {
+    core::ptr::null()
+}
+
 #[repr(C)]
 pub struct jmp_buf {
     regs: [u64; 8],

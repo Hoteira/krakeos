@@ -4,6 +4,7 @@ pub mod paging;
 pub mod address;
 pub mod mapper;
 pub mod mmio;
+pub mod allocator;
 
 pub fn init() {
     pmm::init();

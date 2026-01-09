@@ -18,6 +18,7 @@ pub mod sys;
 pub mod curses;
 pub mod dirent;
 pub mod locale;
+pub mod time;
 
 #[cfg(feature = "userland")]
 pub use std::runtime::*;

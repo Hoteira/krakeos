@@ -44,7 +44,6 @@ name = "kernel"
 version = "0.1.0"
 dependencies = [
  "elfic",
- "std",
 ]
 
 [[package]]

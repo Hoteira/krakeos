@@ -85,6 +85,29 @@ pub unsafe extern "C" fn atof(s: *const c_char) -> f64 {
 pub unsafe extern "C" fn abs(j: c_int) -> c_int { if j < 0 { -j } else { j } }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn abort() -> ! {
+    std::os::exit(1)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -> f64 {
+    let res = atof(nptr);
+    if !endptr.is_null() {
+        let mut p = nptr;
+        while *p != 0 {
+            let c = *p as u8;
+            if (c >= b'0' && c <= b'9') || c == b'.' || c == b'-' || c == b'+' || c == b'e' || c == b'E' {
+                p = p.add(1);
+            } else {
+                break;
+            }
+        }
+        *endptr = p as *mut c_char;
+    }
+    res
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn system(_c: *const c_char) -> c_int { 0 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn exit(s: c_int) -> ! { std::os::exit(s as u64) }

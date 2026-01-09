@@ -14,6 +14,7 @@ mod memory;
 mod tss;
 pub mod debug;
 pub mod window_manager;
+pub mod sync;
 
 use crate::boot::{BootInfo, BOOT_INFO};
 use crate::fs::ext2::fs::Ext2;
@@ -71,7 +72,7 @@ pub extern "C" fn _start(bootinfo_ptr: u64) -> ! {
     let heap_virt_ptr = phys_to_virt(PhysAddr::new(heap_phys_addr)).as_mut_ptr::<u8>();
     
     
-    std::memory::heap::init_heap(heap_virt_ptr, heap_size as usize);
+    crate::memory::allocator::init_heap(heap_virt_ptr, heap_size as usize);
 
     debugln!("SIGNPOST: Heap initialized.");
 

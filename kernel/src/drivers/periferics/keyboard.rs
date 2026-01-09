@@ -1,6 +1,6 @@
 use crate::drivers::port::{inb, outb};
 use alloc::collections::VecDeque;
-use std::sync::Mutex;
+use crate::sync::Mutex;
 
 #[allow(dead_code)]
 pub static KEYBOARD_BUFFER: Mutex<VecDeque<u32>> = Mutex::new(VecDeque::new());

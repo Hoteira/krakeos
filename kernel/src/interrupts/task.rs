@@ -305,8 +305,8 @@ pub struct TaskManager {
     pub(crate) current_task: isize,
 }
 
-pub static TASK_MANAGER: std::sync::Mutex<TaskManager> =
-    std::sync::Mutex::new(TaskManager {
+pub static TASK_MANAGER: crate::sync::Mutex<TaskManager> =
+    crate::sync::Mutex::new(TaskManager {
         tasks: [NULL_TASK; MAX_TASKS],
         task_count: 0,
         current_task: -1,

@@ -9,6 +9,10 @@ use alloc::format;
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
+use alloc::boxed::Box;
+use std::io::Read;
+use std::println;
+
 use inkui::{Color, Size, Widget, Window};
 use std::fs::File;
 
@@ -141,11 +145,18 @@ pub extern "C" fn main() -> i32 {
     let mut pipe_buf = [0u8; 4096];
 
     loop {
+        let mut did_work = false;
         use inkui::Event;
         let mut events: [Event; 16] = [Event::None; 16];
         unsafe {
             std::os::syscall(104, win.id as u64, events.as_mut_ptr() as u64, 16);
         }
+
+        if events[0] != Event::None {
+            did_work = true;
+        }
+
+        let mut needs_redraw = false;
 
         for event in events.iter() {
             match event {
@@ -181,16 +192,14 @@ pub extern "C" fn main() -> i32 {
                     if e.scroll != 0 && !term_buffer.is_alt { 
                         if let Some(widget) = win.find_widget_by_id_mut(2) {
                             widget.handle_scroll(e.scroll);
-                            win.draw();
-                            win.update();
+                            needs_redraw = true;
                         }
                     }
                 }
                 Event::Resize(e) => {
                     win.resize(e.width, e.height, true);
                     update_term_size(&win);
-                    win.draw();
-                    win.update();
+                    needs_redraw = true;
                 }
                 _ => {}
             }
@@ -198,6 +207,7 @@ pub extern "C" fn main() -> i32 {
 
         let n = std::os::file_read(unsafe { TERM_READ_FD }, &mut pipe_buf);
         if n > 0 && n != usize::MAX {
+            did_work = true;
             term_buffer.input_buffer.extend_from_slice(&pipe_buf[..n]);
 
             let mut consumed = 0;
@@ -356,25 +366,7 @@ pub extern "C" fn main() -> i32 {
                                 }
                             }
                             b't' => {
-                                if seq == "18" {
-                                    if let Some(widget) = win.find_widget_by_id(2) {
-                                        if let inkui::widget::Widget::Label { text, geometry, .. } = widget {
-                                            let padding = 10;
-                                            let width = geometry.width.saturating_sub(padding * 2);
-                                            let height = geometry.height.saturating_sub(padding * 2);
-
-                                            let char_width = (text.size as f32 * 0.8) as usize;
-                                            let line_height = (text.size as f32 * 1.2) as usize;
-
-                                            if char_width > 0 && line_height > 0 {
-                                                let cols = width / char_width;
-                                                let rows = height / line_height;
-                                                let resp = format!("\x1B[8;{};{}t", rows, cols);
-                                                std::os::file_write(unsafe { TERM_WRITE_FD }, resp.as_bytes());
-                                            }
-                                        }
-                                    }
-                                }
+                                // Disabled to prevent blocking writes if shell is not reading
                             }
                             _ => {}
                         }
@@ -418,7 +410,7 @@ pub extern "C" fn main() -> i32 {
                                 let content_height = visual_lines * line_height;
 
                                 if content_height > height {
-                                    geometry.scroll_offset_y = content_height - height;
+                                    geometry.scroll_offset_y = content_height.saturating_sub(height).saturating_add(20);
                                 } else {
                                     geometry.scroll_offset_y = 0;
                                 }
@@ -427,10 +419,16 @@ pub extern "C" fn main() -> i32 {
                     }
                 }
             }
+            needs_redraw = true;
+        }
+
+        if needs_redraw {
             win.draw();
             win.update();
         }
 
-        std::os::yield_task();
+        if !did_work {
+            std::os::yield_task();
+        }
     }
 }

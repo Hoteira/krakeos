@@ -1,7 +1,8 @@
 use alloc::vec::Vec;
-use std::sync::Mutex;
+use crate::sync::Mutex;
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+
 #[repr(C)]
 pub struct MouseEvent {
     pub wid: u32,

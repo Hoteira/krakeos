@@ -9,7 +9,14 @@ pub unsafe extern "C" fn usleep(usec: c_uint) -> c_int {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn time(_t: *mut c_long) -> c_long { 0 }
+pub unsafe extern "C" fn time(t: *mut c_long) -> c_long {
+    let ticks = std::os::syscall(109, 0, 0, 0); // SYS_GET_TICKS
+    let seconds = (ticks / 1000) as c_long;
+    if !t.is_null() {
+        *t = seconds;
+    }
+    seconds
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn open(path: *const c_char, _flags: c_int, _mode: c_int) -> c_int {
@@ -78,7 +85,9 @@ pub unsafe extern "C" fn isatty(fd: c_int) -> c_int {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn getpid() -> c_int { 1 }
+pub unsafe extern "C" fn getpid() -> c_int {
+    std::os::syscall(39, 0, 0, 0) as c_int // SYS_GETPID
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn unlink(path: *const c_char) -> c_int {

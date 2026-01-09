@@ -51,6 +51,13 @@ cd ..\..\..
 ld.lld -pie --entry _start -o apps\doomgeneric-master\doomgeneric\doom.elf apps\doomgeneric-master\doomgeneric\*.o target\bits64pie\release\liblibc.a
 copy "apps\doomgeneric-master\doomgeneric\doom.elf" "tree\apps\doom\doom.elf"
 
+cd apps\lua-master
+clang -target x86_64-unknown-elf -ffreestanding -fno-stack-protector -fPIC -I ..\..\libs\libc\include -DLUA_COMPAT_5_3 -c *.c
+cd ..\..
+ld.lld -pie --entry _start -o apps\lua-master\lua.elf apps\lua-master\lapi.o apps\lua-master\lcode.o apps\lua-master\lctype.o apps\lua-master\ldebug.o apps\lua-master\ldo.o apps\lua-master\ldump.o apps\lua-master\lfunc.o apps\lua-master\lgc.o apps\lua-master\llex.o apps\lua-master\lmem.o apps\lua-master\lobject.o apps\lua-master\lopcodes.o apps\lua-master\lparser.o apps\lua-master\lstate.o apps\lua-master\lstring.o apps\lua-master\ltable.o apps\lua-master\ltm.o apps\lua-master\lundump.o apps\lua-master\lvm.o apps\lua-master\lzio.o apps\lua-master\lauxlib.o apps\lua-master\lbaselib.o apps\lua-master\lcorolib.o apps\lua-master\ldblib.o apps\lua-master\liolib.o apps\lua-master\lmathlib.o apps\lua-master\loslib.o apps\lua-master\lstrlib.o apps\lua-master\ltablib.o apps\lua-master\lutf8lib.o apps\lua-master\loadlib.o apps\lua-master\linit.o apps\lua-master\lua.o target\bits64pie\release\liblibc.a
+mkdir "tree\apps\lua"
+copy "apps\lua-master\lua.elf" "tree\apps\lua\lua.elf"
+
 
 wsl dd if=build/kernel.bin of=build/disk.img seek=6144 bs=512 conv=notrunc
 

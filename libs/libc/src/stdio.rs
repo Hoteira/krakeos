@@ -1,6 +1,7 @@
 use crate::string::strlen;
 use alloc::boxed::Box;
 use core::ffi::{c_char, c_double, c_int, c_long, c_uint, c_void, VaList};
+use std::io::{Read, Write};
 
 unsafe fn write_padded(output: &mut impl FnMut(u8), s: &[u8], width: usize, zero_pad: bool, written: &mut c_int) {
     let len = s.len();
@@ -87,8 +88,11 @@ pub unsafe extern "C" fn putchar(c: c_int) -> c_int {
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn puts(s: *const c_char) -> c_int {
-    printf(s);
-    putchar(b'\n' as i32);
+    if s.is_null() { return -1; }
+    let len = strlen(s);
+    let slice = core::slice::from_raw_parts(s as *const u8, len);
+    std::os::print(core::str::from_utf8_unchecked(slice));
+    std::os::print("\n");
     0
 }
 
@@ -102,7 +106,7 @@ pub unsafe extern "C" fn krake_debug_printf(f: *const c_char, mut args: ...) -> 
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn printf(f: *const c_char, mut args: ...) -> c_int {
-    vfprintf(core::ptr::null_mut(), f, args.as_va_list())
+    vfprintf(1 as *mut c_void, f, args.as_va_list())
 }
 
 #[unsafe(no_mangle)]
@@ -114,9 +118,8 @@ pub unsafe extern "C" fn fprintf(s: *mut c_void, f: *const c_char, mut args: ...
 pub unsafe extern "C" fn vfprintf(st: *mut c_void, f: *const c_char, mut ap: VaList) -> c_int {
     printf_core(|b| {
         let buf = [b];
-        let s = core::str::from_utf8_unchecked(&buf);
         if st.is_null() || st == (1 as *mut c_void) || st == (2 as *mut c_void) {
-            std::os::print(s);
+            std::os::print(core::str::from_utf8_unchecked(&buf));
         } else {
             fwrite(buf.as_ptr() as *const c_void, 1, 1, st);
         }
@@ -125,6 +128,75 @@ pub unsafe extern "C" fn vfprintf(st: *mut c_void, f: *const c_char, mut ap: VaL
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fflush(_s: *mut c_void) -> c_int { 0 }
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fgets(s: *mut c_char, size: c_int, stream: *mut c_void) -> *mut c_char {
+    if size <= 0 { return core::ptr::null_mut(); }
+    let mut i = 0;
+    while i < (size - 1) as usize {
+        let c = getc(stream);
+        if c == -1 {
+            if i == 0 { return core::ptr::null_mut(); }
+            break;
+        }
+
+        if c == 0x08 || c == 0x7F {
+            if i > 0 {
+                std::os::file_write(1, b"\x08 \x08");
+                i -= 1;
+            }
+            continue;
+        }
+        
+        // Translate \r to \n for internal consistency
+        let val = if c == b'\r' as c_int { b'\n' as c_int } else { c };
+        
+        *s.add(i) = val as c_char;
+        i += 1;
+        if val == b'\n' as c_int { break; }
+    }
+    *s.add(i) = 0;
+    s
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fputs(s: *const c_char, stream: *mut c_void) -> c_int {
+    let len = strlen(s);
+    fwrite(s as *const c_void, 1, len, stream) as c_int
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tmpfile() -> *mut c_void {
+    fopen(b"@0xE0/tmp/temp\0".as_ptr() as *const c_char, b"wb+\0".as_ptr() as *const c_char)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tmpnam(s: *mut c_char) -> *mut c_char {
+    let name = b"@0xE0/tmp/lua_tmp\0";
+    if !s.is_null() {
+        core::ptr::copy_nonoverlapping(name.as_ptr(), s as *mut u8, name.len());
+        s
+    } else {
+        core::ptr::null_mut()
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn clearerr(_stream: *mut c_void) {}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn feof(_stream: *mut c_void) -> c_int { 0 }
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn setvbuf(_stream: *mut c_void, _buf: *mut c_char, _mode: c_int, _size: usize) -> c_int { 0 }
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn freopen(filename: *const c_char, mode: *const c_char, stream: *mut c_void) -> *mut c_void {
+    if !stream.is_null() && stream as usize > 2 {
+        fclose(stream);
+    }
+    fopen(filename, mode)
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fdopen(fd: c_int, _mode: *const c_char) -> *mut c_void {
@@ -140,40 +212,106 @@ pub unsafe extern "C" fn fopen(filename: *const c_char, _mode: *const c_char) ->
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fclose(s: *mut c_void) -> c_int {
-    if !s.is_null() {
-        drop(Box::from_raw(s as *mut std::fs::File));
-        0
-    } else { -1 }
+    if s.is_null() || s as usize <= 2 { return 0; }
+    drop(Box::from_raw(s as *mut std::fs::File));
+    0
 }
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fread(p: *mut c_void, s: usize, n: usize, st: *mut c_void) -> usize {
-    if st.is_null() { return 0; }
-    let f = &mut *(st as *mut std::fs::File);
-    if let Ok(got) = f.read(core::slice::from_raw_parts_mut(p as *mut u8, s * n)) { got / s } else { 0 }
+    let fd = if st.is_null() { 1 } else if st as usize <= 2 { st as usize } else { 
+        return if let Ok(got) = (*(st as *mut std::fs::File)).read(core::slice::from_raw_parts_mut(p as *mut u8, s * n)) { got / s } else { 0 };
+    };
+    
+    let got = std::os::file_read(fd, core::slice::from_raw_parts_mut(p as *mut u8, s * n));
+    if got == usize::MAX { 0 } else { got / s }
 }
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fwrite(p: *const c_void, s: usize, n: usize, st: *mut c_void) -> usize {
-    if st.is_null() { return 0; }
-    let f = &mut *(st as *mut std::fs::File);
-    if let Ok(put) = f.write(core::slice::from_raw_parts(p as *const u8, s * n)) { put / s } else { 0 }
+    let fd = if st.is_null() { 1 } else if st as usize <= 2 { st as usize } else {
+        return if let Ok(put) = (*(st as *mut std::fs::File)).write(core::slice::from_raw_parts(p as *const u8, s * n)) { put / s } else { 0 };
+    };
+
+    let put = std::os::file_write(fd, core::slice::from_raw_parts(p as *const u8, s * n));
+    if put == usize::MAX { 0 } else { put / s }
 }
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fseek(st: *mut c_void, o: c_long, w: c_int) -> c_int {
-    if st.is_null() { return -1; }
+    if st.is_null() || st as usize <= 2 { return -1; }
     let f = &mut *(st as *mut std::fs::File);
     if std::os::file_seek(f.as_raw_fd(), o as i64, w as usize) != u64::MAX { 0 } else { -1 }
 }
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ftell(st: *mut c_void) -> c_long {
-    if st.is_null() { return -1; }
+    if st.is_null() || st as usize <= 2 { return -1; }
     let f = &mut *(st as *mut std::fs::File);
     let r = std::os::file_seek(f.as_raw_fd(), 0, 1);
     if r != u64::MAX { r as c_long } else { -1 }
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn rewind(st: *mut c_void) {
+    if st.is_null() || st as usize <= 2 { return; }
+    let f = &mut *(st as *mut std::fs::File);
+    std::os::file_seek(f.as_raw_fd(), 0, 0);
+}
+
+static mut STDIN_PUSHBACK: c_int = -1;
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ungetc(c: c_int, stream: *mut c_void) -> c_int {
+    if stream == (0 as *mut c_void) || stream.is_null() {
+        STDIN_PUSHBACK = c;
+        return c;
+    }
+    -1
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn getc(stream: *mut c_void) -> c_int {
-    if stream.is_null() { return -1; }
+    if stream == (0 as *mut c_void) || stream.is_null() {
+        if STDIN_PUSHBACK != -1 {
+            let c = STDIN_PUSHBACK;
+            STDIN_PUSHBACK = -1;
+            return c;
+        }
+        let mut buf = [0u8; 1];
+        loop {
+            let n = std::os::file_read(0, &mut buf);
+            if n == 1 { 
+                let b = buf[0];
+                
+                // Echo to stdout
+                if buf[0] == 0x08 || buf[0] == 0x7F {
+                    // Do nothing, handled by fgets
+                } else if buf[0] == b'\r' {
+                    std::os::file_write(1, b"\n");
+                } else {
+                    std::os::file_write(1, &buf);
+                }
+
+                // Debug print to trace input
+                if b >= 32 && b <= 126 {
+                    crate::stdio::krake_debug_printf(b"getc(stdin): got '%c' (%d)\n\0".as_ptr() as *const c_char, b as c_int, b as c_int);
+                } else {
+                    crate::stdio::krake_debug_printf(b"getc(stdin): got code %d\n\0".as_ptr() as *const c_char, b as c_int);
+                }
+                return b as c_int; 
+            }
+            if n == usize::MAX { return -1; }
+            std::os::yield_task();
+        }
+    }
+    
+    if stream as usize <= 2 {
+        let mut buf = [0u8; 1];
+        if std::os::file_read(stream as usize, &mut buf) == 1 { return buf[0] as c_int; }
+        return -1;
+    }
+
     let f = &mut *(stream as *mut std::fs::File);
     let mut buf = [0u8; 1];
     if let Ok(n) = f.read(&mut buf) {

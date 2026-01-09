@@ -6,4 +6,3 @@ edition = "2024"
 [dependencies]
 
 elfic = { path = "../elfic" }
-std = { path = "../std", default-features = false }
