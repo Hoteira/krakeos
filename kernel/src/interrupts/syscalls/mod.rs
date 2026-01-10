@@ -57,6 +57,7 @@ pub const SYS_SPAWN_THREAD: u64 = 112;
 pub const SYS_THREAD_EXIT: u64 = 113;
 
 pub const SYS_SPAWN_EXT: u64 = 114;
+pub const SYS_GET_DATE: u64 = 115;
 pub const SYS_DEBUG_PRINT: u64 = 999; 
 pub const SYS_MOUNT: u64 = 165;
 
@@ -155,6 +156,7 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
         SYS_GET_SCREEN_HEIGHT => window::handle_get_height(context),
         SYS_GET_MOUSE => window::handle_get_mouse(context),
         SYS_GET_TIME => misc::handle_time(context),
+        SYS_GET_DATE => misc::handle_date(context),
         SYS_GET_TICKS => misc::handle_ticks(context),
         SYS_GET_PROCESS_LIST => process::handle_get_process_list(context),
         SYS_GET_PROCESS_MEM => memory::handle_get_process_mem(context),

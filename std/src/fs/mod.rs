@@ -170,7 +170,14 @@ pub struct DirEntry {
 }
 
 pub fn read_dir(path: &str) -> Result<Vec<DirEntry>> {
-    let mut file = File::open(path)?;
+    let mut actual_path = String::from(path);
+    if actual_path.starts_with('/') {
+        actual_path = String::from("@0xE0") + &actual_path;
+    } else if !actual_path.starts_with('@') {
+        actual_path = String::from("@0xE0/") + &actual_path;
+    }
+
+    let mut file = File::open(&actual_path)?;
 
     let mut entries = Vec::new();
     let mut buffer = [0u8; 1024];

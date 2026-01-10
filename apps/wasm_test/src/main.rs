@@ -11,16 +11,21 @@ fn main() {
     }
 
     // Test 2: Filesystem (Read)
-    println!("Reading /sys/bin directory...");
-    if let Ok(entries) = fs::read_dir("/") {
-        for entry in entries {
-            if let Ok(entry) = entry {
-                println!("Found: {:?}", entry.path());
-            }
+    println!("Reading / directory...");
+    let entries = fs::read_dir("/").unwrap();
+    println!("read_dir Ok. Iterating...");
+    
+    let mut count = 0;
+    for entry in entries {
+        match entry {
+            Ok(e) => {
+                println!("Entry: {:?}", e.path());
+                count += 1;
+            },
+            Err(err) => println!("Error: {:?}", err),
         }
-    } else {
-        println!("Failed to read directory.");
     }
+    println!("Total entries: {}", count);
 
     // Test 3: Filesystem (Write)
     let test_file = "/wasm_hello.txt";

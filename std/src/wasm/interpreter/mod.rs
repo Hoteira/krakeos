@@ -13,6 +13,7 @@ pub struct Interpreter {
     pub(crate) dropped_data: Vec<bool>,
     pub(crate) dropped_elem: Vec<bool>,
     pub(crate) host_functions: Vec<(String, String, Box<dyn Fn(&mut Interpreter, Vec<Value>) -> Option<Value>>)>,
+    pub(crate) fd_paths: Vec<(usize, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -33,6 +34,7 @@ impl Interpreter {
             dropped_data: Vec::new(),
             dropped_elem: Vec::new(),
             host_functions: Vec::new(),
+            fd_paths: Vec::new(),
         }
     }
 
@@ -51,6 +53,16 @@ impl Interpreter {
                 match global.init_bytecode[pc] {
                     0x41 => { pc += 1; self.globals.push(Value::I32(Leb128::decode_i32(&global.init_bytecode, &mut pc))); }
                     0x42 => { pc += 1; self.globals.push(Value::I64(Leb128::decode_i64(&global.init_bytecode, &mut pc))); }
+                    0x43 => { 
+                        pc += 1; 
+                        let mut b = [0u8; 4]; b.copy_from_slice(&global.init_bytecode[pc..pc+4]); 
+                        self.globals.push(Value::F32(f32::from_le_bytes(b))); 
+                    }
+                    0x44 => { 
+                        pc += 1; 
+                        let mut b = [0u8; 8]; b.copy_from_slice(&global.init_bytecode[pc..pc+8]); 
+                        self.globals.push(Value::F64(f64::from_le_bytes(b))); 
+                    }
                     _ => { self.globals.push(Value::I32(0)); }
                 }
             } else { self.globals.push(Value::I32(0)); }

@@ -30,3 +30,19 @@ pub fn get_time() -> (u8, u8, u8) {
 
     (hour, minute, second)
 }
+
+pub fn get_date() -> (u8, u8, u16) {
+    let mut day = read_rtc(0x07);
+    let mut month = read_rtc(0x08);
+    let mut year = read_rtc(0x09);
+    let register_b = read_rtc(0x0B);
+
+    if (register_b & 0x04) == 0 {
+        day = (day & 0x0F) + ((day / 16) * 10);
+        month = (month & 0x0F) + ((month / 16) * 10);
+        year = (year & 0x0F) + ((year / 16) * 10);
+    }
+    
+    let full_year = 2000 + year as u16;
+    (day, month, full_year)
+}

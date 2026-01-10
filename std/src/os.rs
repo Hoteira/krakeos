@@ -182,6 +182,14 @@ pub fn get_time() -> (u8, u8, u8) {
     (h, m, s)
 }
 
+pub fn get_date() -> (u8, u8, u16) {
+    let res = unsafe { syscall(115, 0, 0, 0) };
+    let y = ((res >> 16) & 0xFFFF) as u16;
+    let m = ((res >> 8) & 0xFF) as u8;
+    let d = (res & 0xFF) as u8;
+    (d, m, y)
+}
+
 pub fn get_system_ticks() -> u64 {
     unsafe { syscall(109, 0, 0, 0) }
 }

@@ -17,6 +17,11 @@ pub fn handle_time(context: &mut CPUState) {
     context.rax = ((h as u64) << 16) | ((m as u64) << 8) | (s as u64);
 }
 
+pub fn handle_date(context: &mut CPUState) {
+    let (d, m, y) = crate::drivers::rtc::get_date();
+    context.rax = ((y as u64) << 16) | ((m as u64) << 8) | (d as u64);
+}
+
 pub fn handle_ticks(context: &mut CPUState) {
     unsafe {
         context.rax = crate::interrupts::task::SYSTEM_TICKS;

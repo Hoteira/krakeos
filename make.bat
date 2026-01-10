@@ -49,4 +49,4 @@ wsl dd if=build/disk2.img of=build/disk.img seek=16384 bs=512 conv=notrunc
 
 qemu-system-x86_64 -drive file=build/disk.img,format=raw,if=virtio -serial stdio --no-reboot -device virtio-gpu-pci,xres=1024,yres=576 -display sdl -vga none -m 4G -accel whpx -machine kernel_irqchip=off
 
-pause
+REM pause
