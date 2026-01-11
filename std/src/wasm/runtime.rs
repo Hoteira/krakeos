@@ -74,7 +74,8 @@ impl Store {
              let mut found = None;
              for src in imports_src {
                  for exp in &src.exports {
-                     if exp.name == import.name {
+                     // Check if exact match or if it's a WASI import where we only match the function name
+                     if exp.name == import.name || (import.module.contains("wasi") && import.name == exp.name) {
                          found = Some(exp.value);
                          break;
                      }

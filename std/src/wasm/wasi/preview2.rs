@@ -116,7 +116,6 @@ fn wasi_fd_close(store: &mut Store, args: &[Value]) -> Vec<Value> {
 }
 
 fn wasi_path_open(store: &mut Store, args: &[Value]) -> Vec<Value> {
-    // (dirfd, dirflags, path_ptr, path_len, oflags, fs_rights_base, fs_rights_inheriting, fdflags, ret_fd_ptr)
     if args.len() < 9 { return vec![Value::I32(28)]; }
     let path_ptr = match args[2] { Value::I32(x) => x as usize, _ => return vec![Value::I32(28)] };
     let path_len = match args[3] { Value::I32(x) => x as usize, _ => return vec![Value::I32(28)] };
@@ -137,7 +136,7 @@ fn wasi_path_open(store: &mut Store, args: &[Value]) -> Vec<Value> {
             }
         }
     }
-    vec![Value::I32(44)] // ENOENT or similar
+    vec![Value::I32(44)] 
 }
 
 fn wasi_random_get(store: &mut Store, args: &[Value]) -> Vec<Value> {
@@ -161,7 +160,7 @@ fn wasi_environ_sizes_get(store: &mut Store, args: &[Value]) -> Vec<Value> {
     let count_ptr = match args[0] { Value::I32(x) => x as usize, _ => return vec![Value::I32(28)] };
     let size_ptr = match args[1] { Value::I32(x) => x as usize, _ => return vec![Value::I32(28)] };
     if let Some(mem) = store.memories.get_mut(0) {
-        write_u32(mem, count_ptr, 0); // No environment variables for now
+        write_u32(mem, count_ptr, 0); 
         write_u32(mem, size_ptr, 0);
         return vec![Value::I32(0)];
     }
@@ -170,14 +169,51 @@ fn wasi_environ_sizes_get(store: &mut Store, args: &[Value]) -> Vec<Value> {
 
 fn wasi_environ_get(_store: &mut Store, args: &[Value]) -> Vec<Value> {
     if args.len() != 2 { return vec![Value::I32(28)]; }
-    // (environ_ptr, environ_buf_ptr)
-    vec![Value::I32(0)] // Success, but wrote nothing because count was 0
+    vec![Value::I32(0)]
+}
+
+fn wasi_args_sizes_get(store: &mut Store, args: &[Value]) -> Vec<Value> {
+    if args.len() != 2 { return vec![Value::I32(28)]; }
+    let count_ptr = match args[0] { Value::I32(x) => x as usize, _ => return vec![Value::I32(28)] };
+    let size_ptr = match args[1] { Value::I32(x) => x as usize, _ => return vec![Value::I32(28)] };
+    if let Some(mem) = store.memories.get_mut(0) {
+        let count = store.wasi.args.len() as u32;
+        let mut total_size = 0;
+        for arg in &store.wasi.args { total_size += arg.len() + 1; }
+        write_u32(mem, count_ptr, count);
+        write_u32(mem, size_ptr, total_size as u32);
+        return vec![Value::I32(0)];
+    }
+    vec![Value::I32(9)]
+}
+
+fn wasi_args_get(store: &mut Store, args: &[Value]) -> Vec<Value> {
+    if args.len() != 2 { return vec![Value::I32(28)]; }
+    let argv_ptr = match args[0] { Value::I32(x) => x as usize, _ => return vec![Value::I32(28)] };
+    let argv_buf_ptr = match args[1] { Value::I32(x) => x as usize, _ => return vec![Value::I32(28)] };
+    
+    if let Some(mem) = store.memories.get_mut(0) {
+        let mut current_argv_ptr = argv_ptr;
+        let mut current_argv_buf_ptr = argv_buf_ptr;
+        for arg in &store.wasi.args {
+            write_u32(mem, current_argv_ptr, current_argv_buf_ptr as u32);
+            current_argv_ptr += 4;
+            let bytes = arg.as_bytes();
+            if current_argv_buf_ptr + bytes.len() + 1 <= mem.data.len() {
+                mem.data[current_argv_buf_ptr..current_argv_buf_ptr + bytes.len()].copy_from_slice(bytes);
+                mem.data[current_argv_buf_ptr + bytes.len()] = 0;
+                current_argv_buf_ptr += bytes.len() + 1;
+            }
+        }
+        return vec![Value::I32(0)];
+    }
+    vec![Value::I32(9)]
 }
 
 fn wasi_fd_prestat_get(store: &mut Store, args: &[Value]) -> Vec<Value> {
     if args.len() != 2 { return vec![Value::I32(28)]; }
     let fd = match args[0] { Value::I32(x) => x, _ => return vec![Value::I32(28)] };
-    if fd == 3 { // Map FD 3 as "/"
+    if fd == 3 { 
         let ptr = match args[1] { Value::I32(x) => x as usize, _ => return vec![Value::I32(28)] };
         if let Some(mem) = store.memories.get_mut(0) {
             if ptr + 8 <= mem.data.len() {
@@ -187,7 +223,7 @@ fn wasi_fd_prestat_get(store: &mut Store, args: &[Value]) -> Vec<Value> {
             }
         }
     }
-    vec![Value::I32(8)] // EBADF
+    vec![Value::I32(8)] 
 }
 
 fn wasi_fd_prestat_dir_name(store: &mut Store, args: &[Value]) -> Vec<Value> {
@@ -216,13 +252,11 @@ fn wasi_cli_stdout_get_stdout(_store: &mut Store, _args: &[Value]) -> Vec<Value>
 fn wasi_cli_stderr_get_stderr(_store: &mut Store, _args: &[Value]) -> Vec<Value> { vec![Value::I32(2)] }
 
 fn wasi_random_get_random_bytes(store: &mut Store, args: &[Value]) -> Vec<Value> {
-    // (len, ret_ptr)
     if args.len() != 2 { return vec![]; }
     let len = match args[0] { Value::I32(x) => x as usize, _ => return vec![] };
     let ret_ptr = match args[1] { Value::I32(x) => x as usize, _ => return vec![] };
     if store.memories.is_empty() { return vec![]; }
     let mem = &mut store.memories[0];
-    
     if ret_ptr + len <= mem.data.len() {
         let mut seed = crate::os::get_system_ticks();
         for i in 0..len {
@@ -234,15 +268,12 @@ fn wasi_random_get_random_bytes(store: &mut Store, args: &[Value]) -> Vec<Value>
 }
 
 fn wasi_io_streams_blocking_write_and_flush(store: &mut Store, args: &[Value]) -> Vec<Value> {
-    // Standard P2 Lowering: (handle, ptr, len, ret_ptr) -> ()
     if args.len() < 3 { return vec![]; }
     let fd = match args[0] { Value::I32(x) => x as u32, _ => return vec![] };
     let ptr = match args[1] { Value::I32(x) => x as usize, _ => return vec![] };
     let len = match args[2] { Value::I32(x) => x as usize, _ => return vec![] };
-    
     if store.memories.is_empty() { return vec![]; }
     let mem = &mut store.memories[0];
-
     let mut ret_ptr_opt = None;
     if args.len() >= 4 {
         if let Value::I32(ret_ptr) = args[3] {
@@ -250,7 +281,6 @@ fn wasi_io_streams_blocking_write_and_flush(store: &mut Store, args: &[Value]) -
             if rp + 4 <= mem.data.len() { ret_ptr_opt = Some(rp); }
         }
     }
-
     if let Some(buf) = read_memory(mem, ptr, len) {
         if fd == 1 || fd == 2 {
              if let Ok(s) = core::str::from_utf8(buf) { crate::print!("{}", s); }
@@ -259,10 +289,7 @@ fn wasi_io_streams_blocking_write_and_flush(store: &mut Store, args: &[Value]) -
              unsafe { crate::os::syscall(1, host_fd as u64, buf.as_ptr() as u64, buf.len() as u64) };
         }
     }
-    
-    if let Some(ret_ptr) = ret_ptr_opt {
-        write_u32(&mut store.memories[0], ret_ptr, 0); // Success
-    }
+    if let Some(ret_ptr) = ret_ptr_opt { write_u32(&mut store.memories[0], ret_ptr, 0); }
     vec![]
 }
 
@@ -286,9 +313,7 @@ fn wasi_cli_environment_get_arguments(store: &mut Store, args: &[Value]) -> Vec<
     let ret_ptr = match args[0] { Value::I32(x) => x as usize, _ => return vec![] };
     if store.memories.is_empty() { return vec![]; }
     let mem = &mut store.memories[0];
-    if ret_ptr + 8 <= mem.data.len() {
-        mem.data[ret_ptr..ret_ptr+8].copy_from_slice(&0u64.to_le_bytes()); 
-    }
+    if ret_ptr + 8 <= mem.data.len() { mem.data[ret_ptr..ret_ptr+8].copy_from_slice(&0u64.to_le_bytes()); }
     vec![]
 }
 
@@ -316,6 +341,8 @@ pub fn create_wasi_module(store: &mut Store) -> Rc<ModuleInstance> {
     add_func("proc_exit", vec![ValType::I32], vec![], wasi_proc_exit);
     add_func("environ_get", vec![ValType::I32, ValType::I32], vec![ValType::I32], wasi_environ_get);
     add_func("environ_sizes_get", vec![ValType::I32, ValType::I32], vec![ValType::I32], wasi_environ_sizes_get);
+    add_func("args_get", vec![ValType::I32, ValType::I32], vec![ValType::I32], wasi_args_get);
+    add_func("args_sizes_get", vec![ValType::I32, ValType::I32], vec![ValType::I32], wasi_args_sizes_get);
     add_func("fd_prestat_get", vec![ValType::I32, ValType::I32], vec![ValType::I32], wasi_fd_prestat_get);
     add_func("fd_prestat_dir_name", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32], wasi_fd_prestat_dir_name);      
     add_func("adapter_close_badfd", vec![ValType::I32], vec![ValType::I32], |s, a| vec![Value::I32(0)]);
@@ -324,13 +351,10 @@ pub fn create_wasi_module(store: &mut Store) -> Rc<ModuleInstance> {
     add_func("get-stdout", vec![], vec![ValType::I32], wasi_cli_stdout_get_stdout);
     add_func("get-stderr", vec![], vec![ValType::I32], wasi_cli_stderr_get_stderr);
     add_func("get-random-bytes", vec![ValType::I32, ValType::I32], vec![], wasi_random_get_random_bytes);
-
-    add_func("sock_send", vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32], |s, a| vec![Value::I32(52)]); // ENOSYS/ENOTSUP
+    add_func("sock_send", vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32], |s, a| vec![Value::I32(52)]); 
     add_func("sock_recv", vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32], |s, a| vec![Value::I32(52)]);
     add_func("sock_shutdown", vec![ValType::I32, ValType::I32], vec![ValType::I32], |s, a| vec![Value::I32(52)]);
     add_func("poll_oneoff", vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32], |s, a| vec![Value::I32(52)]);
-
-    // Support both 3 and 4 argument variants of blocking-write-and-flush to be extremely robust
     add_func("[method]output-stream.blocking-write-and-flush", vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32], vec![], wasi_io_streams_blocking_write_and_flush);    
     add_func("now", vec![ValType::I32], vec![], wasi_clocks_wall_clock_now);
     add_func("get-arguments", vec![ValType::I32], vec![], wasi_cli_environment_get_arguments);
