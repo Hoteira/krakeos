@@ -77,6 +77,18 @@ fn wasi_io_streams_blocking_write_and_flush(store: &mut Store, args: &[Value]) -
     
     if store.memories.is_empty() { return vec![]; }
     let mem = &mut store.memories[0];
+
+    // If there's a 4th argument, it's the result pointer.
+    // Memory Safety: Check bounds BEFORE doing any work.
+    let mut ret_ptr_opt = None;
+    if args.len() >= 4 {
+        if let Value::I32(ret_ptr) = args[3] {
+            let rp = ret_ptr as usize;
+            if rp + 4 > mem.data.len() { return vec![]; } // Out of bounds
+            ret_ptr_opt = Some(rp);
+        }
+    }
+
     if let Some(buf) = read_memory(mem, ptr, len) {
         if fd == 1 || fd == 2 {
              if let Ok(s) = core::str::from_utf8(buf) { crate::print!("{}", s); }
@@ -84,14 +96,8 @@ fn wasi_io_streams_blocking_write_and_flush(store: &mut Store, args: &[Value]) -
         }
     }
     
-    // If there's a 4th argument, it's the result pointer
-    if args.len() >= 4 {
-        if let Value::I32(ret_ptr) = args[3] {
-            let ret_ptr = ret_ptr as usize;
-            if ret_ptr + 4 <= mem.data.len() {
-                mem.data[ret_ptr..ret_ptr+4].copy_from_slice(&0u32.to_le_bytes()); // Success (tag 0)
-            }
-        }
+    if let Some(ret_ptr) = ret_ptr_opt {
+        mem.data[ret_ptr..ret_ptr+4].copy_from_slice(&0u32.to_le_bytes()); // Success (tag 0)
     }
     
     vec![]

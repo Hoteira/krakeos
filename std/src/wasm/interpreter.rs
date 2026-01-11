@@ -122,10 +122,11 @@ impl<'a> Interpreter<'a> {
     fn run_loop(&mut self) -> Result<Vec<Value>, &'static str> {
         loop {
             if self.stack.frames.is_empty() { return Ok(Vec::new()); }
-            let (op, mut current_ip, frame_code);
+            let (op, mut current_ip, frame_code, inst_start_ip);
             {
                 let frame = self.stack.frames.last().unwrap();
                 frame_code = frame.code.clone();
+                inst_start_ip = frame.ip;
                 if frame.ip >= frame.code.len() { op = 0x0B; current_ip = frame.ip; }
                 else { op = frame.code[frame.ip]; current_ip = frame.ip + 1; }
             }
@@ -147,8 +148,12 @@ impl<'a> Interpreter<'a> {
                             frame.ip = Self::find_else_or_end(&frame_code, frame.ip)?;
                             if frame.code[frame.ip] == 0x05 { frame.ip += 1; }
                         }
-                    } else if op == 0x02 { self.stack.frames.last_mut().unwrap().labels.push(WasmLabel { target_ip: end_ip, stack_height: self.stack.values.len(), arity }); }
-                    else { self.stack.frames.last_mut().unwrap().labels.push(WasmLabel { target_ip: current_ip - 1, stack_height: self.stack.values.len(), arity: 0 }); }
+                    } else if op == 0x02 { 
+                        self.stack.frames.last_mut().unwrap().labels.push(WasmLabel { target_ip: end_ip, stack_height: self.stack.values.len(), arity }); 
+                    } else { 
+                        // Loop: target is the START of the loop instruction
+                        self.stack.frames.last_mut().unwrap().labels.push(WasmLabel { target_ip: inst_start_ip, stack_height: self.stack.values.len(), arity: 0 }); 
+                    }
                 },
                 0x05 => { let label = self.stack.frames.last().unwrap().labels.last().ok_or("else fail")?.clone(); self.stack.frames.last_mut().unwrap().ip = label.target_ip; },
                 0x0B => {
@@ -279,6 +284,10 @@ impl<'a> Interpreter<'a> {
                         0x6A => { let b = self.pop_i32()?; let a = self.pop_i32()?; self.stack.values.push(Value::I32(a.wrapping_add(b))); },
                         0x6B => { let b = self.pop_i32()?; let a = self.pop_i32()?; self.stack.values.push(Value::I32(a.wrapping_sub(b))); },
                         0x6C => { let b = self.pop_i32()?; let a = self.pop_i32()?; self.stack.values.push(Value::I32(a.wrapping_mul(b))); },
+                        0x6D => { let b = self.pop_i32()?; let a = self.pop_i32()?; if b == 0 { return Err("Divide by zero"); } self.stack.values.push(Value::I32(a.checked_div(b).ok_or("Overflow")?)); },
+                        0x6E => { let b = self.pop_i32()? as u32; let a = self.pop_i32()? as u32; if b == 0 { return Err("Divide by zero"); } self.stack.values.push(Value::I32((a / b) as i32)); },
+                        0x6F => { let b = self.pop_i32()?; let a = self.pop_i32()?; if b == 0 { return Err("Divide by zero"); } self.stack.values.push(Value::I32(a.checked_rem(b).ok_or("Overflow")?)); },
+                        0x70 => { let b = self.pop_i32()? as u32; let a = self.pop_i32()? as u32; if b == 0 { return Err("Divide by zero"); } self.stack.values.push(Value::I32((a % b) as i32)); },
                         0x71 => { let b = self.pop_i32()?; let a = self.pop_i32()?; self.stack.values.push(Value::I32(a & b)); },
                         0x72 => { let b = self.pop_i32()?; let a = self.pop_i32()?; self.stack.values.push(Value::I32(a | b)); },
                         0x73 => { let b = self.pop_i32()?; let a = self.pop_i32()?; self.stack.values.push(Value::I32(a ^ b)); },
@@ -289,15 +298,29 @@ impl<'a> Interpreter<'a> {
                         0x7C => { let b = self.pop_i64()?; let a = self.pop_i64()?; self.stack.values.push(Value::I64(a.wrapping_add(b))); },
                         0x7D => { let b = self.pop_i64()?; let a = self.pop_i64()?; self.stack.values.push(Value::I64(a.wrapping_sub(b))); },
                         0x7E => { let b = self.pop_i64()?; let a = self.pop_i64()?; self.stack.values.push(Value::I64(a.wrapping_mul(b))); },
+                        0x7F => { let b = self.pop_i64()?; let a = self.pop_i64()?; if b == 0 { return Err("Divide by zero"); } self.stack.values.push(Value::I64(a.checked_div(b).ok_or("Overflow")?)); },
+                        0x80 => { let b = self.pop_i64()? as u64; let a = self.pop_i64()? as u64; if b == 0 { return Err("Divide by zero"); } self.stack.values.push(Value::I64((a / b) as i64)); },
+                        0x81 => { let b = self.pop_i64()?; let a = self.pop_i64()?; if b == 0 { return Err("Divide by zero"); } self.stack.values.push(Value::I64(a.checked_rem(b).ok_or("Overflow")?)); },
+                        0x82 => { let b = self.pop_i64()? as u64; let a = self.pop_i64()? as u64; if b == 0 { return Err("Divide by zero"); } self.stack.values.push(Value::I64((a % b) as i64)); },
                         0x83 => { let b = self.pop_i64()?; let a = self.pop_i64()?; self.stack.values.push(Value::I64(a & b)); },
                         0x84 => { let b = self.pop_i64()?; let a = self.pop_i64()?; self.stack.values.push(Value::I64(a | b)); },
                         0x85 => { let b = self.pop_i64()?; let a = self.pop_i64()?; self.stack.values.push(Value::I64(a ^ b)); },
                         0x86 => { let b = self.pop_i64()? as u32; let a = self.pop_i64()?; self.stack.values.push(Value::I64(a << (b % 64))); },
                         0x87 => { let b = self.pop_i64()? as u32; let a = self.pop_i64()?; self.stack.values.push(Value::I64(a >> (b % 64))); },
                         0x88 => { let b = self.pop_i64()? as u32; let a = self.pop_i64()? as u64; self.stack.values.push(Value::I64((a >> (b % 64)) as i64)); },
+                        0x92 => { let b = self.pop_f32()?; let a = self.pop_f32()?; self.stack.values.push(Value::F32(a + b)); },
+                        0x93 => { let b = self.pop_f32()?; let a = self.pop_f32()?; self.stack.values.push(Value::F32(a - b)); },
+                        0x94 => { let b = self.pop_f32()?; let a = self.pop_f32()?; self.stack.values.push(Value::F32(a * b)); },
+                        0x95 => { let b = self.pop_f32()?; let a = self.pop_f32()?; self.stack.values.push(Value::F32(a / b)); },
+                        0xA0 => { let b = self.pop_f64()?; let a = self.pop_f64()?; self.stack.values.push(Value::F64(a + b)); },
+                        0xA1 => { let b = self.pop_f64()?; let a = self.pop_f64()?; self.stack.values.push(Value::F64(a - b)); },
+                        0xA2 => { let b = self.pop_f64()?; let a = self.pop_f64()?; self.stack.values.push(Value::F64(a * b)); },
+                        0xA3 => { let b = self.pop_f64()?; let a = self.pop_f64()?; self.stack.values.push(Value::F64(a / b)); },
                         0xA7 => { let v = self.pop_i64()?; self.stack.values.push(Value::I32(v as i32)); },
                         0xAC => { let v = self.pop_i32()?; self.stack.values.push(Value::I64(v as i64)); },
                         0xAD => { let v = self.pop_i32()? as u32; self.stack.values.push(Value::I64(v as i64)); },
+                        0xB2 => { let v = self.pop_i32()?; self.stack.values.push(Value::F32(v as f32)); },
+                        0xB7 => { let v = self.pop_i32()?; self.stack.values.push(Value::F64(v as f64)); },
                         0xBE => { let v = self.pop_f32()?; self.stack.values.push(Value::I32(v.to_bits() as i32)); },
                         0xBF => { let v = self.pop_f64()?; self.stack.values.push(Value::I64(v.to_bits() as i64)); },
                         _ => {}

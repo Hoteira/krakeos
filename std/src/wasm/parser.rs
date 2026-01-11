@@ -306,8 +306,18 @@ impl<'a> Parser<'a> {
             let op = self.read_u8()?; instructions.push(op);
             match op {
                 0x0B => depth -= 1,
-                0x41 => { let start = self.pos; self.read_u32_leb128()?; instructions.extend_from_slice(&self.data[start..self.pos]); },
-                0x42 => { let start = self.pos; /* i64 leb */ loop { let b = self.read_u8()?; if (b & 0x80) == 0 { break; } }; instructions.extend_from_slice(&self.data[start..self.pos]); },
+                0x41 | 0x20 | 0x21 | 0x22 | 0x23 | 0x24 | 0x10 | 0xD2 => { 
+                    let start = self.pos; self.read_u32_leb128()?; 
+                    instructions.extend_from_slice(&self.data[start..self.pos]); 
+                },
+                0x42 => { 
+                    let start = self.pos; /* i64 leb */ 
+                    loop { let b = self.read_u8()?; if (b & 0x80) == 0 { break; } }; 
+                    instructions.extend_from_slice(&self.data[start..self.pos]); 
+                },
+                0xD0 => {
+                    instructions.push(self.read_u8()?); // reftype
+                },
                 _ => {}
             }
         }
