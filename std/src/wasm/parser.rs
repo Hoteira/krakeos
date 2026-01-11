@@ -1,45 +1,75 @@
-use crate::wasm::{WasmModule, FunctionType, CodeSection, LocalEntry, ValueType};
-use crate::wasm::leb128::Leb128;
+use crate::rust_alloc::string::String;
 use crate::rust_alloc::vec::Vec;
+use crate::rust_alloc::vec;
+use super::types::*;
+
+#[derive(Debug)]
+pub enum ParseError {
+    UnexpectedEof,
+    InvalidMagic,
+    InvalidVersion,
+    InvalidSectionId(u8),
+    InvalidValType(u8),
+    InvalidUtf8,
+    MalformedLeb128,
+    Other(&'static str),
+}
+
+pub type Result<T> = core::result::Result<T, ParseError>;
 
 pub struct Parser<'a> {
     data: &'a [u8],
-    offset: usize,
+    pub pos: usize,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(data: &'a [u8]) -> Self {
-        Self { data, offset: 0 }
+        Self { data, pos: 0 }
     }
 
-    pub fn parse(&mut self) -> Result<WasmModule, &'static str> {
-        let mut module = WasmModule::empty();
-
-        // 1. Verify Magic Number (\0asm)
-        if &self.data[0..4] != b"\0asm" {
-            return Err("Invalid WASM magic number");
+    pub fn parse_module(&mut self) -> Result<Module> {
+        if self.pos + 8 > self.data.len() { return Err(ParseError::UnexpectedEof); }
+        let magic = &self.data[self.pos..self.pos+4];
+        if magic != b"\0asm" { return Err(ParseError::InvalidMagic); }
+        let version = &self.data[self.pos+4..self.pos+8];
+        
+        if version == b"\x01\0\0\0" {
+            self.pos += 8;
+            self.parse_core_module_content()
+        } else {
+            // Component Model
+            self.pos += 8;
+            self.parse_component()
         }
-        self.offset += 4;
+    }
 
-        // 2. Verify Version (1)
-        module.version = u32::from_le_bytes([
-            self.data[self.offset],
-            self.data[self.offset + 1],
-            self.data[self.offset + 2],
-            self.data[self.offset + 3],
-        ]);
-        self.offset += 4;
-
-        if module.version != 1 {
-            return Err("Unsupported WASM version");
+    fn parse_component(&mut self) -> Result<Module> {
+        while self.pos < self.data.len() {
+            let section_id = self.read_u8()?;
+            let section_len = self.read_u32_leb128()?;
+            let start_pos = self.pos;
+            if section_id == 1 { // Module section
+                let module_data = &self.data[self.pos..self.pos + (section_len as usize)];
+                let mut sub_parser = Parser::new(module_data);
+                return sub_parser.parse_module();
+            }
+            self.skip(section_len as usize)?;
         }
+        Err(ParseError::Other("No Module in Component"))
+    }
 
-        // 3. Parse Sections
-        while self.offset < self.data.len() {
-            let section_id = self.data[self.offset];
-            self.offset += 1;
-            let section_size = Leb128::decode_u32(self.data, &mut self.offset) as usize;
-            let section_end = self.offset + section_size;
+    fn parse_core_module_content(&mut self) -> Result<Module> {
+        let mut module = Module {
+            types: Vec::new(), imports: Vec::new(), functions: Vec::new(),
+            tables: Vec::new(), memories: Vec::new(), globals: Vec::new(),
+            exports: Vec::new(), start: None, elements: Vec::new(),
+            code: Vec::new(), data: Vec::new(),
+        };
+
+        while self.pos < self.data.len() {
+            let section_id = self.read_u8()?;
+            let section_len = self.read_u32_leb128()?;
+            let start_pos = self.pos;
 
             match section_id {
                 1 => self.parse_type_section(&mut module)?,
@@ -49,243 +79,238 @@ impl<'a> Parser<'a> {
                 5 => self.parse_memory_section(&mut module)?,
                 6 => self.parse_global_section(&mut module)?,
                 7 => self.parse_export_section(&mut module)?,
-                8 => module.start_func = Some(Leb128::decode_u32(self.data, &mut self.offset)),
+                8 => self.parse_start_section(&mut module)?,
                 9 => self.parse_element_section(&mut module)?,
                 10 => self.parse_code_section(&mut module)?,
                 11 => self.parse_data_section(&mut module)?,
-                _ => {
-                    // Skip unknown/unimplemented sections for now
-                    self.offset = section_end;
-                }
+                _ => self.skip(section_len as usize)?,
             }
 
-            // Ensure we are exactly at the end of the section
-            self.offset = section_end;
+            self.pos = start_pos + (section_len as usize);
         }
-
         Ok(module)
     }
 
-    fn parse_table_section(&mut self, module: &mut WasmModule) -> Result<(), &'static str> {
-        let count = Leb128::decode_u32(self.data, &mut self.offset);
+    fn parse_type_section(&mut self, module: &mut Module) -> Result<()> {
+        let count = self.read_u32_leb128()?;
         for _ in 0..count {
-            let element_type = self.data[self.offset];
-            self.offset += 1;
-            let flags = self.data[self.offset];
-            self.offset += 1;
-            let min = Leb128::decode_u32(self.data, &mut self.offset);
-            let max = if flags & 1 != 0 {
-                Some(Leb128::decode_u32(self.data, &mut self.offset))
-            } else {
-                None
+            if self.read_u8()? != 0x60 { return Err(ParseError::Other("Invalid func type")); }
+            let p_count = self.read_u32_leb128()?;
+            let mut params = Vec::new(); for _ in 0..p_count { params.push(self.read_val_type()?); }
+            let r_count = self.read_u32_leb128()?;
+            let mut results = Vec::new(); for _ in 0..r_count { results.push(self.read_val_type()?); }
+            module.types.push(FuncType { params, results });
+        }
+        Ok(())
+    }
+
+    fn parse_import_section(&mut self, module: &mut Module) -> Result<()> {
+        let count = self.read_u32_leb128()?;
+        for _ in 0..count {
+            let m = self.read_name()?; let n = self.read_name()?;
+            let kind = self.read_u8()?;
+            let desc = match kind {
+                0x00 => ImportDesc::Func(self.read_u32_leb128()?),
+                0x01 => ImportDesc::Table(self.read_table_type()?),
+                0x02 => ImportDesc::Memory(self.read_memory_type()?),
+                0x03 => ImportDesc::Global(self.read_global_type()?),
+                _ => return Err(ParseError::Other("Invalid import")),
             };
-            module.tables.push(crate::wasm::Table { element_type, min_size: min, max_size: max });
+            module.imports.push(Import { module: m, name: n, desc });
         }
         Ok(())
     }
 
-    fn parse_element_section(&mut self, module: &mut WasmModule) -> Result<(), &'static str> {
-        let count = Leb128::decode_u32(self.data, &mut self.offset);
+    fn parse_function_section(&mut self, module: &mut Module) -> Result<()> {
+        let count = self.read_u32_leb128()?;
+        for _ in 0..count { module.functions.push(self.read_u32_leb128()?); }
+        Ok(())
+    }
+
+    fn parse_table_section(&mut self, module: &mut Module) -> Result<()> {
+        let count = self.read_u32_leb128()?;
+        for _ in 0..count { module.tables.push(self.read_table_type()?); }
+        Ok(())
+    }
+
+    fn parse_memory_section(&mut self, module: &mut Module) -> Result<()> {
+        let count = self.read_u32_leb128()?;
+        for _ in 0..count { module.memories.push(self.read_memory_type()?); }
+        Ok(())
+    }
+
+    fn parse_global_section(&mut self, module: &mut Module) -> Result<()> {
+        let count = self.read_u32_leb128()?;
         for _ in 0..count {
-            let table_index = Leb128::decode_u32(self.data, &mut self.offset);
-            
-            // Offset expression
-            let mut offset_bytecode = Vec::new();
-            while self.data[self.offset] != 0x0B {
-                offset_bytecode.push(self.data[self.offset]);
-                self.offset += 1;
-            }
-            self.offset += 1;
-
-            let func_count = Leb128::decode_u32(self.data, &mut self.offset);
-            let mut function_indices = Vec::new();
-            for _ in 0..func_count {
-                function_indices.push(Leb128::decode_u32(self.data, &mut self.offset));
-            }
-
-            module.elements.push(crate::wasm::ElementSegment {
-                table_index,
-                offset_bytecode,
-                function_indices,
-            });
+            let ty = self.read_global_type()?;
+            let init = self.read_expr()?;
+            module.globals.push(Global { ty, init });
         }
         Ok(())
     }
 
-    fn parse_import_section(&mut self, module: &mut WasmModule) -> Result<(), &'static str> {
-        let count = Leb128::decode_u32(self.data, &mut self.offset);
+    fn parse_export_section(&mut self, module: &mut Module) -> Result<()> {
+        let count = self.read_u32_leb128()?;
         for _ in 0..count {
-            let mod_len = Leb128::decode_u32(self.data, &mut self.offset) as usize;
-            let module_name = crate::rust_alloc::string::String::from_utf8_lossy(&self.data[self.offset..self.offset + mod_len]).into_owned();
-            self.offset += mod_len;
-
-            let name_len = Leb128::decode_u32(self.data, &mut self.offset) as usize;
-            let field_name = crate::rust_alloc::string::String::from_utf8_lossy(&self.data[self.offset..self.offset + name_len]).into_owned();
-            self.offset += name_len;
-
-            let kind = self.data[self.offset];
-            self.offset += 1;
-
-            let index = Leb128::decode_u32(self.data, &mut self.offset);
-
-            module.imports.push(crate::wasm::Import {
-                module: module_name,
-                name: field_name,
-                kind,
-                index,
-            });
-        }
-        Ok(())
-    }
-
-    fn parse_memory_section(&mut self, module: &mut WasmModule) -> Result<(), &'static str> {
-        let count = Leb128::decode_u32(self.data, &mut self.offset);
-        for _ in 0..count {
-            let flags = self.data[self.offset];
-            self.offset += 1;
-            let min = Leb128::decode_u32(self.data, &mut self.offset);
-            let max = if flags & 1 != 0 {
-                Some(Leb128::decode_u32(self.data, &mut self.offset))
-            } else {
-                None
+            let name = self.read_name()?;
+            let kind = self.read_u8()?;
+            let idx = self.read_u32_leb128()?;
+            let desc = match kind {
+                0x00 => ExportDesc::Func(idx),
+                0x01 => ExportDesc::Table(idx),
+                0x02 => ExportDesc::Memory(idx),
+                0x03 => ExportDesc::Global(idx),
+                _ => return Err(ParseError::Other("Invalid export")),
             };
-            module.memories.push(crate::wasm::Memory { min_pages: min, max_pages: max });
+            module.exports.push(Export { name, desc });
         }
         Ok(())
     }
 
-    fn parse_data_section(&mut self, module: &mut WasmModule) -> Result<(), &'static str> {
-        let count = Leb128::decode_u32(self.data, &mut self.offset);
+    fn parse_start_section(&mut self, module: &mut Module) -> Result<()> {
+        module.start = Some(self.read_u32_leb128()?);
+        Ok(())
+    }
+
+    fn parse_element_section(&mut self, module: &mut Module) -> Result<()> {
+        let count = self.read_u32_leb128()?;
         for _ in 0..count {
-            let _index = Leb128::decode_u32(self.data, &mut self.offset); // Usually 0
+            let flags = self.read_u32_leb128()?;
+            // Flag bitmask:
+            // 0: active, table 0, expr offset, vec<funcidx>
+            // 1: passive, kind, vec<funcidx>
+            // 2: active, tableidx, expr offset, kind, vec<funcidx>
+            // ... and so on.
             
-            // Offset expression
-            let mut offset_bytecode = Vec::new();
-            while self.data[self.offset] != 0x0B {
-                offset_bytecode.push(self.data[self.offset]);
-                self.offset += 1;
+            let table_index = if (flags & 2) != 0 { self.read_u32_leb128()? } else { 0 };
+            let offset = if (flags & 1) == 0 { self.read_expr()? } else { Expr { instructions: Vec::new() } };
+            
+            if (flags & 3) != 0 && (flags & 4) == 0 {
+                 let _kind = self.read_u8()?; // elemkind (0x00 = funcref)
             }
-            self.offset += 1; // skip 0x0B
 
-            let data_len = Leb128::decode_u32(self.data, &mut self.offset) as usize;
-            let mut data = Vec::new();
-            data.extend_from_slice(&self.data[self.offset..self.offset + data_len]);
-            self.offset += data_len;
-
-            module.datas.push(crate::wasm::DataSegment { offset_bytecode, data });
+            let num_funcs = self.read_u32_leb128()?;
+            let mut init = Vec::new();
+            for _ in 0..num_funcs {
+                // If flag bit 3 set, it's vec<expr>, else vec<funcidx>
+                if (flags & 4) != 0 {
+                     let expr = self.read_expr()?;
+                     // Extract funcidx from (ref.func idx)
+                     if expr.instructions[0] == 0xD2 { // ref.func
+                          let mut sub_ip = 1;
+                          init.push(Self::read_u32_leb128_static(&expr.instructions, &mut sub_ip).unwrap_or(0));
+                     }
+                } else {
+                    init.push(self.read_u32_leb128()?);
+                }
+            }
+            module.elements.push(Element { table_index, offset, init });
         }
         Ok(())
     }
 
-    fn parse_global_section(&mut self, module: &mut WasmModule) -> Result<(), &'static str> {
-        let count = Leb128::decode_u32(self.data, &mut self.offset);
+    fn parse_code_section(&mut self, module: &mut Module) -> Result<()> {
+        let count = self.read_u32_leb128()?;
         for _ in 0..count {
-            let val_type = self.parse_value_type()?;
-            let mutable = self.data[self.offset] == 1;
-            self.offset += 1;
-
-            // Simple expression parser (usually just i32.const value end)
-            let mut init_bytecode = Vec::new();
-            while self.data[self.offset] != 0x0B {
-                init_bytecode.push(self.data[self.offset]);
-                self.offset += 1;
-            }
-            self.offset += 1; // skip 0x0B
-
-            module.globals.push(crate::wasm::Global { val_type, mutable, init_bytecode });
-        }
-        Ok(())
-    }
-
-    fn parse_export_section(&mut self, module: &mut WasmModule) -> Result<(), &'static str> {
-        let count = Leb128::decode_u32(self.data, &mut self.offset);
-        for _ in 0..count {
-            let name_len = Leb128::decode_u32(self.data, &mut self.offset) as usize;
-            let name_bytes = &self.data[self.offset..self.offset + name_len];
-            self.offset += name_len;
-            let name = crate::rust_alloc::string::String::from_utf8_lossy(name_bytes).into_owned();
-
-            let kind = self.data[self.offset];
-            self.offset += 1;
-
-            let index = Leb128::decode_u32(self.data, &mut self.offset);
-
-            module.exports.push(crate::wasm::Export { name, kind, index });
-        }
-        Ok(())
-    }
-
-    fn parse_type_section(&mut self, module: &mut WasmModule) -> Result<(), &'static str> {
-        let count = Leb128::decode_u32(self.data, &mut self.offset);
-        for _ in 0..count {
-            if self.data[self.offset] != 0x60 {
-                return Err("Invalid function type prefix");
-            }
-            self.offset += 1;
-
-            // Params
-            let param_count = Leb128::decode_u32(self.data, &mut self.offset);
-            let mut params = Vec::new();
-            for _ in 0..param_count {
-                params.push(self.parse_value_type()?);
-            }
-
-            // Results
-            let result_count = Leb128::decode_u32(self.data, &mut self.offset);
-            let mut results = Vec::new();
-            for _ in 0..result_count {
-                results.push(self.parse_value_type()?);
-            }
-
-            module.types.push(FunctionType { params, results });
-        }
-        Ok(())
-    }
-
-    fn parse_function_section(&mut self, module: &mut WasmModule) -> Result<(), &'static str> {
-        let count = Leb128::decode_u32(self.data, &mut self.offset);
-        for _ in 0..count {
-            let type_idx = Leb128::decode_u32(self.data, &mut self.offset);
-            module.functions.push(type_idx);
-        }
-        Ok(())
-    }
-
-    fn parse_code_section(&mut self, module: &mut WasmModule) -> Result<(), &'static str> {
-        let count = Leb128::decode_u32(self.data, &mut self.offset);
-        for _ in 0..count {
-            let body_size = Leb128::decode_u32(self.data, &mut self.offset) as usize;
-            let body_end = self.offset + body_size;
-
-            // Locals
-            let local_count = Leb128::decode_u32(self.data, &mut self.offset);
+            let size = self.read_u32_leb128()?;
+            let start = self.pos;
+            let l_count = self.read_u32_leb128()?;
             let mut locals = Vec::new();
-            for _ in 0..local_count {
-                let n = Leb128::decode_u32(self.data, &mut self.offset);
-                let val_type = self.parse_value_type()?;
-                locals.push(LocalEntry { count: n, val_type });
-            }
-
-            // Bytecode (the rest of the body until body_end - 1, usually ends with 0x0B)
-            let bytecode_len = body_end - self.offset;
-            let mut bytecode = Vec::new();
-            bytecode.extend_from_slice(&self.data[self.offset..body_end]);
-            
-            module.codes.push(CodeSection { locals, bytecode });
-            self.offset = body_end;
+            for _ in 0..l_count { locals.push(Local { count: self.read_u32_leb128()?, ty: self.read_val_type()? }); }
+            let code_len = (size as usize) - (self.pos - start);
+            let mut code = vec![0u8; code_len];
+            self.read_exact(&mut code)?;
+            module.code.push(FunctionBody { locals, code });
         }
         Ok(())
     }
 
-    fn parse_value_type(&mut self) -> Result<ValueType, &'static str> {
-        let byte = self.data[self.offset];
-        self.offset += 1;
-        match byte {
-            0x7F => Ok(ValueType::I32),
-            0x7E => Ok(ValueType::I64),
-            0x7D => Ok(ValueType::F32),
-            0x7C => Ok(ValueType::F64),
-            _ => Err("Invalid value type"),
+    fn parse_data_section(&mut self, module: &mut Module) -> Result<()> {
+        let count = self.read_u32_leb128()?;
+        for _ in 0..count {
+            let flags = self.read_u32_leb128()?;
+            let mem_idx = if flags == 2 { self.read_u32_leb128()? } else { 0 };
+            let offset = if (flags & 1) == 0 { Some(self.read_expr()?) } else { None };
+            let size = self.read_u32_leb128()?;
+            let mut init = vec![0u8; size as usize];
+            self.read_exact(&mut init)?;
+            module.data.push(DataSegment { memory_index: mem_idx, offset, init });
         }
+        Ok(())
+    }
+
+    fn read_u8(&mut self) -> Result<u8> {
+        if self.pos >= self.data.len() { return Err(ParseError::UnexpectedEof); }
+        let b = self.data[self.pos]; self.pos += 1; Ok(b)
+    }
+
+    fn read_exact(&mut self, buf: &mut [u8]) -> Result<()> {
+        if self.pos + buf.len() > self.data.len() { return Err(ParseError::UnexpectedEof); }
+        buf.copy_from_slice(&self.data[self.pos..self.pos + buf.len()]);
+        self.pos += buf.len(); Ok(())
+    }
+
+    fn skip(&mut self, n: usize) -> Result<()> {
+        if self.pos + n > self.data.len() { return Err(ParseError::UnexpectedEof); }
+        self.pos += n; Ok(())
+    }
+
+    fn read_u32_leb128(&mut self) -> Result<u32> {
+        let mut res = 0; let mut shift = 0;
+        loop {
+            let b = self.read_u8()?; res |= ((b & 0x7F) as u32) << shift;
+            if (b & 0x80) == 0 { break; } shift += 7;
+        }
+        Ok(res)
+    }
+
+    fn read_u32_leb128_static(data: &[u8], ip: &mut usize) -> Result<u32> {
+        let mut res = 0; let mut shift = 0;
+        loop {
+            if *ip >= data.len() { return Err(ParseError::UnexpectedEof); }
+            let b = data[*ip]; *ip += 1; res |= ((b & 0x7F) as u32) << shift;
+            if (b & 0x80) == 0 { break; } shift += 7;
+        }
+        Ok(res)
+    }
+
+    fn read_val_type(&mut self) -> Result<ValType> {
+        match self.read_u8()? {
+            0x7F => Ok(ValType::I32), 0x7E => Ok(ValType::I64),
+            0x7D => Ok(ValType::F32), 0x7C => Ok(ValType::F64),
+            0x70 => Ok(ValType::FuncRef), 0x6F => Ok(ValType::ExternRef),
+            b => Err(ParseError::InvalidValType(b)),
+        }
+    }
+
+    fn read_table_type(&mut self) -> Result<TableType> { Ok(TableType { element_type: self.read_val_type()?, limits: self.read_limits()? }) }
+    fn read_memory_type(&mut self) -> Result<MemoryType> { Ok(MemoryType { limits: self.read_limits()? }) }
+    fn read_global_type(&mut self) -> Result<GlobalType> { Ok(GlobalType { content_type: self.read_val_type()?, mutability: self.read_u8()? == 1 }) }
+    fn read_limits(&mut self) -> Result<Limits> {
+        let flags = self.read_u8()?; let min = self.read_u32_leb128()?;
+        let max = if flags == 1 { Some(self.read_u32_leb128()?) } else { None };
+        Ok(Limits { min, max })
+    }
+
+    fn read_name(&mut self) -> Result<String> {
+        let len = self.read_u32_leb128()?;
+        let mut buf = vec![0u8; len as usize];
+        self.read_exact(&mut buf)?;
+        String::from_utf8(buf).map_err(|_| ParseError::InvalidUtf8)
+    }
+
+    fn read_expr(&mut self) -> Result<Expr> {
+        let mut instructions = Vec::new();
+        let mut depth = 1;
+        while depth > 0 {
+            let op = self.read_u8()?; instructions.push(op);
+            match op {
+                0x0B => depth -= 1,
+                0x41 => { let start = self.pos; self.read_u32_leb128()?; instructions.extend_from_slice(&self.data[start..self.pos]); },
+                0x42 => { let start = self.pos; /* i64 leb */ loop { let b = self.read_u8()?; if (b & 0x80) == 0 { break; } }; instructions.extend_from_slice(&self.data[start..self.pos]); },
+                _ => {}
+            }
+        }
+        Ok(Expr { instructions })
     }
 }

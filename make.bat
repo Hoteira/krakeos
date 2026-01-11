@@ -13,8 +13,8 @@ cargo build --package=kernel --target="swiftboot/bits64.json"
 
 wsl objcopy -I elf64-x86-64 -O binary target/bits64/debug/kernel build/kernel.bin
 
-cargo build --package wasm_test --target wasm32-wasip1 --release
-copy "target\wasm32-wasip1\release\wasm_test.wasm" "tree\wasm_test.wasm"
+cargo build --package wasm_test --target wasm32-wasip2 --release
+copy "target\wasm32-wasip2\release\wasm_test.wasm" "tree\wasm_test.wasm"
 
 cargo build --package=userland --target=bits64pie.json --release
 copy "target\bits64pie\release\userland" "tree\user.elf"

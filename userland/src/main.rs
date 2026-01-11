@@ -67,9 +67,10 @@ pub extern "C" fn main() -> i32 {
 fn test_wasm() {
     use std::wasm::parser::Parser;
     use std::wasm::interpreter::Interpreter;
-    use std::wasm::wasi::Wasi;
-    use std::wasm::Value;
+    use std::wasm::runtime::{Store, Stack, ExternalVal};
+    use std::wasm::wasi::preview2::create_wasi_module;
     use alloc::vec;
+    use alloc::rc::Rc;
 
     debugln!("WASM: Starting WASI Test App...");
     
@@ -78,21 +79,49 @@ fn test_wasm() {
         let mut buffer = vec![0u8; size];
         if file.read(&mut buffer).is_ok() {
             let mut parser = Parser::new(&buffer);
-            match parser.parse() {
+            match parser.parse_module() {
                 Ok(module) => {
                     debugln!("WASM: Module parsed successfully.");
-                    let mut interpreter = Interpreter::new();
-                    Wasi::register(&mut interpreter);
                     
-                    // Standard WASI start function
-                    if let Some(func_idx) = module.find_export("_start") {
-                        match interpreter.call(&module, func_idx, vec![]) {
-                            Ok(_) => debugln!("WASM: Execution finished successfully."),
-                            Err(e) => debugln!("WASM: Execution error: {}", e),
-                        }
+                    debugln!("--- WASM IMPORTS ---");
+                    for import in &module.imports {
+                        debugln!("Import: {}.{}", import.module, import.name);
+                    }
+                    debugln!("--------------------");
+                    
+                    let mut store = Store::new();
+                    let mut stack = Stack::new();
+                    
+                    // Instantiate WASI
+                    let wasi = create_wasi_module(&mut store);
+                    
+                    // Instantiate Module
+                    let module_rc = Rc::new(module);
+                    match store.instantiate(module_rc, &[wasi]) {
+                        Ok(instance) => {
+                            debugln!("WASM: Module instantiated.");
+                            
+                             // Find _start
+                            let start_func_addr = instance.exports.iter().find(|e| e.name == "_start")
+                                .and_then(|e| match e.value {
+                                    ExternalVal::Func(addr) => Some(addr),
+                                    _ => None
+                                });
+
+                            if let Some(addr) = start_func_addr {
+                                let mut interpreter = Interpreter::new(&mut store, &mut stack);
+                                match interpreter.invoke(addr, vec![]) {
+                                    Ok(_) => debugln!("WASM: Execution finished successfully."),
+                                    Err(e) => debugln!("WASM: Execution error: {}", e),
+                                }
+                            } else {
+                                debugln!("WASM: _start function not found.");
+                            }
+                        },
+                        Err(e) => debugln!("WASM: Instantiation error: {}", e),
                     }
                 }
-                Err(e) => debugln!("WASM: Parse error: {}", e),
+                Err(e) => debugln!("WASM: Parse error: {:?}", e),
             }
         }
     } else {
