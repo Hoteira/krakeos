@@ -275,17 +275,46 @@ pub fn create_wasi_module(store: &mut Store) -> Rc<ModuleInstance> {
     add_func("get-stderr", vec![], vec![ValType::I32], wasi_cli_stderr_get_stderr);
     add_func("get-random-bytes", vec![ValType::I32, ValType::I32], vec![], wasi_random_get_random_bytes);
 
+    add_func("sock_send", vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32], |s, a| vec![Value::I32(52)]); // ENOSYS/ENOTSUP
+    add_func("sock_recv", vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32], |s, a| vec![Value::I32(52)]);
+    add_func("sock_shutdown", vec![ValType::I32, ValType::I32], vec![ValType::I32], |s, a| vec![Value::I32(52)]);
+    add_func("poll_oneoff", vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32], |s, a| vec![Value::I32(52)]);
+
     // Support both 3 and 4 argument variants of blocking-write-and-flush to be extremely robust
     add_func("[method]output-stream.blocking-write-and-flush", vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32], vec![], wasi_io_streams_blocking_write_and_flush);    
     add_func("now", vec![ValType::I32], vec![], wasi_clocks_wall_clock_now);
     add_func("get-arguments", vec![ValType::I32], vec![], wasi_cli_environment_get_arguments);
-    add_func("get-environment", vec![ValType::I32], vec![], |s, a| vec![]);
-    add_func("initial-cwd", vec![ValType::I32], vec![], |s, a| vec![]);
+    add_func("get-environment", vec![ValType::I32], vec![], |s, a| {
+        if let Some(Value::I32(ret_ptr)) = a.get(0) {
+            if let Some(mem) = s.memories.get_mut(0) {
+                let rp = *ret_ptr as usize;
+                if rp + 8 <= mem.data.len() { mem.data[rp..rp+8].copy_from_slice(&0u64.to_le_bytes()); }
+            }
+        }
+        vec![]
+    });
+    add_func("initial-cwd", vec![ValType::I32], vec![], |s, a| {
+        if let Some(Value::I32(ret_ptr)) = a.get(0) {
+            if let Some(mem) = s.memories.get_mut(0) {
+                let rp = *ret_ptr as usize;
+                if rp + 8 <= mem.data.len() { mem.data[rp..rp+8].copy_from_slice(&0u64.to_le_bytes()); }
+            }
+        }
+        vec![]
+    });
 
     for name in &["[resource-drop]error", "[resource-drop]output-stream", "[resource-drop]input-stream", "[resource-drop]pollable", "[resource-drop]udp-socket", "[resource-drop]incoming-datagram-stream", "[resource-drop]outgoing-datagram-stream", "[resource-drop]tcp-socket"] {
         add_func(name, vec![ValType::I32], vec![], stub_resource_drop);
     }
     add_func("[method]error.to-debug-string", vec![ValType::I32, ValType::I32], vec![], |s, a| vec![]);
 
-    Rc::new(ModuleInstance { func_addrs, table_addrs: Vec::new(), mem_addrs: Vec::new(), global_addrs: Vec::new(), data_segments: RefCell::new(Vec::new()), exports })
+    Rc::new(ModuleInstance { 
+        func_addrs, 
+        table_addrs: Vec::new(), 
+        mem_addrs: Vec::new(), 
+        global_addrs: Vec::new(), 
+        data_segments: RefCell::new(Vec::new()), 
+        element_segments: RefCell::new(Vec::new()),
+        exports 
+    })
 }

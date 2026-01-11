@@ -148,12 +148,16 @@ impl Store {
         let mut data_segments = Vec::new();
         for data in &module.data { data_segments.push(Some(data.init.clone())); }
 
+        let mut element_segments = Vec::new();
+        for elem in &module.elements { element_segments.push(Some(elem.init.clone())); }
+
         let instance = Rc::new(ModuleInstance { 
             func_addrs: func_addrs.clone(), 
             table_addrs: table_addrs.clone(), 
             mem_addrs: mem_addrs.clone(), 
             global_addrs, 
             data_segments: RefCell::new(data_segments),
+            element_segments: RefCell::new(element_segments),
             exports 
         });
         let num_defined = module.functions.len();
@@ -240,6 +244,7 @@ pub struct ModuleInstance {
     pub mem_addrs: Vec<u32>,
     pub global_addrs: Vec<u32>,
     pub data_segments: RefCell<Vec<Option<Vec<u8>>>>,
+    pub element_segments: RefCell<Vec<Option<Vec<u32>>>>,
     pub exports: Vec<ExportInstance>,
 }
 

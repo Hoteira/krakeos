@@ -414,6 +414,19 @@ impl<'a> Interpreter<'a> {
                     let sub_op = Self::read_leb_u32(&frame_code, &mut current_ip)?;
                     self.stack.frames.last_mut().unwrap().ip = current_ip;
                     match sub_op {
+                        0..=7 => { // iXX.trunc_sat_fXX_X
+                            match sub_op {
+                                0 => { let v = self.pop_f32()?; self.stack.values.push(Value::I32(if v.is_nan() {0} else { v.max(i32::MIN as f32).min(i32::MAX as f32) as i32 })); },
+                                1 => { let v = self.pop_f32()?; self.stack.values.push(Value::I32(if v.is_nan() || v < 0.0 {0} else { v.min(u32::MAX as f32) as u32 as i32 })); },
+                                2 => { let v = self.pop_f64()?; self.stack.values.push(Value::I32(if v.is_nan() {0} else { v.max(i32::MIN as f64).min(i32::MAX as f64) as i32 })); },
+                                3 => { let v = self.pop_f64()?; self.stack.values.push(Value::I32(if v.is_nan() || v < 0.0 {0} else { v.min(u32::MAX as f64) as u32 as i32 })); },
+                                4 => { let v = self.pop_f32()?; self.stack.values.push(Value::I64(if v.is_nan() {0} else { v.max(i64::MIN as f32).min(i64::MAX as f32) as i64 })); },
+                                5 => { let v = self.pop_f32()?; self.stack.values.push(Value::I64(if v.is_nan() || v < 0.0 {0} else { v.min(u64::MAX as f32) as u64 as i64 })); },
+                                6 => { let v = self.pop_f64()?; self.stack.values.push(Value::I64(if v.is_nan() {0} else { v.max(i64::MIN as f64).min(i64::MAX as f64) as i64 })); },
+                                7 => { let v = self.pop_f64()?; self.stack.values.push(Value::I64(if v.is_nan() || v < 0.0 {0} else { v.min(u64::MAX as f64) as u64 as i64 })); },
+                                _ => unreachable!(),
+                            }
+                        },
                         8 => { // memory.init
                             let data_idx = Self::read_leb_u32(&frame_code, &mut current_ip)? as usize;
                             let _mem_idx = Self::read_leb_u32(&frame_code, &mut current_ip)?;
@@ -435,9 +448,7 @@ impl<'a> Interpreter<'a> {
                             self.stack.frames.last_mut().unwrap().ip = current_ip;
                             let frame = self.stack.frames.last().unwrap();
                             let mut data_segs = frame.module.data_segments.borrow_mut();
-                            if data_idx < data_segs.len() {
-                                data_segs[data_idx] = None;
-                            } else { return Err("data.drop invalid index"); }
+                            if data_idx < data_segs.len() { data_segs[data_idx] = None; } else { return Err("data.drop invalid index"); }
                         },
                         10 => { // memory.copy
                             let _dst_mem = Self::read_leb_u32(&frame_code, &mut current_ip)?;
@@ -448,9 +459,7 @@ impl<'a> Interpreter<'a> {
                             let d = self.pop_i32()? as usize;
                             let mem_idx = self.stack.frames.last().unwrap().module.mem_addrs[0] as usize;
                             let mem = &mut self.store.memories[mem_idx].data;
-                            if d + n <= mem.len() && s + n <= mem.len() {
-                                mem.copy_within(s..s+n, d);
-                            } else { return Err("memory.copy OOB"); }
+                            if d + n <= mem.len() && s + n <= mem.len() { mem.copy_within(s..s+n, d); } else { return Err("memory.copy OOB"); }
                         },
                         11 => { // memory.fill
                             let _mem_idx = Self::read_leb_u32(&frame_code, &mut current_ip)?;
@@ -460,9 +469,80 @@ impl<'a> Interpreter<'a> {
                             let d = self.pop_i32()? as usize;
                             let mem_idx = self.stack.frames.last().unwrap().module.mem_addrs[0] as usize;
                             let mem = &mut self.store.memories[mem_idx].data;
-                            if d + n <= mem.len() {
-                                for i in 0..n { mem[d + i] = val; }
-                            } else { return Err("memory.fill OOB"); }
+                            if d + n <= mem.len() { for i in 0..n { mem[d + i] = val; } } else { return Err("memory.fill OOB"); }
+                        },
+                        12 => { // table.init
+                            let elem_idx = Self::read_leb_u32(&frame_code, &mut current_ip)? as usize;
+                            let table_idx = Self::read_leb_u32(&frame_code, &mut current_ip)? as usize;
+                            self.stack.frames.last_mut().unwrap().ip = current_ip;
+                            let n = self.pop_i32()? as usize;
+                            let s = self.pop_i32()? as usize;
+                            let d = self.pop_i32()? as usize;
+                            let frame = self.stack.frames.last().unwrap();
+                            let elem_segs = frame.module.element_segments.borrow();
+                            let elem = elem_segs.get(elem_idx).ok_or("Invalid elem index")?.as_ref().ok_or("Elem segment dropped")?;
+                            let store_table_idx = frame.module.table_addrs[table_idx] as usize;
+                            let table = &mut self.store.tables[store_table_idx].elements;
+                            if s + n <= elem.len() && d + n <= table.len() {
+                                for i in 0..n { table[d + i] = Some(elem[s + i]); }
+                            } else { return Err("table.init OOB"); }
+                        },
+                        13 => { // elem.drop
+                            let elem_idx = Self::read_leb_u32(&frame_code, &mut current_ip)? as usize;
+                            self.stack.frames.last_mut().unwrap().ip = current_ip;
+                            let frame = self.stack.frames.last().unwrap();
+                            let mut elem_segs = frame.module.element_segments.borrow_mut();
+                            if elem_idx < elem_segs.len() { elem_segs[elem_idx] = None; } else { return Err("elem.drop invalid index"); }
+                        },
+                        14 => { // table.copy
+                            let dst_idx = Self::read_leb_u32(&frame_code, &mut current_ip)? as usize;
+                            let src_idx = Self::read_leb_u32(&frame_code, &mut current_ip)? as usize;
+                            self.stack.frames.last_mut().unwrap().ip = current_ip;
+                            let n = self.pop_i32()? as usize;
+                            let s = self.pop_i32()? as usize;
+                            let d = self.pop_i32()? as usize;
+                            let frame = self.stack.frames.last().unwrap();
+                            let store_dst = frame.module.table_addrs[dst_idx] as usize;
+                            let store_src = frame.module.table_addrs[src_idx] as usize;
+                            if store_dst == store_src {
+                                let table = &mut self.store.tables[store_dst].elements;
+                                if d + n <= table.len() && s + n <= table.len() { table.copy_within(s..s+n, d); }
+                                else { return Err("table.copy OOB same"); }
+                            } else {
+                                // TODO: Cross-table copy if ever needed (multiple tables)
+                                return Err("Cross-table copy not implemented");
+                            }
+                        },
+                        15 => { // table.grow
+                            let table_idx = Self::read_leb_u32(&frame_code, &mut current_ip)? as usize;
+                            self.stack.frames.last_mut().unwrap().ip = current_ip;
+                            let n = self.pop_i32()?;
+                            let _val = self.stack.values.pop().ok_or("under table.grow val")?;
+                            let frame = self.stack.frames.last().unwrap();
+                            let store_idx = frame.module.table_addrs[table_idx] as usize;
+                            let table = &mut self.store.tables[store_idx];
+                            let old_size = table.elements.len() as i32;
+                            table.elements.resize(table.elements.len() + n as usize, None);
+                            self.stack.values.push(Value::I32(old_size));
+                        },
+                        16 => { // table.size
+                            let table_idx = Self::read_leb_u32(&frame_code, &mut current_ip)? as usize;
+                            self.stack.frames.last_mut().unwrap().ip = current_ip;
+                            let frame = self.stack.frames.last().unwrap();
+                            let store_idx = frame.module.table_addrs[table_idx] as usize;
+                            let size = self.store.tables[store_idx].elements.len() as i32;
+                            self.stack.values.push(Value::I32(size));
+                        },
+                        17 => { // table.fill
+                            let table_idx = Self::read_leb_u32(&frame_code, &mut current_ip)? as usize;
+                            self.stack.frames.last_mut().unwrap().ip = current_ip;
+                            let n = self.pop_i32()? as usize;
+                            let val = match self.stack.values.pop().ok_or("under table.fill val")? { Value::I32(v) => Some(v as u32), _ => None };
+                            let d = self.pop_i32()? as usize;
+                            let frame = self.stack.frames.last().unwrap();
+                            let store_idx = frame.module.table_addrs[table_idx] as usize;
+                            let table = &mut self.store.tables[store_idx].elements;
+                            if d + n <= table.len() { for i in 0..n { table[d + i] = val; } } else { return Err("table.fill OOB"); }
                         },
                         _ => return Err("Unsupported 0xFC subop"),
                     }
