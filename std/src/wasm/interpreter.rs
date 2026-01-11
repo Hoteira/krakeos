@@ -3,6 +3,7 @@ use super::types::ValType;
 use crate::rust_alloc::vec::Vec;
 use crate::rust_alloc::rc::Rc;
 use crate::rust_alloc::vec;
+use crate::math::FloatMath;
 
 pub struct Interpreter<'a> {
     pub store: &'a mut Store,
@@ -224,13 +225,27 @@ impl<'a> Interpreter<'a> {
                     self.stack.frames.last_mut().unwrap().ip = current_ip;
                     let mem_idx = self.stack.frames.last().unwrap().module.mem_addrs[0] as usize;
                     if op >= 0x36 {
-                        if op == 0x37 { let v = self.pop_i64()?; let b = self.pop_i32()?; let addr = (b as u32).wrapping_add(offset) as usize; let mem = &mut self.store.memories[mem_idx]; if addr + 8 > mem.data.len() { return Err("OOB STORE i64"); } mem.data[addr..addr+8].copy_from_slice(&v.to_le_bytes()); }
-                        else {
-                            let v = self.pop_i32()?; let b = self.pop_i32()?; let addr = (b as u32).wrapping_add(offset) as usize;
-                            let mem = &mut self.store.memories[mem_idx]; if addr >= mem.data.len() { return Err("OOB base store"); }
-                            if op == 0x36 { if addr + 4 > mem.data.len() { return Err("OOB i32 store"); } mem.data[addr..addr+4].copy_from_slice(&v.to_le_bytes()); }
-                            else if op == 0x3A { mem.data[addr] = v as u8; }
-                            else if op == 0x3B { if addr + 2 > mem.data.len() { return Err("OOB i16 store"); } mem.data[addr..addr+2].copy_from_slice(&(v as u16).to_le_bytes()); }
+                        let v = match op {
+                            0x36 | 0x3A | 0x3B => Value::I32(self.pop_i32()?),
+                            0x37 | 0x3C | 0x3D | 0x3E => Value::I64(self.pop_i64()?),
+                            0x38 => Value::F32(self.pop_f32()?),
+                            0x39 => Value::F64(self.pop_f64()?),
+                            _ => return Err("Invalid store op value pop"),
+                        };
+                        let b = self.pop_i32()?; let addr = (b as u32).wrapping_add(offset) as usize;
+                        let mem = &mut self.store.memories[mem_idx];
+                        if addr >= mem.data.len() { return Err("OOB store base"); }
+                        match (op, v) {
+                            (0x36, Value::I32(v)) => { if addr + 4 > mem.data.len() { return Err("OOB i32 store"); } mem.data[addr..addr+4].copy_from_slice(&v.to_le_bytes()); },
+                            (0x37, Value::I64(v)) => { if addr + 8 > mem.data.len() { return Err("OOB i64 store"); } mem.data[addr..addr+8].copy_from_slice(&v.to_le_bytes()); },
+                            (0x38, Value::F32(v)) => { if addr + 4 > mem.data.len() { return Err("OOB f32 store"); } mem.data[addr..addr+4].copy_from_slice(&v.to_bits().to_le_bytes()); },
+                            (0x39, Value::F64(v)) => { if addr + 8 > mem.data.len() { return Err("OOB f64 store"); } mem.data[addr..addr+8].copy_from_slice(&v.to_bits().to_le_bytes()); },
+                            (0x3A, Value::I32(v)) => { mem.data[addr] = v as u8; },
+                            (0x3B, Value::I32(v)) => { if addr + 2 > mem.data.len() { return Err("OOB i32 store16"); } mem.data[addr..addr+2].copy_from_slice(&(v as u16).to_le_bytes()); },
+                            (0x3C, Value::I64(v)) => { mem.data[addr] = v as u8; },
+                            (0x3D, Value::I64(v)) => { if addr + 2 > mem.data.len() { return Err("OOB i64 store16"); } mem.data[addr..addr+2].copy_from_slice(&(v as u16).to_le_bytes()); },
+                            (0x3E, Value::I64(v)) => { if addr + 4 > mem.data.len() { return Err("OOB i64 store32"); } mem.data[addr..addr+4].copy_from_slice(&(v as u32).to_le_bytes()); },
+                            _ => return Err("Invalid store op/value mismatch"),
                         }
                     } else {
                         let b = self.pop_i32()?; let addr = (b as u32).wrapping_add(offset) as usize;
@@ -238,11 +253,19 @@ impl<'a> Interpreter<'a> {
                         match op {
                             0x28 => { if addr + 4 > mem.data.len() { return Err("OOB i32 load"); } self.stack.values.push(Value::I32(i32::from_le_bytes(mem.data[addr..addr+4].try_into().unwrap()))); },
                             0x29 => { if addr + 8 > mem.data.len() { return Err("OOB i64 load"); } self.stack.values.push(Value::I64(i64::from_le_bytes(mem.data[addr..addr+8].try_into().unwrap()))); },
+                            0x2A => { if addr + 4 > mem.data.len() { return Err("OOB f32 load"); } self.stack.values.push(Value::F32(f32::from_bits(u32::from_le_bytes(mem.data[addr..addr+4].try_into().unwrap())))); },
+                            0x2B => { if addr + 8 > mem.data.len() { return Err("OOB f64 load"); } self.stack.values.push(Value::F64(f64::from_bits(u64::from_le_bytes(mem.data[addr..addr+8].try_into().unwrap())))); },
                             0x2D => self.stack.values.push(Value::I32(mem.data[addr] as i32)),
                             0x2E => self.stack.values.push(Value::I32(mem.data[addr] as i8 as i32)),
                             0x2F => { if addr + 2 > mem.data.len() { return Err("OOB u16 load"); } self.stack.values.push(Value::I32(u16::from_le_bytes(mem.data[addr..addr+2].try_into().unwrap()) as i32)); },
                             0x30 => { if addr + 2 > mem.data.len() { return Err("OOB s16 load"); } self.stack.values.push(Value::I32(i16::from_le_bytes(mem.data[addr..addr+2].try_into().unwrap()) as i32)); },
-                            _ => {}
+                            0x31 => self.stack.values.push(Value::I64(mem.data[addr] as i8 as i64)),
+                            0x32 => self.stack.values.push(Value::I64(mem.data[addr] as i64)),
+                            0x33 => { if addr + 2 > mem.data.len() { return Err("OOB s16 load i64"); } self.stack.values.push(Value::I64(i16::from_le_bytes(mem.data[addr..addr+2].try_into().unwrap()) as i64)); },
+                            0x34 => { if addr + 2 > mem.data.len() { return Err("OOB u16 load i64"); } self.stack.values.push(Value::I64(u16::from_le_bytes(mem.data[addr..addr+2].try_into().unwrap()) as i64)); },
+                            0x35 => { if addr + 4 > mem.data.len() { return Err("OOB s32 load i64"); } self.stack.values.push(Value::I64(i32::from_le_bytes(mem.data[addr..addr+4].try_into().unwrap()) as i64)); },
+                            0x36 => { if addr + 4 > mem.data.len() { return Err("OOB u32 load i64"); } self.stack.values.push(Value::I64(u32::from_le_bytes(mem.data[addr..addr+4].try_into().unwrap()) as i64)); },
+                            _ => return Err("Invalid load op"),
                         }
                     }
                 },
@@ -280,6 +303,18 @@ impl<'a> Interpreter<'a> {
                         0x58 => { let b = self.pop_i64()? as u64; let a = self.pop_i64()? as u64; self.stack.values.push(Value::I32(if a <= b {1} else {0})); },
                         0x59 => { let b = self.pop_i64()?; let a = self.pop_i64()?; self.stack.values.push(Value::I32(if a >= b {1} else {0})); },
                         0x5A => { let b = self.pop_i64()? as u64; let a = self.pop_i64()? as u64; self.stack.values.push(Value::I32(if a >= b {1} else {0})); },
+                        0x5B => { let b = self.pop_f32()?; let a = self.pop_f32()?; self.stack.values.push(Value::I32(if a == b {1} else {0})); },
+                        0x5C => { let b = self.pop_f32()?; let a = self.pop_f32()?; self.stack.values.push(Value::I32(if a != b {1} else {0})); },
+                        0x5D => { let b = self.pop_f32()?; let a = self.pop_f32()?; self.stack.values.push(Value::I32(if a < b {1} else {0})); },
+                        0x5E => { let b = self.pop_f32()?; let a = self.pop_f32()?; self.stack.values.push(Value::I32(if a > b {1} else {0})); },
+                        0x5F => { let b = self.pop_f32()?; let a = self.pop_f32()?; self.stack.values.push(Value::I32(if a <= b {1} else {0})); },
+                        0x60 => { let b = self.pop_f32()?; let a = self.pop_f32()?; self.stack.values.push(Value::I32(if a >= b {1} else {0})); },
+                        0x61 => { let b = self.pop_f64()?; let a = self.pop_f64()?; self.stack.values.push(Value::I32(if a == b {1} else {0})); },
+                        0x62 => { let b = self.pop_f64()?; let a = self.pop_f64()?; self.stack.values.push(Value::I32(if a != b {1} else {0})); },
+                        0x63 => { let b = self.pop_f64()?; let a = self.pop_f64()?; self.stack.values.push(Value::I32(if a < b {1} else {0})); },
+                        0x64 => { let b = self.pop_f64()?; let a = self.pop_f64()?; self.stack.values.push(Value::I32(if a > b {1} else {0})); },
+                        0x65 => { let b = self.pop_f64()?; let a = self.pop_f64()?; self.stack.values.push(Value::I32(if a <= b {1} else {0})); },
+                        0x66 => { let b = self.pop_f64()?; let a = self.pop_f64()?; self.stack.values.push(Value::I32(if a >= b {1} else {0})); },
                         0x67..=0x69 => { let v = self.pop_i32()?; if op == 0x67 { self.stack.values.push(Value::I32(v.count_ones() as i32)); } else if op == 0x68 { self.stack.values.push(Value::I32(v.trailing_zeros() as i32)); } else { self.stack.values.push(Value::I32(v.leading_zeros() as i32)); } },
                         0x6A => { let b = self.pop_i32()?; let a = self.pop_i32()?; self.stack.values.push(Value::I32(a.wrapping_add(b))); },
                         0x6B => { let b = self.pop_i32()?; let a = self.pop_i32()?; self.stack.values.push(Value::I32(a.wrapping_sub(b))); },
@@ -294,7 +329,11 @@ impl<'a> Interpreter<'a> {
                         0x74 => { let b = self.pop_i32()? as u32; let a = self.pop_i32()?; self.stack.values.push(Value::I32(a << (b % 32))); },
                         0x75 => { let b = self.pop_i32()? as u32; let a = self.pop_i32()?; self.stack.values.push(Value::I32(a >> (b % 32))); },
                         0x76 => { let b = self.pop_i32()? as u32; let a = self.pop_i32()? as u32; self.stack.values.push(Value::I32((a >> (b % 32)) as i32)); },
+                        0x77 => { let b = self.pop_i32()? as u32; let a = self.pop_i32()? as u32; self.stack.values.push(Value::I32(a.rotate_left(b % 32) as i32)); },
+                        0x78 => { let b = self.pop_i32()? as u32; let a = self.pop_i32()? as u32; self.stack.values.push(Value::I32(a.rotate_right(b % 32) as i32)); },
                         0x79 => { let v = self.pop_i64()?; self.stack.values.push(Value::I64(v.count_ones() as i64)); },
+                        0x7A => { let v = self.pop_i64()?; self.stack.values.push(Value::I64(v.leading_zeros() as i64)); },
+                        0x7B => { let v = self.pop_i64()?; self.stack.values.push(Value::I64(v.trailing_zeros() as i64)); },
                         0x7C => { let b = self.pop_i64()?; let a = self.pop_i64()?; self.stack.values.push(Value::I64(a.wrapping_add(b))); },
                         0x7D => { let b = self.pop_i64()?; let a = self.pop_i64()?; self.stack.values.push(Value::I64(a.wrapping_sub(b))); },
                         0x7E => { let b = self.pop_i64()?; let a = self.pop_i64()?; self.stack.values.push(Value::I64(a.wrapping_mul(b))); },
@@ -308,24 +347,127 @@ impl<'a> Interpreter<'a> {
                         0x86 => { let b = self.pop_i64()? as u32; let a = self.pop_i64()?; self.stack.values.push(Value::I64(a << (b % 64))); },
                         0x87 => { let b = self.pop_i64()? as u32; let a = self.pop_i64()?; self.stack.values.push(Value::I64(a >> (b % 64))); },
                         0x88 => { let b = self.pop_i64()? as u32; let a = self.pop_i64()? as u64; self.stack.values.push(Value::I64((a >> (b % 64)) as i64)); },
+                        0x89 => { let b = self.pop_i64()? as u32; let a = self.pop_i64()? as u64; self.stack.values.push(Value::I64(a.rotate_left(b % 64) as i64)); },
+                        0x8A => { let b = self.pop_i64()? as u32; let a = self.pop_i64()? as u64; self.stack.values.push(Value::I64(a.rotate_right(b % 64) as i64)); },
+                        0x8B => { let v = self.pop_f32()?; self.stack.values.push(Value::F32(v.abs())); },
+                        0x8C => { let v = self.pop_f32()?; self.stack.values.push(Value::F32(-v)); },
+                        0x8D => { let v = self.pop_f32()?; self.stack.values.push(Value::F32(v.ceil())); },
+                        0x8E => { let v = self.pop_f32()?; self.stack.values.push(Value::F32(v.floor())); },
+                        0x8F => { let v = self.pop_f32()?; self.stack.values.push(Value::F32(v.trunc())); },
+                        0x90 => { let v = self.pop_f32()?; self.stack.values.push(Value::F32(v.round())); },
+                        0x91 => { let v = self.pop_f32()?; self.stack.values.push(Value::F32(v.sqrt())); },
                         0x92 => { let b = self.pop_f32()?; let a = self.pop_f32()?; self.stack.values.push(Value::F32(a + b)); },
                         0x93 => { let b = self.pop_f32()?; let a = self.pop_f32()?; self.stack.values.push(Value::F32(a - b)); },
                         0x94 => { let b = self.pop_f32()?; let a = self.pop_f32()?; self.stack.values.push(Value::F32(a * b)); },
                         0x95 => { let b = self.pop_f32()?; let a = self.pop_f32()?; self.stack.values.push(Value::F32(a / b)); },
+                        0x96 => { let b = self.pop_f32()?; let a = self.pop_f32()?; self.stack.values.push(Value::F32(if a < b { a } else { b })); },
+                        0x97 => { let b = self.pop_f32()?; let a = self.pop_f32()?; self.stack.values.push(Value::F32(if a > b { a } else { b })); },
+                        0x98 => { let b = self.pop_f32()?; let a = self.pop_f32()?; self.stack.values.push(Value::F32(if b.is_sign_negative() { -a.abs() } else { a.abs() })); },
+                        0x99 => { let v = self.pop_f64()?; self.stack.values.push(Value::F64(v.abs())); },
+                        0x9A => { let v = self.pop_f64()?; self.stack.values.push(Value::F64(-v)); },
+                        0x9B => { let v = self.pop_f64()?; self.stack.values.push(Value::F64(v.ceil())); },
+                        0x9C => { let v = self.pop_f64()?; self.stack.values.push(Value::F64(v.floor())); },
+                        0x9D => { let v = self.pop_f64()?; self.stack.values.push(Value::F64(v.trunc())); },
+                        0x9E => { let v = self.pop_f64()?; self.stack.values.push(Value::F64(v.round())); },
+                        0x9F => { let v = self.pop_f64()?; self.stack.values.push(Value::F64(v.sqrt())); },
                         0xA0 => { let b = self.pop_f64()?; let a = self.pop_f64()?; self.stack.values.push(Value::F64(a + b)); },
                         0xA1 => { let b = self.pop_f64()?; let a = self.pop_f64()?; self.stack.values.push(Value::F64(a - b)); },
                         0xA2 => { let b = self.pop_f64()?; let a = self.pop_f64()?; self.stack.values.push(Value::F64(a * b)); },
                         0xA3 => { let b = self.pop_f64()?; let a = self.pop_f64()?; self.stack.values.push(Value::F64(a / b)); },
+                        0xA4 => { let b = self.pop_f64()?; let a = self.pop_f64()?; self.stack.values.push(Value::F64(if a < b { a } else { b })); },
+                        0xA5 => { let b = self.pop_f64()?; let a = self.pop_f64()?; self.stack.values.push(Value::F64(if a > b { a } else { b })); },
+                        0xA6 => { let b = self.pop_f64()?; let a = self.pop_f64()?; self.stack.values.push(Value::F64(if b.is_sign_negative() { -a.abs() } else { a.abs() })); },
                         0xA7 => { let v = self.pop_i64()?; self.stack.values.push(Value::I32(v as i32)); },
+                        0xA8 => { let v = self.pop_f32()?; self.stack.values.push(Value::I32(v as i32)); },
+                        0xA9 => { let v = self.pop_f32()?; self.stack.values.push(Value::I32(v as u32 as i32)); },
+                        0xAA => { let v = self.pop_f64()?; self.stack.values.push(Value::I32(v as i32)); },
+                        0xAB => { let v = self.pop_f64()?; self.stack.values.push(Value::I32(v as u32 as i32)); },
                         0xAC => { let v = self.pop_i32()?; self.stack.values.push(Value::I64(v as i64)); },
                         0xAD => { let v = self.pop_i32()? as u32; self.stack.values.push(Value::I64(v as i64)); },
+                        0xAE => { let v = self.pop_f32()?; self.stack.values.push(Value::I64(v as i64)); },
+                        0xAF => { let v = self.pop_f32()?; self.stack.values.push(Value::I64(v as u64 as i64)); },
+                        0xB0 => { let v = self.pop_f64()?; self.stack.values.push(Value::I64(v as i64)); },
+                        0xB1 => { let v = self.pop_f64()?; self.stack.values.push(Value::I64(v as u64 as i64)); },
                         0xB2 => { let v = self.pop_i32()?; self.stack.values.push(Value::F32(v as f32)); },
+                        0xB3 => { let v = self.pop_i32()? as u32; self.stack.values.push(Value::F32(v as f32)); },
+                        0xB4 => { let v = self.pop_i64()?; self.stack.values.push(Value::F32(v as f32)); },
+                        0xB5 => { let v = self.pop_i64()? as u64; self.stack.values.push(Value::F32(v as f32)); },
+                        0xB6 => { let v = self.pop_f64()?; self.stack.values.push(Value::F32(v as f32)); },
                         0xB7 => { let v = self.pop_i32()?; self.stack.values.push(Value::F64(v as f64)); },
-                        0xBE => { let v = self.pop_f32()?; self.stack.values.push(Value::I32(v.to_bits() as i32)); },
-                        0xBF => { let v = self.pop_f64()?; self.stack.values.push(Value::I64(v.to_bits() as i64)); },
+                        0xB8 => { let v = self.pop_i32()? as u32; self.stack.values.push(Value::F64(v as f64)); },
+                        0xB9 => { let v = self.pop_i64()?; self.stack.values.push(Value::F64(v as f64)); },
+                        0xBA => { let v = self.pop_i64()? as u64; self.stack.values.push(Value::F64(v as f64)); },
+                        0xBB => { let v = self.pop_f32()?; self.stack.values.push(Value::F64(v as f64)); },
+                        0xBC => { let v = self.pop_f32()?; self.stack.values.push(Value::I32(v.to_bits() as i32)); },
+                        0xBD => { let v = self.pop_f64()?; self.stack.values.push(Value::I64(v.to_bits() as i64)); },
+                        0xBE => { let v = self.pop_i32()?; self.stack.values.push(Value::F32(f32::from_bits(v as u32))); },
+                        0xBF => { let v = self.pop_i64()?; self.stack.values.push(Value::F64(f64::from_bits(v as u64))); },
+                        0xC0 => { let v = self.pop_i32()?; self.stack.values.push(Value::I32(v as i8 as i32)); },
+                        0xC1 => { let v = self.pop_i32()?; self.stack.values.push(Value::I32(v as i16 as i32)); },
+                        0xC2 => { let v = self.pop_i64()?; self.stack.values.push(Value::I64(v as i8 as i64)); },
+                        0xC3 => { let v = self.pop_i64()?; self.stack.values.push(Value::I64(v as i16 as i64)); },
+                        0xC4 => { let v = self.pop_i64()?; self.stack.values.push(Value::I64(v as i32 as i64)); },
                         _ => {}
                     }
                 },
+                0xFC => {
+                    let sub_op = Self::read_leb_u32(&frame_code, &mut current_ip)?;
+                    self.stack.frames.last_mut().unwrap().ip = current_ip;
+                    match sub_op {
+                        8 => { // memory.init
+                            let data_idx = Self::read_leb_u32(&frame_code, &mut current_ip)? as usize;
+                            let _mem_idx = Self::read_leb_u32(&frame_code, &mut current_ip)?;
+                            self.stack.frames.last_mut().unwrap().ip = current_ip;
+                            let n = self.pop_i32()? as usize;
+                            let s = self.pop_i32()? as usize;
+                            let d = self.pop_i32()? as usize;
+                            let frame = self.stack.frames.last().unwrap();
+                            let data_segs = frame.module.data_segments.borrow();
+                            let data = data_segs.get(data_idx).ok_or("Invalid data index")?.as_ref().ok_or("Data segment dropped")?;
+                            let mem_idx = frame.module.mem_addrs[0] as usize;
+                            let mem = &mut self.store.memories[mem_idx].data;
+                            if s + n <= data.len() && d + n <= mem.len() {
+                                mem[d..d+n].copy_from_slice(&data[s..s+n]);
+                            } else { return Err("memory.init OOB"); }
+                        },
+                        9 => { // data.drop
+                            let data_idx = Self::read_leb_u32(&frame_code, &mut current_ip)? as usize;
+                            self.stack.frames.last_mut().unwrap().ip = current_ip;
+                            let frame = self.stack.frames.last().unwrap();
+                            let mut data_segs = frame.module.data_segments.borrow_mut();
+                            if data_idx < data_segs.len() {
+                                data_segs[data_idx] = None;
+                            } else { return Err("data.drop invalid index"); }
+                        },
+                        10 => { // memory.copy
+                            let _dst_mem = Self::read_leb_u32(&frame_code, &mut current_ip)?;
+                            let _src_mem = Self::read_leb_u32(&frame_code, &mut current_ip)?;
+                            self.stack.frames.last_mut().unwrap().ip = current_ip;
+                            let n = self.pop_i32()? as usize;
+                            let s = self.pop_i32()? as usize;
+                            let d = self.pop_i32()? as usize;
+                            let mem_idx = self.stack.frames.last().unwrap().module.mem_addrs[0] as usize;
+                            let mem = &mut self.store.memories[mem_idx].data;
+                            if d + n <= mem.len() && s + n <= mem.len() {
+                                mem.copy_within(s..s+n, d);
+                            } else { return Err("memory.copy OOB"); }
+                        },
+                        11 => { // memory.fill
+                            let _mem_idx = Self::read_leb_u32(&frame_code, &mut current_ip)?;
+                            self.stack.frames.last_mut().unwrap().ip = current_ip;
+                            let n = self.pop_i32()? as usize;
+                            let val = self.pop_i32()? as u8;
+                            let d = self.pop_i32()? as usize;
+                            let mem_idx = self.stack.frames.last().unwrap().module.mem_addrs[0] as usize;
+                            let mem = &mut self.store.memories[mem_idx].data;
+                            if d + n <= mem.len() {
+                                for i in 0..n { mem[d + i] = val; }
+                            } else { return Err("memory.fill OOB"); }
+                        },
+                        _ => return Err("Unsupported 0xFC subop"),
+                    }
+                },
+                0xFD => return Err("SIMD not supported"),
                 _ => {}
             }
         }

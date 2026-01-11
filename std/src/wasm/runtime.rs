@@ -1,5 +1,6 @@
 use crate::rust_alloc::vec::Vec;
 use crate::rust_alloc::rc::Rc;
+use crate::rust_alloc::collections::BTreeMap;
 use core::cell::RefCell;
 use super::types::{ValType, Module};
 use crate::rust_alloc::string::String;
@@ -24,11 +25,32 @@ impl Value {
     }
 }
 
+pub struct WasiCtx {
+    pub env: Vec<(String, String)>,
+    pub args: Vec<String>,
+    pub files: BTreeMap<u32, usize>, // WASI FD -> Host FD
+}
+
+impl WasiCtx {
+    pub fn new() -> Self {
+        let mut files = BTreeMap::new();
+        files.insert(0, 0); // stdin
+        files.insert(1, 1); // stdout
+        files.insert(2, 2); // stderr
+        Self {
+            env: Vec::new(),
+            args: Vec::new(),
+            files,
+        }
+    }
+}
+
 pub struct Store {
     pub funcs: Vec<FuncInstance>,
     pub tables: Vec<TableInstance>,
     pub memories: Vec<MemoryInstance>,
     pub globals: Vec<GlobalInstance>,
+    pub wasi: WasiCtx,
 }
 
 impl Store {
@@ -38,6 +60,7 @@ impl Store {
             tables: Vec::new(),
             memories: Vec::new(),
             globals: Vec::new(),
+            wasi: WasiCtx::new(),
         }
     }
 
@@ -122,7 +145,17 @@ impl Store {
              exports.push(ExportInstance { name: export.name.clone(), value: val });
         }
         
-        let instance = Rc::new(ModuleInstance { func_addrs: func_addrs.clone(), table_addrs: table_addrs.clone(), mem_addrs: mem_addrs.clone(), global_addrs, exports });
+        let mut data_segments = Vec::new();
+        for data in &module.data { data_segments.push(Some(data.init.clone())); }
+
+        let instance = Rc::new(ModuleInstance { 
+            func_addrs: func_addrs.clone(), 
+            table_addrs: table_addrs.clone(), 
+            mem_addrs: mem_addrs.clone(), 
+            global_addrs, 
+            data_segments: RefCell::new(data_segments),
+            exports 
+        });
         let num_defined = module.functions.len();
         for i in 0..num_defined {
              let imported_funcs_count = func_addrs.len() - num_defined;
@@ -206,6 +239,7 @@ pub struct ModuleInstance {
     pub table_addrs: Vec<u32>,
     pub mem_addrs: Vec<u32>,
     pub global_addrs: Vec<u32>,
+    pub data_segments: RefCell<Vec<Option<Vec<u8>>>>,
     pub exports: Vec<ExportInstance>,
 }
 
