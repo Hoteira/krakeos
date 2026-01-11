@@ -66,12 +66,13 @@ impl<'a> Interpreter<'a> {
             },
             0x10 => { Self::read_leb_u32(code, ip)?; },
             0x11 => { Self::read_leb_u32(code, ip)?; Self::read_leb_u32(code, ip)?; },
-            0x20..=0x24 => { Self::read_leb_u32(code, ip)?; },
+            0x20..=0x26 => { Self::read_leb_u32(code, ip)?; },
             0x28..=0x3E => { Self::read_leb_u32(code, ip)?; Self::read_leb_u32(code, ip)?; },
             0x3F | 0x40 => { Self::read_leb_u32(code, ip)?; },
             0x41 => { Self::read_leb_i32(code, ip)?; },
             0x42 => { Self::read_leb_i64(code, ip)?; },
             0x43 => { *ip += 4; }, 0x44 => { *ip += 8; },
+            0xD0 => { *ip += 1; }, // reftype
             0xD2 => { Self::read_leb_u32(code, ip)?; },
             0xFC => {
                 let sub_op = Self::read_leb_u32(code, ip)?;
@@ -134,7 +135,10 @@ impl<'a> Interpreter<'a> {
             self.stack.frames.last_mut().unwrap().ip = current_ip;
 
             match op {
-                0x00 => return Err("unreachable trap"),
+                0x00 => {
+                    crate::debugln!("WASM: unreachable trap at IP {}", inst_start_ip);
+                    return Err("unreachable trap");
+                },
                 0x01 => {}, // nop
                 0x02 | 0x03 | 0x04 => {
                     let bt = Self::read_leb_i32(&frame_code, &mut current_ip)?;

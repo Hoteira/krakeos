@@ -122,18 +122,6 @@ impl Store {
              self.globals.push(GlobalInstance { value: val, mutability: global_def.ty.mutability });
              global_addrs.push((self.globals.len() - 1) as u32);
         }
-        
-        for addr in &global_addrs {
-            let g = &mut self.globals[*addr as usize];
-            if g.mutability {
-                if let Value::I32(v) = g.value {
-                    if v < 65536 {
-                        g.value = Value::I32(1024 * 1024 * 32); 
-                        break;
-                    }
-                }
-            }
-        }
 
         let mut exports = Vec::new();
         for export in &module.exports {
