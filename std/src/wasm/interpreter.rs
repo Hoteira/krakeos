@@ -548,7 +548,10 @@ impl<'a> Interpreter<'a> {
                     }
                 },
                 0xFD => return Err("SIMD not supported"),
-                _ => {}
+                _ => {
+                    crate::debugln!("WASM: Unknown opcode 0x{:02X} at IP {}", op, inst_start_ip);
+                    return Err("Unknown opcode");
+                }
             }
         }
     }

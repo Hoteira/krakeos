@@ -156,6 +156,56 @@ fn wasi_random_get(store: &mut Store, args: &[Value]) -> Vec<Value> {
     vec![Value::I32(0)]
 }
 
+fn wasi_environ_sizes_get(store: &mut Store, args: &[Value]) -> Vec<Value> {
+    if args.len() != 2 { return vec![Value::I32(28)]; }
+    let count_ptr = match args[0] { Value::I32(x) => x as usize, _ => return vec![Value::I32(28)] };
+    let size_ptr = match args[1] { Value::I32(x) => x as usize, _ => return vec![Value::I32(28)] };
+    if let Some(mem) = store.memories.get_mut(0) {
+        write_u32(mem, count_ptr, 0); // No environment variables for now
+        write_u32(mem, size_ptr, 0);
+        return vec![Value::I32(0)];
+    }
+    vec![Value::I32(9)]
+}
+
+fn wasi_environ_get(_store: &mut Store, args: &[Value]) -> Vec<Value> {
+    if args.len() != 2 { return vec![Value::I32(28)]; }
+    // (environ_ptr, environ_buf_ptr)
+    vec![Value::I32(0)] // Success, but wrote nothing because count was 0
+}
+
+fn wasi_fd_prestat_get(store: &mut Store, args: &[Value]) -> Vec<Value> {
+    if args.len() != 2 { return vec![Value::I32(28)]; }
+    let fd = match args[0] { Value::I32(x) => x, _ => return vec![Value::I32(28)] };
+    if fd == 3 { // Map FD 3 as "/"
+        let ptr = match args[1] { Value::I32(x) => x as usize, _ => return vec![Value::I32(28)] };
+        if let Some(mem) = store.memories.get_mut(0) {
+            if ptr + 8 <= mem.data.len() {
+                mem.data[ptr] = 0; // prestat_dir (tag 0)
+                write_u32(mem, ptr + 4, 1); // pr_name_len (1 for "/")
+                return vec![Value::I32(0)];
+            }
+        }
+    }
+    vec![Value::I32(8)] // EBADF
+}
+
+fn wasi_fd_prestat_dir_name(store: &mut Store, args: &[Value]) -> Vec<Value> {
+    if args.len() != 3 { return vec![Value::I32(28)]; }
+    let fd = match args[0] { Value::I32(x) => x, _ => return vec![Value::I32(28)] };
+    let path_ptr = match args[1] { Value::I32(x) => x as usize, _ => return vec![Value::I32(28)] };
+    let path_len = match args[2] { Value::I32(x) => x as usize, _ => return vec![Value::I32(28)] };
+    if fd == 3 && path_len >= 1 {
+        if let Some(mem) = store.memories.get_mut(0) {
+            if path_ptr < mem.data.len() {
+                mem.data[path_ptr] = b'/';
+                return vec![Value::I32(0)];
+            }
+        }
+    }
+    vec![Value::I32(8)]
+}
+
 fn wasi_proc_exit(_store: &mut Store, args: &[Value]) -> Vec<Value> {
     let code = match args.get(0) { Some(Value::I32(x)) => *x, _ => 0 };
     crate::os::exit(code as u64);
@@ -264,10 +314,10 @@ pub fn create_wasi_module(store: &mut Store) -> Rc<ModuleInstance> {
     add_func("fd_seek", vec![ValType::I32, ValType::I64, ValType::I32, ValType::I32], vec![ValType::I32], wasi_fd_seek);
     add_func("path_open", vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32, ValType::I32, ValType::I64, ValType::I64, ValType::I32, ValType::I32], vec![ValType::I32], wasi_path_open);
     add_func("proc_exit", vec![ValType::I32], vec![], wasi_proc_exit);
-    add_func("environ_get", vec![ValType::I32, ValType::I32], vec![ValType::I32], |s, a| vec![Value::I32(0)]);
-    add_func("environ_sizes_get", vec![ValType::I32, ValType::I32], vec![ValType::I32], |s, a| vec![Value::I32(0)]);
-    add_func("fd_prestat_get", vec![ValType::I32, ValType::I32], vec![ValType::I32], |s, a| vec![Value::I32(0)]); // Return success for prestat
-    add_func("fd_prestat_dir_name", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32], |s, a| vec![Value::I32(0)]);      
+    add_func("environ_get", vec![ValType::I32, ValType::I32], vec![ValType::I32], wasi_environ_get);
+    add_func("environ_sizes_get", vec![ValType::I32, ValType::I32], vec![ValType::I32], wasi_environ_sizes_get);
+    add_func("fd_prestat_get", vec![ValType::I32, ValType::I32], vec![ValType::I32], wasi_fd_prestat_get);
+    add_func("fd_prestat_dir_name", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32], wasi_fd_prestat_dir_name);      
     add_func("adapter_close_badfd", vec![ValType::I32], vec![ValType::I32], |s, a| vec![Value::I32(0)]);
     add_func("fd_fdstat_get", vec![ValType::I32, ValType::I32], vec![ValType::I32], |s, a| vec![Value::I32(0)]);
 
