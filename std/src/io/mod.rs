@@ -15,7 +15,7 @@ impl Error {
 
 pub trait Read {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
-    
+
     fn read_to_end(&mut self, buf: &mut rust_alloc::vec::Vec<u8>) -> Result<usize> {
         let mut temp = [0u8; 1024];
         let mut total = 0;
@@ -47,7 +47,7 @@ pub trait Read {
 pub trait Write {
     fn write(&mut self, buf: &[u8]) -> Result<usize>;
     fn flush(&mut self) -> Result<()>;
-    
+
     fn write_all(&mut self, mut buf: &[u8]) -> Result<()> {
         while !buf.is_empty() {
             match self.write(buf) {

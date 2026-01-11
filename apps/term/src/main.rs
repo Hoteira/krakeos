@@ -1,23 +1,19 @@
 #![no_std]
 #![no_main]
 
+extern crate alloc;
 mod types;
 mod buffer;
 
-extern crate alloc;
-use alloc::format;
-use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
-use alloc::boxed::Box;
 use std::io::Read;
-use std::println;
 
 use inkui::{Color, Size, Widget, Window};
 use std::fs::File;
 
-use crate::types::{TermAction, Cell};
 use crate::buffer::TerminalBuffer;
+use crate::types::{Cell, TermAction};
 
 static mut TERM_READ_FD: usize = 0;
 static mut TERM_WRITE_FD: usize = 0;
@@ -34,14 +30,14 @@ fn update_term_size(win: &Window) {
             if char_width > 0 && line_height > 0 {
                 let cols = (width / char_width) as u16;
                 let rows = ((height / line_height) as u16).saturating_sub(2);
-                
+
                 let ws = std::os::WinSize {
                     ws_row: rows,
                     ws_col: cols,
                     ws_xpixel: 0,
                     ws_ypixel: 0,
                 };
-                
+
                 std::os::ioctl(0, std::os::TIOCSWINSZ, &ws as *const _ as u64);
             }
         }
@@ -53,19 +49,19 @@ pub extern "C" fn main() -> i32 {
     let width = 800;
     let height = 400;
 
-    
+
     let font_size = 14.0f32;
     let char_w = (font_size * 0.7) as usize;
     let line_h = (font_size * 1.3) as usize;
 
-    
+
     let avail_w = (width - width * 4 / 100) as f32;
     let avail_h = (height - height * 5 / 100) as f32;
 
     if char_w > 0 && line_h > 0 {
         let cols = (avail_w / char_w as f32) as u16;
         let rows = (avail_h / line_h as f32) as u16;
-        let rows = rows.saturating_sub(2); 
+        let rows = rows.saturating_sub(2);
 
         let ws = std::os::WinSize {
             ws_row: rows,
@@ -169,15 +165,14 @@ pub extern "C" fn main() -> i32 {
                                 std::os::file_write(unsafe { TERM_WRITE_FD }, s.as_bytes());
                             }
                         } else {
-                            
                             let seq = match e.key {
-                                0x110003 => Some("\x1B[A"), 
-                                0x110004 => Some("\x1B[B"), 
-                                0x110002 => Some("\x1B[C"), 
-                                0x110001 => Some("\x1B[D"), 
-                                0x110007 => None, 
-                                0x110005 => None, 
-                                0x110006 => None, 
+                                0x110003 => Some("\x1B[A"),
+                                0x110004 => Some("\x1B[B"),
+                                0x110002 => Some("\x1B[C"),
+                                0x110001 => Some("\x1B[D"),
+                                0x110007 => None,
+                                0x110005 => None,
+                                0x110006 => None,
                                 _ => None,
                             };
                             if let Some(s) = seq {
@@ -189,7 +184,7 @@ pub extern "C" fn main() -> i32 {
                     }
                 }
                 Event::Mouse(e) => {
-                    if e.scroll != 0 && !term_buffer.is_alt { 
+                    if e.scroll != 0 && !term_buffer.is_alt {
                         if let Some(widget) = win.find_widget_by_id_mut(2) {
                             widget.handle_scroll(e.scroll);
                             needs_redraw = true;
@@ -244,12 +239,12 @@ pub extern "C" fn main() -> i32 {
                                     let seq_str = unsafe { core::str::from_utf8_unchecked(seq) }.to_string();
                                     (Some(TermAction::Csi(cmd, seq_str)), j + 1)
                                 } else if bytes.len() > 64 {
-                                    (None, 1) 
+                                    (None, 1)
                                 } else {
-                                    (None, 0) 
+                                    (None, 0)
                                 }
                             } else {
-                                (None, 1) 
+                                (None, 1)
                             }
                         } else {
                             let mut len = 1;
@@ -275,23 +270,23 @@ pub extern "C" fn main() -> i32 {
                     Some(TermAction::Newline) => term_buffer.newline(),
                     Some(TermAction::Csi(cmd, seq)) => {
                         match cmd {
-                            b'A' => { 
+                            b'A' => {
                                 let n = if seq.is_empty() { 1 } else { seq.parse::<usize>().unwrap_or(1) };
                                 term_buffer.cursor_row = term_buffer.cursor_row.saturating_sub(n);
                             }
-                            b'B' => { 
+                            b'B' => {
                                 let n = if seq.is_empty() { 1 } else { seq.parse::<usize>().unwrap_or(1) };
                                 term_buffer.cursor_row += n;
                             }
-                            b'C' => { 
+                            b'C' => {
                                 let n = if seq.is_empty() { 1 } else { seq.parse::<usize>().unwrap_or(1) };
                                 term_buffer.cursor_col += n;
                             }
-                            b'D' => { 
+                            b'D' => {
                                 let n = if seq.is_empty() { 1 } else { seq.parse::<usize>().unwrap_or(1) };
                                 term_buffer.cursor_col = term_buffer.cursor_col.saturating_sub(n);
                             }
-                            b'G' => { 
+                            b'G' => {
                                 let n = if seq.is_empty() { 1 } else { seq.parse::<usize>().unwrap_or(1) };
                                 term_buffer.cursor_col = n.saturating_sub(1);
                             }
@@ -321,24 +316,24 @@ pub extern "C" fn main() -> i32 {
                                     }
                                 }
                             }
-                            b'd' => { 
+                            b'd' => {
                                 let n = if seq.is_empty() { 1 } else { seq.parse::<usize>().unwrap_or(1) };
                                 term_buffer.cursor_row = n.saturating_sub(1);
                             }
                             b'K' => {
-                                if seq == "1" { 
+                                if seq == "1" {
                                     let current = if term_buffer.is_alt { &mut term_buffer.alt_lines } else { &mut term_buffer.lines };
                                     if term_buffer.cursor_row < current.len() {
                                         for i in 0..core::cmp::min(term_buffer.cursor_col + 1, current[term_buffer.cursor_row].len()) {
                                             current[term_buffer.cursor_row][i] = Cell::default();
                                         }
                                     }
-                                } else if seq == "2" { 
+                                } else if seq == "2" {
                                     let current = if term_buffer.is_alt { &mut term_buffer.alt_lines } else { &mut term_buffer.lines };
                                     if term_buffer.cursor_row < current.len() {
                                         current[term_buffer.cursor_row].clear();
                                     }
-                                } else { 
+                                } else {
                                     term_buffer.clear_line();
                                 }
                             }
@@ -392,7 +387,8 @@ pub extern "C" fn main() -> i32 {
                         let height = geometry.height.saturating_sub(padding * 2);
 
                         if width > 0 {
-                                                            let char_width = (text.size as f32 * 0.8) as usize;                            if char_width > 0 {
+                            let char_width = (text.size as f32 * 0.8) as usize;
+                            if char_width > 0 {
                                 let chars_per_line = width / char_width;
                                 let mut visual_lines = 0;
 

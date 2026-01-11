@@ -153,7 +153,6 @@ pub unsafe extern "C" fn krake_window_draw(wid: usize) {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kill(pid: c_int, sig: c_int) -> c_int {
-    
     if sig == 9 {
         krake_syscall(62, pid as u64, 9, 0, 0) as c_int
     } else {
@@ -205,10 +204,10 @@ pub struct jmp_buf {
 pub unsafe extern "C" fn _setjmp(env: *mut jmp_buf) -> c_int {
     let res: c_int;
     core::arch::asm!(
-        "call setjmp",
-        in("rdi") env,
-        lateout("rax") res,
-        options(nostack)
+    "call setjmp",
+    in("rdi") env,
+    lateout("rax") res,
+    options(nostack)
     );
     res
 }

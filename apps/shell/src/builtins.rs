@@ -1,9 +1,8 @@
+use crate::utils::resolve_path;
 use alloc::format;
 use alloc::string::String;
-use alloc::string::ToString;
 use alloc::vec::Vec;
 use std::io::{Read, Write};
-use crate::utils::resolve_path;
 
 pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &mut String, in_fd: usize, out_fd: usize) -> i32 {
     if cmd == "help" {
@@ -68,10 +67,10 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
         let mut info: Vec<String> = Vec::new();
         info.push(format!("{}{}user@{}krakeos{}", p_pink, white, p_blue, reset));
         info.push(format!("{}-----------------{}", gray, reset));
-        
+
         let mut os_line = String::from(p_cyan);
         os_line.push(' ');
-        os_line.push(core::char::from_u32(0xF300).unwrap_or('?')); 
+        os_line.push(core::char::from_u32(0xF300).unwrap_or('?'));
         os_line.push_str(" OS: ");
         os_line.push_str(white);
         os_line.push_str("KrakeOS");
@@ -133,7 +132,7 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
         info.push(font_line);
 
         info.push(String::new());
-        
+
         let mut palette1 = String::new();
         for i in 0..8 {
             palette1.push_str(&format!("\x1B[{}m  ", 40 + i));

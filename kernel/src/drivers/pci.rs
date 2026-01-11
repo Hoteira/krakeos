@@ -163,9 +163,7 @@ impl PciDevice {
         let bar_offset = 0x10 + (bar_index as u32 * 4);
         let bar_value = self.read_config_register(bar_offset);
 
-        
-        
-        
+
         if bar_value == 0 {
             return None;
         }
@@ -187,8 +185,8 @@ impl PciDevice {
     pub fn write_bar(&self, bar_index: u8, address: u32) {
         if bar_index > 5 { return; }
         let bar_offset = 0x10 + (bar_index as u32 * 4);
-        
-        
+
+
         let current_val = self.read_config_register(bar_offset);
         let is_64bit = (current_val & 0x4) != 0;
 
@@ -197,7 +195,6 @@ impl PciDevice {
         outl(0xCFC, address);
 
         if is_64bit && bar_index < 5 {
-            
             let upper_offset = bar_offset + 4;
             let upper_config_addr = self.generate_config_address(upper_offset as u8);
             outl(0xCF8, upper_config_addr);

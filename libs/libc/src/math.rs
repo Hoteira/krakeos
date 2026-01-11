@@ -4,8 +4,6 @@ const LN2: f64 = core::f64::consts::LN_2;
 const INV_LN2: f64 = core::f64::consts::LOG2_E;
 
 
-
-
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sqrt(x: f64) -> f64 {
     x.sqrt()
@@ -39,19 +37,19 @@ pub extern "C" fn pow(x: f64, y: f64) -> f64 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn asin(_x: f64) -> f64 { 0.0 } 
+pub unsafe extern "C" fn asin(_x: f64) -> f64 { 0.0 }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn acos(_x: f64) -> f64 { 0.0 } 
+pub unsafe extern "C" fn acos(_x: f64) -> f64 { 0.0 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn atan2(y: f64, x: f64) -> f64 { y.atan2(x) }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn log(_x: f64) -> f64 { 0.0 } 
+pub unsafe extern "C" fn log(_x: f64) -> f64 { 0.0 }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn log10(_x: f64) -> f64 { 0.0 } 
+pub unsafe extern "C" fn log10(_x: f64) -> f64 { 0.0 }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn exp(_x: f64) -> f64 { 0.0 } 
+pub unsafe extern "C" fn exp(_x: f64) -> f64 { 0.0 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fmod(x: f64, y: f64) -> f64 { x % y }

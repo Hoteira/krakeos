@@ -1,6 +1,6 @@
 use crate::drivers::port::{inb, outb};
-use alloc::collections::VecDeque;
 use crate::sync::Mutex;
+use alloc::collections::VecDeque;
 
 #[allow(dead_code)]
 pub static KEYBOARD_BUFFER: Mutex<VecDeque<u32>> = Mutex::new(VecDeque::new());
@@ -119,43 +119,39 @@ fn wait_for_write() -> bool {
 
 #[allow(dead_code)]
 pub fn init() {
-    
     if !wait_for_write() { return; }
     outb(COMMAND_PORT, PS2_CMD_DISABLE_PORT1);
 
-    
+
     while (inb(STATUS_PORT) & 0x01) != 0 {
         inb(DATA_PORT);
     }
 
-    
+
     if !wait_for_write() { return; }
     outb(COMMAND_PORT, PS2_CMD_READ_CONFIG);
     if !wait_for_read() { return; }
     let mut config = inb(DATA_PORT);
 
-    
-    
-    
+
     config |= 0x01;
     config |= 0x40;
 
-    
+
     if !wait_for_write() { return; }
     outb(COMMAND_PORT, PS2_CMD_WRITE_CONFIG);
     if !wait_for_write() { return; }
     outb(DATA_PORT, config);
 
-    
+
     if !wait_for_write() { return; }
     outb(COMMAND_PORT, PS2_CMD_ENABLE_PORT1);
 
-    
-    
+
     if !wait_for_write() { return; }
     outb(DATA_PORT, KEYBOARD_CMD_ENABLE_SCANNING);
 
-    
+
     if wait_for_read() {
         let _ack = inb(DATA_PORT);
     }
@@ -177,12 +173,10 @@ pub fn handle_scancode(scancode: u8) -> Option<(u32, bool)> {
         let pressed = !is_release;
 
         match scancode_val {
-            
             0x5B | 0x5C if is_e0 => {
                 SUPER_ACTIVE = pressed;
                 None
             }
-
 
             0x38 => {
                 ALT_ACTIVE = pressed;

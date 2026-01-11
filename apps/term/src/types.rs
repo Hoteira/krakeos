@@ -11,8 +11,8 @@ pub enum TermAction {
 #[derive(Clone, Copy, PartialEq)]
 pub struct Cell {
     pub c: char,
-    pub fg: u8,   
-    pub bg: u8,   
+    pub fg: u8,
+    pub bg: u8,
     pub bold: bool,
 }
 

@@ -18,18 +18,18 @@ pub mod sync;
 
 use crate::boot::{BootInfo, BOOT_INFO};
 use crate::fs::ext2::fs::Ext2;
+use crate::interrupts::gdt::reload_gdt_high_half;
 use crate::memory::pmm;
 use core::arch::asm;
 use window_manager::display::DISPLAY_SERVER;
-use crate::interrupts::gdt::reload_gdt_high_half;
 
 const EFER_MSR: u32 = 0xC0000080;
 const STAR_MSR: u32 = 0xC0000081;
 const LSTAR_MSR: u32 = 0xC0000082;
 const SFMASK_MSR: u32 = 0xC0000084;
 const PAT_MSR: u32 = 0x277;
-use crate::memory::paging::{phys_to_virt, active_level_4_table};
 use crate::memory::address::PhysAddr;
+use crate::memory::paging::{active_level_4_table, phys_to_virt};
 
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".start")]
@@ -70,8 +70,8 @@ pub extern "C" fn _start(bootinfo_ptr: u64) -> ! {
     let heap_pages = heap_size / 4096;
     let heap_phys_addr = pmm::allocate_frames(heap_pages as usize, 0).expect("Failed to allocate heap memory from PMM");
     let heap_virt_ptr = phys_to_virt(PhysAddr::new(heap_phys_addr)).as_mut_ptr::<u8>();
-    
-    
+
+
     crate::memory::allocator::init_heap(heap_virt_ptr, heap_size as usize);
 
     debugln!("SIGNPOST: Heap initialized.");
@@ -93,13 +93,19 @@ pub extern "C" fn _start(bootinfo_ptr: u64) -> ! {
     crate::debugln!("Mounting Ext2...");
     match Ext2::new(0xE0, 16384) {
         Ok(fs) => crate::fs::vfs::mount(0xE0, fs),
-        Err(e) => { crate::debugln!("Failed to mount Ext2: {}", e); loop {} }
+        Err(e) => {
+            crate::debugln!("Failed to mount Ext2: {}", e);
+            loop {}
+        }
     }
 
     crate::debugln!("Spawning init process...");
     match crate::interrupts::syscalls::spawn_process("@0xE0/user.elf", None, None) {
         Ok(pid) => crate::debugln!("Init process spawned with PID {}", pid),
-        Err(e) => { crate::debugln!("Failed to spawn init: {}", e); loop {} }
+        Err(e) => {
+            crate::debugln!("Failed to spawn init: {}", e);
+            loop {}
+        }
     }
 
     init_syscall_msrs();

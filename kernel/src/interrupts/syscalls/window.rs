@@ -21,25 +21,25 @@ pub fn handle_add_window(context: &mut CPUState) {
             if let Some(thread) = tm.tasks[current].as_ref() {
                 let proc = thread.process.as_ref().expect("Thread has no process");
                 w.pid = proc.pid;
-                
+
                 let pml4 = proc.pml4_phys;
                 let buffer_size = w.width * w.height * 4;
-                
+
                 let original_user_addr = w.buffer;
-                
+
                 if let Some(kernel_addr) = crate::memory::vmm::map_user_memory_into_kernel(original_user_addr as u64, buffer_size, pml4) {
                     w.buffer = kernel_addr as usize;
-                    
+
                     drop(tm);
                     let id = (*(&raw mut COMPOSER)).add_window(w);
-                    
+
                     if id < 256 {
                         WINDOW_MAPPINGS[id] = Mapping {
                             user_addr: original_user_addr,
                             kernel_addr: kernel_addr as usize,
                         };
                     }
-                    
+
                     context.rax = id as u64;
                 } else {
                     crate::debugln!("Failed to map window buffer to kernel space");
@@ -59,7 +59,7 @@ pub fn handle_update_window(context: &mut CPUState) {
     unsafe {
         let w = *window_ptr;
         let composer = &mut *(&raw mut COMPOSER);
-        
+
         // Lockless cache check for common cases (no dimension change)
         if w.id < 256 && WINDOW_MAPPINGS[w.id].user_addr == w.buffer && WINDOW_MAPPINGS[w.id].user_addr != 0 {
             if let Some(existing_win) = composer.find_window_id(w.id) {
@@ -72,44 +72,44 @@ pub fn handle_update_window(context: &mut CPUState) {
                 }
             }
         }
-        
+
         // Fallback to slow path if dimensions changed or mapping is missing
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         if let Some(current) = tm.current_task_idx() {
-             if let Some(existing_win) = composer.find_window_id(w.id) {
-                 if let Some(thread) = tm.tasks[current].as_ref() {
-                     let proc = thread.process.as_ref().expect("Thread has no process");
-                     if existing_win.pid == proc.pid {
-                         let original_user_addr = w.buffer;
-                         let pml4 = proc.pml4_phys;
-                         let buffer_size = w.width * w.height * 4;
-                         
-                         if let Some(kernel_addr) = crate::memory::vmm::map_user_memory_into_kernel(original_user_addr as u64, buffer_size, pml4) {
-                             let mut updated_w = w;
-                             updated_w.buffer = kernel_addr as usize;
-                             
-                             if w.id < 256 {
-                                 WINDOW_MAPPINGS[w.id] = Mapping {
-                                     user_addr: original_user_addr,
-                                     kernel_addr: kernel_addr as usize,
-                                 };
-                             }
-                             
-                             drop(tm);
-                             composer.resize_window(updated_w);
-                             context.rax = 1;
-                         } else {
-                             context.rax = 0;
-                         }
-                     } else {
-                         context.rax = 0;
-                     }
-                 } else {
-                     context.rax = 0;
-                 }
-             } else {
-                 context.rax = 0;
-             }
+            if let Some(existing_win) = composer.find_window_id(w.id) {
+                if let Some(thread) = tm.tasks[current].as_ref() {
+                    let proc = thread.process.as_ref().expect("Thread has no process");
+                    if existing_win.pid == proc.pid {
+                        let original_user_addr = w.buffer;
+                        let pml4 = proc.pml4_phys;
+                        let buffer_size = w.width * w.height * 4;
+
+                        if let Some(kernel_addr) = crate::memory::vmm::map_user_memory_into_kernel(original_user_addr as u64, buffer_size, pml4) {
+                            let mut updated_w = w;
+                            updated_w.buffer = kernel_addr as usize;
+
+                            if w.id < 256 {
+                                WINDOW_MAPPINGS[w.id] = Mapping {
+                                    user_addr: original_user_addr,
+                                    kernel_addr: kernel_addr as usize,
+                                };
+                            }
+
+                            drop(tm);
+                            composer.resize_window(updated_w);
+                            context.rax = 1;
+                        } else {
+                            context.rax = 0;
+                        }
+                    } else {
+                        context.rax = 0;
+                    }
+                } else {
+                    context.rax = 0;
+                }
+            } else {
+                context.rax = 0;
+            }
         } else {
             context.rax = 0;
         }

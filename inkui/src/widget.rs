@@ -517,8 +517,7 @@ impl Widget {
     ) {
         let geometry = self.geometry_mut();
 
-        
-        
+
         geometry.margin = match geometry.user_margin {
             Size::Absolute(size) => size,
             Size::Relative(size) => crate::math::floor_f32(parent_height as f32 * size as f32 / 100.0) as usize,
@@ -637,7 +636,7 @@ impl Widget {
                                     let avail_w = (content_width - current_x).min(child_total_w);
                                     let avail_h = content_height.saturating_sub(current_y);
 
-                                    
+
                                     child.update_layout(child_x, child_y, avail_w, avail_h.min(child_total_h), 0, _widget_margin, &Display::None);
 
                                     current_x += child_total_w;
@@ -654,7 +653,7 @@ impl Widget {
                                     let avail_w = content_width.saturating_sub(current_x);
                                     let avail_h = (content_height - current_y).min(child_total_h);
 
-                                    
+
                                     child.update_layout(child_x, child_y, avail_w, avail_h, 0, _widget_margin, &Display::None);
 
                                     current_y += child_total_h;

@@ -1,7 +1,7 @@
 use crate::os::syscall;
-use rust_alloc::boxed::Box;
-use rust_alloc::alloc::{alloc, dealloc, Layout};
 use core::cell::UnsafeCell;
+use rust_alloc::alloc::{alloc, dealloc, Layout};
+use rust_alloc::boxed::Box;
 
 pub struct JoinHandle<T> {
     id: usize,
@@ -65,7 +65,7 @@ where
     unsafe {
         let args = Box::from_raw(args_ptr);
         let res = (args.f)();
-        
+
         // Write result to packet
         *(*args.packet).result.get() = Some(res);
 

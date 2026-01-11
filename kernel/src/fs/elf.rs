@@ -1,7 +1,7 @@
-use crate::memory::{paging, pmm, vmm};
 use crate::memory::address::PhysAddr;
-use alloc::string::String;
+use crate::memory::{paging, pmm, vmm};
 use alloc::format;
+use alloc::string::String;
 #[allow(unused_imports)]
 use elfic::{Elf64, Elf64Phdr, Elf64Rela, Elf64Sym, ProgramFlags, ProgramType};
 
@@ -14,7 +14,7 @@ pub fn load_elf(data: &[u8], target_pml4_phys: u64, pid: u64) -> Result<u64, Str
         return Err(format!("Security Violation: Non-PIE executable (Type {})", elf.header.e_type + 0));
     }
 
-    
+
     let load_base = 0x400000;
     crate::debugln!("load_elf: Base address: {:#x}", load_base);
 
@@ -34,20 +34,20 @@ pub fn load_elf(data: &[u8], target_pml4_phys: u64, pid: u64) -> Result<u64, Str
 
             let page_start = virt_start & !(paging::PAGE_SIZE - 1);
             let page_end = (virt_end + paging::PAGE_SIZE - 1) & !(paging::PAGE_SIZE - 1);
-            
+
             let mut current_page = page_start;
             while current_page < page_end {
                 let frame = pmm::allocate_frame(pid).ok_or("OOM during ELF loading")?;
-                
+
                 let mut flags = paging::PAGE_PRESENT | paging::PAGE_USER;
                 if (phdr.p_flags & ProgramFlags::WRITE) != 0 {
                     flags |= paging::PAGE_WRITABLE;
                 }
-                
-                
+
+
                 vmm::map_page(current_page, PhysAddr::new(frame), flags, Some(target_pml4_phys));
 
-                
+
                 let dest_ptr = (frame + paging::HHDM_OFFSET) as *mut u8;
                 unsafe { core::ptr::write_bytes(dest_ptr, 0, paging::PAGE_SIZE as usize); }
 
@@ -66,7 +66,7 @@ pub fn load_elf(data: &[u8], target_pml4_phys: u64, pid: u64) -> Result<u64, Str
                         core::ptr::copy_nonoverlapping(
                             data.as_ptr().add(file_offset as usize),
                             dest_ptr.add(dest_offset),
-                            copy_len
+                            copy_len,
                         );
                     }
                 }
@@ -75,10 +75,13 @@ pub fn load_elf(data: &[u8], target_pml4_phys: u64, pid: u64) -> Result<u64, Str
         }
     }
 
-    
+
     let mut dynsym_shdr: Option<&elfic::Elf64Shdr> = None;
     for shdr in elf.section_headers() {
-        if shdr.sh_type == 11 { dynsym_shdr = Some(shdr); break; }
+        if shdr.sh_type == 11 {
+            dynsym_shdr = Some(shdr);
+            break;
+        }
     }
 
     for shdr in elf.section_headers() {

@@ -42,7 +42,7 @@ pub fn get_date() -> (u8, u8, u16) {
         month = (month & 0x0F) + ((month / 16) * 10);
         year = (year & 0x0F) + ((year / 16) * 10);
     }
-    
+
     let full_year = 2000 + year as u16;
     (day, month, full_year)
 }

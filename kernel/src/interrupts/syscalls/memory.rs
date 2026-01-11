@@ -1,6 +1,6 @@
 use crate::interrupts::task::CPUState;
-use crate::memory::{paging, pmm, vmm};
 use crate::memory::address::PhysAddr;
+use crate::memory::{paging, pmm, vmm};
 
 pub fn handle_brk(context: &mut CPUState) {
     let new_brk = context.rdi;
@@ -17,7 +17,7 @@ pub fn handle_brk(context: &mut CPUState) {
         let mut heap_end = proc.heap_end.lock();
         let current_brk = *heap_end;
 
-        
+
         if new_brk == 0 {
             context.rax = current_brk;
             return;
@@ -26,36 +26,31 @@ pub fn handle_brk(context: &mut CPUState) {
         let pml4_phys = proc.pml4_phys;
         let pid = proc.pid;
 
-        
+
         let aligned_new = (new_brk + 0xFFF) & !0xFFF;
         let aligned_current = (current_brk + 0xFFF) & !0xFFF;
 
         if aligned_new > aligned_current {
-            
             let size = aligned_new - aligned_current;
             let pages = size / 4096;
-            
-            
+
+
             for i in 0..pages {
                 let virt = aligned_current + (i * 4096);
                 if let Some(phys) = pmm::allocate_frame(pid) {
-                    
                     let flags = paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER;
                     unsafe {
                         vmm::map_page(virt, PhysAddr::new(phys), flags, Some(pml4_phys));
                     }
                 } else {
-                    
                     context.rax = current_brk;
                     return;
                 }
             }
-            
+
             *heap_end = new_brk;
             context.rax = new_brk;
         } else if aligned_new < aligned_current {
-            
-            
             *heap_end = new_brk;
             context.rax = new_brk;
         } else {
@@ -77,9 +72,9 @@ pub fn handle_mmap(context: &mut CPUState) {
 
     let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
     let current_idx = tm.current_task;
-    
+
     if current_idx < 0 || len == 0 {
-        context.rax = u64::MAX; 
+        context.rax = u64::MAX;
         return;
     }
 
@@ -88,28 +83,15 @@ pub fn handle_mmap(context: &mut CPUState) {
         let pml4_phys = proc.pml4_phys;
         let pid = proc.pid;
 
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
+
         let target_addr = if addr == 0 {
-            
-            
             let mut heap_end = proc.heap_end.lock();
             let old_brk = *heap_end;
             let new_brk = old_brk + len;
-            
+
             let aligned_new = (new_brk + 0xFFF) & !0xFFF;
-            *heap_end = aligned_new; 
-            old_brk 
+            *heap_end = aligned_new;
+            old_brk
         } else {
             addr
         };
@@ -140,7 +122,7 @@ pub fn handle_mmap(context: &mut CPUState) {
 pub fn handle_munmap(context: &mut CPUState) {
     let _addr = context.rdi;
     let _len = context.rsi;
-    
+
     context.rax = 0;
 }
 

@@ -1,20 +1,19 @@
 #![no_std]
 #![no_main]
 
+extern crate alloc;
 mod utils;
 mod parser;
 mod builtins;
 
-extern crate alloc;
 use alloc::format;
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
-use std::println;
 
-use crate::utils::resolve_path;
-use crate::parser::parse_segment;
 use crate::builtins::execute_builtin;
+use crate::parser::parse_segment;
+use crate::utils::resolve_path;
 
 const STDIN_FD: usize = 0;
 const STDOUT_FD: usize = 1;
@@ -42,7 +41,7 @@ pub extern "C" fn main() -> i32 {
 
                 if !line.is_empty() {
                     let logical_blocks: Vec<&str> = line.split("&&").collect();
-                    
+
                     for block in logical_blocks {
                         let segments: Vec<&str> = block.split('|').collect();
                         let mut prev_pipe_read: Option<i32> = None;
@@ -133,15 +132,28 @@ pub extern "C" fn main() -> i32 {
                                     }
                                 } else {
                                     for path_dir in path_env.split(';') {
-                                        let mut p = format!("{}/{}", path_dir, parsed.cmd);
-                                        if !parsed.cmd.ends_with(".elf") {
-                                            p.push_str(".elf");
-                                        }
-
-                                        if let Ok(_) = std::fs::File::open(&p) {
-                                            prog_path = p;
+                                        // Try exact match first
+                                        let p_exact = format!("{}/{}", path_dir, parsed.cmd);
+                                        if let Ok(_) = std::fs::File::open(&p_exact) {
+                                            prog_path = p_exact;
                                             found = true;
                                             break;
+                                        }
+
+                                        if !parsed.cmd.ends_with(".elf") && !parsed.cmd.ends_with(".wasm") {
+                                            let p_elf = format!("{}/{}.elf", path_dir, parsed.cmd);
+                                            if let Ok(_) = std::fs::File::open(&p_elf) {
+                                                prog_path = p_elf;
+                                                found = true;
+                                                break;
+                                            }
+
+                                            let p_wasm = format!("{}/{}.wasm", path_dir, parsed.cmd);
+                                            if let Ok(_) = std::fs::File::open(&p_wasm) {
+                                                prog_path = p_wasm;
+                                                found = true;
+                                                break;
+                                            }
                                         }
 
                                         if !found && (path_dir.ends_with("/apps") || path_dir == "@0xE0/apps") {
@@ -149,6 +161,11 @@ pub extern "C" fn main() -> i32 {
                                             if let Ok(entries) = std::fs::read_dir(&apps_dir) {
                                                 for entry in entries {
                                                     if entry.file_type == std::fs::FileType::File && entry.name.ends_with(".elf") {
+                                                        prog_path = format!("{}/{}", apps_dir, entry.name);
+                                                        found = true;
+                                                        break;
+                                                    }
+                                                    if entry.file_type == std::fs::FileType::File && entry.name.ends_with(".wasm") {
                                                         prog_path = format!("{}/{}", apps_dir, entry.name);
                                                         found = true;
                                                         break;
@@ -168,7 +185,17 @@ pub extern "C" fn main() -> i32 {
                                     ];
 
                                     let args_refs: Vec<&str> = parsed.args.iter().map(|s| s.as_str()).collect();
-                                    let pid = std::os::spawn_with_fds(&prog_path, &args_refs, &map);
+
+                                    let pid;
+                                    if prog_path.ends_with(".wasm") {
+                                        let runner = "@0xE0/sys/bin/wasm_runner.elf";
+                                        let mut runner_args = Vec::new();
+                                        runner_args.push(prog_path.as_str());
+                                        runner_args.extend_from_slice(&args_refs);
+                                        pid = std::os::spawn_with_fds(runner, &runner_args, &map);
+                                    } else {
+                                        pid = std::os::spawn_with_fds(&prog_path, &args_refs, &map);
+                                    }
 
                                     if pid != usize::MAX {
                                         children_pids.push(pid);
@@ -193,7 +220,7 @@ pub extern "C" fn main() -> i32 {
                         for pid in children_pids {
                             last_exit_code = std::os::waitpid(pid);
                         }
-                        
+
                         if last_exit_code != 0 {
                             break;
                         }

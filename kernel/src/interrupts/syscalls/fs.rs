@@ -7,12 +7,11 @@ use alloc::vec::Vec;
 use super::{PollFd, POLLERR, POLLIN, POLLNVAL, POLLOUT};
 
 
-
 pub fn copy_string_from_user(ptr: *const u8, len: usize) -> String {
     if ptr.is_null() || len == 0 {
         return String::new();
     }
-    
+
     unsafe {
         let slice = core::slice::from_raw_parts(ptr, len);
         let s = String::from_utf8_lossy(slice).into_owned();
@@ -26,10 +25,8 @@ pub fn resolve_path(cwd: &str, path: &str) -> String {
     if path.starts_with('@') {
         full_path = String::from(path);
     } else if path.starts_with('/') {
-        
         full_path = alloc::format!("@0xE0{}", path);
     } else {
-        
         full_path = alloc::format!("{}{}", cwd, path);
     }
 
@@ -51,7 +48,7 @@ pub fn resolve_path(cwd: &str, path: &str) -> String {
         if i > 0 { res.push('/'); }
         res.push_str(p);
     }
-    
+
     res
 }
 
@@ -85,12 +82,12 @@ pub fn handle_read(context: &mut CPUState) {
             break;
         }
 
-        
+
         unsafe {
             core::arch::asm!("int 0x81");
         }
     }
-    
+
     context.rax = bytes_written_to_user as u64;
 }
 
@@ -167,7 +164,7 @@ pub fn handle_poll(context: &mut CPUState) {
 pub fn handle_chdir(context: &mut CPUState) {
     let ptr = context.rdi as *const u8;
     let len = context.rsi as usize;
-    
+
     let path_str_full = copy_string_from_user(ptr, len);
 
     let cwd_str = {
@@ -239,7 +236,7 @@ pub fn handle_chdir(context: &mut CPUState) {
 pub fn handle_create(context: &mut CPUState, syscall_num: u64) {
     let ptr = context.rdi as *const u8;
     let len = context.rsi as usize;
-    
+
     let path_str_full = copy_string_from_user(ptr, len);
 
     let cwd_str = {
@@ -319,7 +316,7 @@ pub fn handle_create(context: &mut CPUState, syscall_num: u64) {
 pub fn handle_remove(context: &mut CPUState) {
     let ptr = context.rdi as *const u8;
     let len = context.rsi as usize;
-    
+
     let path_str_full = copy_string_from_user(ptr, len);
 
     let cwd_str = {
@@ -451,7 +448,7 @@ pub fn handle_rename(context: &mut CPUState) {
 pub fn handle_open(context: &mut CPUState) {
     let ptr = context.rdi as *const u8;
     let len = context.rsi as usize;
-    
+
     let path_str_full = copy_string_from_user(ptr, len);
 
     let cwd_str = {
@@ -472,7 +469,7 @@ pub fn handle_open(context: &mut CPUState) {
 
     let resolved = resolve_path(&cwd_str, &path_str_full);
 
-    
+
     let path_parts: Vec<&str> = resolved.split('/').collect();
     let disk_part = &path_parts[0][1..];
     let disk_id = if disk_part.starts_with("0x") || disk_part.starts_with("0X") {
@@ -514,7 +511,7 @@ pub fn handle_open(context: &mut CPUState) {
         }
         Err(_) => {
             context.rax = u64::MAX;
-        },
+        }
     }
 }
 
@@ -688,7 +685,7 @@ pub fn handle_read_dir(context: &mut CPUState) {
 
 pub fn handle_file_size(context: &mut CPUState) {
     let syscall_num = context.rax;
-    
+
     if syscall_num == 4 { // SYS_STAT (path)
         let ptr = context.rdi as *const u8;
         let len = context.rsi as usize;
@@ -855,7 +852,7 @@ pub fn handle_pipe(context: &mut CPUState) {
                         unsafe {
                             OPEN_FILES[g1 as usize] = Some(FileHandle::Pipe { pipe: pipe.clone() });
                             OPEN_FILES[g2 as usize] = Some(FileHandle::Pipe { pipe });
-                            
+
                             GLOBAL_FILE_REFCOUNT[g1 as usize] = 1;
                             GLOBAL_FILE_REFCOUNT[g2 as usize] = 1;
                         }

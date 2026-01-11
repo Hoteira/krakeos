@@ -401,7 +401,6 @@ impl Mouse {
 
                     use crate::window_manager::events::{Event, MouseEvent, GLOBAL_EVENT_QUEUE};
 
-                    
                     static mut LAST_X: usize = 9999;
                     static mut LAST_Y: usize = 9999;
                     static mut LAST_BTNS: [bool; 3] = [false; 3];

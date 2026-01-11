@@ -1,5 +1,5 @@
-use core::ffi::c_long;
 use crate::sys::krake_get_time_ms;
+use core::ffi::c_long;
 
 #[repr(C)]
 pub struct tm {
@@ -49,9 +49,9 @@ pub unsafe extern "C" fn localtime(_timep: *const c_long) -> *mut tm {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn strftime(s: *mut core::ffi::c_char, max: usize, format: *const core::ffi::c_char, _tm: *const tm) -> usize {
     if max > 0 {
-        *s = 0; 
+        *s = 0;
     }
-    0 
+    0
 }
 
 #[unsafe(no_mangle)]

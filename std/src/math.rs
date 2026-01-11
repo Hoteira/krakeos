@@ -209,8 +209,14 @@ fn ln_approx(x: f64) -> f64 {
     if x <= 0.0 { return f64::NAN; }
     let mut val = x;
     let mut k = 0;
-    while val > 1.5 { val /= 2.718281828459; k += 1; }
-    while val < 0.5 { val *= 2.718281828459; k -= 1; }
+    while val > 1.5 {
+        val /= 2.718281828459;
+        k += 1;
+    }
+    while val < 0.5 {
+        val *= 2.718281828459;
+        k -= 1;
+    }
     let y = (val - 1.0) / (val + 1.0);
     let y2 = y * y;
     let mut sum = y;

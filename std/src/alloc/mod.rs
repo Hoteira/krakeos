@@ -144,7 +144,7 @@ unsafe fn grow_heap(min_size: usize) -> bool {
         let new_brk = crate::os::brk(new_brk_req);
 
         if new_brk < new_brk_req {
-            return false; 
+            return false;
         }
 
         let start = current_brk;
@@ -275,7 +275,7 @@ unsafe impl GlobalAlloc for Allocator {
 
         self.lock();
 
-        
+
         let needed_total = size_of::<Used>() + layout.size();
         let aligned_total = if needed_total < MIN_BLOCK_SIZE {
             MIN_BLOCK_SIZE
@@ -352,7 +352,7 @@ unsafe impl GlobalAlloc for Allocator {
                 cur_ptr = (*cur_ptr).next;
             }
 
-            
+
             let required = size_of::<Used>() + layout.size();
             if !grow_heap(required) {
                 break;
@@ -406,11 +406,6 @@ unsafe impl GlobalAlloc for Allocator {
         let mut prev: *mut Free = core::ptr::null_mut();
         let mut current = self.first_free.load(Ordering::Relaxed);
 
-        
-        
-        
-        
-        
 
         while !current.is_null() && current < free_block {
             prev = current;
@@ -424,7 +419,7 @@ unsafe impl GlobalAlloc for Allocator {
             (*prev).next = free_block;
         }
 
-        
+
         if !(*free_block).next.is_null() {
             let next_block = (*free_block).next;
             let free_end = (*free_block).end();
@@ -434,7 +429,7 @@ unsafe impl GlobalAlloc for Allocator {
             }
         }
 
-        
+
         if !prev.is_null() {
             let prev_end = (*prev).end();
             if prev_end == free_block as *mut u8 {

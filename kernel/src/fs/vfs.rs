@@ -13,9 +13,7 @@ pub enum FileHandle {
     Pipe { pipe: crate::fs::pipe::Pipe },
 }
 
-pub fn init() {
-    
-}
+pub fn init() {}
 
 pub fn mount(disk_id: u8, fs: Box<dyn FileSystem>) {
     crate::debugln!("Mounting at index {}, fs box: {:p}", disk_id, fs);
@@ -26,10 +24,8 @@ pub fn mount(disk_id: u8, fs: Box<dyn FileSystem>) {
 
 pub fn open_file(disk_id: u8, path_str: &str) -> Result<usize, String> {
     let mut actual_path = String::from(path_str);
-    if !path_str.starts_with('@') && !path_str.starts_with('/') {
-        
-    }
-    
+    if !path_str.starts_with('@') && !path_str.starts_with('/') {}
+
     let node = open(disk_id, path_str)?;
     unsafe {
         for i in 3..256 {

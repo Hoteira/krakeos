@@ -7,6 +7,7 @@ pub fn handle_debug_print(context: &mut CPUState) {
 
     let s = unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
     let str_val = String::from_utf8_lossy(s);
+
     crate::debug_print!("{}", str_val);
 
     context.rax = len as u64;

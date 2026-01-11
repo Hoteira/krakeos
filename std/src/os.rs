@@ -1,6 +1,5 @@
-use core::arch::asm;
 pub use crate::sys::{syscall, syscall4, syscall5, syscall6};
-use crate::debugln;
+use core::arch::asm;
 
 pub fn print(s: &str) {
     file_write(1, s.as_bytes());
@@ -123,7 +122,6 @@ pub fn spawn_with_fds(path: &str, args: &[&str], fds: &[(u8, u8)]) -> usize {
     use rust_alloc::vec::Vec;
     use rust_alloc::string::String;
 
-    
     let mut c_args = Vec::new();
     for &a in args {
         let mut s = String::from(a);
@@ -134,13 +132,13 @@ pub fn spawn_with_fds(path: &str, args: &[&str], fds: &[(u8, u8)]) -> usize {
     let arg_ptrs: Vec<*const u8> = c_args.iter().map(|s| s.as_ptr()).collect();
 
     unsafe {
-        syscall6(59, 
-            path.as_ptr() as u64, 
-            path.len() as u64, 
-            arg_ptrs.as_ptr() as u64, 
-            arg_ptrs.len() as u64, 
-            fds.as_ptr() as u64,
-            fds.len() as u64
+        syscall6(59,
+                 path.as_ptr() as u64,
+                 path.len() as u64,
+                 arg_ptrs.as_ptr() as u64,
+                 arg_ptrs.len() as u64,
+                 fds.as_ptr() as u64,
+                 fds.len() as u64,
         ) as usize
     }
 }
@@ -206,14 +204,14 @@ pub fn get_process_list() -> rust_alloc::vec::Vec<ProcessInfo> {
     let max_count = 128;
     let mut processes = rust_alloc::vec::Vec::with_capacity(max_count);
 
-    
+
     processes.resize(max_count, ProcessInfo { pid: 0, state: 0, name: [0; 32] });
 
     let count = unsafe {
         syscall(110, processes.as_mut_ptr() as u64, max_count as u64, 0) as usize
     };
 
-    
+
     if count <= max_count {
         processes.truncate(count);
     }

@@ -246,8 +246,7 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
         } else {
             if pressed {
                 KEYBOARD_BUFFER.lock().push_back(key);
-            } else {
-            }
+            } else {}
 
 
             unsafe {

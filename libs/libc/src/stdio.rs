@@ -147,10 +147,10 @@ pub unsafe extern "C" fn fgets(s: *mut c_char, size: c_int, stream: *mut c_void)
             }
             continue;
         }
-        
+
         // Translate \r to \n for internal consistency
         let val = if c == b'\r' as c_int { b'\n' as c_int } else { c };
-        
+
         *s.add(i) = val as c_char;
         i += 1;
         if val == b'\n' as c_int { break; }
@@ -219,10 +219,10 @@ pub unsafe extern "C" fn fclose(s: *mut c_void) -> c_int {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fread(p: *mut c_void, s: usize, n: usize, st: *mut c_void) -> usize {
-    let fd = if st.is_null() { 1 } else if st as usize <= 2 { st as usize } else { 
+    let fd = if st.is_null() { 1 } else if st as usize <= 2 { st as usize } else {
         return if let Ok(got) = (*(st as *mut std::fs::File)).read(core::slice::from_raw_parts_mut(p as *mut u8, s * n)) { got / s } else { 0 };
     };
-    
+
     let got = std::os::file_read(fd, core::slice::from_raw_parts_mut(p as *mut u8, s * n));
     if got == usize::MAX { 0 } else { got / s }
 }
@@ -281,9 +281,9 @@ pub unsafe extern "C" fn getc(stream: *mut c_void) -> c_int {
         let mut buf = [0u8; 1];
         loop {
             let n = std::os::file_read(0, &mut buf);
-            if n == 1 { 
+            if n == 1 {
                 let b = buf[0];
-                
+
                 // Echo to stdout
                 if buf[0] == 0x08 || buf[0] == 0x7F {
                     // Do nothing, handled by fgets
@@ -299,13 +299,13 @@ pub unsafe extern "C" fn getc(stream: *mut c_void) -> c_int {
                 } else {
                     crate::stdio::krake_debug_printf(b"getc(stdin): got code %d\n\0".as_ptr() as *const c_char, b as c_int);
                 }
-                return b as c_int; 
+                return b as c_int;
             }
             if n == usize::MAX { return -1; }
             std::os::yield_task();
         }
     }
-    
+
     if stream as usize <= 2 {
         let mut buf = [0u8; 1];
         if std::os::file_read(stream as usize, &mut buf) == 1 { return buf[0] as c_int; }
@@ -333,7 +333,7 @@ struct Stat {
     st_dev: u64,
     st_ino: u64,
     st_mode: u32,
-    _pad1: u32, 
+    _pad1: u32,
     st_nlink: u64,
     st_uid: u32,
     st_gid: u32,
@@ -409,7 +409,7 @@ unsafe fn printf_core(mut output: impl FnMut(u8), fmt: *const c_char, args: &mut
 
         if *p == b'*' as c_char {
             let w = args.arg::<c_int>();
-            width = if w < 0 { 0 } else { w as usize }; 
+            width = if w < 0 { 0 } else { w as usize };
             p = p.add(1);
         } else {
             while *p >= b'0' as c_char && *p <= b'9' as c_char {

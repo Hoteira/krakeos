@@ -27,7 +27,7 @@ pub struct Superblock {
     pub rev_level: u32,
     pub def_resuid: u16,
     pub def_resgid: u16,
-    
+
     // -- EXT2_DYNAMIC_REV fields --
     pub first_ino: u32,
     pub inode_size: u16,
@@ -39,23 +39,23 @@ pub struct Superblock {
     pub volume_name: [u8; 16],
     pub last_mounted: [u8; 64],
     pub algo_bitmap: u32,
-    
+
     // -- Performance hints --
     pub prealloc_blocks: u8,
     pub prealloc_dir_blocks: u8,
     pub padding1: u16,
-    
+
     // -- Journaling support --
     pub journal_uuid: [u8; 16],
     pub journal_inum: u32,
     pub journal_dev: u32,
     pub last_orphan: u32,
-    
+
     // -- Directory indexing support --
     pub hash_seed: [u32; 4],
     pub def_hash_version: u8,
     pub padding2: [u8; 3],
-    
+
     // -- Other options --
     pub default_mount_opts: u32,
     pub first_meta_bg: u32,

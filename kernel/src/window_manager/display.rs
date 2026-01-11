@@ -81,14 +81,14 @@ impl DisplayServer {
                 if let Some((w, h)) = virtio::get_display_info() {
                     self.width = w as u64;
                     self.height = h as u64;
-                    
+
                     if self.width == 1280 && vbe.width != 1280 && vbe.width != 0 {
                         self.width = vbe.width as u64;
                         self.height = vbe.height as u64;
                         self.pitch = self.width * 4;
                         debugln!("DisplayServer: VirtIO reported 1280 but VBE says {}, trusting VBE", self.width);
                     }
-                    
+
                     debugln!("DisplayServer: Detected resolution {}x{}", self.width, self.height);
                 } else {
                     debugln!("DisplayServer: Could not detect resolution, defaulting to {}x{} from VBE", self.width, self.height);
@@ -159,7 +159,7 @@ impl DisplayServer {
         self.depth = 32;
 
         let size_bytes = self.pitch as usize * self.height as usize;
-        
+
         unsafe {
             self.framebuffer = crate::memory::paging::phys_to_virt(crate::memory::address::PhysAddr::new(vbe.framebuffer as u64)).as_u64();
         }
@@ -542,7 +542,7 @@ impl DisplayServer {
 
         let src_off_x = (intersect_x - win_x) as usize;
         let src_off_y = (intersect_y - win_y) as usize;
-// ... (omitting middle part for clarity, it stays identical) ...
+        // ... (omitting middle part for clarity, it stays identical) ...
 
 
         let src_len = (width as usize) * (height as usize);
@@ -812,7 +812,7 @@ impl DisplayServer {
 
         let src_off_x = (intersect_x - win_x) as usize;
         let src_off_y = (intersect_y - win_y) as usize;
-// ... (rest unchanged) ...
+        // ... (rest unchanged) ...
 
         unsafe {
             let src_base = buffer as *const u32;
@@ -825,11 +825,10 @@ impl DisplayServer {
                 let is_top_or_bottom = (src_off_y + row) == 0 || (src_off_y + row) == (height as usize - 1);
 
                 if !treat_as_transparent && !is_top_or_bottom {
-                    
                     let mut start_col = 0;
                     let mut end_col = copy_width;
 
-                    
+
                     if src_off_x == 0 && copy_width > 0 {
                         if let Some(color) = border_color {
                             *dst_row_ptr.add(0) = color;
@@ -839,7 +838,7 @@ impl DisplayServer {
                         start_col = 1;
                     }
 
-                    
+
                     if (src_off_x + copy_width) == (width as usize) && copy_width > start_col {
                         if let Some(color) = border_color {
                             *dst_row_ptr.add(copy_width - 1) = color;
@@ -849,7 +848,7 @@ impl DisplayServer {
                         end_col = copy_width - 1;
                     }
 
-                    
+
                     if end_col > start_col {
                         core::ptr::copy_nonoverlapping(
                             src_row_ptr.add(start_col),

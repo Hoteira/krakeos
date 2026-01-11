@@ -1,7 +1,7 @@
+use crate::io::{Error, Read, Result, Seek, SeekFrom, Write};
 use crate::os::syscall;
 use rust_alloc::string::String;
 use rust_alloc::vec::Vec;
-use crate::io::{Read, Write, Seek, SeekFrom, Result, Error};
 
 pub struct File {
     fd: usize,

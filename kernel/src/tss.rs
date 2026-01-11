@@ -1,5 +1,4 @@
 use crate::boot::TaskStateSegment;
-use crate::debugln;
 
 #[allow(dead_code)]
 pub static mut BASE_TSS: TaskStateSegment = TaskStateSegment {
@@ -63,7 +62,6 @@ pub fn init_ists() {
         (*tss_struct).ist3 = ist3_frame + 4096 + crate::memory::paging::HHDM_OFFSET;
     }
 }
-
 
 
 pub fn set_tss(kernel_stack: u64) {

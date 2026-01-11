@@ -1,5 +1,5 @@
 use super::address::{PhysAddr, VirtAddr};
-use super::paging::{PageTable, PageTableEntry, PageTableFlags, phys_to_virt, PAGE_SIZE, PAGE_PRESENT, PAGE_WRITABLE, PAGE_USER};
+use super::paging::{phys_to_virt, PageTable, PageTableFlags};
 use super::pmm;
 
 pub struct Mapper {
@@ -38,20 +38,19 @@ impl Mapper {
 
     fn get_next_table_from(table: &mut PageTable, index: usize) -> Result<&'static mut PageTable, &'static str> {
         let entry = &mut table[index];
-        
+
         if entry.flags().contains(PageTableFlags::HUGE_PAGE) {
             return Err("Huge page encountered while walking");
         }
 
         if entry.is_unused() {
             let frame = pmm::allocate_frame(0).ok_or("OOM: Failed to allocate page table")?;
-            
-            
-            
+
+
             let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER_ACCESSIBLE;
-            
+
             entry.set_addr(PhysAddr::new(frame), flags);
-            
+
             let virt = phys_to_virt(PhysAddr::new(frame));
             let table = unsafe { &mut *(virt.as_mut_ptr() as *mut PageTable) };
             table.zero();

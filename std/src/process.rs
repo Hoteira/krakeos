@@ -19,7 +19,7 @@ impl<T: Termination, E: core::fmt::Debug> Termination for Result<T, E> {
         match self {
             Ok(val) => val.report(),
             Err(err) => {
-                crate::println!("Error: {:?}", err);
+                crate::debugln!("Error: {:?}", err);
                 1
             }
         }

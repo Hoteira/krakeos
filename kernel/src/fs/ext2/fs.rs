@@ -1,9 +1,9 @@
+use crate::sync::Mutex;
 #[allow(dead_code)]
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::mem::size_of;
-use crate::sync::Mutex;
 
 
 use crate::fs::disk;
@@ -524,10 +524,10 @@ impl VfsNode for Ext2Node {
     fn read(&mut self, offset: u64, buffer: &mut [u8]) -> Result<usize, String> {
         let fs = unsafe { &mut *self.fs };
         let fs_ptr = fs as *mut Ext2;
-        
+
         let total_size = self.size();
-        if offset >= total_size { 
-            return Ok(0); 
+        if offset >= total_size {
+            return Ok(0);
         }
 
         let mut bytes_read = 0;
@@ -542,7 +542,7 @@ impl VfsNode for Ext2Node {
         let start_block_offset = (current_offset % block_size) as usize;
         if start_block_offset != 0 {
             let block_idx = (current_offset / block_size) as u32;
-            
+
             let phys = {
                 let _lock = fs.lock.lock();
                 unsafe { (*fs_ptr).get_block_address(&self.inode, block_idx) }
@@ -737,9 +737,6 @@ impl VfsNode for Ext2Node {
 
 
         while offset < total_size {
-
-            
-
             let block_idx = (offset / block_size as u64) as u32;
 
             let phys = {
@@ -778,12 +775,6 @@ impl VfsNode for Ext2Node {
 
                         let name = String::from_utf8_lossy(name_slice).into_owned();
 
-
-                        
-
-                        
-
-                        
 
                         let child_inode = {
                             let _lock = fs.lock.lock();
@@ -1070,7 +1061,7 @@ impl VfsNode for Ext2Node {
                         if entry_index >= start_index {
                             let name_len = entry.name_len as usize;
 
-                            
+
                             if bytes_written + 2 + name_len > buffer.len() {
                                 return Ok((bytes_written, count_read));
                             }
@@ -1081,14 +1072,11 @@ impl VfsNode for Ext2Node {
                             };
 
                             let mapped_type = if (child_inode.mode & 0xF000) == 0x4000 {
-                                2 
-
+                                2
                             } else if (child_inode.mode & 0xF000) == 0x8000 {
-                                1 
-
+                                1
                             } else {
-                                0 
-
+                                0
                             };
 
 
@@ -1118,7 +1106,7 @@ impl VfsNode for Ext2Node {
     fn rename(&mut self, old_name: &str, new_name: &str) -> Result<(), String> {
         let fs = unsafe { &mut *self.fs };
         let fs_ptr = fs as *mut Ext2;
-        
+
         let _child = self.find_internal(old_name)?;
 
 
@@ -1161,8 +1149,8 @@ impl VfsNode for Ext2Node {
             offset += fs.block_size as u64;
         }
 
-        if target_inode == 0 { 
-            return Err(String::from("Old file not found")); 
+        if target_inode == 0 {
+            return Err(String::from("Old file not found"));
         }
 
 

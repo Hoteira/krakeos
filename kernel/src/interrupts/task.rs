@@ -1,9 +1,9 @@
-use alloc::vec::Vec;
-use alloc::sync::Arc;
-use crate::memory::{paging, pmm, vmm};
 use crate::memory::address::PhysAddr;
-use core::arch::{asm, naked_asm};
+use crate::memory::{paging, pmm, vmm};
 use crate::sync::Mutex;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::arch::{asm, naked_asm};
 
 pub(crate) const MAX_THREADS: usize = 128;
 pub(crate) const MAX_PROCESSES: usize = 64;
@@ -148,20 +148,20 @@ impl TaskManager {
     pub fn init(&mut self) {
         let mut idle_thread = Thread::new(b"idle");
         idle_thread.state = ThreadState::Ready;
-        
+
         unsafe {
             let kernel_pml4 = (*(&raw const crate::boot::BOOT_INFO)).pml4;
             let kernel_proc = Process::new(0, kernel_pml4);
             idle_thread.process = Some(kernel_proc);
-            
+
             let stack_pages = (STACK_SIZE / 4096) as usize;
             let stack_phys = pmm::allocate_frames(stack_pages, 0).expect("Idle stack allocation failed");
             idle_thread.kernel_stack = stack_phys + STACK_SIZE + paging::HHDM_OFFSET;
-            
+
             let state_size = core::mem::size_of::<CPUState>();
             let state_ptr = (idle_thread.kernel_stack - state_size as u64) as *mut CPUState;
             idle_thread.cpu_state_ptr = state_ptr as u64;
-            
+
             (*state_ptr).rip = idle as u64;
             (*state_ptr).cs = 0x08;
             (*state_ptr).rflags = 0x202;
@@ -261,16 +261,16 @@ impl TaskManager {
     pub fn init_user_task(&mut self, slot: usize, entry_point: u64, _pml4: u64, args: Option<&[&str]>, fd_table: Option<[i16; 16]>, name: &[u8], terminal_size: (u16, u16)) -> Result<(), pmm::FrameError> {
         let pid = slot as u64;
         let mut thread = Thread::new(name);
-        
+
         let user_pml4 = unsafe { vmm::create_user_pml4().ok_or(pmm::FrameError::NoMemory)? };
         let proc = Process::new(pid, user_pml4);
-        
+
         if let Some(fds) = fd_table {
             *proc.fd_table.lock() = fds;
         }
         *proc.terminal_width.lock() = terminal_size.0;
         *proc.terminal_height.lock() = terminal_size.1;
-        
+
         thread.process = Some(proc);
 
         let k_frame = pmm::allocate_frames(16, pid).ok_or(pmm::FrameError::NoMemory)?;
@@ -278,12 +278,12 @@ impl TaskManager {
 
         let stack_pages = (STACK_SIZE / 4096) as usize;
         let u_frame_phys = pmm::allocate_frames(stack_pages, pid).ok_or(pmm::FrameError::NoMemory)?;
-        let u_stack_virt = 0x0000_7FFF_FFFF_0000 - STACK_SIZE; 
-        
+        let u_stack_virt = 0x0000_7FFF_FFFF_0000 - STACK_SIZE;
+
         for i in 0..stack_pages {
             let offset = i as u64 * 4096;
-            vmm::map_page(u_stack_virt + offset, PhysAddr::new(u_frame_phys + offset), 
-                          paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER, 
+            vmm::map_page(u_stack_virt + offset, PhysAddr::new(u_frame_phys + offset),
+                          paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER,
                           Some(user_pml4));
         }
         thread.user_stack = u_stack_virt + STACK_SIZE;
@@ -295,7 +295,7 @@ impl TaskManager {
         unsafe {
             let stack_phys_base = u_frame_phys + paging::HHDM_OFFSET;
             let mut current_virt_sp = thread.user_stack;
-            
+
             let mut arg_ptrs = Vec::new();
             let mut push_str = |s: &[u8]| {
                 let len = s.len() + 1;
@@ -303,7 +303,7 @@ impl TaskManager {
                 let offset = current_virt_sp - u_stack_virt;
                 let dest = (stack_phys_base + offset) as *mut u8;
                 core::ptr::copy_nonoverlapping(s.as_ptr(), dest, s.len());
-                *dest.add(s.len()) = 0; 
+                *dest.add(s.len()) = 0;
                 current_virt_sp
             };
 
@@ -314,7 +314,7 @@ impl TaskManager {
                 }
             }
 
-            current_virt_sp &= !15; 
+            current_virt_sp &= !15;
             let mut push_u64 = |val: u64| {
                 current_virt_sp -= 8;
                 let offset = current_virt_sp - u_stack_virt;
@@ -322,9 +322,10 @@ impl TaskManager {
                 *dest = val;
             };
 
-            push_u64(0); push_u64(0); 
+            push_u64(0);
+            push_u64(0);
             for &ptr in arg_ptrs.iter().rev() { push_u64(ptr); }
-            push_u64(arg_ptrs.len() as u64); 
+            push_u64(arg_ptrs.len() as u64);
 
             (*state_ptr).rax = 0;
             (*state_ptr).rip = entry_point;
@@ -469,7 +470,7 @@ unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
             crate::tss::set_tss(k_stack);
             KERNEL_STACK_PTR = k_stack;
         }
-        
+
         if pml4_phys != 0 {
             let current_cr3: u64;
             asm!("mov {}, cr3", out(reg) current_cr3);

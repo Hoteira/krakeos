@@ -1,6 +1,6 @@
-use crate::sync::Mutex;
 use crate::rust_alloc::string::String;
 use crate::rust_alloc::vec::Vec;
+use crate::sync::Mutex;
 
 static ARGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static VARS: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
@@ -56,7 +56,7 @@ pub fn var(key: &str) -> Result<String, VarError> {
 #[derive(Debug, PartialEq, Eq)]
 pub enum VarError {
     NotPresent,
-    NotUnicode(String), 
+    NotUnicode(String),
 }
 
 // Internal initialization function called by runtime

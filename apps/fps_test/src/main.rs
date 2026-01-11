@@ -12,7 +12,7 @@ pub extern "C" fn main() -> i32 {
     win.x = 100;
     win.y = 100;
 
-    
+
     win.set_transparent(false);
     win.set_treat_as_transparent(false);
 
@@ -26,23 +26,15 @@ pub extern "C" fn main() -> i32 {
         .width(Size::Relative(100))
         .height(Size::Relative(100));
 
-    
+
     win.children.push(root);
 
     for i in 0..1000 {
-        
         let r = (i % 255) as u8;
         let g = ((i * 2) % 255) as u8;
         let b = ((i * 3) % 255) as u8;
 
-        if let Some(root_widget) = win.find_widget_by_id_mut(1) {
-            
-            
-            
-            
-            
-            
-        }
+        if let Some(root_widget) = win.find_widget_by_id_mut(1) {}
 
         win.children.clear();
         let bg = Widget::frame(1)

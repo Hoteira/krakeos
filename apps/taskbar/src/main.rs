@@ -3,10 +3,9 @@
 
 extern crate alloc;
 use alloc::format;
-use std::io::Read;
-use std::println;
 use inkui::{Color, Display, Size, Widget, Window};
 use std::fs::File;
+use std::io::Read;
 
 fn open_start_menu(_win: &mut Window, _id: usize) {
     std::os::print("Start Menu Clicked\n");

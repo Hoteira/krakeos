@@ -90,7 +90,7 @@ impl AppState {
         if self.selected_index < self.processes.len() {
             let pid = self.processes[self.selected_index].pid;
             unsafe {
-                std::os::syscall(62, pid, 9, 0); 
+                std::os::syscall(62, pid, 9, 0);
             }
             self.refresh();
         }
@@ -102,7 +102,7 @@ pub extern "C" fn main() -> i32 {
     let mut app = AppState::new();
     let mut needs_redraw = true;
 
-    
+
     std::os::file_write(STDOUT_FD, b"\x1B[?1049h\x1B[?25l");
 
     loop {
@@ -132,7 +132,6 @@ pub extern "C" fn main() -> i32 {
                     needs_redraw = true;
                 }
                 'q' | 'Q' => {
-                    
                     std::os::file_write(STDOUT_FD, b"\x1B[?1049l\x1B[?25h");
                     return 0;
                 }
@@ -140,8 +139,6 @@ pub extern "C" fn main() -> i32 {
             }
         } else {
             std::os::yield_task();
-            
-            
         }
     }
 }

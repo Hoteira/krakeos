@@ -8,11 +8,11 @@ use self::queue::*;
 use self::structs::*;
 use crate::debugln;
 use crate::drivers::pci::{PciCapability, PciDevice};
-use alloc::vec::Vec;
 use crate::memory::mmio::{read_16, read_32, read_8, write_32, write_8};
-use crate::memory::vmm;
-use crate::memory::pmm;
 use crate::memory::paging::virt_to_phys;
+use crate::memory::pmm;
+use crate::memory::vmm;
+use alloc::vec::Vec;
 
 pub static mut COMMON_CFG_ADDR: u64 = 0;
 
@@ -53,7 +53,7 @@ pub fn init() {
         debugln!("VirtIO GPU: Failed to enable bus mastering.");
     }
 
-    
+
     unsafe {
         if let Some(frame) = pmm::allocate_frame(0) {
             GPU_CMD_PHYS = frame;
@@ -70,7 +70,7 @@ pub fn init() {
     let mut common_cfg_ptr: *mut u8 = core::ptr::null_mut();
     let mut notify_base: u64 = 0;
     let mut notify_multiplier: u32 = 0;
-    
+
     let mut next_bar_addr = 0xF0000000;
 
     for cap in virtio_caps {
@@ -80,7 +80,7 @@ pub fn init() {
                 let raw_bar = virtio.read_bar_raw(cap.bar);
                 if (raw_bar & 0xFFFFFFF0) == 0 {
                     virtio.write_bar(cap.bar, next_bar_addr);
-                    next_bar_addr += 0x100000; 
+                    next_bar_addr += 0x100000;
                     bar_base_opt = virtio.get_bar(cap.bar);
                 }
             }
@@ -189,7 +189,11 @@ pub fn get_display_info() -> Option<(u32, u32)> {
 
         core::ptr::write(req_ptr, VirtioGpuCtrlHeader {
             type_: VIRTIO_GPU_CMD_GET_DISPLAY_INFO,
-            flags: 0, fence_id: 0, ctx_id: 0, ring_idx: 0, padding: [0; 3],
+            flags: 0,
+            fence_id: 0,
+            ctx_id: 0,
+            ring_idx: 0,
+            padding: [0; 3],
         });
         core::ptr::write_bytes(resp_ptr as *mut u8, 0, 512);
 
@@ -233,7 +237,11 @@ pub fn start_gpu(width: u32, height: u32, phys_buf1: u64, phys_buf2: u64) {
             core::ptr::write(req_create_ptr, VirtioGpuResourceCreate2d {
                 hdr: VirtioGpuCtrlHeader {
                     type_: VIRTIO_GPU_CMD_RESOURCE_CREATE_2D,
-                    flags: 0, fence_id: 0, ctx_id: 0, ring_idx: 0, padding: [0; 3],
+                    flags: 0,
+                    fence_id: 0,
+                    ctx_id: 0,
+                    ring_idx: 0,
+                    padding: [0; 3],
                 },
                 resource_id: id,
                 format: 1,
@@ -249,7 +257,11 @@ pub fn start_gpu(width: u32, height: u32, phys_buf1: u64, phys_buf2: u64) {
                 hdr: VirtioGpuResourceAttachBacking {
                     hdr: VirtioGpuCtrlHeader {
                         type_: VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING,
-                        flags: 0, fence_id: 0, ctx_id: 0, ring_idx: 0, padding: [0; 3],
+                        flags: 0,
+                        fence_id: 0,
+                        ctx_id: 0,
+                        ring_idx: 0,
+                        padding: [0; 3],
                     },
                     resource_id: id,
                     nr_entries: 1,
@@ -268,7 +280,11 @@ pub fn start_gpu(width: u32, height: u32, phys_buf1: u64, phys_buf2: u64) {
         core::ptr::write(req_scanout_ptr, VirtioGpuSetScanout {
             hdr: VirtioGpuCtrlHeader {
                 type_: VIRTIO_GPU_CMD_SET_SCANOUT,
-                flags: 0, fence_id: 0, ctx_id: 0, ring_idx: 0, padding: [0; 3],
+                flags: 0,
+                fence_id: 0,
+                ctx_id: 0,
+                ring_idx: 0,
+                padding: [0; 3],
             },
             r: VirtioGpuRect { x: 0, y: 0, width, height },
             scanout_id: 0,
@@ -300,7 +316,8 @@ pub fn transfer_and_flush(resource_id: u32, width: u32, height: u32) {
         *req_flush = VirtioGpuResourceFlush {
             hdr: VirtioGpuCtrlHeader { type_: VIRTIO_GPU_CMD_RESOURCE_FLUSH, flags: 0, fence_id: 0, ctx_id: 0, ring_idx: 0, padding: [0; 3] },
             r: VirtioGpuRect { x: 0, y: 0, width, height },
-            resource_id, padding: 0,
+            resource_id,
+            padding: 0,
         };
         let req_flush_phys = virt_to_phys(req_flush as *const _ as u64);
         send_command_queue(0, &[req_flush_phys], &[core::mem::size_of::<VirtioGpuResourceFlush>() as u32], &[], &[], false);
@@ -317,7 +334,9 @@ pub fn flush(x: u32, y: u32, width: u32, height: u32, screen_width: u32, resourc
         *req_transfer = VirtioGpuTransferToHost2d {
             hdr: VirtioGpuCtrlHeader { type_: VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D, flags: 0, fence_id: 0, ctx_id: 0, ring_idx: 0, padding: [0; 3] },
             r: VirtioGpuRect { x, y, width, height },
-            offset, resource_id, padding: 0,
+            offset,
+            resource_id,
+            padding: 0,
         };
         let req_transfer_phys = virt_to_phys(req_transfer as *const _ as u64);
         send_command_queue(0, &[req_transfer_phys], &[core::mem::size_of::<VirtioGpuTransferToHost2d>() as u32], &[], &[], false);
@@ -326,7 +345,8 @@ pub fn flush(x: u32, y: u32, width: u32, height: u32, screen_width: u32, resourc
         *req_flush = VirtioGpuResourceFlush {
             hdr: VirtioGpuCtrlHeader { type_: VIRTIO_GPU_CMD_RESOURCE_FLUSH, flags: 0, fence_id: 0, ctx_id: 0, ring_idx: 0, padding: [0; 3] },
             r: VirtioGpuRect { x, y, width, height },
-            resource_id, padding: 0,
+            resource_id,
+            padding: 0,
         };
         let req_flush_phys = virt_to_phys(req_flush as *const _ as u64);
         send_command_queue(0, &[req_flush_phys], &[core::mem::size_of::<VirtioGpuResourceFlush>() as u32], &[], &[], false);
@@ -338,7 +358,8 @@ pub fn set_scanout(resource_id: u32, width: u32, height: u32) {
         core::ptr::write(req_scanout_ptr, VirtioGpuSetScanout {
             hdr: VirtioGpuCtrlHeader { type_: VIRTIO_GPU_CMD_SET_SCANOUT, flags: 0, fence_id: 0, ctx_id: 0, ring_idx: 0, padding: [0; 3] },
             r: VirtioGpuRect { x: 0, y: 0, width, height },
-            scanout_id: 0, resource_id,
+            scanout_id: 0,
+            resource_id,
         });
         send_command_queue(0, &[GPU_CMD_PHYS], &[core::mem::size_of::<VirtioGpuSetScanout>() as u32], &[GPU_CMD_PHYS + 1024], &[24], false);
     }

@@ -1,4 +1,3 @@
-use crate::println;
 use core::arch::naked_asm;
 
 #[unsafe(no_mangle)]
@@ -16,7 +15,7 @@ pub unsafe extern "C" fn _start() -> ! {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rust_start(stack: *const usize) -> ! {
-    let heap_size = 10 * 1024 * 1024; 
+    let heap_size = 10 * 1024 * 1024;
     let heap_ptr = crate::memory::malloc(heap_size);
     if heap_ptr == 0 || heap_ptr == usize::MAX {
         crate::os::exit(1);

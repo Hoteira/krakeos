@@ -119,5 +119,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasm_runner"
+version = "0.1.0"
+dependencies = [
+ "std",
+]
+
+[[package]]
 name = "wasm_test"
 version = "0.1.0"

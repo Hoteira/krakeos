@@ -1,12 +1,12 @@
+use crate::debugln;
 use crate::interrupts::syscalls::fs::resolve_path;
 use crate::interrupts::task::CPUState;
-use crate::debugln;
 use crate::memory::paging;
 use alloc::string::String;
 use alloc::vec::Vec;
 
 pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&[(u8, u8)]>) -> Result<u64, String> {
-// ... (rest of spawn_process remains the same) ...
+    // ... (rest of spawn_process remains the same) ...
 
     let cwd_str = {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
@@ -63,12 +63,11 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
         return Err(String::from("File not found"));
     }
 
-    
+
     let pid_idx = crate::interrupts::task::TASK_MANAGER.int_lock().reserve_pid().map_err(|_| String::from("No free process slots"))?;
     let pid = pid_idx as u64;
 
-    
-    
+
     let (new_fd_table, term_size) = {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         let mut fds = [-1i16; 16];
@@ -99,14 +98,14 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
         }
     }
 
-    
+
     {
         let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
-        
+
         tm.init_user_task(pid_idx, 0, 0, args, Some(new_fd_table), process_name_bytes, term_size).map_err(|_| String::from("Failed to init task"))?;
     }
 
-    
+
     let target_pml4_phys = {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         tm.tasks[pid_idx].as_ref().unwrap().process.as_ref().unwrap().pml4_phys
@@ -114,20 +113,18 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
 
     match crate::fs::elf::load_elf(&file_buf, target_pml4_phys, pid) {
         Ok(entry_point) => {
-            
             let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
             let task = tm.tasks[pid_idx].as_mut().unwrap();
-            
-            
+
+
             unsafe {
                 let cpu_state = &mut *(task.cpu_state_ptr as *mut crate::interrupts::task::CPUState);
                 cpu_state.rip = entry_point;
             }
-            
+
             Ok(pid)
         }
         Err(e) => {
-            
             crate::interrupts::task::TASK_MANAGER.int_lock().kill_process(pid);
             Err(e)
         }
@@ -186,7 +183,7 @@ pub fn handle_spawn(context: &mut CPUState) {
     let path_slice = unsafe { core::slice::from_raw_parts(path_ptr, path_len) };
     let path_str = String::from_utf8_lossy(path_slice);
 
-    
+
     let mut args_vec = Vec::new();
     if !args_ptr.is_null() && args_len > 0 {
         let args_ptrs = unsafe { core::slice::from_raw_parts(args_ptr, args_len) };
@@ -197,7 +194,7 @@ pub fn handle_spawn(context: &mut CPUState) {
             }
         }
     }
-    
+
     let args_refs: Vec<&str> = args_vec.iter().map(|s| s.as_str()).collect();
     let args_opt = if args_refs.is_empty() { None } else { Some(args_refs.as_slice()) };
 
@@ -347,7 +344,7 @@ pub fn handle_thread_exit(context: &mut CPUState) {
         if current >= 0 {
             if let Some(task) = tm.tasks[current as usize].as_mut() {
                 task.state = crate::interrupts::task::TaskState::Zombie;
-                task.exit_code = 0; 
+                task.exit_code = 0;
             }
         }
     }

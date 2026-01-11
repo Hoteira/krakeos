@@ -58,7 +58,7 @@ pub const SYS_THREAD_EXIT: u64 = 113;
 
 pub const SYS_SPAWN_EXT: u64 = 114;
 pub const SYS_GET_DATE: u64 = 115;
-pub const SYS_DEBUG_PRINT: u64 = 999; 
+pub const SYS_DEBUG_PRINT: u64 = 999;
 pub const SYS_MOUNT: u64 = 165;
 
 #[unsafe(naked)]
@@ -161,13 +161,13 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
         SYS_GET_PROCESS_LIST => process::handle_get_process_list(context),
         SYS_GET_PROCESS_MEM => memory::handle_get_process_mem(context),
         SYS_FTRUNCATE => fs::handle_ftruncate(context),
-        
+
         SYS_SPAWN_THREAD => process::handle_spawn_thread(context),
         SYS_THREAD_EXIT => process::handle_thread_exit(context),
 
         SYS_DEBUG_PRINT => misc::handle_debug_print(context),
         SYS_MOUNT => {
-            context.rax = 0; 
+            context.rax = 0;
         }
 
         _ => {

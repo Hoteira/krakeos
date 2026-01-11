@@ -31,4 +31,4 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     crate::os::exit(1);
 }
 
-pub use crate::io::serial::{_print, _debug_print};
+pub use crate::io::serial::{_debug_print, _print};

@@ -9,14 +9,12 @@ pub fn resolve_path(cwd: &str, path: &str) -> String {
 
     if !trimmed_path.starts_with('@') {
         if trimmed_path.starts_with('/') {
-            
             if let Some(idx) = cwd.find('/') {
                 parts.push(&cwd[..idx]);
             } else {
                 parts.push(cwd);
             }
         } else {
-            
             for part in cwd.split('/') {
                 if !part.is_empty() {
                     parts.push(part);

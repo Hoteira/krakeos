@@ -3,9 +3,7 @@
 
 extern crate alloc;
 use std::fs::File;
-use std::io::{Read, Write};
-use alloc::ffi::CString;
-use alloc::string::String;
+use std::io::Read;
 
 fn sanitize_buffer(buf: &mut [u8]) {
     for b in buf.iter_mut() {

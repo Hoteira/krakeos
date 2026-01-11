@@ -1,6 +1,6 @@
+use crate::task::noop_waker;
 use core::future::Future;
 use core::task::{Context, Poll};
-use crate::task::noop_waker;
 
 pub fn block_on<F: Future>(mut future: F) -> F::Output {
     let mut future = unsafe { core::pin::Pin::new_unchecked(&mut future) };

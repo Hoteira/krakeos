@@ -1,7 +1,7 @@
-use core::ffi::{c_int, c_void};
-use std::thread::JoinHandle;
-use std::sync::Mutex;
 use alloc::collections::BTreeMap;
+use core::ffi::{c_int, c_void};
+use std::sync::Mutex;
+use std::thread::JoinHandle;
 
 pub type pthread_t = usize;
 
@@ -60,7 +60,7 @@ pub unsafe extern "C" fn pthread_exit(retval: *mut c_void) -> ! {
     // This is tricky because we need to pass the retval back to the JoinHandle's packet
     // But since we are inside the thread, we don't easily have access to it here 
     // unless we use thread local storage (which we haven't implemented).
-    
+
     // For now, we'll just exit. retval support would require TLS or similar.
     let _ = retval;
     crate::stdlib::exit(0);

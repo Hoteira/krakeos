@@ -1,8 +1,8 @@
 extern crate alloc;
+use crate::types::Cell;
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
-use crate::types::Cell;
 
 pub struct TerminalBuffer {
     pub lines: Vec<Vec<Cell>>,
@@ -12,12 +12,10 @@ pub struct TerminalBuffer {
     pub cursor_col: usize,
     pub cursor_visible: bool,
 
-    
     pub current_fg: u8,
     pub current_bg: u8,
     pub current_bold: bool,
 
-    
     pub input_buffer: Vec<u8>,
 }
 
@@ -58,11 +56,11 @@ impl TerminalBuffer {
         self.ensure_row();
         let current = if self.is_alt { &mut self.alt_lines } else { &mut self.lines };
         let line = &mut current[self.cursor_row];
-        
+
         while line.len() <= self.cursor_col {
             line.push(Cell::default());
         }
-        
+
         let cell = Cell {
             c,
             fg: self.current_fg,
@@ -115,7 +113,11 @@ impl TerminalBuffer {
         for part in parts {
             let n = part.parse::<u8>().unwrap_or(0);
             match n {
-                0 => { self.current_fg = 255; self.current_bg = 255; self.current_bold = false; }
+                0 => {
+                    self.current_fg = 255;
+                    self.current_bg = 255;
+                    self.current_bold = false;
+                }
                 1 => self.current_bold = true,
                 22 => self.current_bold = false,
                 30..=37 => self.current_fg = n - 30,
@@ -124,7 +126,7 @@ impl TerminalBuffer {
                 49 => self.current_bg = 255,
                 90..=97 => self.current_fg = n - 90 + 8,
                 100..=107 => self.current_bg = n - 100 + 8,
-                _ => {} 
+                _ => {}
             }
         }
     }
@@ -132,28 +134,27 @@ impl TerminalBuffer {
     pub fn render(&self) -> String {
         let current = if self.is_alt { &self.alt_lines } else { &self.lines };
         let mut s = String::new();
-        
+
         let mut last_fg = 255;
         let mut last_bg = 255;
         let mut last_bold = false;
 
-        
+
         s.push_str("\x1B[0m");
 
-        
+
         let max_row = current.len().max(if self.cursor_visible { self.cursor_row + 1 } else { 0 });
 
         for i in 0..max_row {
-            if i > 0 { 
-                s.push('\n'); 
+            if i > 0 {
+                s.push('\n');
             }
-            
-            
+
+
             let empty_line = Vec::new();
             let line = if i < current.len() { &current[i] } else { &empty_line };
 
-            
-            
+
             let line_len = line.len();
             let mut max_col = line_len;
             if self.cursor_visible && i == self.cursor_row {
@@ -161,27 +162,24 @@ impl TerminalBuffer {
             }
 
             for j in 0..max_col {
-                
                 let mut cell = if j < line_len { line[j] } else { Cell::default() };
-                
-                
+
+
                 if self.cursor_visible && i == self.cursor_row && j == self.cursor_col {
-                    
-                    
                     cell.c = '▆';
                 }
 
-                
+
                 if cell.bold != last_bold {
                     if cell.bold {
                         s.push_str("\x1B[1m");
                     } else {
-                        s.push_str("\x1B[22m"); 
+                        s.push_str("\x1B[22m");
                     }
                     last_bold = cell.bold;
                 }
 
-                
+
                 if cell.fg != last_fg {
                     if cell.fg == 255 {
                         s.push_str("\x1B[39m");
@@ -197,7 +195,7 @@ impl TerminalBuffer {
                     last_fg = cell.fg;
                 }
 
-                
+
                 if cell.bg != last_bg {
                     if cell.bg == 255 {
                         s.push_str("\x1B[49m");

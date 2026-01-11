@@ -146,7 +146,7 @@ pub fn init() {
     let mut notify_base: u64 = 0;
     let mut notify_multiplier: u32 = 0;
 
-    let mut next_bar_addr = 0xF1000000; 
+    let mut next_bar_addr = 0xF1000000;
 
     for cap in caps {
         if cap.id != 0x09 { continue; }
@@ -156,8 +156,8 @@ pub fn init() {
         let offset = virtio.read_u32(cap.offset as u32 + 8);
 
         let mut bar_base_opt = virtio.get_bar(bar);
-        
-        
+
+
         if bar_base_opt.is_none() || bar_base_opt.unwrap() < 0x100000 {
             let raw_bar = virtio.read_bar_raw(bar);
             if (raw_bar & 0xFFFFFFF0) < 0x100000 {
@@ -253,22 +253,17 @@ unsafe fn setup_queue(common_cfg: *mut u8, index: u16, notify_base: u64, notify_
         let max_size = read_16(common_cfg.add(OFF_QUEUE_SIZE));
         if max_size == 0 { return; }
 
-        let size: u16 = 128; 
+        let size: u16 = 128;
         write_16(common_cfg.add(OFF_QUEUE_SIZE), size);
 
         if let Some(frame) = pmm::allocate_frame(0) {
-            
             let virt_frame = (frame + crate::memory::paging::HHDM_OFFSET) as *mut u8;
             core::ptr::write_bytes(virt_frame, 0, 4096);
 
-            
-            
-            
-            
-            
+
             let desc_addr = frame;
             let avail_addr = desc_addr + 2048;
-            let used_addr = desc_addr + 3072; 
+            let used_addr = desc_addr + 3072;
 
             let avail_ptr = (avail_addr + crate::memory::paging::HHDM_OFFSET) as *mut VirtqAvail;
             (*avail_ptr).flags = 1;
@@ -300,16 +295,16 @@ pub fn read(lba: u64, _disk: u8, target: &mut [u8]) {
     let mut total_processed = 0;
     while total_processed < target.len() {
         let remaining = target.len() - total_processed;
-        
-        
-        let chunk_limit = 64 * 4096; 
+
+
+        let chunk_limit = 64 * 4096;
         let current_len = core::cmp::min(remaining, chunk_limit);
-        
+
         let slice = &mut target[total_processed..total_processed + current_len];
         let current_lba = lba + (total_processed as u64 / 512);
-        
+
         read_chunk(current_lba, slice);
-        
+
         total_processed += current_len;
     }
 }
@@ -338,14 +333,14 @@ fn read_chunk(lba: u64, target: &mut [u8]) {
         let page_offset = virt_addr & 0xFFF;
         let bytes_left_in_page = 4096 - page_offset;
         let bytes_left_total = (target.len() - current_offset) as u64;
-        
-                let mut chunk_size = core::cmp::min(bytes_left_in_page, bytes_left_total);
-        
+
+        let mut chunk_size = core::cmp::min(bytes_left_in_page, bytes_left_total);
+
         let phys_addr = crate::memory::paging::virt_to_phys(virt_addr);
-        
+
         in_phys.push(phys_addr);
         in_lens.push(chunk_size as u32);
-        
+
         current_offset += chunk_size as usize;
     }
 
@@ -363,12 +358,12 @@ pub fn write(lba: u64, _disk: u8, buffer: &[u8]) {
         let remaining = buffer.len() - total_processed;
         let chunk_limit = 64 * 4096;
         let current_len = core::cmp::min(remaining, chunk_limit);
-        
+
         let slice = &buffer[total_processed..total_processed + current_len];
         let current_lba = lba + (total_processed as u64 / 512);
-        
+
         write_chunk(current_lba, slice);
-        
+
         total_processed += current_len;
     }
 }
@@ -400,13 +395,13 @@ fn write_chunk(lba: u64, buffer: &[u8]) {
         let page_offset = virt_addr & 0xFFF;
         let bytes_left_in_page = 4096 - page_offset;
         let bytes_left_total = (buffer.len() - current_offset) as u64;
-        
+
         let chunk_size = core::cmp::min(bytes_left_in_page, bytes_left_total);
         let phys_addr = crate::memory::paging::virt_to_phys(virt_addr);
-        
+
         out_phys.push(phys_addr);
         out_lens.push(chunk_size as u32);
-        
+
         current_offset += chunk_size as usize;
     }
 
@@ -432,7 +427,7 @@ unsafe fn send_command(out_phys: &[u64], out_lens: &[u32], in_phys: &[u64], in_l
         let num_usize = vq.num as usize;
         let mut current_desc_idx = vq.free_head as usize;
 
-        
+
         let virt_desc_base = (vq.desc_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqDesc;
 
         for i in 0..out_phys.len() {
@@ -462,7 +457,7 @@ unsafe fn send_command(out_phys: &[u64], out_lens: &[u32], in_phys: &[u64], in_l
 
         let last_idx = (vq.free_head as usize + total_descs - 1) % num_usize;
         let last_desc_ptr = (virt_desc_base).add(last_idx);
-        (*last_desc_ptr).flags &= !1; 
+        (*last_desc_ptr).flags &= !1;
         (*last_desc_ptr).next = 0;
 
 

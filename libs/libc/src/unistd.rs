@@ -21,15 +21,12 @@ pub unsafe extern "C" fn time(t: *mut c_long) -> c_long {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn open(path: *const c_char, _flags: c_int, _mode: c_int) -> c_int {
     let path_str = core::ffi::CStr::from_ptr(path).to_string_lossy();
-    
+
     if let Ok(f) = std::fs::File::open(&path_str) {
         let fd = f.as_raw_fd();
         core::mem::forget(f);
         fd as c_int
     } else {
-        
-        
-        
         if let Ok(f) = std::fs::File::create(&path_str) {
             let fd = f.as_raw_fd();
             core::mem::forget(f);
@@ -119,7 +116,7 @@ pub unsafe extern "C" fn wait(status: *mut c_int) -> c_int {
 pub unsafe extern "C" fn waitpid(pid: c_int, status: *mut c_int, _options: c_int) -> c_int {
     let res = std::os::waitpid(pid as usize);
     if !status.is_null() {
-        *status = (res as c_int) << 8; 
+        *status = (res as c_int) << 8;
     }
     pid
 }
