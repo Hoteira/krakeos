@@ -1,7 +1,21 @@
-use crate::io::{Error, Read, Result, Seek, SeekFrom, Write};
 use crate::os::syscall;
 use rust_alloc::string::String;
 use rust_alloc::vec::Vec;
+use crate::io::{Read, Write, Seek, SeekFrom, Result, Error};
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct Stat {
+    pub dev: u64,
+    pub ino: u64,
+    pub mode: u32,
+    pub nlink: u32,
+    pub size: u64,
+    pub atime: u64,
+    pub mtime: u64,
+    pub ctime: u64,
+    pub _reserved: [u64; 1],
+}
 
 pub struct File {
     fd: usize,
@@ -14,7 +28,7 @@ impl File {
         };
 
         if res == u64::MAX {
-            Err(Error::from_raw_os_error(2)) // ENOENT-ish
+            Err(Error::from_raw_os_error(2)) // ENOENT
         } else {
             Ok(File { fd: res as usize })
         }
@@ -24,21 +38,26 @@ impl File {
         let res = unsafe {
             syscall(85, path.as_ptr() as u64, path.len() as u64, 0)
         };
-        if res == 0 {
-            File::open(path)
+        if res == u64::MAX {
+            Err(Error::from_raw_os_error(1)) 
         } else {
-            Err(Error::from_raw_os_error(1)) // EPERM-ish
+            Ok(File { fd: res as usize })
         }
     }
 
     pub fn size(&self) -> usize {
-        unsafe {
-            let res = syscall(5, self.fd as u64, 0, 0);
-            if res == u64::MAX {
-                0
-            } else {
-                res as usize
-            }
+        self.stat().map(|s| s.size as usize).unwrap_or(0)
+    }
+
+    pub fn stat(&self) -> Result<Stat> {
+        let mut s = unsafe { core::mem::zeroed::<Stat>() };
+        let res = unsafe {
+            syscall(5, self.fd as u64, 0, &mut s as *mut Stat as u64)
+        };
+        if res == u64::MAX {
+            Err(Error::from_raw_os_error(5))
+        } else {
+            Ok(s)
         }
     }
 
@@ -57,6 +76,10 @@ impl File {
         } else {
             Err(Error::from_raw_os_error(5))
         }
+    }
+
+    pub fn sync_all(&self) -> Result<()> {
+        Ok(())
     }
 }
 
@@ -105,7 +128,7 @@ impl Seek for File {
         };
 
         if res == u64::MAX {
-            Err(Error::from_raw_os_error(29)) // ESPIPE or similar
+            Err(Error::from_raw_os_error(29)) // ESPIPE
         } else {
             Ok(res)
         }
@@ -133,7 +156,10 @@ pub fn remove_file(path: &str) -> Result<()> {
 }
 
 pub fn remove_dir(path: &str) -> Result<()> {
-    remove_file(path)
+    let res = unsafe {
+        syscall(84, path.as_ptr() as u64, path.len() as u64, 0)
+    };
+    if res == 0 { Ok(()) } else { Err(Error::from_raw_os_error(1)) }
 }
 
 pub fn rename(from: &str, to: &str) -> Result<()> {

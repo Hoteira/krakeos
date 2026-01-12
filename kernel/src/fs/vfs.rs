@@ -74,10 +74,24 @@ pub fn increment_ref(fd: usize) {
 }
 
 pub fn open(disk_id: u8, path_str: &str) -> Result<Box<dyn VfsNode>, String> {
-    let components: Vec<String> = path_str.split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
+    let (actual_disk, actual_path) = if path_str.starts_with('@') {
+        let mut parts = path_str.splitn(2, '/');
+        let disk_part = parts.next().unwrap().trim_start_matches('@');
+        let id = if disk_part.starts_with("0x") || disk_part.starts_with("0X") {
+            u8::from_str_radix(&disk_part[2..], 16).unwrap_or(disk_id)
+        } else {
+            u8::from_str_radix(disk_part, 16).unwrap_or_else(|_| disk_part.parse::<u8>().unwrap_or(disk_id))
+        };
+        let p = parts.next().unwrap_or("");
+        (id, p)
+    } else {
+        (disk_id, path_str)
+    };
+
+    let components: Vec<String> = actual_path.split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
 
     unsafe {
-        if let Some(fs) = &mut FILESYSTEMS[disk_id as usize] {
+        if let Some(fs) = &mut FILESYSTEMS[actual_disk as usize] {
             let mut node = fs.root()?;
             for component in components.iter() {
                 node = node.find(&component)?;
@@ -90,24 +104,9 @@ pub fn open(disk_id: u8, path_str: &str) -> Result<Box<dyn VfsNode>, String> {
 }
 
 pub fn read(disk_id: u8, path_str: &str, offset: u64, size: u64, buffer: *mut u8) -> Result<usize, String> {
-    let components: Vec<String> = path_str
-        .split('/')
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .collect();
-
-    unsafe {
-        if let Some(fs) = &mut FILESYSTEMS[disk_id as usize] {
-            let mut node = fs.root()?;
-            for component in components {
-                node = node.find(&component)?;
-            }
-            let slice = core::slice::from_raw_parts_mut(buffer, size as usize);
-            node.read(offset, slice)
-        } else {
-            Err(String::from("Disk ID not mounted"))
-        }
-    }
+    let mut node = open(disk_id, path_str)?;
+    let slice = unsafe { core::slice::from_raw_parts_mut(buffer, size as usize) };
+    node.read(offset, slice)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,6 +115,20 @@ pub enum FileType {
     Directory,
     Device,
     Unknown,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct Stat {
+    pub dev: u64,
+    pub ino: u64,
+    pub mode: u32,
+    pub nlink: u32,
+    pub size: u64,
+    pub atime: u64,
+    pub mtime: u64,
+    pub ctime: u64,
+    pub _reserved: [u64; 1], // Pad to 64 bytes
 }
 
 pub trait FileSystem: Send + Sync {
@@ -127,6 +140,20 @@ pub trait VfsNode: Send + Sync {
     fn name(&self) -> String;
     fn size(&self) -> u64;
     fn kind(&self) -> FileType;
+    fn inode(&self) -> u64 { 0 }
+    fn stat(&self) -> Stat {
+        Stat {
+            dev: 1,
+            ino: self.inode(),
+            mode: 0,
+            nlink: 1,
+            size: self.size(),
+            atime: 0,
+            mtime: 0,
+            ctime: 0,
+            _reserved: [0],
+        }
+    }
     fn read(&mut self, offset: u64, buffer: &mut [u8]) -> Result<usize, String>;
     fn write(&mut self, offset: u64, buffer: &[u8]) -> Result<usize, String>;
     fn children(&mut self) -> Result<Vec<Box<dyn VfsNode>>, String>;

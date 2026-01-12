@@ -38,7 +38,8 @@ pub fn read(lba: u64, disk: u8, buffer: &mut [u8]) {
         outb(0x1F3, current_lba as u8);
         outb(0x1F4, (current_lba >> 8) as u8);
         outb(0x1F5, (current_lba >> 16) as u8);
-        outb(0x1F6, disk | ((current_lba >> 24) & 0x0F) as u8);
+        let drive_select = 0xE0 | ((disk & 1) << 4);
+        outb(0x1F6, (drive_select as u64 | ((current_lba >> 24) & 0x0F)) as u8);
         outb(0x1F7, 0x20);
 
         while is_busy() {}
@@ -91,7 +92,8 @@ pub fn write(lba: u64, disk: u8, buffer: &[u8]) {
         outb(0x1F3, current_lba as u8);
         outb(0x1F4, (current_lba >> 8) as u8);
         outb(0x1F5, (current_lba >> 16) as u8);
-        outb(0x1F6, disk | ((current_lba >> 24) & 0x0F) as u8);
+        let drive_select = 0xE0 | ((disk & 1) << 4);
+        outb(0x1F6, (drive_select as u64 | ((current_lba >> 24) & 0x0F)) as u8);
         outb(0x1F7, 0x30);
 
         while is_busy() {}
