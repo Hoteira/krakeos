@@ -19,6 +19,71 @@ pub fn instantiate_component<'a, T: Config>(
     component: &ParsedComponent,
     wasm: &'a [u8],
 ) -> Result<BTreeMap<String, ExternVal>, RuntimeError> {
+    let mut all_instantiated_modules = Vec::new();
+    let exports = instantiate_component_internal(store, linker, component, wasm, &mut all_instantiated_modules)?;
+
+    // EXECUTION LOGIC - ONLY run for the top-level component
+    // 1. Try "run" from component exports (Fuzzy match)
+    let run_func = exports.get("run").or_else(|| {
+        exports.iter().find_map(|(k, v)| {
+            if k.ends_with(":cli/run.run") || k.ends_with("#run") {
+                Some(v)
+            } else {
+                None
+            }
+        })
+    });
+
+    if let Some(run_func) = run_func {
+        if let crate::wasm::ExternVal::Func(func_addr) = *run_func {
+            crate::debugln!("Executing component export 'run'...");
+            store.invoke_unchecked(
+                func_addr,
+                crate::rust_alloc::vec::Vec::<crate::wasm::Value>::new(),
+                None,
+            ).map_err(|e| {
+                crate::debugln!("WASM Component Trap during 'run': {:?}", e);
+                e
+            })?;
+            return Ok(exports);
+        }
+    }
+
+    // 2. Fallback: Search ONLY the first non-shim module for entry points
+    if let Some(module_addr) = all_instantiated_modules.first() {
+        let module_exports = {
+            let module_inst = store.modules.get(*module_addr);
+            module_inst.exports.clone()
+        };
+
+        for (name, val) in &module_exports {
+            if name == "_start" || name == "main" {
+                if let Some(func_addr) = val.as_func() {
+                    crate::debugln!("Entry Point Found: Executing User Module export '{}'...", name);
+                    store.invoke_unchecked(
+                        func_addr,
+                        crate::rust_alloc::vec::Vec::<crate::wasm::Value>::new(),
+                        None,
+                    ).map_err(|e| {
+                        crate::debugln!("WASM Component Trap during '{}': {:?}", name, e);
+                        e
+                    })?;
+                    return Ok(exports);
+                }
+            }
+        }
+    }
+
+    Ok(exports)
+}
+
+fn instantiate_component_internal<'a, T: Config>(
+    store: &mut Store<'a, T>,
+    linker: &Linker,
+    component: &ParsedComponent,
+    wasm: &'a [u8],
+    all_instantiated_modules: &mut Vec<ModuleAddr>,
+) -> Result<BTreeMap<String, ExternVal>, RuntimeError> {
     use crate::wasm::component::types::ComponentItem;
     crate::debugln!("Instantiating Component...");
 
@@ -36,8 +101,6 @@ pub fn instantiate_component<'a, T: Config>(
     let mut core_modules: Vec<&crate::wasm::component::types::ComponentModule> = Vec::new();
     let mut nested_components: Vec<&crate::wasm::component::types::NestedComponent> = Vec::new();
 
-    let mut all_instantiated_modules: Vec<ModuleAddr> = Vec::new();
-
     // Iterate over items in order
     for item in &component.items {
         use crate::wasm::component::types::ComponentItem;
@@ -53,11 +116,7 @@ pub fn instantiate_component<'a, T: Config>(
                     }
                     instances.push(export_map);
                 } else {
-                    crate::debugln!(
-                        "Warning: Could not resolve component import '{}'",
-                        import.name
-                    );
-                    instances.push(BTreeMap::new());
+                    panic!("Component Executor stub: missing component import '{}'", import.name);
                 }
             }
             ComponentItem::CoreInstance(core_inst_def) => {
@@ -134,7 +193,7 @@ pub fn instantiate_component<'a, T: Config>(
                                     crate::debugln!("    Synthesizing env.memory (fallback)...");
                                     let mem_ty = crate::wasm::core::reader::types::MemType {
                                         limits: crate::wasm::core::reader::types::Limits {
-                                            min: 17,
+                                            min: 256, // 16 MiB
                                             max: None,
                                         },
                                     };
@@ -165,78 +224,7 @@ pub fn instantiate_component<'a, T: Config>(
                             }
 
                             if !resolved {
-                                crate::debugln!(
-                                    "Warning: Failed to resolve core module import: {}::{}",
-                                    import.module_name,
-                                    import.name
-                                );
-                                // Stubbing logic to allow instantiation to proceed
-                                use crate::wasm::core::reader::types::import::ImportDesc;
-                                match &import.desc {
-                                    ImportDesc::Func(type_idx) => {
-                                        if let Some(func_type) =
-                                            validation_info.types.get(*type_idx)
-                                        {
-                                            crate::debugln!(
-                                                "    -> Stubbing function import (Type: {:?})",
-                                                func_type
-                                            );
-                                            let func_addr = store.func_alloc_unchecked(func_type.clone(), |_, params| {
-                                                crate::debugln!("STUB: Called missing import function");
-                                                // Return default values matching result types
-                                                // We don't have easy access to result types here inside the closure without capturing func_type
-                                                // But since we cloned func_type, we might not have it inside `fn`.
-                                                // Wait, `host_func` is `fn`. It cannot capture.
-                                                // So we can't be type-safe easily.
-                                                // Return empty vec? If signature expects results, execution will crash/trap on return check?
-                                                // Core runtime `invoke_unchecked` doesn't enforce return count strictly if host func returns Vec.
-                                                // But `resume_unchecked` pushes results.
-                                                // If we return empty, and it expects i32, the stack will be underflown?
-                                                // Yes.
-                                                // Ideally we should return correct zeros.
-                                                // Since we can't capture, we assume void or crash.
-                                                // Actually, let's just Trap.
-                                                Err(crate::wasm::execution::store::HaltExecutionError)
-                                            });
-                                            extern_vals.push(ExternVal::Func(func_addr));
-                                            resolved = true;
-                                        }
-                                    }
-                                    ImportDesc::Mem(mem_ty) => {
-                                        crate::debugln!("    -> Stubbing memory import");
-                                        let mem_addr = store.mem_alloc_unchecked(*mem_ty);
-                                        extern_vals.push(ExternVal::Mem(mem_addr));
-                                        resolved = true;
-                                    }
-                                    ImportDesc::Table(table_ty) => {
-                                        crate::debugln!("    -> Stubbing table import");
-                                        use crate::wasm::execution::value::Ref;
-                                        let table_addr = store
-                                            .table_alloc_unchecked(
-                                                *table_ty,
-                                                Ref::Null(table_ty.et),
-                                            )
-                                            .unwrap(); // unwrap safe for alloc
-                                        extern_vals.push(ExternVal::Table(table_addr));
-                                        resolved = true;
-                                    }
-                                    ImportDesc::Global(global_ty) => {
-                                        crate::debugln!("    -> Stubbing global import");
-                                        use crate::wasm::core::reader::types::{NumType, ValType};
-                                        use crate::wasm::execution::value::{Value, F32, F64};
-
-                                        let val = match global_ty.ty {
-                                            ValType::NumType(NumType::I64) => Value::I64(0),
-                                            ValType::NumType(NumType::F32) => Value::F32(F32(0.0)),
-                                            ValType::NumType(NumType::F64) => Value::F64(F64(0.0)),
-                                            _ => Value::I32(0),
-                                        };
-                                        let global_addr =
-                                            store.global_alloc_unchecked(*global_ty, val).unwrap();
-                                        extern_vals.push(ExternVal::Global(global_addr));
-                                        resolved = true;
-                                    }
-                                }
+                                panic!("Component Executor stub: missing core module import {}::{}", import.module_name, import.name);
                             }
                         }
 
@@ -405,11 +393,7 @@ pub fn instantiate_component<'a, T: Config>(
                             }
 
                             if !resolved {
-                                crate::debugln!(
-                                    "Warning: Failed to resolve module import: {}::{}",
-                                    import.module_name,
-                                    import.name
-                                );
+                                panic!("Component Executor stub: missing module import {}::{}", import.module_name, import.name);
                             }
                         }
 
@@ -472,11 +456,12 @@ pub fn instantiate_component<'a, T: Config>(
                             }
                         }
 
-                        if let Ok(nested_exports) = instantiate_component(
+                        if let Ok(nested_exports) = instantiate_component_internal(
                             store,
                             &nested_linker,
                             &nested_node.parsed,
                             nested_bytes,
+                            all_instantiated_modules,
                         ) {
                             instances.push(nested_exports);
                         } else {
@@ -488,10 +473,7 @@ pub fn instantiate_component<'a, T: Config>(
                         for export in values {
                             let val = match export.kind {
                                 0x03 => functions.get(export.idx as usize).copied(),
-                                0x02 => instances
-                                    .get(export.idx as usize)
-                                    .cloned()
-                                    .map(|_| ExternVal::Func(0)), // FIXME
+                                0x02 => panic!("Component Executor stub: FromExports instance"),
                                 _ => None,
                             };
                             if let Some(v) = val {
@@ -530,123 +512,6 @@ pub fn instantiate_component<'a, T: Config>(
                     for (name, val) in inst {
                         component_exports.insert(format!("{}.{}", export.name, name), *val);
                     }
-                }
-            }
-        }
-    }
-
-    // EXECUTION LOGIC
-    // 1. Try "run" from component exports (Fuzzy match)
-    let run_func = component_exports.get("run").or_else(|| {
-        component_exports.iter().find_map(|(k, v)| {
-            if k.ends_with(":cli/run.run") || k.ends_with("#run") {
-                Some(v)
-            } else {
-                None
-            }
-        })
-    });
-
-    if let Some(run_func) = run_func {
-        if let crate::wasm::ExternVal::Func(func_addr) = *run_func {
-            crate::debugln!("Executing component export 'run'...");
-            let _ = store.invoke_unchecked(
-                func_addr,
-                crate::rust_alloc::vec::Vec::<crate::wasm::Value>::new(),
-                None,
-            );
-            return Ok(component_exports);
-        }
-    }
-
-    // 2. Fallback: Search ALL instantiated modules for entry points
-    crate::debugln!(
-        "Entry Point Search: Checking {} instantiated modules...",
-        all_instantiated_modules.len()
-    );
-
-    let mut executed_run = false;
-
-    // Pass 1: Execute explicit "run" commands (e.g. Adapter initialization / wasi:cli/run.run)
-    // If "run" is found and executed, this is THE entry point - don't also run _start
-    for module_addr in all_instantiated_modules.iter().rev() {
-        let exports = {
-            let module_inst = store.modules.get(*module_addr);
-            module_inst.exports.clone()
-        };
-        crate::debugln!(
-            "  Module at {:?}, Exports: {:?}",
-            module_addr,
-            exports.keys().collect::<Vec<_>>()
-        );
-
-        for (name, val) in &exports {
-            if name == "run" || name.ends_with("#run") || name.ends_with(".run") {
-                if let Some(func_addr) = val.as_func() {
-                    crate::debugln!("Entry Point Found: Executing export '{}' from Module {:?}...", name, module_addr);
-                    let _ = store.invoke_unchecked(
-                        func_addr,
-                        crate::rust_alloc::vec::Vec::<crate::wasm::Value>::new(),
-                        None,
-                    );
-                    executed_run = true;
-                    break; // Found and executed "run", stop searching
-                }
-            }
-        }
-        if executed_run {
-            break;
-        }
-    }
-
-    // If we executed "run", we're done - return early
-    if executed_run {
-        return Ok(component_exports);
-    }
-
-    // Pass 2: Execute _start / main (User code) - ONLY if no "run" was found
-    for module_addr in all_instantiated_modules.iter().rev() {
-        let exports = {
-            let module_inst = store.modules.get(*module_addr);
-            module_inst.exports.clone()
-        };
-
-        let mut found_start = false;
-        for (name, val) in &exports {
-            if name == "_start" || name == "main" {
-                if let Some(func_addr) = val.as_func() {
-                    crate::debugln!("Entry Point Found: Executing export '{}' from Module {:?}...", name, module_addr);
-                    let _ = store.invoke_unchecked(
-                        func_addr,
-                        crate::rust_alloc::vec::Vec::<crate::wasm::Value>::new(),
-                        None,
-                    );
-                    found_start = true;
-                    break;
-                }
-            }
-        }
-        if found_start {
-            return Ok(component_exports);
-        }
-    }
-
-    // Numeric fallback: Execute ALL numeric exports sequentially (last resort)
-    for module_addr in all_instantiated_modules.iter().rev() {
-        let exports = {
-            let module_inst = store.modules.get(*module_addr);
-            module_inst.exports.clone()
-        };
-        for i in 0..10 {
-            let name = i.to_string();
-            if let Some(val) = exports.get(&name) {
-                if let Some(func_addr) = val.as_func() {
-                    crate::debugln!("Entry Point Found: Executing numeric export '{}' from Module {:?}...", name, module_addr);
-                    let _ = store.invoke_unchecked(
-                        func_addr,
-                        crate::rust_alloc::vec::Vec::<crate::wasm::Value>::new(),
-                        None,
-                    );
                 }
             }
         }

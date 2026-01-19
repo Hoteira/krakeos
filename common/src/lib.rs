@@ -5,8 +5,8 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 #[repr(C)]
 pub struct MouseEvent {
     pub wid: u32,
-    pub x: usize,
-    pub y: usize,
+    pub x: u32,
+    pub y: u32,
     pub buttons: [bool; 3],
     pub scroll: i8,
 }
@@ -24,8 +24,8 @@ pub struct KeyboardEvent {
 #[repr(C)]
 pub struct ResizeEvent {
     pub wid: u32,
-    pub width: usize,
-    pub height: usize,
+    pub width: u32,
+    pub height: u32,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]

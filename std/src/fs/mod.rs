@@ -181,6 +181,14 @@ pub fn mount(disk_id: u8, fs_type: &str) -> Result<()> {
     }
 }
 
+pub fn read(path: &str) -> Result<Vec<u8>> {
+    let mut file = File::open(path)?;
+    let size = file.size();
+    let mut bytes = Vec::with_capacity(size);
+    file.read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileType {
     Unknown = 0,

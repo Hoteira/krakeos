@@ -12,7 +12,7 @@ use core::{
 pub struct LinearMemory<const PAGE_SIZE: usize = { crate::wasm::Limits::MEM_PAGE_SIZE as usize }> {
     inner_data: RwSpinLock<Vec<AtomicU8>>,
 }
-pub type PageCountTy = u16;
+pub type PageCountTy = u32;
 impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
     const PAGE_SIZE: usize = PAGE_SIZE;
     pub fn new() -> Self {
@@ -41,10 +41,15 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
     pub fn pages(&self) -> PageCountTy {
         PageCountTy::try_from(self.inner_data.read().len() / PAGE_SIZE).unwrap()
     }
-    pub fn len(&self) -> usize {
-        self.inner_data.read().len()
-    }
-    pub fn store<const N: usize, T: LittleEndianBytes<N>>(
+        pub fn len(&self) -> usize {
+            self.inner_data.read().len()
+        }
+    
+        pub fn get_base_ptr(&self) -> *mut u8 {
+            self.inner_data.read().as_ptr() as *mut u8
+        }
+    
+        pub fn store<const N: usize, T: LittleEndianBytes<N>>(
         &self,
         index: MemIdx,
         value: T,

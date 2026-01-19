@@ -1,3 +1,4 @@
+use crate::rust_alloc::string::String;
 use core::fmt::{Display, Formatter};
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum RuntimeError {
@@ -21,7 +22,7 @@ pub enum RuntimeError {
     OutOfFuel,
     ExternValsLenMismatch,
     DuplicateExternDefinition,
-    UnableToResolveExternLookup,
+    UnableToResolveExternLookup { module: String, name: String },
     ValidationError,
     FunctionInvocationSignatureMismatch,
     LinkerNotYetAssociatedWithStoreId,
@@ -72,8 +73,8 @@ impl Display for RuntimeError {
             RuntimeError::DuplicateExternDefinition => {
                 f.write_str("Linking failed because of a duplicate definition of some extern value")
             }
-            RuntimeError::UnableToResolveExternLookup => {
-                f.write_str("An extern lookup could not be resolved because no matching extern value existed for it.")
+            RuntimeError::UnableToResolveExternLookup { module, name } => {
+                write!(f, "An extern lookup could not be resolved because no matching extern value existed for it: {module}::{name}")
             }
             RuntimeError::FunctionInvocationSignatureMismatch => {
                 f.write_str("A function was invoked with incorrect parameters or return types")

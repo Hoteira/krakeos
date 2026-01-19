@@ -240,6 +240,10 @@ pub fn handle_create(context: &mut CPUState, syscall_num: u64) {
 
     match final_res {
         Ok(_) => {
+            if syscall_num == 83 {
+                context.rax = 0;
+                return;
+            }
             crate::debugln!("SYS_CREATE: Success, opening new file...");
             if let Ok(global_fd) = crate::fs::vfs::open_file(0, &resolved) {
                 context.rax = assign_local_fd(global_fd);

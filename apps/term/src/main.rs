@@ -186,7 +186,7 @@ fn main() {
                     }
                 }
                 inkui::Event::Resize(e) => {
-                    win.resize(e.width, e.height, true);
+                    win.resize(e.width as usize, e.height as usize, true);
                     update_term_size(&win);
                     needs_redraw = true;
                 }

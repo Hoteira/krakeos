@@ -10,7 +10,7 @@ impl<T> UnwrapValidatedExt<T> for Option<T> {
 impl<T, E: Debug> UnwrapValidatedExt<T> for Result<T, E> {
     fn unwrap_validated(self) -> T {
         self.unwrap_or_else(|e| {
-            panic!("Validation guarantees this to be `Ok(_)`, but it is `Err({e:?})`");
+            panic!("Validation guarantees this to be `Ok(_)`, but it is `Err({e:?})`. This indicates a bug in the validator or interpreter state.");
         })
     }
 }

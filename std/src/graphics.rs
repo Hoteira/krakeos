@@ -1,7 +1,7 @@
 use crate::os::syscall;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-#[repr(C)]
+#[repr(u32)]
 pub enum Items {
     Wallpaper,
     Bar,

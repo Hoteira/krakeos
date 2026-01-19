@@ -45,12 +45,5 @@ pub fn exit<T: Config>(_: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Val
 }
 
 pub fn get_environment<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-    use super::write_u32;
-    let ret_ptr = match args.get(0) {
-        Some(Value::I32(v)) => *v as u32,
-        _ => return Ok(vec![]),
-    };
-    write_u32(store, ret_ptr + 4, 0).map_err(|_| HaltExecutionError)?;
-    write_u32(store, ret_ptr, 0).map_err(|_| HaltExecutionError)?;
-    Ok(vec![])
+    panic!("WASI P2 stub: get_environment");
 }

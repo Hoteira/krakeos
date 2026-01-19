@@ -17,6 +17,8 @@ pub mod resumable;
 pub mod store;
 pub mod value;
 pub mod component_executor;
+pub mod simd_utils;
+pub mod simd_instructions;
 pub use self::value_stack::Stack;
 pub use interpreter_loop::run;
 pub mod value_stack;

@@ -9,7 +9,7 @@ use crate::wasm::RuntimeError;
 #[derive(Default, Debug)]
 pub struct Stack {
     values: Vec<Value>,
-    frames: Vec<CallFrame>,
+    pub(crate) frames: Vec<CallFrame>,
 }
 impl Stack {
     pub fn new() -> Self {

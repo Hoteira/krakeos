@@ -1,6 +1,7 @@
 #[macro_export]
 macro_rules! trace {
     ($($arg:tt)*) => {
+
     };
 }
 #[macro_export]

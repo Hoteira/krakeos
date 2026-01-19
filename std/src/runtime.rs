@@ -75,14 +75,22 @@ pub unsafe extern "C" fn cabi_realloc(ptr: *mut u8, old_size: usize, align: usiz
     if ptr.is_null() {
         if new_size == 0 { return align as *mut u8; }
         let layout = Layout::from_size_align(new_size, align).unwrap();
-        crate::alloc::ALLOCATOR.alloc(layout)
+        let res = crate::alloc::ALLOCATOR.alloc(layout);
+        if res.is_null() {
+            crate::debugln!("cabi_realloc: ALLOC FAILED (size: {}, align: {})", new_size, align);
+        }
+        res
     } else {
         let layout = Layout::from_size_align(old_size, align).unwrap();
         if new_size == 0 {
             crate::alloc::ALLOCATOR.dealloc(ptr, layout);
             return core::ptr::null_mut();
         }
-        crate::alloc::ALLOCATOR.realloc(ptr, layout, new_size)
+        let res = crate::alloc::ALLOCATOR.realloc(ptr, layout, new_size);
+        if res.is_null() {
+            crate::debugln!("cabi_realloc: REALLOC FAILED (old: {}, new: {}, align: {})", old_size, new_size, align);
+        }
+        res
     }
 }
 

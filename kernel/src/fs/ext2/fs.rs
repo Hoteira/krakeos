@@ -653,6 +653,8 @@ impl VfsNode for Ext2Node {
                 current_offset += to_copy as u64;
                 buf_offset += to_copy;
             }
+
+            crate::fs::cache::GLOBAL_PAGE_CACHE.lock().invalidate(fs.disk_id, self.inode_idx as u64, block_idx);
         }
 
 
@@ -868,86 +870,89 @@ impl VfsNode for Ext2Node {
 
                 if entry.rec_len == 0 { break; }
 
-                let name_len = entry.name_len as usize;
-                let name_ptr = unsafe { ptr.add(8) };
-                let entry_name = unsafe { core::slice::from_raw_parts(name_ptr, name_len) };
+                // Skip deleted entries
+                if entry.inode != 0 {
+                    let name_len = entry.name_len as usize;
+                    let name_ptr = unsafe { ptr.add(8) };
+                    let entry_name = unsafe { core::slice::from_raw_parts(name_ptr, name_len) };
 
-                if entry_name == name.as_bytes() {
-                    let inode_to_free = entry.inode;
+                    if entry_name == name.as_bytes() {
+                        let inode_to_free = entry.inode;
 
-                    if prev_rec_len > 0 {
-                        let prev_ptr = unsafe { buf.as_mut_ptr().add(prev_pos) };
-                        let prev_entry = unsafe { &mut *(prev_ptr as *mut DirectoryEntry) };
-                        prev_entry.rec_len += entry.rec_len;
-                    } else {
-                        entry.inode = 0;
-                    }
-
-
-                    {
-                        let _lock = fs.lock.lock();
-                        unsafe { (*fs_ptr).write_disk_data(read_off, &buf) };
-                    }
-
-
-                    let mut target_inode = {
-                        let _lock = fs.lock.lock();
-                        unsafe { (*fs_ptr).read_inode(inode_to_free) }
-                    };
-
-                    let is_dir = (target_inode.mode & 0xF000) == 0x4000;
-                    if is_dir {
-                        let mut check_buf = alloc::vec![0u8; fs.block_size as usize];
-
-
-                        if target_inode.block[0] != 0 {
-                            {
-                                let _lock = fs.lock.lock();
-                                unsafe { (*fs_ptr).read_disk_data(target_inode.block[0] as u64 * fs.block_size as u64, &mut check_buf) };
-                            }
-                            let mut check_pos = 0;
-                            let mut entries_count = 0;
-                            while check_pos < fs.block_size as usize {
-                                let c_ptr = unsafe { check_buf.as_ptr().add(check_pos) };
-                                let c_entry = unsafe { &*(c_ptr as *const DirectoryEntry) };
-                                if c_entry.rec_len == 0 { break; }
-                                if c_entry.inode != 0 {
-                                    entries_count += 1;
-                                }
-                                check_pos += c_entry.rec_len as usize;
-                            }
-
-                            if entries_count > 2 {
-                                return Err(String::from("Directory not empty"));
-                            }
-                        }
-                    }
-
-                    if target_inode.links_count > 0 {
-                        target_inode.links_count -= 1;
-                        if target_inode.links_count == 0 {
-                            {
-                                let _lock = fs.lock.lock();
-                                unsafe {
-                                    for i in 0..12 {
-                                        if target_inode.block[i] != 0 {
-                                            (*fs_ptr).free_block(target_inode.block[i]);
-                                            target_inode.block[i] = 0;
-                                        }
-                                    }
-
-
-                                    (*fs_ptr).write_inode(inode_to_free, &target_inode);
-                                    (*fs_ptr).free_inode(inode_to_free);
-                                }
-                            }
+                        if prev_rec_len > 0 {
+                            let prev_ptr = unsafe { buf.as_mut_ptr().add(prev_pos) };
+                            let prev_entry = unsafe { &mut *(prev_ptr as *mut DirectoryEntry) };
+                            prev_entry.rec_len += entry.rec_len;
                         } else {
-                            let _lock = fs.lock.lock();
-                            unsafe { (*fs_ptr).write_inode(inode_to_free, &target_inode) };
+                            entry.inode = 0;
                         }
-                    }
 
-                    return Ok(());
+
+                        {
+                            let _lock = fs.lock.lock();
+                            unsafe { (*fs_ptr).write_disk_data(read_off, &buf) };
+                        }
+
+
+                        let mut target_inode = {
+                            let _lock = fs.lock.lock();
+                            unsafe { (*fs_ptr).read_inode(inode_to_free) }
+                        };
+
+                        let is_dir = (target_inode.mode & 0xF000) == 0x4000;
+                        if is_dir {
+                            let mut check_buf = alloc::vec![0u8; fs.block_size as usize];
+
+
+                            if target_inode.block[0] != 0 {
+                                {
+                                    let _lock = fs.lock.lock();
+                                    unsafe { (*fs_ptr).read_disk_data(target_inode.block[0] as u64 * fs.block_size as u64, &mut check_buf) };
+                                }
+                                let mut check_pos = 0;
+                                let mut entries_count = 0;
+                                while check_pos < fs.block_size as usize {
+                                    let c_ptr = unsafe { check_buf.as_ptr().add(check_pos) };
+                                    let c_entry = unsafe { &*(c_ptr as *const DirectoryEntry) };
+                                    if c_entry.rec_len == 0 { break; }
+                                    if c_entry.inode != 0 {
+                                        entries_count += 1;
+                                    }
+                                    check_pos += c_entry.rec_len as usize;
+                                }
+
+                                if entries_count > 2 {
+                                    return Err(String::from("Directory not empty"));
+                                }
+                            }
+                        }
+
+                        if target_inode.links_count > 0 {
+                            target_inode.links_count -= 1;
+                            if target_inode.links_count == 0 {
+                                {
+                                    let _lock = fs.lock.lock();
+                                    unsafe {
+                                        for i in 0..12 {
+                                            if target_inode.block[i] != 0 {
+                                                (*fs_ptr).free_block(target_inode.block[i]);
+                                                target_inode.block[i] = 0;
+                                            }
+                                        }
+
+
+                                        (*fs_ptr).write_inode(inode_to_free, &target_inode);
+                                        (*fs_ptr).free_inode(inode_to_free);
+                                    }
+                                }
+                            } else {
+                                let _lock = fs.lock.lock();
+                                unsafe { (*fs_ptr).write_inode(inode_to_free, &target_inode) };
+                            }
+                        }
+
+                        return Ok(());
+                    }
                 }
 
                 prev_pos = block_pos;
@@ -1123,6 +1128,7 @@ impl VfsNode for Ext2Node {
                 if block != 0 {
                     unsafe { (*fs_ptr).free_block(block) };
                     self.inode.block[i] = 0;
+                    crate::fs::cache::GLOBAL_PAGE_CACHE.lock().invalidate(fs.disk_id, self.inode_idx as u64, i as u32);
                 }
             }
             self.inode.size = 0;

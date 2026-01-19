@@ -89,7 +89,10 @@ impl Linker {
             .iter()
             .map(|import| {
                 self.get_unchecked(import.module_name.clone(), import.name.clone())
-                    .ok_or(RuntimeError::UnableToResolveExternLookup)
+                    .ok_or_else(|| RuntimeError::UnableToResolveExternLookup {
+                        module: import.module_name.clone(),
+                        name: import.name.clone(),
+                    })
             })
             .collect()
     }

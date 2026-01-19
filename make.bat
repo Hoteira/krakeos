@@ -12,12 +12,6 @@ copy "swiftboot\build\disk.img" "build\"
 cargo build --package=kernel --target="swiftboot/bits64.json"
 wsl objcopy -I elf64-x86-64 -O binary target/bits64/debug/kernel build/kernel.bin
 
-cargo build --package wasm_test --target wasm32-wasip1
-copy "target\wasm32-wasip1\debug\wasm_test.wasm" "tree\wasm_test.wasm"
-
-cargo build --package saltty --target wasm32-wasip2
-copy "target\wasm32-wasip2\debug\saltty.wasm" "tree\saltty.wasm"
-
 cargo build --package=userland --target=bits64pie.json --release
 copy "target\bits64pie\release\userland" "tree\user.elf"
 
@@ -44,6 +38,12 @@ copy "target\bits64pie\release\taskbar" "tree\sys\bin\taskbar.elf"
 
 cargo build --package=wasm_runner --target=bits64pie.json --release
 copy "target\bits64pie\release\wasm_runner" "tree\sys\bin\wasm_runner.elf"
+
+
+cargo build --package=taskbar --target=wasm32-wasip2 --release
+copy "target\wasm32-wasip2\release\taskbar.wasm" "tree\apps\taskbar.wasm"
+
+
 
 cargo build --package=libc --target=bits64pie.json --release
 

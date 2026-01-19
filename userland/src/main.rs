@@ -48,13 +48,15 @@ pub extern "C" fn main() -> i32 {
 
     println!("Desktop Environment Initialized.");
 
-    std::os::exec("@0xE0/sys/bin/taskbar.elf");
+    //std::os::exec("@0xE0/sys/bin/taskbar.elf");
 
     std::os::exec("@0xE0/sys/bin/term.elf");
 
     std::thread::spawn(|| {
-        //run_wasm("@0xE0/wasm_test.wasm");
-        run_wasm("@0xE0/saltty.wasm");
+        //run_wasm("@0xE0/apps/taskbar.wasm");
+        run_wasm("@0xE0/wasm_test.wasm");
+        //run_wasm("@0xE0/saltty.wasm");
+
     });
 
     loop {

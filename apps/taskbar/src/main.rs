@@ -1,11 +1,11 @@
-#![no_std]
-#![no_main]
 
+#![no_std]
 extern crate alloc;
+
+use alloc::boxed::Box;
 use alloc::format;
 use inkui::{Color, Display, Size, Widget, Window};
-use std::fs::File;
-use std::io::Read;
+use std::{println};
 
 fn open_start_menu(_win: &mut Window, _id: usize) {
     std::os::print("Start Menu Clicked\n");
@@ -19,8 +19,8 @@ fn wifi_status(_win: &mut Window, _id: usize) {
     std::os::print("Wifi Clicked\n");
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn main() -> i32 {
+pub fn main() {
+
     let screen_w = std::graphics::get_screen_width();
     let screen_total_h = std::graphics::get_screen_height();
     let screen_h = (screen_total_h * 4) / 100;
@@ -30,14 +30,17 @@ pub extern "C" fn main() -> i32 {
     win.x = 0;
     win.y = 0;
 
+    println!("Loading font...");
     {
-        if let Ok(mut file) = File::open("@0xE0/sys/fonts/CaskaydiaNerd.ttf") {
-            let size = file.size();
-            let buffer_addr = std::memory::malloc(size);
-            let buffer = unsafe { core::slice::from_raw_parts_mut(buffer_addr as *mut u8, size) };
-            if file.read(buffer).is_ok() {
-                let static_buf = unsafe { core::slice::from_raw_parts(buffer_addr as *const u8, size) };
+        match std::fs::read("@0xE0/sys/fonts/CaskaydiaNerd.ttf") {
+            Ok(bytes) => {
+                println!("Font loaded ({} bytes).", bytes.len());
+                // Leak the memory to create a 'static slice for the window font loader
+                let static_buf = Box::leak(bytes.into_boxed_slice());
                 win.load_font(static_buf);
+            }
+            Err(_) => {
+                println!("Failed to load font.");
             }
         }
     }
@@ -52,7 +55,7 @@ pub extern "C" fn main() -> i32 {
     let unit = screen_h as f32 / 8.0;
     let font_size = unit * 4.0;
 
-    let l = Widget::label(2, " \u{E8F0}  Guest | ")
+    let mut l = Widget::label(2, " \u{E8F0}  Guest | ")
         .y(Size::Absolute((unit) as usize))
         .set_text_color(Color::rgb(255, 255, 255))
         .background_color(Color::rgba(0, 0, 0, 0))
@@ -70,11 +73,13 @@ pub extern "C" fn main() -> i32 {
     root = root.add_child(clock);
     win.children.push(root);
     win.show();
+    println!("Taskbar initialized.");
 
     let mut last_minute = 99;
 
     loop {
         let (h, m, _) = std::os::get_time();
+
         if m != last_minute {
             last_minute = m;
             let time_str = format!("{:02}:{:02}", h, m);
@@ -84,9 +89,11 @@ pub extern "C" fn main() -> i32 {
                     text.text = time_str;
                 }
             }
+
             win.draw();
             win.update();
         }
+
         std::os::sleep(1000);
     }
 }

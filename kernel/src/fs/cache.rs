@@ -35,4 +35,10 @@ impl PageCache {
         self.pages.insert((disk_id, inode, block_index), CachePage { phys_addr: phys });
         phys
     }
+
+    pub fn invalidate(&mut self, disk_id: u8, inode: u64, block_index: u32) {
+        if let Some(page) = self.pages.remove(&(disk_id, inode, block_index)) {
+            pmm::free_frame(page.phys_addr);
+        }
+    }
 }

@@ -89,25 +89,23 @@ pub fn stream_read<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Res
 }
 
 pub fn stream_write<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-    let mut handle = match args.get(0) {
+    let handle = match args.get(0) {
         Some(Value::I32(v)) => *v as i32,
-        _ => return Ok(vec![Value::I32(1)]),
+        _ => return Ok(vec![]),
     };
-    let mut ptr = match args.get(1) {
+    let ptr = match args.get(1) {
         Some(Value::I32(v)) => *v as u32,
-        _ => return Ok(vec![Value::I32(1)]),
+        _ => return Ok(vec![]),
     };
-    let mut len = match args.get(2) {
+    let len = match args.get(2) {
         Some(Value::I32(v)) => *v as u32,
-        _ => return Ok(vec![Value::I32(1)]),
+        _ => return Ok(vec![]),
     };
-    if handle > 100_000 {
-        let real_ptr = handle as u32;
-        let real_len = ptr;
-        handle = 1;
-        ptr = real_ptr;
-        len = real_len;
-    }
+    let ret_ptr = match args.get(3) {
+        Some(Value::I32(v)) => *v as u32,
+        _ => return Ok(vec![]),
+    };
+
     crate::debugln!(
         "WASI P2: stream_write(handle: {}, ptr: {:#x}, len: {})",
         handle,
@@ -125,7 +123,9 @@ pub fn stream_write<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Re
         let mut buf = vec![0u8; len as usize];
         if read_mem(store, ptr, &mut buf).is_err() {
             crate::debugln!("  Error: Failed to read guest memory at {:#x}", ptr);
-            return Ok(vec![Value::I32(1)]);
+            // Write Error (Tag 1)
+            let _ = write_u32(store, ret_ptr, 1);
+            return Ok(vec![]);
         }
         match source {
             OutputStreamSource::Stdout | OutputStreamSource::Stderr => {
@@ -138,10 +138,14 @@ pub fn stream_write<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Re
             }
             OutputStreamSource::Null => {}
         }
-        Ok(vec![Value::I32(0)])
+        // Write Success (Tag 0)
+        write_u32(store, ret_ptr, 0).map_err(|_| HaltExecutionError)?;
+        Ok(vec![])
     } else {
         crate::debugln!("  Error: Invalid output stream handle {}", handle);
-        Ok(vec![Value::I32(1)])
+        // Write Error (Tag 1)
+        let _ = write_u32(store, ret_ptr, 1);
+        Ok(vec![])
     }
 }
 
@@ -283,19 +287,5 @@ pub fn poll_block<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Resu
 }
 
 pub fn error_to_debug_string<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-    let ret_ptr = match args.get(1) {
-        Some(Value::I32(v)) => *v as u32,
-        _ => return Ok(vec![]),
-    };
-    let debug_msg = "WASI Error";
-    let ptr = match call_cabi_realloc(store, debug_msg.len() as u32, 1) {
-        Ok(p) => p,
-        Err(_) => return Ok(vec![]),
-    };
-    if write_bytes(store, ptr, debug_msg.as_bytes()).is_err() {
-        return Ok(vec![]);
-    }
-    write_u32(store, ret_ptr, ptr).map_err(|_| HaltExecutionError)?;
-    write_u32(store, ret_ptr + 4, debug_msg.len() as u32).map_err(|_| HaltExecutionError)?;
-    Ok(vec![])
+    panic!("WASI P2 stub: error_to_debug_string");
 }

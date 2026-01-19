@@ -136,8 +136,8 @@ impl Mouse {
                     if w.event_handler != 0 {
                         GLOBAL_EVENT_QUEUE.int_lock().add_event(Event::Resize(ResizeEvent {
                             wid: w.id as u32,
-                            width: W_WIDTH,
-                            height: W_HEIGHT,
+                            width: W_WIDTH as u32,
+                            height: W_HEIGHT as u32,
                         }));
                     }
                     W_WIDTH = 0;
@@ -421,8 +421,8 @@ impl Mouse {
 
                         let event = Event::Mouse(MouseEvent {
                             wid: w.id as u32,
-                            x: local_x,
-                            y: local_y,
+                            x: local_x as u32,
+                            y: local_y as u32,
                             buttons: btns,
                             scroll: scroll_val,
                         });

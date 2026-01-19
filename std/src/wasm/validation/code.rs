@@ -1630,13 +1630,36 @@ fn read_instructions(
                         stack.assert_pop_val_type(ValType::VecType)?;
                         stack.push_valtype(ValType::VecType);
                     }
-                    F32X4_RELAXED_MADD | F32X4_RELAXED_MAX | F32X4_RELAXED_MIN | F32X4_RELAXED_NMADD
-                    | F64X2_RELAXED_MADD | F64X2_RELAXED_MAX | F64X2_RELAXED_MIN | F64X2_RELAXED_NMADD
-                    | I8X16_RELAXED_LANESELECT | I16X8_RELAXED_LANESELECT | I32X4_RELAXED_LANESELECT | I64X2_RELAXED_LANESELECT
-                    | I32X4_RELAXED_TRUNC_F32X4_S | I32X4_RELAXED_TRUNC_F32X4_U
-                    | I32X4_RELAXED_TRUNC_F64X2_S_ZERO | I32X4_RELAXED_TRUNC_F64X2_U_ZERO
-                    | I8X16_RELAXED_SWIZZLE
-                    | 154 | 187 | 194 | 256.. => return Err(ValidationError::InvalidMultiByteInstr(first_instr_byte, second_instr)),
+                    F32X4_RELAXED_MADD | F32X4_RELAXED_NMADD
+                    | F64X2_RELAXED_MADD | F64X2_RELAXED_NMADD => {
+                        stack.assert_pop_val_type(ValType::VecType)?;
+                        stack.assert_pop_val_type(ValType::VecType)?;
+                        stack.assert_pop_val_type(ValType::VecType)?;
+                        stack.push_valtype(ValType::VecType);
+                    }
+                    F32X4_RELAXED_MAX | F32X4_RELAXED_MIN
+                    | F64X2_RELAXED_MAX | F64X2_RELAXED_MIN => {
+                        stack.assert_pop_val_type(ValType::VecType)?;
+                        stack.assert_pop_val_type(ValType::VecType)?;
+                        stack.push_valtype(ValType::VecType);
+                    }
+                    I8X16_RELAXED_LANESELECT | I16X8_RELAXED_LANESELECT | I32X4_RELAXED_LANESELECT | I64X2_RELAXED_LANESELECT => {
+                        stack.assert_pop_val_type(ValType::VecType)?;
+                        stack.assert_pop_val_type(ValType::VecType)?;
+                        stack.assert_pop_val_type(ValType::VecType)?;
+                        stack.push_valtype(ValType::VecType);
+                    }
+                    I32X4_RELAXED_TRUNC_F32X4_S | I32X4_RELAXED_TRUNC_F32X4_U
+                    | I32X4_RELAXED_TRUNC_F64X2_S_ZERO | I32X4_RELAXED_TRUNC_F64X2_U_ZERO => {
+                        stack.assert_pop_val_type(ValType::VecType)?;
+                        stack.push_valtype(ValType::VecType);
+                    }
+                    I8X16_RELAXED_SWIZZLE => {
+                        stack.assert_pop_val_type(ValType::VecType)?;
+                        stack.assert_pop_val_type(ValType::VecType)?;
+                        stack.push_valtype(ValType::VecType);
+                    }
+                    154 | 187 | 194 | 256.. => return Err(ValidationError::InvalidMultiByteInstr(first_instr_byte, second_instr)),
                 }
             }
             0x06..=0x0A

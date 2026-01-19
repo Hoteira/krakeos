@@ -1,6 +1,8 @@
 pub mod ctx;
 pub mod preview1;
 pub mod preview2;
+pub mod env;
+pub mod krakeos;
 
 pub use ctx::{WasiCtx, WasiResource};
 pub use preview1::create_wasi_imports;

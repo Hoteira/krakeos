@@ -11,13 +11,7 @@ use crate::wasm::{
 // Reuse helpers
 
 pub fn get_directories<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-    let ret_ptr = match args.get(0) {
-        Some(Value::I32(v)) => *v as u32,
-        _ => return Ok(vec![]),
-    };
-    write_u32(store, ret_ptr + 4, 0).map_err(|_| HaltExecutionError)?;
-    write_u32(store, ret_ptr, 0).map_err(|_| HaltExecutionError)?;
-    Ok(vec![])
+    panic!("WASI P2 stub: get_directories");
 }
 
 pub fn filesystem_types_read_via_stream<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {

@@ -158,6 +158,18 @@ pub enum Instruction {
     I64ReinterpretF64,
     F32ReinterpretI32,
     F64ReinterpretI64,
+    Try(BlockType),
+    Catch(u32), // tag_index
+    CatchAll,
+    Delegate(LabelIdx),
+    Throw(u32), // tag_index
+    Rethrow(LabelIdx),
+    ReturnCall(FuncIdx),
+    ReturnCallIndirect(TypeIdx, TableIdx),
+    CallRef(TypeIdx),
+    ReturnCallRef(TypeIdx),
+    Atomic(u32),
+    Gc(u32),
     FcExtension(u32),
     FeExtension(u32),
 }
@@ -171,6 +183,12 @@ impl WasmReadable for Instruction {
             LOOP => Ok(Instruction::Loop(BlockType::read(wasm)?)),
             IF => Ok(Instruction::If(BlockType::read(wasm)?)),
             ELSE => Ok(Instruction::Else),
+            TRY => Ok(Instruction::Try(BlockType::read(wasm)?)),
+            CATCH => Ok(Instruction::Catch(wasm.read_var_u32()?)),
+            CATCH_ALL => Ok(Instruction::CatchAll),
+            DELEGATE => Ok(Instruction::Delegate(wasm.read_var_u32()? as LabelIdx)),
+            THROW => Ok(Instruction::Throw(wasm.read_var_u32()?)),
+            RETHROW => Ok(Instruction::Rethrow(wasm.read_var_u32()? as LabelIdx)),
             END => Ok(Instruction::End),
             BR => Ok(Instruction::Br(wasm.read_var_u32()? as LabelIdx)),
             BR_IF => Ok(Instruction::BrIf(wasm.read_var_u32()? as LabelIdx)),
@@ -186,6 +204,14 @@ impl WasmReadable for Instruction {
                 let tab = wasm.read_var_u32()? as TableIdx;
                 Ok(Instruction::CallIndirect(ty, tab))
             }
+            RETURN_CALL => Ok(Instruction::ReturnCall(wasm.read_var_u32()? as FuncIdx)),
+            RETURN_CALL_INDIRECT => {
+                let ty = wasm.read_var_u32()? as TypeIdx;
+                let tab = wasm.read_var_u32()? as TableIdx;
+                Ok(Instruction::ReturnCallIndirect(ty, tab))
+            }
+            CALL_REF => Ok(Instruction::CallRef(wasm.read_var_u32()? as TypeIdx)),
+            RETURN_CALL_REF => Ok(Instruction::ReturnCallRef(wasm.read_var_u32()? as TypeIdx)),
             DROP => Ok(Instruction::Drop),
             SELECT => Ok(Instruction::Select),
             LOCAL_GET => Ok(Instruction::LocalGet(wasm.read_var_u32()? as LocalIdx)),
@@ -330,6 +356,8 @@ impl WasmReadable for Instruction {
             I64_EXTEND8_S => Ok(Instruction::I64Extend8S),
             I64_EXTEND16_S => Ok(Instruction::I64Extend16S),
             I64_EXTEND32_S => Ok(Instruction::I64Extend32S),
+            ATOMIC_PREFIX => Ok(Instruction::Atomic(wasm.read_var_u32()?)),
+            GC_PREFIX | GC_PREFIX_ALT => Ok(Instruction::Gc(wasm.read_var_u32()?)),
             FC_EXTENSIONS => Ok(Instruction::FcExtension(wasm.read_var_u32()?)),
             FD_EXTENSIONS => Ok(Instruction::FeExtension(wasm.read_var_u32()?)),
             _ => Err(ValidationError::InvalidInstr(opcode)),
