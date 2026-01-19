@@ -1,0 +1,8 @@
+[package]
+name = "wasm_test"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# We use standard Rust dependencies; when compiled for wasm32-wasip1, 
+# it automatically uses WASI for syscalls.

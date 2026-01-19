@@ -1,0 +1,15 @@
+[package]
+name = "std"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["rlib"]
+
+[features]
+default = ["userland"]
+userland = []
+
+[dependencies]
+common = { path = "../common" }
