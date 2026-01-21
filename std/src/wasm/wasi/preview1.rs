@@ -133,8 +133,13 @@ fn fd_pread<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec
     
     match wasi_ctx(store).env.fd_pread(fd, &mut slices, offset) {
         Ok(n) => {
+            let mut remaining = n;
             for ((ptr, _), buf) in iovs.iter().zip(buffers.iter()) {
-                if write_bytes(store, *ptr, buf).is_err() { return Ok(vec![Value::I32(28)]); }
+                let to_write = core::cmp::min(remaining, buf.len());
+                if to_write > 0 {
+                    if write_bytes(store, *ptr, &buf[..to_write]).is_err() { return Ok(vec![Value::I32(28)]); }
+                    remaining -= to_write;
+                }
             }
             if n_ptr != 0 { let _ = write_u32(store, n_ptr, n as u32); }
             Ok(vec![Value::I32(0)])
@@ -271,8 +276,13 @@ fn sock_recv<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Ve
     
     match wasi_ctx(store).env.sock_recv(fd, &mut slices, ri_flags) {
         Ok((len, flags)) => {
+            let mut remaining = len;
             for ((ptr, _), buf) in iovs.iter().zip(buffers.iter()) {
-                if write_bytes(store, *ptr, buf).is_err() { return Ok(vec![Value::I32(28)]); }
+                let swallowed = core::cmp::min(remaining, buf.len());
+                if swallowed > 0 {
+                    if write_bytes(store, *ptr, &buf[..swallowed]).is_err() { return Ok(vec![Value::I32(28)]); }
+                    remaining -= swallowed;
+                }
             }
             if write_u32(store, ro_datalen_ptr, len as u32).is_err() || write_u16(store, ro_flags_ptr, flags).is_err() { return Ok(vec![Value::I32(28)]); }
             Ok(vec![Value::I32(0)])
@@ -516,8 +526,13 @@ fn fd_read<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<
     match wasi_ctx(store).env.fd_read(fd, &mut slices) {
         Ok(n) => {
             // Write back
+            let mut remaining = n;
             for ((ptr, _), buf) in iovs.iter().zip(buffers.iter()) {
-                if write_bytes(store, *ptr, buf).is_err() { return Ok(vec![Value::I32(28)]); }
+                let to_write = core::cmp::min(remaining, buf.len());
+                if to_write > 0 {
+                    if write_bytes(store, *ptr, &buf[..to_write]).is_err() { return Ok(vec![Value::I32(28)]); }
+                    remaining -= to_write;
+                }
             }
             if n_ptr != 0 { let _ = write_u32(store, n_ptr, n as u32); }
             Ok(vec![Value::I32(0)])

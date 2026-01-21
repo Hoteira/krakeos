@@ -15,6 +15,7 @@ fn run_wasm(path: String) {
         let size = file.size();
         let mut buffer = Vec::with_capacity(size);
         if file.read_to_end(&mut buffer).is_ok() {
+            unsafe { std::wasm::wasi::ICRNL = true; }
             match validate(&buffer) {
                 Ok(validation_info) => {
                     let mut store = Store::new(());
@@ -63,6 +64,7 @@ fn run_wasm(path: String) {
                     std::os::file_write(1, msg.as_bytes());
                 }
             }
+            unsafe { std::wasm::wasi::ICRNL = false; }
         }
     } else {
         let msg = format!("WASM: WASM file not found at {}\n", path);

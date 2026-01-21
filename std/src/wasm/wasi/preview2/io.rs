@@ -64,6 +64,15 @@ pub fn stream_read<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Res
             loop {
                 let bytes_read = crate::os::file_read(0, &mut buf);
                 if bytes_read > 0 {
+                    unsafe {
+                        if crate::wasm::wasi::ICRNL {
+                            for i in 0..bytes_read {
+                                if buf[i] == b'\r' {
+                                    buf[i] = b'\n';
+                                }
+                            }
+                        }
+                    }
                     crate::os::file_write(1, &buf[..bytes_read]);
                     buf.truncate(bytes_read);
                     break buf;

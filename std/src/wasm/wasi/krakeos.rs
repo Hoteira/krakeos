@@ -209,6 +209,15 @@ impl WasiEnv for KrakeosWasiEnv {
                 for buf in iovs.iter_mut() {
                     let n = crate::os::file_read(0, buf);
                     if n > 0 {
+                        unsafe {
+                            if crate::wasm::wasi::ICRNL {
+                                for i in 0..n {
+                                    if buf[i] == b'\r' {
+                                        buf[i] = b'\n';
+                                    }
+                                }
+                            }
+                        }
                         crate::os::file_write(1, &buf[..n]);
                     }
                     total += n;
