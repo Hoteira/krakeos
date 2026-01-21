@@ -4,6 +4,7 @@ use crate::rust_alloc::format;
 use crate::rust_alloc::string::String;
 use crate::rust_alloc::string::ToString;
 use crate::rust_alloc::vec::Vec;
+use crate::sys::{syscall, syscall4, syscall5, syscall6};
 use crate::wasm::wasi::env::{FdStat, FileStat, WasiEnv};
 
 pub struct KrakeosWasiEnv {
@@ -21,7 +22,7 @@ impl Default for KrakeosWasiEnv {
     fn default() -> Self {
         Self {
             fd_table: BTreeMap::new(),
-            next_fd: 3, // 0,1,2 are reserved
+            next_fd: 4, // 0,1,2 are reserved, 3 is preopened root
             random_state: 0,
         }
     }
@@ -97,6 +98,11 @@ impl WasiEnv for KrakeosWasiEnv {
         }
     }
 
+    fn fd_fdstat_set_flags(&mut self, _fd: i32, _flags: u16) -> Result<(), i32> {
+        // Stub: Assume flags set successfully
+        Ok(())
+    }
+
     fn fd_filestat_get(&self, fd: i32) -> Result<FileStat, i32> {
         if let Some(wf) = self.fd_table.get(&fd) {
             if let Ok(s) = wf.file.stat() {
@@ -136,6 +142,11 @@ impl WasiEnv for KrakeosWasiEnv {
         }
     }
 
+    fn fd_filestat_set_times(&mut self, _fd: i32, _atime: u64, _mtime: u64, _fst_flags: u16) -> Result<(), i32> {
+        // Stub: pretend success
+        Ok(())
+    }
+
     fn fd_prestat_get(&self, fd: i32) -> Result<u32, i32> {
         if fd == 3 { Ok(0) } // Preopen type dir (0)
         else { Err(8) }
@@ -166,10 +177,29 @@ impl WasiEnv for KrakeosWasiEnv {
         Ok(total)
     }
 
+    fn fd_pread(&mut self, fd: i32, iovs: &mut [(&mut [u8])], offset: u64) -> Result<usize, i32> {
+        if let Some(wf) = self.fd_table.get(&fd) {
+            let mut total = 0;
+            let mut curr_offset = offset;
+            for buf in iovs {
+                let len = buf.len();
+                let res = unsafe { syscall4(17, wf.file.as_raw_fd() as u64, buf.as_mut_ptr() as u64, len as u64, curr_offset) };
+                if res == u64::MAX { return Err(5); }
+                total += res as usize;
+                curr_offset += res;
+                if (res as usize) < len { break; }
+            }
+            Ok(total)
+        } else {
+            Err(8)
+        }
+    }
+
     fn fd_write(&mut self, fd: i32, iovs: &[&[u8]]) -> Result<usize, i32> {
         let mut total = 0;
         if fd == 1 || fd == 2 {
             for buf in iovs {
+                // crate::debug_print! handles formatted string logic
                 if let Ok(s) = core::str::from_utf8(buf) {
                     crate::debug_print!("{}", s);
                 } else {
@@ -192,6 +222,23 @@ impl WasiEnv for KrakeosWasiEnv {
         Ok(total)
     }
 
+    fn fd_pwrite(&mut self, fd: i32, iovs: &[&[u8]], offset: u64) -> Result<usize, i32> {
+        if let Some(wf) = self.fd_table.get(&fd) {
+            let mut total = 0;
+            let mut curr_offset = offset;
+            for buf in iovs {
+                let len = buf.len();
+                let res = unsafe { syscall4(18, wf.file.as_raw_fd() as u64, buf.as_ptr() as u64, len as u64, curr_offset) };
+                if res == u64::MAX { return Err(5); }
+                total += res as usize;
+                curr_offset += res;
+            }
+            Ok(total)
+        } else {
+            Err(8)
+        }
+    }
+
     fn fd_seek(&mut self, fd: i32, offset: i64, whence: u8) -> Result<u64, i32> {
         let wf = self.fd_table.get_mut(&fd).ok_or(8)?;
         use crate::io::{Seek, SeekFrom};
@@ -211,6 +258,14 @@ impl WasiEnv for KrakeosWasiEnv {
     }
 
     fn fd_sync(&mut self, _fd: i32) -> Result<(), i32> {
+        Ok(())
+    }
+
+    fn fd_datasync(&mut self, _fd: i32) -> Result<(), i32> {
+        Ok(())
+    }
+
+    fn fd_advise(&mut self, _fd: i32, _offset: u64, _len: u64, _advice: u8) -> Result<(), i32> {
         Ok(())
     }
 
@@ -263,6 +318,26 @@ impl WasiEnv for KrakeosWasiEnv {
         }
     }
 
+    fn path_readlink(&mut self, dirfd: i32, path: &str, buf: &mut [u8]) -> Result<usize, i32> {
+        let res = unsafe { syscall5(267, dirfd as u64, path.as_ptr() as u64, path.len() as u64, buf.as_mut_ptr() as u64, buf.len() as u64) };
+        if res == u64::MAX { Err(5) } else { Ok(res as usize) }
+    }
+
+    fn path_link(&mut self, old_fd: i32, _old_flags: u32, old_path: &str, new_fd: i32, new_path: &str) -> Result<(), i32> {
+        let op = self.resolve_path(old_fd, old_path)?;
+        let np = self.resolve_path(new_fd, new_path)?;
+        // syscall6(265, 0, old_ptr, old_len, 0, new_ptr, new_len)
+        let res = unsafe { syscall6(265, 0, op.as_ptr() as u64, op.len() as u64, 0, np.as_ptr() as u64, np.len() as u64) };
+        if res == 0 { Ok(()) } else { Err(28) }
+    }
+
+    fn path_symlink(&mut self, old_path: &str, fd: i32, new_path: &str) -> Result<(), i32> {
+        let np = self.resolve_path(fd, new_path)?;
+        // syscall6(266, target_ptr, target_len, 0, new_ptr, new_len, 0)
+        let res = unsafe { syscall6(266, old_path.as_ptr() as u64, old_path.len() as u64, 0, np.as_ptr() as u64, np.len() as u64, 0) };
+        if res == 0 { Ok(()) } else { Err(28) }
+    }
+
     fn path_filestat_get(&mut self, dirfd: i32, _flags: u32, path: &str) -> Result<FileStat, i32> {
         let full_path = self.resolve_path(dirfd, path)?;
         if let Ok(f) = fs::File::open(&full_path) {
@@ -281,6 +356,13 @@ impl WasiEnv for KrakeosWasiEnv {
             }
         }
         Err(44)
+    }
+
+    fn path_filestat_set_times(&mut self, dirfd: i32, _flags: u32, path: &str, atime: u64, mtime: u64, _fst_flags: u16) -> Result<(), i32> {
+        let full_path = self.resolve_path(dirfd, path)?;
+        // syscall5(280, 0, path_ptr, path_len, atime, mtime)
+        let res = unsafe { syscall5(280, 0, full_path.as_ptr() as u64, full_path.len() as u64, atime, mtime) };
+        if res == 0 { Ok(()) } else { Err(28) }
     }
 
     fn random_get(&mut self, buf: &mut [u8]) -> Result<(), i32> {
@@ -400,6 +482,12 @@ impl WasiEnv for KrakeosWasiEnv {
         crate::debugln!("WASI: proc_exit({})", code);
         crate::os::exit(code as u64)
     }
+
+    // Socket Stubs
+    fn sock_accept(&mut self, _fd: i32, _flags: u16) -> Result<i32, i32> { Err(76) } // ENOTSUP
+    fn sock_recv(&mut self, _fd: i32, _ri_data: &mut [(&mut [u8])], _ri_flags: u16) -> Result<(usize, u16), i32> { Err(76) }
+    fn sock_send(&mut self, _fd: i32, _si_data: &[&[u8]], _si_flags: u16) -> Result<usize, i32> { Err(76) }
+    fn sock_shutdown(&mut self, _fd: i32, _how: u8) -> Result<(), i32> { Err(76) }
 
     fn fd_readdir(&mut self, fd: i32, cookie: u64) -> Result<Vec<(String, u8, u64)>, i32> {
         let p = if fd == 3 {

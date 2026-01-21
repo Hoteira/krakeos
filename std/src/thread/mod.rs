@@ -28,7 +28,7 @@ where
     F: Send + 'static,
     T: Send + 'static,
 {
-    let stack_size = 4096 * 4; // 16KB stack
+    let stack_size = 512 * 1024; // 512KB stack
     let stack_layout = Layout::from_size_align(stack_size, 16).unwrap();
     let stack = unsafe { alloc(stack_layout) };
     let stack_ptr = unsafe { stack.add(stack_size) as usize };

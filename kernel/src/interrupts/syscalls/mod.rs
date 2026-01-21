@@ -22,6 +22,8 @@ pub const SYS_MMAP: u64 = 9;
 pub const SYS_MUNMAP: u64 = 11;
 pub const SYS_BRK: u64 = 12;
 pub const SYS_IOCTL: u64 = 16;
+pub const SYS_PREAD64: u64 = 17;
+pub const SYS_PWRITE64: u64 = 18;
 pub const SYS_PIPE: u64 = 22;
 pub const SYS_NANOSLEEP: u64 = 35;
 pub const SYS_GETPID: u64 = 39;
@@ -29,6 +31,7 @@ pub const SYS_EXECVE: u64 = 59;
 pub const SYS_EXIT: u64 = 60;
 pub const SYS_WAIT4: u64 = 61;
 pub const SYS_KILL: u64 = 62;
+pub const SYS_FCNTL: u64 = 72;
 pub const SYS_GETDENTS: u64 = 78;
 pub const SYS_CHDIR: u64 = 80;
 pub const SYS_RENAME: u64 = 82;
@@ -36,6 +39,10 @@ pub const SYS_MKDIR: u64 = 83;
 pub const SYS_RMDIR: u64 = 84;
 pub const SYS_CREATE: u64 = 85;
 pub const SYS_UNLINK: u64 = 87;
+pub const SYS_LINKAT: u64 = 265;
+pub const SYS_SYMLINKAT: u64 = 266;
+pub const SYS_READLINKAT: u64 = 267;
+pub const SYS_UTIMENSAT: u64 = 280;
 
 
 pub const SYS_ADD_WINDOW: u64 = 100;
@@ -136,6 +143,8 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
         SYS_MUNMAP => memory::handle_munmap(context),
         SYS_BRK => memory::handle_brk(context),
         SYS_IOCTL => fs::handle_ioctl(context),
+        SYS_PREAD64 => fs::handle_pread64(context),
+        SYS_PWRITE64 => fs::handle_pwrite64(context),
         SYS_PIPE => fs::handle_pipe(context),
         SYS_NANOSLEEP => process::handle_sleep(context),
         SYS_GETPID => process::handle_getpid(context),
@@ -143,6 +152,7 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
         SYS_EXIT => process::handle_exit(context),
         SYS_WAIT4 => process::handle_wait_pid(context),
         SYS_KILL => process::handle_kill(context),
+        SYS_FCNTL => fs::handle_fcntl(context),
         SYS_GETDENTS => fs::handle_read_dir(context),
         SYS_CHDIR => fs::handle_chdir(context),
         SYS_RENAME => fs::handle_rename(context),
@@ -150,6 +160,10 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
         SYS_CREATE => fs::handle_create(context, 85),
         SYS_RMDIR => fs::handle_remove(context),
         SYS_UNLINK => fs::handle_remove(context),
+        SYS_LINKAT => fs::handle_linkat(context),
+        SYS_SYMLINKAT => fs::handle_symlinkat(context),
+        SYS_READLINKAT => fs::handle_readlinkat(context),
+        SYS_UTIMENSAT => fs::handle_utimensat(context),
 
         SYS_ADD_WINDOW => window::handle_add_window(context),
         SYS_UPDATE_WINDOW => window::handle_update_window(context),

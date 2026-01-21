@@ -38,10 +38,23 @@ pub fn create_wasi_imports<T: Config>(linker: &mut Linker, store: &mut Store<'_,
     define("fd_tell", vec![i32_t, i32_t], vec![i32_t], fd_tell);
     define("fd_write", vec![i32_t, i32_t, i32_t, i32_t], vec![i32_t], fd_write);
     define("fd_sync", vec![i32_t], vec![i32_t], fd_sync);
+    define("fd_datasync", vec![i32_t], vec![i32_t], fd_datasync);
+    define("fd_advise", vec![i32_t, i64_t, i64_t, i32_t], vec![i32_t], fd_advise);
+    define("fd_fdstat_set_flags", vec![i32_t, i32_t], vec![i32_t], fd_fdstat_set_flags);
+    define("fd_filestat_set_times", vec![i32_t, i64_t, i64_t, i32_t], vec![i32_t], fd_filestat_set_times);
+    define("fd_pread", vec![i32_t, i32_t, i32_t, i64_t, i32_t], vec![i32_t], fd_pread);
+    define("fd_pwrite", vec![i32_t, i32_t, i32_t, i64_t, i32_t], vec![i32_t], fd_pwrite);
     define("path_open", vec![i32_t, i32_t, i32_t, i32_t, i32_t, i64_t, i64_t, i32_t, i32_t], vec![i32_t], path_open);
     define("proc_exit", vec![i32_t], vec![], proc_exit);
     define("fd_readdir", vec![i32_t, i32_t, i32_t, i64_t, i32_t], vec![i32_t], fd_readdir);
     define("path_filestat_get", vec![i32_t, i32_t, i32_t, i32_t, i32_t], vec![i32_t], path_filestat_get);
+    define("path_filestat_set_times", vec![i32_t, i32_t, i32_t, i32_t, i64_t, i64_t, i32_t], vec![i32_t], path_filestat_set_times);
+    define("path_link", vec![i32_t, i32_t, i32_t, i32_t, i32_t, i32_t, i32_t], vec![i32_t], path_link);
+    define("path_symlink", vec![i32_t, i32_t, i32_t, i32_t, i32_t], vec![i32_t], path_symlink);
+    define("sock_accept", vec![i32_t, i32_t, i32_t], vec![i32_t], sock_accept);
+    define("sock_recv", vec![i32_t, i32_t, i32_t, i32_t, i32_t, i32_t], vec![i32_t], sock_recv);
+    define("sock_send", vec![i32_t, i32_t, i32_t, i32_t, i32_t], vec![i32_t], sock_send);
+    define("sock_shutdown", vec![i32_t, i32_t], vec![i32_t], sock_shutdown);
     define("random_get", vec![i32_t, i32_t], vec![i32_t], random_get);
     define("path_create_directory", vec![i32_t, i32_t, i32_t], vec![i32_t], path_create_directory);
     define("path_remove_directory", vec![i32_t, i32_t, i32_t], vec![i32_t], path_remove_directory);
@@ -73,6 +86,237 @@ fn write_u32<T: Config>(store: &mut Store<'_, T>, addr: u32, val: u32) -> Result
 fn write_u64<T: Config>(store: &mut Store<'_, T>, addr: u32, val: u64) -> Result<(), ()> { write_bytes(store, addr, &val.to_le_bytes()) }
 
 // --- Implementation Wrappers ---
+
+fn fd_fdstat_set_flags<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let fd = args.get(0).and_then(|v| if let Value::I32(x) = v { Some(*x as i32) } else { None }).unwrap_or(-1);
+    let flags = args.get(1).and_then(|v| if let Value::I32(x) = v { Some(*x as u16) } else { None }).unwrap_or(0);
+    match wasi_ctx(store).env.fd_fdstat_set_flags(fd, flags) {
+        Ok(_) => Ok(vec![Value::I32(0)]),
+        Err(e) => Ok(vec![Value::I32(e as u32)])
+    }
+}
+
+fn fd_filestat_set_times<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let fd = args.get(0).and_then(|v| if let Value::I32(x) = v { Some(*x as i32) } else { None }).unwrap_or(-1);
+    let atime = args.get(1).and_then(|v| if let Value::I64(x) = v { Some(*x as u64) } else { None }).unwrap_or(0);
+    let mtime = args.get(2).and_then(|v| if let Value::I64(x) = v { Some(*x as u64) } else { None }).unwrap_or(0);
+    let fst_flags = args.get(3).and_then(|v| if let Value::I32(x) = v { Some(*x as u16) } else { None }).unwrap_or(0);
+    match wasi_ctx(store).env.fd_filestat_set_times(fd, atime, mtime, fst_flags) {
+        Ok(_) => Ok(vec![Value::I32(0)]),
+        Err(e) => Ok(vec![Value::I32(e as u32)])
+    }
+}
+
+fn fd_pread<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let fd = args.get(0).and_then(|v| if let Value::I32(x) = v { Some(*x as i32) } else { None }).unwrap_or(-1);
+    let i_ptr = args.get(1).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    let i_len = args.get(2).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    let offset = args.get(3).and_then(|v| if let Value::I64(x) = v { Some(*x as u64) } else { None }).unwrap_or(0);
+    let n_ptr = args.get(4).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    
+    let mut iovs = Vec::new();
+    for i in 0..i_len {
+        let mut iov = [0u8; 8];
+        if read_bytes(store, i_ptr + i * 8, &mut iov).is_err() { return Ok(vec![Value::I32(21)]); }
+        let b_ptr = u32::from_le_bytes(iov[0..4].try_into().unwrap());
+        let b_len = u32::from_le_bytes(iov[4..8].try_into().unwrap());
+        iovs.push((b_ptr, b_len));
+    }
+
+    let mut buffers = Vec::new();
+    for (_, len) in &iovs {
+        buffers.push(vec![0u8; *len as usize]);
+    }
+    
+    let mut slices: Vec<&mut [u8]> = buffers.iter_mut().map(|v| v.as_mut_slice()).collect();
+    
+    match wasi_ctx(store).env.fd_pread(fd, &mut slices, offset) {
+        Ok(n) => {
+            for ((ptr, _), buf) in iovs.iter().zip(buffers.iter()) {
+                if write_bytes(store, *ptr, buf).is_err() { return Ok(vec![Value::I32(28)]); }
+            }
+            if n_ptr != 0 { let _ = write_u32(store, n_ptr, n as u32); }
+            Ok(vec![Value::I32(0)])
+        },
+        Err(e) => Ok(vec![Value::I32(e as u32)])
+    }
+}
+
+fn fd_pwrite<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let fd = args.get(0).and_then(|v| if let Value::I32(x) = v { Some(*x as i32) } else { None }).unwrap_or(-1);
+    let i_ptr = args.get(1).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    let i_len = args.get(2).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    let offset = args.get(3).and_then(|v| if let Value::I64(x) = v { Some(*x as u64) } else { None }).unwrap_or(0);
+    let n_ptr = args.get(4).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    
+    let mut buffers = Vec::new();
+    for i in 0..i_len {
+        let mut iov = [0u8; 8];
+        if read_bytes(store, i_ptr + i * 8, &mut iov).is_err() { return Ok(vec![Value::I32(21)]); }
+        let b_ptr = u32::from_le_bytes(iov[0..4].try_into().unwrap());
+        let b_len = u32::from_le_bytes(iov[4..8].try_into().unwrap());
+        let mut b = vec![0u8; b_len as usize];
+        if read_bytes(store, b_ptr, &mut b).is_err() { return Ok(vec![Value::I32(21)]); }
+        buffers.push(b);
+    }
+    
+    let slices: Vec<&[u8]> = buffers.iter().map(|v| v.as_slice()).collect();
+    
+    match wasi_ctx(store).env.fd_pwrite(fd, &slices, offset) {
+        Ok(n) => {
+            let _ = write_u32(store, n_ptr, n as u32);
+            Ok(vec![Value::I32(0)])
+        },
+        Err(e) => Ok(vec![Value::I32(e as u32)])
+    }
+}
+
+fn path_filestat_set_times<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let dirfd = args.get(0).and_then(|v| if let Value::I32(x) = v { Some(*x as i32) } else { None }).unwrap_or(-1);
+    let flags = args.get(1).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    let ptr = args.get(2).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    let len = args.get(3).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    let atime = args.get(4).and_then(|v| if let Value::I64(x) = v { Some(*x as u64) } else { None }).unwrap_or(0);
+    let mtime = args.get(5).and_then(|v| if let Value::I64(x) = v { Some(*x as u64) } else { None }).unwrap_or(0);
+    let fst_flags = args.get(6).and_then(|v| if let Value::I32(x) = v { Some(*x as u16) } else { None }).unwrap_or(0);
+    
+    let mut pb = vec![0u8; len as usize];
+    if read_bytes(store, ptr, &mut pb).is_err() { return Ok(vec![Value::I32(21)]); }
+    let path = String::from_utf8_lossy(&pb).into_owned();
+    
+    match wasi_ctx(store).env.path_filestat_set_times(dirfd, flags, &path, atime, mtime, fst_flags) {
+        Ok(_) => Ok(vec![Value::I32(0)]),
+        Err(e) => Ok(vec![Value::I32(e as u32)])
+    }
+}
+
+fn path_link<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let ofd = args.get(0).and_then(|v| if let Value::I32(x) = v { Some(*x as i32) } else { None }).unwrap_or(-1);
+    let oflags = args.get(1).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    let optr = args.get(2).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    let olen = args.get(3).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    let nfd = args.get(4).and_then(|v| if let Value::I32(x) = v { Some(*x as i32) } else { None }).unwrap_or(-1);
+    let nptr = args.get(5).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    let nlen = args.get(6).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    
+    let mut ob = vec![0u8; olen as usize];
+    let mut nb = vec![0u8; nlen as usize];
+    if read_bytes(store, optr, &mut ob).is_err() || read_bytes(store, nptr, &mut nb).is_err() { return Ok(vec![Value::I32(21)]); }
+    let op = String::from_utf8_lossy(&ob).into_owned();
+    let np = String::from_utf8_lossy(&nb).into_owned();
+    
+    match wasi_ctx(store).env.path_link(ofd, oflags, &op, nfd, &np) {
+        Ok(_) => Ok(vec![Value::I32(0)]),
+        Err(e) => Ok(vec![Value::I32(e as u32)])
+    }
+}
+
+fn path_symlink<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let tptr = args.get(0).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    let tlen = args.get(1).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    let fd = args.get(2).and_then(|v| if let Value::I32(x) = v { Some(*x as i32) } else { None }).unwrap_or(-1);
+    let ptr = args.get(3).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    let len = args.get(4).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    
+    let mut tb = vec![0u8; tlen as usize];
+    let mut pb = vec![0u8; len as usize];
+    if read_bytes(store, tptr, &mut tb).is_err() || read_bytes(store, ptr, &mut pb).is_err() { return Ok(vec![Value::I32(21)]); }
+    let target = String::from_utf8_lossy(&tb).into_owned();
+    let path = String::from_utf8_lossy(&pb).into_owned();
+    
+    match wasi_ctx(store).env.path_symlink(&target, fd, &path) {
+        Ok(_) => Ok(vec![Value::I32(0)]),
+        Err(e) => Ok(vec![Value::I32(e as u32)])
+    }
+}
+
+fn sock_accept<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let fd = args.get(0).and_then(|v| if let Value::I32(x) = v { Some(*x as i32) } else { None }).unwrap_or(-1);
+    let flags = args.get(1).and_then(|v| if let Value::I32(x) = v { Some(*x as u16) } else { None }).unwrap_or(0);
+    let ptr = args.get(2).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    
+    match wasi_ctx(store).env.sock_accept(fd, flags) {
+        Ok(new_fd) => {
+            if write_u32(store, ptr, new_fd as u32).is_err() { return Ok(vec![Value::I32(28)]); }
+            Ok(vec![Value::I32(0)])
+        },
+        Err(e) => Ok(vec![Value::I32(e as u32)])
+    }
+}
+
+fn sock_recv<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let fd = args.get(0).and_then(|v| if let Value::I32(x) = v { Some(*x as i32) } else { None }).unwrap_or(-1);
+    let ri_data_ptr = args.get(1).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    let ri_data_len = args.get(2).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    let ri_flags = args.get(3).and_then(|v| if let Value::I32(x) = v { Some(*x as u16) } else { None }).unwrap_or(0);
+    let ro_datalen_ptr = args.get(4).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    let ro_flags_ptr = args.get(5).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    
+    let mut iovs = Vec::new();
+    for i in 0..ri_data_len {
+        let mut iov = [0u8; 8];
+        if read_bytes(store, ri_data_ptr + i * 8, &mut iov).is_err() { return Ok(vec![Value::I32(21)]); }
+        let b_ptr = u32::from_le_bytes(iov[0..4].try_into().unwrap());
+        let b_len = u32::from_le_bytes(iov[4..8].try_into().unwrap());
+        iovs.push((b_ptr, b_len));
+    }
+
+    let mut buffers = Vec::new();
+    for (_, len) in &iovs {
+        buffers.push(vec![0u8; *len as usize]);
+    }
+    
+    let mut slices: Vec<&mut [u8]> = buffers.iter_mut().map(|v| v.as_mut_slice()).collect();
+    
+    match wasi_ctx(store).env.sock_recv(fd, &mut slices, ri_flags) {
+        Ok((len, flags)) => {
+            for ((ptr, _), buf) in iovs.iter().zip(buffers.iter()) {
+                if write_bytes(store, *ptr, buf).is_err() { return Ok(vec![Value::I32(28)]); }
+            }
+            if write_u32(store, ro_datalen_ptr, len as u32).is_err() || write_u16(store, ro_flags_ptr, flags).is_err() { return Ok(vec![Value::I32(28)]); }
+            Ok(vec![Value::I32(0)])
+        },
+        Err(e) => Ok(vec![Value::I32(e as u32)])
+    }
+}
+
+fn sock_send<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let fd = args.get(0).and_then(|v| if let Value::I32(x) = v { Some(*x as i32) } else { None }).unwrap_or(-1);
+    let si_data_ptr = args.get(1).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    let si_data_len = args.get(2).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    let si_flags = args.get(3).and_then(|v| if let Value::I32(x) = v { Some(*x as u16) } else { None }).unwrap_or(0);
+    let so_datalen_ptr = args.get(4).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    
+    let mut buffers = Vec::new();
+    for i in 0..si_data_len {
+        let mut iov = [0u8; 8];
+        if read_bytes(store, si_data_ptr + i * 8, &mut iov).is_err() { return Ok(vec![Value::I32(21)]); }
+        let b_ptr = u32::from_le_bytes(iov[0..4].try_into().unwrap());
+        let b_len = u32::from_le_bytes(iov[4..8].try_into().unwrap());
+        let mut b = vec![0u8; b_len as usize];
+        if read_bytes(store, b_ptr, &mut b).is_err() { return Ok(vec![Value::I32(21)]); }
+        buffers.push(b);
+    }
+    
+    let slices: Vec<&[u8]> = buffers.iter().map(|v| v.as_slice()).collect();
+    
+    match wasi_ctx(store).env.sock_send(fd, &slices, si_flags) {
+        Ok(len) => {
+            if write_u32(store, so_datalen_ptr, len as u32).is_err() { return Ok(vec![Value::I32(28)]); }
+            Ok(vec![Value::I32(0)])
+        },
+        Err(e) => Ok(vec![Value::I32(e as u32)])
+    }
+}
+
+fn sock_shutdown<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let fd = args.get(0).and_then(|v| if let Value::I32(x) = v { Some(*x as i32) } else { None }).unwrap_or(-1);
+    let how = args.get(1).and_then(|v| if let Value::I32(x) = v { Some(*x as u8) } else { None }).unwrap_or(0);
+    match wasi_ctx(store).env.sock_shutdown(fd, how) {
+        Ok(_) => Ok(vec![Value::I32(0)]),
+        Err(e) => Ok(vec![Value::I32(e as u32)])
+    }
+}
 
 fn args_get<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
     let argv_ptr = args.get(0).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
@@ -345,6 +589,26 @@ fn fd_sync<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<
     }
 }
 
+fn fd_datasync<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let fd = args.get(0).and_then(|v| if let Value::I32(x) = v { Some(*x as i32) } else { None }).unwrap_or(-1);
+    match wasi_ctx(store).env.fd_datasync(fd) {
+        Ok(_) => Ok(vec![Value::I32(0)]),
+        Err(e) => Ok(vec![Value::I32(e as u32)])
+    }
+}
+
+fn fd_advise<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let fd = args.get(0).and_then(|v| if let Value::I32(x) = v { Some(*x as i32) } else { None }).unwrap_or(-1);
+    let offset = args.get(1).and_then(|v| if let Value::I64(x) = v { Some(*x as u64) } else { None }).unwrap_or(0);
+    let len = args.get(2).and_then(|v| if let Value::I64(x) = v { Some(*x as u64) } else { None }).unwrap_or(0);
+    let advice = args.get(3).and_then(|v| if let Value::I32(x) = v { Some(*x as u8) } else { None }).unwrap_or(0);
+    
+    match wasi_ctx(store).env.fd_advise(fd, offset, len, advice) {
+        Ok(_) => Ok(vec![Value::I32(0)]),
+        Err(e) => Ok(vec![Value::I32(e as u32)])
+    }
+}
+
 fn path_open<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
     let dirfd = args.get(0).and_then(|v| if let Value::I32(x) = v { Some(*x as i32) } else { None }).unwrap_or(-1);
     let dirflags = args.get(1).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
@@ -515,7 +779,28 @@ fn path_rename<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<
     }
 }
 
-fn path_readlink<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> { panic!("WASI P1 stub: path_readlink"); }
+fn path_readlink<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let fd = args.get(0).and_then(|v| if let Value::I32(x) = v { Some(*x as i32) } else { None }).unwrap_or(-1);
+    let p_ptr = args.get(1).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    let p_len = args.get(2).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    let b_ptr = args.get(3).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    let b_len = args.get(4).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+    let n_ptr = args.get(5).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
+
+    let mut pb = vec![0u8; p_len as usize];
+    if read_bytes(store, p_ptr, &mut pb).is_err() { return Ok(vec![Value::I32(21)]); }
+    let path = String::from_utf8_lossy(&pb).into_owned();
+
+    let mut buf = vec![0u8; b_len as usize];
+    match wasi_ctx(store).env.path_readlink(fd, &path, &mut buf) {
+        Ok(n) => {
+            if write_bytes(store, b_ptr, &buf[..n]).is_err() { return Ok(vec![Value::I32(28)]); }
+            if write_u32(store, n_ptr, n as u32).is_err() { return Ok(vec![Value::I32(28)]); }
+            Ok(vec![Value::I32(0)])
+        }
+        Err(e) => Ok(vec![Value::I32(e as u32)])
+    }
+}
 
 fn fd_readdir<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
     let fd = args.get(0).and_then(|v| if let Value::I32(x) = v { Some(*x as i32) } else { None }).unwrap_or(-1);
@@ -536,7 +821,7 @@ fn fd_readdir<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<V
                     break;
                 }
                 let eb = b_ptr + used as u32;
-                if write_u64(store, eb, 0).is_err() || // Next cookie - simplified
+                if write_u64(store, eb, inode).is_err() || // Next cookie
                    write_u64(store, eb + 8, inode).is_err() || 
                    write_u32(store, eb + 16, nl as u32).is_err() || 
                    write_bytes(store, eb + 20, &[ft, 0, 0, 0]).is_err() || 

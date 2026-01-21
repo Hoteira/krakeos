@@ -114,6 +114,7 @@ pub enum FileType {
     File,
     Directory,
     Device,
+    Symlink,
     Unknown,
 }
 
@@ -187,5 +188,21 @@ pub trait VfsNode: Send + Sync {
 
     fn mmap(&mut self, _offset: u64, _len: usize) -> Result<u64, String> {
         Err(String::from("Not supported"))
+    }
+
+    fn link(&mut self, _name: &str, _src: &mut dyn VfsNode) -> Result<(), String> {
+        Err(String::from("Not supported"))
+    }
+
+    fn symlink(&mut self, _name: &str, _target_path: &str) -> Result<(), String> {
+        Err(String::from("Not supported"))
+    }
+
+    fn set_times(&mut self, _atime: u64, _mtime: u64) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn readlink(&mut self) -> Result<String, String> {
+        Err(String::from("Not a symlink"))
     }
 }

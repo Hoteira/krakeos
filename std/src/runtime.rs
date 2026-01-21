@@ -17,13 +17,6 @@ pub unsafe extern "C" fn _start() -> ! {
 #[cfg(target_arch = "x86_64")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rust_start(stack: *const usize) -> ! {
-    let heap_size = 10 * 1024 * 1024;
-    let heap_ptr = crate::memory::malloc(heap_size);
-    if heap_ptr == 0 || heap_ptr == usize::MAX {
-        crate::os::exit(1);
-    }
-    crate::alloc::init_heap(heap_ptr as *mut u8, heap_size);
-
     let argc = *stack as i32;
     let argv = stack.add(1) as *const *const u8;
     let envp = stack.add(argc as usize + 2) as *const *const u8;

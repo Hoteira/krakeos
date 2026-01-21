@@ -37,17 +37,33 @@ pub trait WasiEnv {
     fn fd_seek(&mut self, fd: i32, offset: i64, whence: u8) -> Result<u64, i32>;
     fn fd_tell(&mut self, fd: i32) -> Result<u64, i32>;
     fn fd_sync(&mut self, fd: i32) -> Result<(), i32>;
+    fn fd_datasync(&mut self, fd: i32) -> Result<(), i32>;
+    fn fd_advise(&mut self, fd: i32, offset: u64, len: u64, advice: u8) -> Result<(), i32>;
+    fn fd_fdstat_set_flags(&mut self, fd: i32, flags: u16) -> Result<(), i32>;
+    fn fd_filestat_set_times(&mut self, fd: i32, atime: u64, mtime: u64, fst_flags: u16) -> Result<(), i32>;
+    fn fd_pread(&mut self, fd: i32, iovs: &mut [(&mut [u8])], offset: u64) -> Result<usize, i32>;
+    fn fd_pwrite(&mut self, fd: i32, iovs: &[&[u8]], offset: u64) -> Result<usize, i32>;
     fn path_open(&mut self, dirfd: i32, dirflags: u32, path: &str, oflags: u32, fs_rights_base: u64, fs_rights_inheriting: u64, fdflags: u16) -> Result<i32, i32>;
     fn path_create_directory(&mut self, dirfd: i32, path: &str) -> Result<(), i32>;
     fn path_remove_directory(&mut self, dirfd: i32, path: &str) -> Result<(), i32>;
     fn path_unlink_file(&mut self, dirfd: i32, path: &str) -> Result<(), i32>;
     fn path_rename(&mut self, old_fd: i32, old_path: &str, new_fd: i32, new_path: &str) -> Result<(), i32>;
+    fn path_readlink(&mut self, dirfd: i32, path: &str, buf: &mut [u8]) -> Result<usize, i32>;
+    fn path_link(&mut self, old_fd: i32, old_flags: u32, old_path: &str, new_fd: i32, new_path: &str) -> Result<(), i32>;
+    fn path_symlink(&mut self, old_path: &str, fd: i32, new_path: &str) -> Result<(), i32>;
     fn path_filestat_get(&mut self, dirfd: i32, flags: u32, path: &str) -> Result<FileStat, i32>;
+    fn path_filestat_set_times(&mut self, dirfd: i32, flags: u32, path: &str, atime: u64, mtime: u64, fst_flags: u16) -> Result<(), i32>;
     fn random_get(&mut self, buf: &mut [u8]) -> Result<(), i32>;
     fn sched_yield(&mut self) -> Result<(), i32>;
     fn poll_oneoff(&mut self, in_events: &[u8], out_events: &mut [u8], nsubscriptions: u32) -> Result<u32, i32>; // simplified for now, struct handling is complex
     fn proc_exit(&mut self, code: i32) -> !;
     
+    // Sockets
+    fn sock_accept(&mut self, fd: i32, flags: u16) -> Result<i32, i32>;
+    fn sock_recv(&mut self, fd: i32, ri_data: &mut [(&mut [u8])], ri_flags: u16) -> Result<(usize, u16), i32>;
+    fn sock_send(&mut self, fd: i32, si_data: &[&[u8]], si_flags: u16) -> Result<usize, i32>;
+    fn sock_shutdown(&mut self, fd: i32, how: u8) -> Result<(), i32>;
+
     // Extensions/Extra
     fn fd_readdir(&mut self, fd: i32, cookie: u64) -> Result<Vec<(String, u8, u64)>, i32>; // name, type, inode
 }

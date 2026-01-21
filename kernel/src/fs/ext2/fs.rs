@@ -512,6 +512,8 @@ impl VfsNode for Ext2Node {
             FileType::Directory
         } else if (self.inode.mode & 0xF000) == 0x8000 {
             FileType::File
+        } else if (self.inode.mode & 0xF000) == 0xA000 {
+            FileType::Symlink
         } else {
             FileType::Unknown
         }
@@ -542,6 +544,19 @@ impl VfsNode for Ext2Node {
         let total_size = self.size();
         if offset >= total_size {
             return Ok(0);
+        }
+
+        // Handle fast symlinks (size < 60 bytes and is a symlink)
+        if self.kind() == FileType::Symlink && total_size < 60 {
+            let mut data = [0u8; 60];
+            let inode_block = self.inode.block;
+            
+            unsafe {
+                core::ptr::copy_nonoverlapping(inode_block.as_ptr() as *const u8, data.as_mut_ptr(), 60);
+            }
+            let to_copy = core::cmp::min(buffer.len(), (total_size - offset) as usize);
+            buffer[..to_copy].copy_from_slice(&data[offset as usize..offset as usize + to_copy]);
+            return Ok(to_copy);
         }
 
         let mut bytes_read = 0;
@@ -761,8 +776,6 @@ impl VfsNode for Ext2Node {
             return Err(String::from("Not a directory"));
         }
 
-        crate::debugln!("Ext2Node::find: '{}' in '{}'", name, self.name);
-
         let fs = unsafe { &mut *self.fs };
         let fs_ptr = fs as *mut Ext2;
 
@@ -812,6 +825,7 @@ impl VfsNode for Ext2Node {
                                     unsafe { (*fs_ptr).read_inode(entry.inode) }
                                 };
 
+                                crate::debugln!("Ext2Node::find: '{}' in '{}'       : V", name, self.name);
                                 return Ok(Box::new(Ext2Node {
                                     fs: self.fs,
                                     inode_idx: entry.inode,
@@ -827,6 +841,7 @@ impl VfsNode for Ext2Node {
             offset += block_size as u64;
         }
 
+        crate::debugln!("Ext2Node::find: '{}' in '{}'       : X", name, self.name);
         Err(String::from("File not found"))
     }
 
@@ -1170,6 +1185,55 @@ impl VfsNode for Ext2Node {
         };
 
         Ok(cache_phys + crate::memory::paging::HHDM_OFFSET + block_offset as u64)
+    }
+
+    fn link(&mut self, name: &str, src: &mut dyn VfsNode) -> Result<(), String> {
+        let inode_num = src.inode() as u32;
+        let fs = unsafe { &mut *self.fs };
+        let fs_ptr = fs as *mut Ext2;
+        
+        let mut src_inode = {
+            let _lock = fs.lock.lock();
+            unsafe { (*fs_ptr).read_inode(inode_num) }
+        };
+        
+        src_inode.links_count += 1;
+        {
+            let _lock = fs.lock.lock();
+            unsafe { (*fs_ptr).write_inode(inode_num, &src_inode) };
+        }
+        
+        let file_type = if (src_inode.mode & 0xF000) == 0x4000 { 2 } else { 1 };
+        self.add_directory_entry(inode_num, name, file_type)?;
+        
+        Ok(())
+    }
+
+    fn symlink(&mut self, name: &str, target: &str) -> Result<(), String> {
+        let mut node = self.create_node(name, 0xA1FF)?;
+        node.write(0, target.as_bytes())?;
+        Ok(())
+    }
+
+    fn set_times(&mut self, atime: u64, mtime: u64) -> Result<(), String> {
+        let fs = unsafe { &mut *self.fs };
+        let fs_ptr = fs as *mut Ext2;
+        let _lock = fs.lock.lock();
+        
+        self.inode.atime = atime as u32;
+        self.inode.mtime = mtime as u32;
+        unsafe { (*fs_ptr).write_inode(self.inode_idx, &self.inode) };
+        Ok(())
+    }
+
+    fn readlink(&mut self) -> Result<String, String> {
+        if self.kind() != FileType::Symlink {
+            return Err(String::from("Not a symlink"));
+        }
+        let size = self.size() as usize;
+        let mut buf = alloc::vec![0u8; size];
+        let n = self.read(0, &mut buf)?;
+        Ok(String::from_utf8_lossy(&buf[..n]).into_owned())
     }
 }
 

@@ -43,13 +43,14 @@ pub fn file_write(fd: usize, buffer: &[u8]) -> usize {
         let n = unsafe {
             syscall(1, fd as u64, buffer[total_written..].as_ptr() as u64, (buffer.len() - total_written) as u64) as usize
         };
-        if n == 0 || n == usize::MAX {
+        if n == usize::MAX {
             break;
         }
-        total_written += n;
-        if total_written < buffer.len() {
+        if n == 0 {
             yield_task();
+            continue;
         }
+        total_written += n;
     }
     total_written
 }

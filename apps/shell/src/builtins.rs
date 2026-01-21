@@ -3,10 +3,100 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use std::io::{Read, Write};
+use std::fs::File;
+use std::wasm::{validate, Linker, Store};
+use std::thread;
+
+fn run_wasm_thread(path: String) {
+    let msg = format!("WASM: Starting WASI App: {}...\n", path);
+    std::os::file_write(1, msg.as_bytes());
+
+    if let Ok(mut file) = File::open(&path) {
+        let size = file.size();
+        let mut buffer = Vec::with_capacity(size);
+        if file.read_to_end(&mut buffer).is_ok() {
+            match validate(&buffer) {
+                Ok(validation_info) => {
+                    // let msg = format!("WASM: Module {} parsed and validated successfully.\n", path);
+                    // std::os::file_write(1, msg.as_bytes());
+
+                    let mut store = Store::new(());
+                    let mut linker = Linker::new();
+
+                    std::wasm::wasi::create_wasi_imports(&mut linker, &mut store);
+                    std::wasm::wasi::create_wasi_p2_imports(&mut linker, &mut store);
+
+                    if let Some(component) = &validation_info.component {
+                        let msg = format!("WASI: [COMPONENT] Starting {}...\n", path);
+                        std::os::file_write(1, msg.as_bytes());
+                        match std::wasm::execution::component_executor::instantiate_component(
+                            &mut store, &linker, component, &buffer,
+                        ) {
+                            Ok(_) => {
+                                let msg = format!("WASI: [COMPONENT] Finished {}.\n", path);
+                                std::os::file_write(1, msg.as_bytes());
+                            }
+                            Err(e) => {
+                                let msg = format!("WASM: Component Execution error: {:?}\n", e);
+                                std::os::file_write(1, msg.as_bytes());
+                            }
+                        }
+                    } else {
+                        // let msg = format!("WASI: [INTERPRETER] Starting {}...\n", path);
+                        // std::os::file_write(1, msg.as_bytes());
+                        match linker.module_instantiate(&mut store, &validation_info, None) {
+                            Ok(instance) => {
+                                let entry_point = store
+                                    .instance_export(instance.module_addr, "run")
+                                    .ok()
+                                    .and_then(|e| e.as_func())
+                                    .or_else(|| {
+                                        store
+                                            .instance_export(instance.module_addr, "_start")
+                                            .ok()
+                                            .and_then(|e| e.as_func())
+                                    });
+
+                                if let Some(func_addr) = entry_point {
+                                    let _ = store.invoke(func_addr, Vec::new(), None);
+                                    let msg = format!("WASI: [INTERPRETER] Finished {}.\n", path);
+                                    std::os::file_write(1, msg.as_bytes());
+                                }
+                            }
+                            Err(e) => {
+                                let msg = format!("WASM: Instantiation error: {:?}\n", e);
+                                std::os::file_write(1, msg.as_bytes());
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    let msg = format!("WASM: Validation error: {:?}\n", e);
+                    std::os::file_write(1, msg.as_bytes());
+                }
+            }
+        }
+    } else {
+        let msg = format!("WASM: WASM file not found at {}\n", path);
+        std::os::file_write(1, msg.as_bytes());
+    }
+}
 
 pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &mut String, in_fd: usize, out_fd: usize) -> i32 {
     if cmd == "help" {
-        std::os::file_write(out_fd, b"Available commands: help, clear, ls, cd, pwd, touch, mkdir, rm, mv, cp, cat, sleep, osfetch, echo, export\n");
+        std::os::file_write(out_fd, b"Available commands: help, clear, ls, cd, pwd, touch, mkdir, rm, mv, cp, cat, sleep, osfetch, echo, export, wasm\n");
+        return 0;
+    } else if cmd == "wasm" {
+        if !args.is_empty() {
+            let path_str = resolve_path(cwd, &args[0]);
+            let path = path_str.clone();
+            thread::spawn(move || {
+                run_wasm_thread(path);
+            });
+        } else {
+             std::os::file_write(out_fd, b"Usage: wasm <file.wasm>\n");
+             return 1;
+        }
         return 0;
     } else if cmd == "export" {
         if !args.is_empty() {

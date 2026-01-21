@@ -11,9 +11,13 @@ pub struct WasiCtx {
 
 impl Default for WasiCtx {
     fn default() -> Self {
+        let mut resource_table = BTreeMap::new();
+        // Preopen the root directory at ID 3
+        resource_table.insert(3, WasiResource::Directory(String::from("/")));
+
         Self {
-            resource_table: BTreeMap::new(),
-            next_resource_id: 1,
+            resource_table,
+            next_resource_id: 4,
             env: Box::new(super::krakeos::KrakeosWasiEnv::default()),
         }
     }

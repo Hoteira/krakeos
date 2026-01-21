@@ -214,19 +214,26 @@ unsafe fn is_valid_ram(start: PhysAddr, count: usize) -> bool {
     }
 }
 
-unsafe fn lock_pmm() {
+unsafe fn lock_pmm() -> u64 {
     unsafe {
+        let rflags: u64;
+        core::arch::asm!("pushfq; pop {}", out(reg) rflags);
+        core::arch::asm!("cli");
         let pmm_ptr = &raw mut PMM;
         while (*pmm_ptr).lock.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
             core::hint::spin_loop();
         }
+        rflags
     }
 }
 
-unsafe fn unlock_pmm() {
+unsafe fn unlock_pmm(rflags: u64) {
     unsafe {
         let pmm_ptr = &raw mut PMM;
         (*pmm_ptr).lock.store(false, Ordering::Release);
+        if (rflags & 0x200) != 0 {
+            core::arch::asm!("sti");
+        }
     }
 }
 
@@ -243,7 +250,7 @@ pub fn allocate_memory(bytes: usize, pid: u64) -> Option<u64> {
     if pages == 0 { return None; }
 
     unsafe {
-        lock_pmm();
+        let flags = lock_pmm();
         let pmm_ptr = &raw mut PMM;
 
         let mut count_used = 0;
@@ -328,12 +335,12 @@ pub fn allocate_memory(bytes: usize, pid: u64) -> Option<u64> {
                 let virt_ptr = (found_addr.as_u64() + crate::memory::paging::HHDM_OFFSET) as *mut u8;
                 core::ptr::write_bytes(virt_ptr, 0, pages * PAGE_SIZE as usize);
 
-                unlock_pmm();
+                unlock_pmm(flags);
                 return Some(found_addr.as_u64());
             }
         }
 
-        unlock_pmm();
+        unlock_pmm(flags);
         debugln!("PMM: FAILED to allocate {} bytes for PID {}. prev_end={:#x}, count_used={}", bytes, pid, prev_end.as_u64(), count_used);
         None
     }
@@ -345,9 +352,9 @@ pub fn reserve_frame(addr: u64) -> bool {
 
 pub fn reserve_frames(addr: u64, count: usize) -> bool {
     unsafe {
-        lock_pmm();
+        let flags = lock_pmm();
         if is_overlap(PhysAddr::new(addr), count) {
-            unlock_pmm();
+            unlock_pmm(flags);
             return false;
         }
         let res = add_allocation(0, PhysAddr::new(addr), count);
@@ -355,22 +362,22 @@ pub fn reserve_frames(addr: u64, count: usize) -> bool {
             let virt_ptr = (addr + crate::memory::paging::HHDM_OFFSET) as *mut u8;
             core::ptr::write_bytes(virt_ptr, 0, count * PAGE_SIZE as usize);
         }
-        unlock_pmm();
+        unlock_pmm(flags);
         res
     }
 }
 
 pub fn free_frame(addr: u64) {
     unsafe {
-        lock_pmm();
+        let flags = lock_pmm();
         remove_allocation(PhysAddr::new(addr));
-        unlock_pmm();
+        unlock_pmm(flags);
     }
 }
 
 pub fn free_frames_by_pid(pid: u64) {
     unsafe {
-        lock_pmm();
+        let flags = lock_pmm();
         let pmm_ptr = &raw mut PMM;
 
         let target_main = pid >> 32;
@@ -417,13 +424,13 @@ pub fn free_frames_by_pid(pid: u64) {
             i += 1;
         }
 
-        unlock_pmm();
+        unlock_pmm(flags);
     }
 }
 
 pub fn print_allocations() {
     unsafe {
-        lock_pmm();
+        let flags = lock_pmm();
         let pmm_ptr = &raw mut PMM;
 
         debugln!("--- PMM Allocations ---");
@@ -454,7 +461,7 @@ pub fn print_allocations() {
         }
         debugln!("--- End of Allocations ---");
 
-        unlock_pmm();
+        unlock_pmm(flags);
     }
 }
 

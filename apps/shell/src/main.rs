@@ -114,7 +114,7 @@ pub extern "C" fn main() -> i32 {
                             }
 
                             let is_builtin = match parsed.cmd.as_str() {
-                                "cd" | "ls" | "pwd" | "help" | "clear" | "touch" | "mkdir" | "rm" | "mv" | "cp" | "sleep" | "osfetch" | "echo" | "cat" | "export" => true,
+                                "cd" | "ls" | "pwd" | "help" | "clear" | "touch" | "mkdir" | "rm" | "mv" | "cp" | "sleep" | "osfetch" | "echo" | "cat" | "export" | "wasm" => true,
                                 _ => false
                             };
 

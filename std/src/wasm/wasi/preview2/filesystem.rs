@@ -11,7 +11,41 @@ use crate::wasm::{
 // Reuse helpers
 
 pub fn get_directories<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-    panic!("WASI P2 stub: get_directories");
+    let ret_ptr = match args.get(0) {
+        Some(Value::I32(v)) => *v as u32,
+        _ => return Ok(vec![]),
+    };
+
+    let wasi = store.wasi_ctx.as_ref().ok_or(HaltExecutionError)?;
+    let mut preopens = Vec::new();
+    for (id, res) in &wasi.resource_table {
+        if let WasiResource::Directory(path) = res {
+            preopens.push((*id, path.clone()));
+        }
+    }
+
+    let count = preopens.len() as u32;
+    let array_ptr = if count > 0 {
+        super::call_cabi_realloc(store, count * 12, 4)?
+    } else {
+        0
+    };
+
+    for (i, (id, path)) in preopens.into_iter().enumerate() {
+        let bytes = path.as_bytes();
+        let s_ptr = super::call_cabi_realloc(store, bytes.len() as u32, 1)?;
+        super::write_bytes(store, s_ptr, bytes).map_err(|_| HaltExecutionError)?;
+
+        let tuple_off = array_ptr + (i as u32 * 12);
+        super::write_u32(store, tuple_off, id as u32).map_err(|_| HaltExecutionError)?;
+        super::write_u32(store, tuple_off + 4, s_ptr).map_err(|_| HaltExecutionError)?;
+        super::write_u32(store, tuple_off + 8, bytes.len() as u32).map_err(|_| HaltExecutionError)?;
+    }
+
+    super::write_u32(store, ret_ptr, array_ptr).map_err(|_| HaltExecutionError)?;
+    super::write_u32(store, ret_ptr + 4, count).map_err(|_| HaltExecutionError)?;
+
+    Ok(vec![])
 }
 
 pub fn filesystem_types_read_via_stream<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {

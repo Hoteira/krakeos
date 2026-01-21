@@ -84,18 +84,29 @@ impl Allocator {
         }
     }
 
-    fn lock(&self) {
-        while self
-            .lock
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
-            core::hint::spin_loop();
+    fn lock(&self) -> u64 {
+        unsafe {
+            let rflags: u64;
+            core::arch::asm!("pushfq; pop {}", out(reg) rflags);
+            core::arch::asm!("cli");
+            while self
+                .lock
+                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                .is_err()
+            {
+                core::hint::spin_loop();
+            }
+            rflags
         }
     }
 
-    fn unlock(&self) {
+    fn unlock(&self, rflags: u64) {
         self.lock.store(false, Ordering::Release);
+        unsafe {
+            if (rflags & 0x200) != 0 {
+                core::arch::asm!("sti");
+            }
+        }
     }
 }
 
@@ -220,7 +231,7 @@ unsafe impl GlobalAlloc for Allocator {
             return core::ptr::null_mut();
         }
 
-        self.lock();
+        let flags = self.lock();
 
 
         let needed_total = size_of::<Used>() + layout.size();
@@ -241,7 +252,7 @@ unsafe impl GlobalAlloc for Allocator {
                     (*used).magic = MAGIC_USED;
                     (*used).size = aligned_total - size_of::<Used>();
 
-                    self.unlock();
+                    self.unlock(flags);
                     return (used as *mut u8).add(size_of::<Used>());
                 }
             }
@@ -291,7 +302,7 @@ unsafe impl GlobalAlloc for Allocator {
                         }
                     }
 
-                    self.unlock();
+                    self.unlock(flags);
                     return payload_ptr;
                 }
 
@@ -306,7 +317,7 @@ unsafe impl GlobalAlloc for Allocator {
             }
         }
 
-        self.unlock();
+        self.unlock(flags);
         core::ptr::null_mut()
     }
 
@@ -315,22 +326,22 @@ unsafe impl GlobalAlloc for Allocator {
             return;
         }
 
-        self.lock();
+        let flags = self.lock();
 
         if !in_heap_bounds(ptr as *const u8) {
-            self.unlock();
+            self.unlock(flags);
             panic!("dealloc: pointer outside heap bounds");
         }
 
         let hdr = get_used_header(ptr);
 
         if !in_heap_bounds(hdr as *const u8) || (hdr as usize) % align_of::<Used>() != 0 {
-            self.unlock();
+            self.unlock(flags);
             panic!("dealloc: invalid header location");
         }
 
         if (*hdr).magic != MAGIC_USED {
-            self.unlock();
+            self.unlock(flags);
             panic!("dealloc: magic mismatch (double free or corruption?)");
         }
 
@@ -344,7 +355,7 @@ unsafe impl GlobalAlloc for Allocator {
             let current_head = self.bins[idx].load(Ordering::Relaxed);
             (*free_block).next = current_head;
             self.bins[idx].store(free_block, Ordering::Relaxed);
-            self.unlock();
+            self.unlock(flags);
             return;
         }
 
@@ -385,7 +396,7 @@ unsafe impl GlobalAlloc for Allocator {
             }
         }
 
-        self.unlock();
+        self.unlock(flags);
     }
 }
 

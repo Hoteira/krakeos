@@ -1,5 +1,4 @@
 #![no_std]
-#![no_main]
 
 extern crate alloc;
 use inkui::{Color, Size, Widget, Window};
@@ -8,8 +7,7 @@ use std::graphics::Items;
 use std::io::Read;
 use std::{debugln, println};
 
-#[unsafe(no_mangle)]
-pub extern "C" fn main() -> i32 {
+pub fn main() {
     println!("Starting Userland Shell...");
 
     let width = std::graphics::get_screen_width();
@@ -54,16 +52,16 @@ pub extern "C" fn main() -> i32 {
 
     std::thread::spawn(|| {
         //run_wasm("@0xE0/apps/taskbar.wasm");
-        run_wasm("@0xE0/wasm_test.wasm");
+        //run_wasm("@0xE0/wasm_test.wasm");
         //run_wasm("@0xE0/saltty.wasm");
+
+        run_wasm("@0xE0/apps/python/python.wasm");
 
     });
 
     loop {
         std::os::yield_task();
     }
-
-    0
 }
 
 fn run_wasm(path: &str) {

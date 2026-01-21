@@ -428,9 +428,9 @@ impl Mouse {
                         });
 
                         {
-                            let tm = crate::interrupts::task::TASK_MANAGER.lock();
-                            if !GLOBAL_EVENT_QUEUE.lock().push_to_process(&*tm, w.pid, event) {
-                                GLOBAL_EVENT_QUEUE.lock().add_event(event);
+                            let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+                            if !GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&*tm, w.pid, event) {
+                                GLOBAL_EVENT_QUEUE.int_lock().add_event(event);
                             }
                         }
 

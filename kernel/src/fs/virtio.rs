@@ -1,7 +1,9 @@
 use crate::debugln;
 use crate::memory::pmm;
 use core::ptr::{read_volatile, write_volatile};
+use core::sync::atomic::{AtomicBool, Ordering};
 
+static LOCK: AtomicBool = AtomicBool::new(false);
 
 const VIRTIO_BLK_T_IN: u32 = 0;
 const VIRTIO_BLK_T_OUT: u32 = 1;
@@ -411,13 +413,24 @@ fn write_chunk(lba: u64, buffer: &[u8]) {
 }
 
 unsafe fn send_command(out_phys: &[u64], out_lens: &[u32], in_phys: &[u64], in_lens: &[u32]) {
+    while LOCK.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+        /*unsafe {
+            core::arch::asm!("sti");
+            core::arch::asm!("hlt");
+            core::arch::asm!("cli");
+        }*/
+        core::hint::spin_loop();
+    }
+
     unsafe {
         let int_enabled = crate::interrupts::idt::interrupts();
-        if int_enabled { core::arch::asm!("cli"); }
+
+        core::arch::asm!("cli");
 
         let vq = match (*(&raw mut BLK_QUEUE)).as_mut() {
             Some(q) => q,
             None => {
+                LOCK.store(false, Ordering::Release);
                 if int_enabled { core::arch::asm!("sti"); }
                 return;
             }
@@ -474,17 +487,22 @@ unsafe fn send_command(out_phys: &[u64], out_lens: &[u32], in_phys: &[u64], in_l
 
         vq.free_head = ((vq.free_head as usize + total_descs) % num_usize) as u16;
 
+        // core::arch::asm!("sti");
 
         let used_ptr = (vq.used_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqUsed;
         loop {
             let used_idx = read_volatile(core::ptr::addr_of!((*used_ptr).idx));
             if used_idx != vq.last_used_idx {
-                vq.last_used_idx = vq.last_used_idx.wrapping_add(1);
                 break;
             }
             core::hint::spin_loop();
         }
+        
+        // core::arch::asm!("cli");
+        vq.last_used_idx = vq.last_used_idx.wrapping_add(1);
 
+        LOCK.store(false, Ordering::Release);
+        
         if int_enabled { core::arch::asm!("sti"); }
     }
 }

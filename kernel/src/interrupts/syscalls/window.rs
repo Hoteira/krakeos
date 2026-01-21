@@ -81,7 +81,7 @@ pub fn handle_get_events(context: &mut CPUState) {
 
     unsafe {
         use crate::window_manager::events::GLOBAL_EVENT_QUEUE;
-        let events = GLOBAL_EVENT_QUEUE.lock().get_and_remove_events(wid, max_events);
+        let events = GLOBAL_EVENT_QUEUE.int_lock().get_and_remove_events(wid, max_events);
 
         if !events.is_empty() {}
 

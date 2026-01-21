@@ -44,6 +44,9 @@ pub extern "C" fn main() -> i32 {
     let mut store = Store::new(()); // Empty user data
     let mut linker = Linker::new();
 
+    std::wasm::wasi::create_wasi_imports(&mut linker, &mut store);
+    std::wasm::wasi::create_wasi_p2_imports(&mut linker, &mut store);
+
     // We can't easily implement WASI here without significant work.
     // So we just try to instantiate with empty imports (or fail if imports are needed).
 
