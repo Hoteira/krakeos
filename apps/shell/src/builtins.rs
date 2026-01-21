@@ -7,7 +7,7 @@ use std::fs::File;
 use std::wasm::{validate, Linker, Store};
 use std::thread;
 
-fn run_wasm_thread(path: String) {
+fn run_wasm(path: String) {
     let msg = format!("WASM: Starting WASI App: {}...\n", path);
     std::os::file_write(1, msg.as_bytes());
 
@@ -17,9 +17,6 @@ fn run_wasm_thread(path: String) {
         if file.read_to_end(&mut buffer).is_ok() {
             match validate(&buffer) {
                 Ok(validation_info) => {
-                    // let msg = format!("WASM: Module {} parsed and validated successfully.\n", path);
-                    // std::os::file_write(1, msg.as_bytes());
-
                     let mut store = Store::new(());
                     let mut linker = Linker::new();
 
@@ -27,23 +24,16 @@ fn run_wasm_thread(path: String) {
                     std::wasm::wasi::create_wasi_p2_imports(&mut linker, &mut store);
 
                     if let Some(component) = &validation_info.component {
-                        let msg = format!("WASI: [COMPONENT] Starting {}...\n", path);
-                        std::os::file_write(1, msg.as_bytes());
                         match std::wasm::execution::component_executor::instantiate_component(
                             &mut store, &linker, component, &buffer,
                         ) {
-                            Ok(_) => {
-                                let msg = format!("WASI: [COMPONENT] Finished {}.\n", path);
-                                std::os::file_write(1, msg.as_bytes());
-                            }
+                            Ok(_) => {}
                             Err(e) => {
                                 let msg = format!("WASM: Component Execution error: {:?}\n", e);
                                 std::os::file_write(1, msg.as_bytes());
                             }
                         }
                     } else {
-                        // let msg = format!("WASI: [INTERPRETER] Starting {}...\n", path);
-                        // std::os::file_write(1, msg.as_bytes());
                         match linker.module_instantiate(&mut store, &validation_info, None) {
                             Ok(instance) => {
                                 let entry_point = store
@@ -59,8 +49,6 @@ fn run_wasm_thread(path: String) {
 
                                 if let Some(func_addr) = entry_point {
                                     let _ = store.invoke(func_addr, Vec::new(), None);
-                                    let msg = format!("WASI: [INTERPRETER] Finished {}.\n", path);
-                                    std::os::file_write(1, msg.as_bytes());
                                 }
                             }
                             Err(e) => {
@@ -89,10 +77,7 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
     } else if cmd == "wasm" {
         if !args.is_empty() {
             let path_str = resolve_path(cwd, &args[0]);
-            let path = path_str.clone();
-            thread::spawn(move || {
-                run_wasm_thread(path);
-            });
+            run_wasm(path_str);
         } else {
              std::os::file_write(out_fd, b"Usage: wasm <file.wasm>\n");
              return 1;

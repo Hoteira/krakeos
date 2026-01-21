@@ -90,9 +90,20 @@ impl WasiEnv for KrakeosWasiEnv {
 
     fn fd_fdstat_get(&self, fd: i32) -> Result<FdStat, i32> {
         if fd >= 0 && fd <= 2 {
-            Ok(FdStat { filetype: 2, rights_base: 0, rights_inheriting: 0, flags: 0 }) // Character device
+            let rb = if fd == 0 { 0x2 } else { 0x40 }; // READ or WRITE rights
+            Ok(FdStat {
+                filetype: 2,
+                rights_base: rb,
+                rights_inheriting: rb,
+                flags: 0,
+            }) // Character device
         } else if self.fd_table.contains_key(&fd) || fd == 3 {
-            Ok(FdStat { filetype: 4, rights_base: 0, rights_inheriting: 0, flags: 0 }) // Regular file or Dir
+            Ok(FdStat {
+                filetype: 4,
+                rights_base: 0x3F,
+                rights_inheriting: 0x3F,
+                flags: 0,
+            }) // Regular file or Dir
         } else {
             Err(8) // EBADF
         }
@@ -121,11 +132,29 @@ impl WasiEnv for KrakeosWasiEnv {
                 Err(5) // EIO
             }
         } else if fd >= 0 && fd <= 2 {
-             // Fake stat for stdio
-             Ok(FileStat { dev: 0, ino: 0, filetype: 2, nlink: 1, size: 0, atime: 0, mtime: 0, ctime: 0 })
+            // Fake stat for stdio
+            Ok(FileStat {
+                dev: 0,
+                ino: 0,
+                filetype: 2,
+                nlink: 1,
+                size: 0,
+                atime: 0,
+                mtime: 0,
+                ctime: 0,
+            })
         } else if fd == 3 {
-             // Fake stat for root
-             Ok(FileStat { dev: 0, ino: 0, filetype: 3, nlink: 1, size: 0, atime: 0, mtime: 0, ctime: 0 })
+            // Fake stat for root
+            Ok(FileStat {
+                dev: 0,
+                ino: 0,
+                filetype: 3,
+                nlink: 1,
+                size: 0,
+                atime: 0,
+                mtime: 0,
+                ctime: 0,
+            })
         } else {
             Err(8)
         }
@@ -135,26 +164,39 @@ impl WasiEnv for KrakeosWasiEnv {
         if let Some(wf) = self.fd_table.get_mut(&fd) {
             match wf.file.set_len(size) {
                 Ok(_) => Ok(()),
-                Err(_) => Err(28) // EINVAL or EIO
+                Err(_) => Err(28), // EINVAL or EIO
             }
         } else {
             Err(8)
         }
     }
 
-    fn fd_filestat_set_times(&mut self, _fd: i32, _atime: u64, _mtime: u64, _fst_flags: u16) -> Result<(), i32> {
+    fn fd_filestat_set_times(
+        &mut self,
+        _fd: i32,
+        _atime: u64,
+        _mtime: u64,
+        _fst_flags: u16,
+    ) -> Result<(), i32> {
         // Stub: pretend success
         Ok(())
     }
 
     fn fd_prestat_get(&self, fd: i32) -> Result<u32, i32> {
-        if fd == 3 { Ok(0) } // Preopen type dir (0)
-        else { Err(8) }
+        if fd == 3 {
+            Ok(0)
+        } // Preopen type dir (0)
+        else {
+            Err(8)
+        }
     }
 
     fn fd_prestat_dir_name(&self, fd: i32) -> Result<String, i32> {
-        if fd == 3 { Ok(String::from("/")) }
-        else { Err(8) }
+        if fd == 3 {
+            Ok(String::from("/"))
+        } else {
+            Err(8)
+        }
     }
 
     fn fd_read(&mut self, fd: i32, iovs: &mut [(&mut [u8])]) -> Result<usize, i32> {
@@ -166,6 +208,9 @@ impl WasiEnv for KrakeosWasiEnv {
                 let mut total = 0;
                 for buf in iovs.iter_mut() {
                     let n = crate::os::file_read(0, buf);
+                    if n > 0 {
+                        crate::os::file_write(1, &buf[..n]);
+                    }
                     total += n;
                     if n < buf.len() {
                         break;

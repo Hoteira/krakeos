@@ -60,9 +60,21 @@ pub fn stream_read<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Res
     let buffer = if let Some(fd) = source {
         let read_len = core::cmp::min(len_req, 1024 * 64) as usize;
         let mut buf = vec![0u8; read_len];
-        let bytes_read = crate::os::file_read(fd, &mut buf);
-        buf.truncate(bytes_read);
-        buf
+        if fd == 0 {
+            loop {
+                let bytes_read = crate::os::file_read(0, &mut buf);
+                if bytes_read > 0 {
+                    crate::os::file_write(1, &buf[..bytes_read]);
+                    buf.truncate(bytes_read);
+                    break buf;
+                }
+                crate::os::yield_task();
+            }
+        } else {
+            let bytes_read = crate::os::file_read(fd, &mut buf);
+            buf.truncate(bytes_read);
+            buf
+        }
     } else {
         Vec::new()
     };
