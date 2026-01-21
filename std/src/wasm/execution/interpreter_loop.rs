@@ -189,8 +189,8 @@ pub fn run<T: Config>(
                         store.caller_module = Some(current_module);
                         let returns = hostcode(store, params);
                         store.caller_module = None;
-                        let returns = returns.map_err(|HaltExecutionError| {
-                            RuntimeError::HostFunctionHaltedExecution
+                        let returns = returns.map_err(|HaltExecutionError(code)| {
+                            RuntimeError::HostFunctionHaltedExecution(code)
                         })?;
                         if returns.len() != func_to_call_ty.returns.valtypes.len() {
                             return Err(RuntimeError::HostFunctionSignatureMismatch);
@@ -276,8 +276,8 @@ pub fn run<T: Config>(
                         store.caller_module = Some(current_module);
                         let returns = hostcode(store, params);
                         store.caller_module = None;
-                        let returns = returns.map_err(|HaltExecutionError| {
-                            RuntimeError::HostFunctionHaltedExecution
+                        let returns = returns.map_err(|HaltExecutionError(code)| {
+                            RuntimeError::HostFunctionHaltedExecution(code)
                         })?;
                         if returns.len() != func_to_call_ty.returns.valtypes.len() {
                             return Err(RuntimeError::HostFunctionSignatureMismatch);
@@ -3380,7 +3380,7 @@ pub fn run<T: Config>(
                         let hostcode = host_func.hostcode;
                         let args = stack.pop_tail_iter(func_to_call_ty.params.valtypes.len()).collect();
                         store.caller_module = Some(current_module);
-                        let returns = hostcode(store, args).map_err(|_| RuntimeError::HostFunctionHaltedExecution)?;
+                        let returns = hostcode(store, args).map_err(|HaltExecutionError(code)| RuntimeError::HostFunctionHaltedExecution(code))?;
                         store.caller_module = None;
                         for ret in returns { stack.push_value::<T>(ret)?; }
                         // Since we popped the frame, we need to handle return? 
@@ -3452,7 +3452,7 @@ pub fn run<T: Config>(
                         let hostcode = host_func.hostcode;
                         let args = stack.pop_tail_iter(func_to_call_ty.params.valtypes.len()).collect();
                         store.caller_module = Some(current_module);
-                        let returns = hostcode(store, args).map_err(|_| RuntimeError::HostFunctionHaltedExecution)?;
+                        let returns = hostcode(store, args).map_err(|HaltExecutionError(code)| RuntimeError::HostFunctionHaltedExecution(code))?;
                         store.caller_module = None;
                         for ret in returns { stack.push_value::<T>(ret)?; }
                     }

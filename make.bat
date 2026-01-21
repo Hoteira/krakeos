@@ -36,11 +36,9 @@ copy "target\bits64pie\release\cat" "tree\sys\bin\cat.elf"
 cargo build --package=taskbar --target=bits64pie.json --release
 copy "target\bits64pie\release\taskbar" "tree\sys\bin\taskbar.elf"
 
-cargo build --package=wasm_runner --target=bits64pie.json --release
-copy "target\bits64pie\release\wasm_runner" "tree\sys\bin\wasm_runner.elf"
-
 
 cargo build --package=taskbar --target=wasm32-wasip2 --release
+
 copy "target\wasm32-wasip2\release\taskbar.wasm" "tree\apps\taskbar.wasm"
 
 

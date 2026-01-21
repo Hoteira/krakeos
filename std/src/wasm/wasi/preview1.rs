@@ -727,7 +727,11 @@ fn poll_oneoff<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<
 
 fn proc_exit<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
     let exit_code = args.get(0).and_then(|v| if let Value::I32(x) = v { Some(*x as i32) } else { None }).unwrap_or(0);
-    wasi_ctx(store).env.proc_exit(exit_code);
+    // KrakeosWasiEnv::proc_exit returns Err(code) on exit
+    match wasi_ctx(store).env.proc_exit(exit_code) {
+        Ok(_) => Ok(vec![]),
+        Err(code) => Err(HaltExecutionError(code)),
+    }
 }
 
 fn path_create_directory<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {

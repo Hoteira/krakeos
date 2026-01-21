@@ -10,7 +10,7 @@ pub enum RuntimeError {
     HostFunctionSignatureMismatch,
     WriteOnImmutableGlobal,
     GlobalTypeMismatch,
-    HostFunctionHaltedExecution,
+    HostFunctionHaltedExecution(i32),
     TableAccessOutOfBounds,
     UnknownExport,
     TableTypeMismatch,
@@ -40,8 +40,8 @@ impl Display for RuntimeError {
             RuntimeError::HostFunctionSignatureMismatch => {
                 f.write_str("host function call did not respect its type signature")
             }
-            RuntimeError::HostFunctionHaltedExecution => {
-                f.write_str("A host function requested execution to be halted.")
+            RuntimeError::HostFunctionHaltedExecution(code) => {
+                write!(f, "A host function requested execution to be halted with code {}.", code)
             }
             RuntimeError::InvalidImportType => f.write_str("Invalid import type"),
             RuntimeError::TableAccessOutOfBounds => f.write_str("A table access was out of bounds"),

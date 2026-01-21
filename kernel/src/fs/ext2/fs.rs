@@ -696,9 +696,6 @@ impl VfsNode for Ext2Node {
 
         let mut entries = Vec::new();
 
-        let mut buf = alloc::vec![0u8; block_size];
-
-
         let mut offset = 0;
 
         let total_size = self.size();
@@ -714,16 +711,25 @@ impl VfsNode for Ext2Node {
 
 
             if phys != 0 {
-                {
-                    let _lock = fs.lock.lock();
-                    unsafe { (*fs_ptr).read_disk_data(phys as u64 * block_size as u64, &mut buf) };
-                }
+                let cache_phys = {
+                    let mut cache = crate::fs::cache::GLOBAL_PAGE_CACHE.lock();
+                    cache.get_or_load(fs.disk_id, self.inode_idx as u64, block_idx, |dest| {
+                        if phys != 0 {
+                            let _lock = fs.lock.lock();
+                            unsafe { (*fs_ptr).read_disk_data(phys as u64 * block_size as u64, dest) };
+                        } else {
+                            dest.fill(0);
+                        }
+                    })
+                };
 
+                let cache_virt = cache_phys + crate::memory::paging::HHDM_OFFSET;
+                let cache_slice = unsafe { core::slice::from_raw_parts(cache_virt as *const u8, block_size) };
 
                 let mut block_pos = 0;
 
                 while block_pos < block_size {
-                    let ptr = unsafe { buf.as_ptr().add(block_pos) };
+                    let ptr = unsafe { cache_slice.as_ptr().add(block_pos) };
 
                     let entry = unsafe { &*(ptr as *const DirectoryEntry) };
 
@@ -787,7 +793,6 @@ impl VfsNode for Ext2Node {
         }
 
         let block_size = fs.block_size as usize;
-        let mut buf = alloc::vec![0u8; block_size];
         let mut offset = 0;
         let total_size = self.size();
         let name_bytes = name.as_bytes();
@@ -800,16 +805,24 @@ impl VfsNode for Ext2Node {
             };
 
             if phys != 0 {
-                // Read fresh block data every time
-                let mut fresh_buf = alloc::vec![0u8; block_size];
-                {
-                    let _lock = fs.lock.lock();
-                    unsafe { (*fs_ptr).read_disk_data(phys as u64 * block_size as u64, &mut fresh_buf) };
-                }
+                let cache_phys = {
+                    let mut cache = crate::fs::cache::GLOBAL_PAGE_CACHE.lock();
+                    cache.get_or_load(fs.disk_id, self.inode_idx as u64, block_idx, |dest| {
+                        if phys != 0 {
+                            let _lock = fs.lock.lock();
+                            unsafe { (*fs_ptr).read_disk_data(phys as u64 * block_size as u64, dest) };
+                        } else {
+                            dest.fill(0);
+                        }
+                    })
+                };
+
+                let cache_virt = cache_phys + crate::memory::paging::HHDM_OFFSET;
+                let cache_slice = unsafe { core::slice::from_raw_parts(cache_virt as *const u8, block_size) };
 
                 let mut block_pos = 0;
                 while block_pos < block_size {
-                    let ptr = unsafe { fresh_buf.as_ptr().add(block_pos) };
+                    let ptr = unsafe { cache_slice.as_ptr().add(block_pos) };
                     let entry = unsafe { &*(ptr as *const DirectoryEntry) };
 
                     if entry.rec_len == 0 { break; }
@@ -991,8 +1004,6 @@ impl VfsNode for Ext2Node {
         let mut offset = 0;
         let total_size = self.size();
 
-        let mut block_buf = alloc::vec![0u8; block_size];
-
         while offset < total_size {
             let block_idx = (offset / block_size as u64) as u32;
             let phys = {
@@ -1001,14 +1012,24 @@ impl VfsNode for Ext2Node {
             };
 
             if phys != 0 {
-                {
-                    let _lock = fs.lock.lock();
-                    unsafe { (*fs_ptr).read_disk_data(phys as u64 * block_size as u64, &mut block_buf) };
-                }
+                let cache_phys = {
+                    let mut cache = crate::fs::cache::GLOBAL_PAGE_CACHE.lock();
+                    cache.get_or_load(fs.disk_id, self.inode_idx as u64, block_idx, |dest| {
+                        if phys != 0 {
+                            let _lock = fs.lock.lock();
+                            unsafe { (*fs_ptr).read_disk_data(phys as u64 * block_size as u64, dest) };
+                        } else {
+                            dest.fill(0);
+                        }
+                    })
+                };
+
+                let cache_virt = cache_phys + crate::memory::paging::HHDM_OFFSET;
+                let cache_slice = unsafe { core::slice::from_raw_parts(cache_virt as *const u8, block_size) };
 
                 let mut block_pos = 0;
                 while block_pos < block_size {
-                    let ptr = unsafe { block_buf.as_ptr().add(block_pos) };
+                    let ptr = unsafe { cache_slice.as_ptr().add(block_pos) };
                     let entry = unsafe { &*(ptr as *const DirectoryEntry) };
 
                     if entry.rec_len == 0 { break; }
@@ -1246,8 +1267,8 @@ impl Ext2Node {
         }
 
         let fs = unsafe { &mut *self.fs };
+        let fs_ptr = fs as *mut Ext2;
         let block_size = fs.block_size as usize;
-        let mut buf = alloc::vec![0u8; block_size];
         let mut offset = 0;
         let total_size = self.size();
         let name_bytes = name.as_bytes();
@@ -1257,10 +1278,24 @@ impl Ext2Node {
             let phys = fs.get_block_address(&self.inode, block_idx);
 
             if phys != 0 {
-                fs.read_disk_data(phys as u64 * block_size as u64, &mut buf);
+                let cache_phys = {
+                    let mut cache = crate::fs::cache::GLOBAL_PAGE_CACHE.lock();
+                    cache.get_or_load(fs.disk_id, self.inode_idx as u64, block_idx, |dest| {
+                        if phys != 0 {
+                            let _lock = fs.lock.lock();
+                            unsafe { (*fs_ptr).read_disk_data(phys as u64 * block_size as u64, dest) };
+                        } else {
+                            dest.fill(0);
+                        }
+                    })
+                };
+
+                let cache_virt = cache_phys + crate::memory::paging::HHDM_OFFSET;
+                let cache_slice = unsafe { core::slice::from_raw_parts(cache_virt as *const u8, block_size) };
+
                 let mut block_pos = 0;
                 while block_pos < block_size {
-                    let ptr = unsafe { buf.as_ptr().add(block_pos) };
+                    let ptr = unsafe { cache_slice.as_ptr().add(block_pos) };
                     let entry = unsafe { &*(ptr as *const DirectoryEntry) };
                     if entry.rec_len == 0 { break; }
                     if entry.inode != 0 {

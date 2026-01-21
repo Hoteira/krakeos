@@ -158,7 +158,7 @@ pub(crate) fn resource_drop<T: Config>(store: &mut Store<'_, T>, args: Vec<Value
         Some(Value::I32(v)) => *v as i32,
         _ => return Ok(vec![]),
     };
-    let wasi = store.wasi_ctx.as_mut().ok_or(HaltExecutionError)?;
+    let wasi = store.wasi_ctx.as_mut().ok_or(HaltExecutionError(1))?;
     wasi.resource_table.remove(&handle);
     Ok(vec![])
 }
@@ -174,17 +174,17 @@ pub(crate) fn find_cabi_realloc<T: Config>(store: &Store<'_, T>) -> Option<FuncA
 }
 
 pub(crate) fn call_cabi_realloc<T: Config>(store: &mut Store<'_, T>, new_size: u32, align: u32) -> Result<u32, HaltExecutionError> {
-    let cabi_realloc_addr = find_cabi_realloc(store).ok_or(HaltExecutionError)?;
+    let cabi_realloc_addr = find_cabi_realloc(store).ok_or(HaltExecutionError(1))?;
     let args = vec![Value::I32(0), Value::I32(0), Value::I32(align), Value::I32(new_size)];
     match store.invoke_unchecked(cabi_realloc_addr, args, None) {
         Ok(crate::wasm::execution::resumable::RunState::Finished { values, .. }) => {
             if let Some(Value::I32(ptr)) = values.first() {
                 Ok(*ptr as u32)
             } else {
-                Err(HaltExecutionError)
+                Err(HaltExecutionError(1))
             }
         }
-        _ => Err(HaltExecutionError),
+        _ => Err(HaltExecutionError(1)),
     }
 }
 
@@ -244,22 +244,22 @@ fn krakeos_syscall_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -
             let mut buf = vec![0u8; a3 as usize];
             let res = unsafe { crate::sys::syscall(num, a1, buf.as_mut_ptr() as u64, a3) };
             if res != u64::MAX && res > 0 {
-                write_bytes(store, a2 as u32, &buf[..res as usize]).map_err(|_| HaltExecutionError)?;
+                write_bytes(store, a2 as u32, &buf[..res as usize]).map_err(|_| HaltExecutionError(1))?;
             }
             return Ok(vec![Value::I64(res)]);
         }
         1 => { // WRITE: fd, buf_ptr, buf_len
             if a3 == 0 { return Ok(vec![Value::I64(0)]); }
             let mut buf = vec![0u8; a3 as usize];
-            read_mem(store, a2 as u32, &mut buf).map_err(|_| HaltExecutionError)?;
+            read_mem(store, a2 as u32, &mut buf).map_err(|_| HaltExecutionError(1))?;
             let res = unsafe { crate::sys::syscall(num, a1, buf.as_ptr() as u64, a3) };
             return Ok(vec![Value::I64(res)]);
         }
         2 | 83 | 84 | 85 | 87 => { // OPEN, MKDIR, RMDIR, CREATE, UNLINK (a1 is string ptr, a2 is len)
             let len = a2 as usize;
             let mut buf = vec![0u8; len];
-            read_mem(store, a1 as u32, &mut buf).map_err(|_| HaltExecutionError)?;
-            let s = String::from_utf8(buf).map_err(|_| HaltExecutionError)?;
+            read_mem(store, a1 as u32, &mut buf).map_err(|_| HaltExecutionError(1))?;
+            let s = String::from_utf8(buf).map_err(|_| HaltExecutionError(1))?;
             let mut s_terminated = s;
             s_terminated.push('\0');
             // For OPEN (2), a2 was len, but syscall expects (path, flags, mode).
@@ -300,8 +300,8 @@ fn krakeos_syscall_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -
         4 => { // STAT (a1 is string ptr, a2 is len, a3 is stat buf)
             let len = a2 as usize;
             let mut buf = vec![0u8; len];
-            read_mem(store, a1 as u32, &mut buf).map_err(|_| HaltExecutionError)?;
-            let s = String::from_utf8(buf).map_err(|_| HaltExecutionError)?;
+            read_mem(store, a1 as u32, &mut buf).map_err(|_| HaltExecutionError(1))?;
+            let s = String::from_utf8(buf).map_err(|_| HaltExecutionError(1))?;
             let mut s_terminated = s;
             s_terminated.push('\0');
             let mut stat = unsafe { core::mem::zeroed::<crate::fs::Stat>() };
@@ -334,7 +334,7 @@ fn krakeos_syscall_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -
             
             let res = unsafe { crate::sys::syscall(num, s_terminated.as_ptr() as u64, &mut stat as *mut _ as u64, 0) };
             if res != u64::MAX {
-                write_bytes(store, a3 as u32, unsafe { core::slice::from_raw_parts(&stat as *const _ as *const u8, core::mem::size_of::<crate::fs::Stat>()) }).map_err(|_| HaltExecutionError)?;
+                write_bytes(store, a3 as u32, unsafe { core::slice::from_raw_parts(&stat as *const _ as *const u8, core::mem::size_of::<crate::fs::Stat>()) }).map_err(|_| HaltExecutionError(1))?;
             }
             return Ok(vec![Value::I64(res)]);
         }
@@ -342,7 +342,7 @@ fn krakeos_syscall_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -
             let mut stat = unsafe { core::mem::zeroed::<crate::fs::Stat>() };
             let res = unsafe { crate::sys::syscall(num, a1, 0, &mut stat as *mut _ as u64) };
             if res != u64::MAX {
-                write_bytes(store, a3 as u32, unsafe { core::slice::from_raw_parts(&stat as *const _ as *const u8, core::mem::size_of::<crate::fs::Stat>()) }).map_err(|_| HaltExecutionError)?;
+                write_bytes(store, a3 as u32, unsafe { core::slice::from_raw_parts(&stat as *const _ as *const u8, core::mem::size_of::<crate::fs::Stat>()) }).map_err(|_| HaltExecutionError(1))?;
             }
             return Ok(vec![Value::I64(res)]);
         }
@@ -350,7 +350,7 @@ fn krakeos_syscall_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -
             let mut buf = vec![0u8; a3 as usize];
             let res = unsafe { crate::sys::syscall(num, a1, buf.as_mut_ptr() as u64, a3) };
             if res != u64::MAX && res > 0 {
-                write_bytes(store, a2 as u32, &buf[..res as usize]).map_err(|_| HaltExecutionError)?;
+                write_bytes(store, a2 as u32, &buf[..res as usize]).map_err(|_| HaltExecutionError(1))?;
             }
             return Ok(vec![Value::I64(res)]);
         }
@@ -359,7 +359,7 @@ fn krakeos_syscall_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -
             let mut buf = vec![0u8; a2 as usize * item_size];
             let res = unsafe { crate::sys::syscall(num, buf.as_mut_ptr() as u64, a2, a3) };
             if res != u64::MAX && res > 0 {
-                write_bytes(store, a1 as u32, &buf[..res as usize * item_size]).map_err(|_| HaltExecutionError)?;
+                write_bytes(store, a1 as u32, &buf[..res as usize * item_size]).map_err(|_| HaltExecutionError(1))?;
             }
             return Ok(vec![Value::I64(res)]);
         }
@@ -380,7 +380,7 @@ fn krakeos_syscall_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -
             let height = read_mem_u32(store, addr + 40)? as usize;
             
             let mut bools = [0u8; 4];
-            read_mem(store, addr + 44, &mut bools).map_err(|_| HaltExecutionError)?;
+            read_mem(store, addr + 44, &mut bools).map_err(|_| HaltExecutionError(1))?;
             
             let min_width = read_mem_u32(store, addr + 48)? as usize;
             let min_height = read_mem_u32(store, addr + 52)? as usize;
@@ -423,7 +423,7 @@ fn krakeos_syscall_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -
             let mut buf = vec![0u8; a3 as usize * event_size];
             let res = unsafe { crate::sys::syscall(num, a1, buf.as_mut_ptr() as u64, a3) };
             if res != u64::MAX && res > 0 {
-                write_bytes(store, a2 as u32, &buf[..res as usize * event_size]).map_err(|_| HaltExecutionError)?;
+                write_bytes(store, a2 as u32, &buf[..res as usize * event_size]).map_err(|_| HaltExecutionError(1))?;
             }
             return Ok(vec![Value::I64(res)]);
         }
@@ -443,7 +443,7 @@ fn read_mem_string<T: Config>(store: &Store<'_, T>, addr: u32) -> Result<String,
     let mut curr = addr;
     loop {
         let mut b = [0u8; 1];
-        if read_mem(store, curr, &mut b).is_err() { return Err(HaltExecutionError); }
+        if read_mem(store, curr, &mut b).is_err() { return Err(HaltExecutionError(1)); }
         if b[0] == 0 { break; }
         res.push(b[0] as char);
         curr += 1;
@@ -454,13 +454,13 @@ fn read_mem_string<T: Config>(store: &Store<'_, T>, addr: u32) -> Result<String,
 
 fn read_mem_u32<T: Config>(store: &Store<'_, T>, addr: u32) -> Result<u32, HaltExecutionError> {
     let mut b = [0u8; 4];
-    read_mem(store, addr, &mut b).map_err(|_| HaltExecutionError)?;
+    read_mem(store, addr, &mut b).map_err(|_| HaltExecutionError(1))?;
     Ok(u32::from_le_bytes(b))
 }
 
 fn read_mem_u64<T: Config>(store: &Store<'_, T>, addr: u32) -> Result<u64, HaltExecutionError> {
     let mut b = [0u8; 8];
-    read_mem(store, addr, &mut b).map_err(|_| HaltExecutionError)?;
+    read_mem(store, addr, &mut b).map_err(|_| HaltExecutionError(1))?;
     Ok(u64::from_le_bytes(b))
 }
 

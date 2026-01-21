@@ -7,7 +7,7 @@ use std::fs::File;
 use std::wasm::{validate, Linker, Store};
 use std::thread;
 
-fn run_wasm(path: String) {
+pub fn run_wasm(path: String) {
     let msg = format!("WASM: Starting WASI App: {}...\n", path);
     std::os::file_write(1, msg.as_bytes());
 
@@ -24,36 +24,42 @@ fn run_wasm(path: String) {
                     std::wasm::wasi::create_wasi_imports(&mut linker, &mut store);
                     std::wasm::wasi::create_wasi_p2_imports(&mut linker, &mut store);
 
-                    if let Some(component) = &validation_info.component {
-                        match std::wasm::execution::component_executor::instantiate_component(
+                    let res = if let Some(component) = &validation_info.component {
+                        std::wasm::execution::component_executor::instantiate_component(
                             &mut store, &linker, component, &buffer,
-                        ) {
-                            Ok(_) => {}
-                            Err(e) => {
-                                let msg = format!("WASM: Component Execution error: {:?}\n", e);
+                        ).map(|_| ())
+                    } else {
+                        linker.module_instantiate(&mut store, &validation_info, None).and_then(|instance| {
+                            let entry_point = store
+                                .instance_export(instance.module_addr, "run")
+                                .ok()
+                                .and_then(|e| e.as_func())
+                                .or_else(|| {
+                                    store
+                                        .instance_export(instance.module_addr, "_start")
+                                        .ok()
+                                        .and_then(|e| e.as_func())
+                                });
+
+                            if let Some(func_addr) = entry_point {
+                                store.invoke(func_addr, Vec::new(), None).map(|_| ())
+                            } else {
+                                Ok(())
+                            }
+                        })
+                    };
+
+                    if let Err(e) = res {
+                        match e {
+                            std::wasm::RuntimeError::HostFunctionHaltedExecution(0) => {
+                                // Normal exit
+                            }
+                            std::wasm::RuntimeError::HostFunctionHaltedExecution(code) => {
+                                let msg = format!("WASM: Process exited with code {}\n", code);
                                 std::os::file_write(1, msg.as_bytes());
                             }
-                        }
-                    } else {
-                        match linker.module_instantiate(&mut store, &validation_info, None) {
-                            Ok(instance) => {
-                                let entry_point = store
-                                    .instance_export(instance.module_addr, "run")
-                                    .ok()
-                                    .and_then(|e| e.as_func())
-                                    .or_else(|| {
-                                        store
-                                            .instance_export(instance.module_addr, "_start")
-                                            .ok()
-                                            .and_then(|e| e.as_func())
-                                    });
-
-                                if let Some(func_addr) = entry_point {
-                                    let _ = store.invoke(func_addr, Vec::new(), None);
-                                }
-                            }
-                            Err(e) => {
-                                let msg = format!("WASM: Instantiation error: {:?}\n", e);
+                            _ => {
+                                let msg = format!("WASM: Execution error: {:?}\n", e);
                                 std::os::file_write(1, msg.as_bytes());
                             }
                         }

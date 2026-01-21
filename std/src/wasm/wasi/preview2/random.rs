@@ -34,7 +34,7 @@ pub fn get_random_bytes<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -
     if write_bytes(store, ptr, &buf).is_err() {
         return Ok(vec![]);
     }
-    write_u32(store, ret_ptr + 4, len as u32).map_err(|_| HaltExecutionError)?;
-    write_u32(store, ret_ptr, ptr).map_err(|_| HaltExecutionError)?;
+    write_u32(store, ret_ptr + 4, len as u32).map_err(|_| HaltExecutionError(1))?;
+    write_u32(store, ret_ptr, ptr).map_err(|_| HaltExecutionError(1))?;
     Ok(vec![])
 }

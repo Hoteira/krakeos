@@ -9,7 +9,7 @@ use crate::wasm::{
 };
 
 pub fn get_stdout<T: Config>(store: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-    let wasi = store.wasi_ctx.as_mut().ok_or(HaltExecutionError)?;
+    let wasi = store.wasi_ctx.as_mut().ok_or(HaltExecutionError(1))?;
     let id = wasi.next_resource_id;
     wasi.next_resource_id += 1;
     wasi.resource_table.insert(id, WasiResource::OutputStream(OutputStreamSource::Stdout));
@@ -18,7 +18,7 @@ pub fn get_stdout<T: Config>(store: &mut Store<'_, T>, _: Vec<Value>) -> Result<
 }
 
 pub fn get_stdin<T: Config>(store: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-    let wasi = store.wasi_ctx.as_mut().ok_or(HaltExecutionError)?;
+    let wasi = store.wasi_ctx.as_mut().ok_or(HaltExecutionError(1))?;
     let id = wasi.next_resource_id;
     wasi.next_resource_id += 1;
     wasi.resource_table.insert(id, WasiResource::InputStream(InputStreamSource::Stdin));
@@ -27,7 +27,7 @@ pub fn get_stdin<T: Config>(store: &mut Store<'_, T>, _: Vec<Value>) -> Result<V
 }
 
 pub fn get_stderr<T: Config>(store: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-    let wasi = store.wasi_ctx.as_mut().ok_or(HaltExecutionError)?;
+    let wasi = store.wasi_ctx.as_mut().ok_or(HaltExecutionError(1))?;
     let id = wasi.next_resource_id;
     wasi.next_resource_id += 1;
     wasi.resource_table.insert(id, WasiResource::OutputStream(OutputStreamSource::Stderr));
@@ -41,7 +41,7 @@ pub fn exit<T: Config>(_: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Val
         _ => 0,
     };
     crate::debugln!("WASI P2: exit({})", code);
-    Err(HaltExecutionError)
+    Err(HaltExecutionError(code))
 }
 
 pub fn get_environment<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {

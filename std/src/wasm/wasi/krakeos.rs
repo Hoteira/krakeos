@@ -558,9 +558,9 @@ impl WasiEnv for KrakeosWasiEnv {
         Ok(events_written as u32)
     }
 
-    fn proc_exit(&mut self, code: i32) -> ! {
-        crate::debugln!("WASI: proc_exit({})", code);
-        crate::os::exit(code as u64)
+    fn proc_exit(&mut self, code: i32) -> Result<(), i32> {
+        crate::debugln!("WASI: proc_exit({}) - Soft Exit", code);
+        Err(code)
     }
 
     // Socket Stubs

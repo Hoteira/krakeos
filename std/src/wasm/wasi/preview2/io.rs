@@ -14,7 +14,7 @@ pub fn input_stream_subscribe<T: Config>(store: &mut Store<'_, T>, args: Vec<Val
         Some(Value::I32(v)) => *v as i32,
         _ => return Ok(vec![Value::I32(0)]),
     };
-    let wasi = store.wasi_ctx.as_mut().ok_or(HaltExecutionError)?;
+    let wasi = store.wasi_ctx.as_mut().ok_or(HaltExecutionError(1))?;
     let id = wasi.next_resource_id;
     wasi.next_resource_id += 1;
     wasi.resource_table.insert(id, WasiResource::Pollable(PollableTarget::Read(handle)));
@@ -26,7 +26,7 @@ pub fn output_stream_subscribe<T: Config>(store: &mut Store<'_, T>, args: Vec<Va
         Some(Value::I32(v)) => *v as i32,
         _ => return Ok(vec![Value::I32(0)]),
     };
-    let wasi = store.wasi_ctx.as_mut().ok_or(HaltExecutionError)?;
+    let wasi = store.wasi_ctx.as_mut().ok_or(HaltExecutionError(1))?;
     let id = wasi.next_resource_id;
     wasi.next_resource_id += 1;
     wasi.resource_table.insert(id, WasiResource::Pollable(PollableTarget::Write(handle)));
@@ -47,7 +47,7 @@ pub fn stream_read<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Res
         _ => return Ok(vec![]),
     };
     let source = {
-        let wasi = store.wasi_ctx.as_ref().ok_or(HaltExecutionError)?;
+        let wasi = store.wasi_ctx.as_ref().ok_or(HaltExecutionError(1))?;
         match wasi.resource_table.get(&handle) {
             Some(WasiResource::InputStream(s)) => match s {
                 InputStreamSource::File(fd) => Some(*fd),
@@ -102,10 +102,10 @@ pub fn stream_read<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Res
     }
     // Result<list<u8>, stream-error>
     // Tag 0 (OK)
-    write_u32(store, ret_ptr, 0).map_err(|_| HaltExecutionError)?;
+    write_u32(store, ret_ptr, 0).map_err(|_| HaltExecutionError(1))?;
     // Payload (ptr, len)
-    write_u32(store, ret_ptr + 4, ptr).map_err(|_| HaltExecutionError)?;
-    write_u32(store, ret_ptr + 8, buffer.len() as u32).map_err(|_| HaltExecutionError)?;
+    write_u32(store, ret_ptr + 4, ptr).map_err(|_| HaltExecutionError(1))?;
+    write_u32(store, ret_ptr + 8, buffer.len() as u32).map_err(|_| HaltExecutionError(1))?;
     Ok(vec![])
 }
 
@@ -134,7 +134,7 @@ pub fn stream_write<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Re
         len
     );
     let source = {
-        let wasi = store.wasi_ctx.as_ref().ok_or(HaltExecutionError)?;
+        let wasi = store.wasi_ctx.as_ref().ok_or(HaltExecutionError(1))?;
         match wasi.resource_table.get(&handle) {
             Some(WasiResource::OutputStream(source)) => Some(source.clone()),
             _ => None,
@@ -161,7 +161,7 @@ pub fn stream_write<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Re
             OutputStreamSource::Null => {}
         }
         // Write Success (Tag 0)
-        write_u32(store, ret_ptr, 0).map_err(|_| HaltExecutionError)?;
+        write_u32(store, ret_ptr, 0).map_err(|_| HaltExecutionError(1))?;
         Ok(vec![])
     } else {
         crate::debugln!("  Error: Invalid output stream handle {}", handle);
@@ -197,7 +197,7 @@ pub fn poll_poll<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Resul
     let mut min_deadline: Option<u64> = None;
     // Check readiness immediately
     {
-        let wasi = store.wasi_ctx.as_ref().ok_or(HaltExecutionError)?;
+        let wasi = store.wasi_ctx.as_ref().ok_or(HaltExecutionError(1))?;
         let now = (crate::os::get_system_ticks() * 1_000_000) as u64;
         for (idx, handle) in pollables.iter().enumerate() {
             if let Some(WasiResource::Pollable(target)) = wasi.resource_table.get(handle) {
@@ -233,7 +233,7 @@ pub fn poll_poll<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Resul
                 }
             }
             // Re-check timers
-            let wasi = store.wasi_ctx.as_ref().ok_or(HaltExecutionError)?;
+            let wasi = store.wasi_ctx.as_ref().ok_or(HaltExecutionError(1))?;
             let now = (crate::os::get_system_ticks() * 1_000_000) as u64;
             for (idx, handle) in pollables.iter().enumerate() {
                 if let Some(WasiResource::Pollable(target)) = wasi.resource_table.get(handle) {
@@ -265,8 +265,8 @@ pub fn poll_poll<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Resul
             return Ok(vec![]);
         }
     }
-    write_u32(store, ret_ptr, out_ptr).map_err(|_| HaltExecutionError)?;
-    write_u32(store, ret_ptr + 4, count).map_err(|_| HaltExecutionError)?;
+    write_u32(store, ret_ptr, out_ptr).map_err(|_| HaltExecutionError(1))?;
+    write_u32(store, ret_ptr + 4, count).map_err(|_| HaltExecutionError(1))?;
     Ok(vec![])
 }
 
@@ -278,7 +278,7 @@ pub fn poll_block<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Resu
     let mut ready = false;
     let mut deadline = None;
     {
-        let wasi = store.wasi_ctx.as_ref().ok_or(HaltExecutionError)?;
+        let wasi = store.wasi_ctx.as_ref().ok_or(HaltExecutionError(1))?;
         if let Some(WasiResource::Pollable(target)) = wasi.resource_table.get(&handle) {
             match target {
                 PollableTarget::Timer(d) => {
@@ -291,7 +291,7 @@ pub fn poll_block<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Resu
                 _ => ready = true,
             }
         } else {
-            return Err(HaltExecutionError);
+            return Err(HaltExecutionError(1));
         }
     }
     if !ready {

@@ -23,7 +23,7 @@ pub fn monotonic_clock_subscribe_duration<T: Config>(store: &mut Store<'_, T>, a
     };
     let now = (crate::os::get_system_ticks() * 1_000_000) as u64;
     let deadline = now.wrapping_add(duration);
-    let wasi = store.wasi_ctx.as_mut().ok_or(HaltExecutionError)?;
+    let wasi = store.wasi_ctx.as_mut().ok_or(HaltExecutionError(1))?;
     let id = wasi.next_resource_id;
     wasi.next_resource_id += 1;
     wasi.resource_table.insert(id, WasiResource::Pollable(PollableTarget::Timer(deadline)));

@@ -227,7 +227,7 @@ impl<'a, T: Config> Store<'a, T> {
                 match func_inst {
                     FuncInst::HostFunc(host_func_inst) => {
                         let hostcode = host_func_inst.hostcode;
-                        let returns = hostcode(self, params).map_err(|_| RuntimeError::HostFunctionHaltedExecution)?;
+                        let returns = hostcode(self, params).map_err(|HaltExecutionError(code)| RuntimeError::HostFunctionHaltedExecution(code))?;
                         Ok(RunState::Finished { values: returns, maybe_remaining_fuel: maybe_fuel })
                     }
                     FuncInst::WasmFunc(wasm_func_inst) => {
@@ -302,7 +302,8 @@ impl StoreId {
         Self(NEXT.fetch_add(1, Ordering::SeqCst))
     }
 }
-pub struct HaltExecutionError;
+#[derive(Debug, Copy, Clone)]
+pub struct HaltExecutionError(pub i32);
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ExternVal { Func(FuncAddr), Table(TableAddr), Mem(MemAddr), Global(GlobalAddr) }
 impl ExternVal {

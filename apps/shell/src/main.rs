@@ -186,23 +186,19 @@ pub extern "C" fn main() -> i32 {
 
                                     let args_refs: Vec<&str> = parsed.args.iter().map(|s| s.as_str()).collect();
 
-                                    let pid;
                                     if prog_path.ends_with(".wasm") {
-                                        let runner = "@0xE0/sys/bin/wasm_runner.elf";
-                                        let mut runner_args = Vec::new();
-                                        runner_args.push(prog_path.as_str());
-                                        runner_args.extend_from_slice(&args_refs);
-                                        pid = std::os::spawn_with_fds(runner, &runner_args, &map);
+                                        builtins::run_wasm(prog_path);
+                                        // WASM runs in-process now, so no PID to track
+                                        last_exit_code = 0; 
                                     } else {
-                                        pid = std::os::spawn_with_fds(&prog_path, &args_refs, &map);
-                                    }
-
-                                    if pid != usize::MAX {
-                                        children_pids.push(pid);
-                                    } else {
-                                        let err = format!("Failed to spawn: {}\n", prog_path);
-                                        std::os::file_write(STDOUT_FD, err.as_bytes());
-                                        last_exit_code = 1;
+                                        let pid = std::os::spawn_with_fds(&prog_path, &args_refs, &map);
+                                        if pid != usize::MAX {
+                                            children_pids.push(pid);
+                                        } else {
+                                            let err = format!("Failed to spawn: {}\n", prog_path);
+                                            std::os::file_write(STDOUT_FD, err.as_bytes());
+                                            last_exit_code = 1;
+                                        }
                                     }
                                 } else {
                                     let err = format!("Command not found: {}\n", parsed.cmd);
