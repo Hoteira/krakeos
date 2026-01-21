@@ -16,7 +16,7 @@ pub fn read(lba: u64, disk: u8, buffer: &mut [u8]) {
 
     crate::debugln!("disk::read PIO: LBA {} disk {}", lba, disk);
 
-    while is_busy() {}
+    while is_busy() { unsafe { asm!("int 0x81") }; }
 
     let total_bytes = buffer.len();
     let sector_count = (total_bytes + 511) / 512;
@@ -32,7 +32,7 @@ pub fn read(lba: u64, disk: u8, buffer: &mut [u8]) {
     while bytes_read < total_bytes {
         let bytes_remaining = total_bytes - bytes_read;
 
-        while is_busy() {}
+        while is_busy() { unsafe { asm!("int 0x81") }; }
 
         outb(0x1F2, 1);
         outb(0x1F3, current_lba as u8);
@@ -42,8 +42,8 @@ pub fn read(lba: u64, disk: u8, buffer: &mut [u8]) {
         outb(0x1F6, (drive_select as u64 | ((current_lba >> 24) & 0x0F)) as u8);
         outb(0x1F7, 0x20);
 
-        while is_busy() {}
-        while !is_ready() {}
+        while is_busy() { unsafe { asm!("int 0x81") }; }
+        while !is_ready() { unsafe { asm!("int 0x81") }; }
 
         for i in 0..256 {
             let word = inw(0x1F0);
@@ -84,7 +84,7 @@ pub fn write(lba: u64, disk: u8, buffer: &[u8]) {
     let mut bytes_written = 0;
 
     while bytes_written < total_bytes {
-        while is_busy() {}
+        while is_busy() { unsafe { asm!("int 0x81") }; }
 
         outb(0x3f6, 0b00000010);
         outb(0x1F1, 0x00);
@@ -96,8 +96,8 @@ pub fn write(lba: u64, disk: u8, buffer: &[u8]) {
         outb(0x1F6, (drive_select as u64 | ((current_lba >> 24) & 0x0F)) as u8);
         outb(0x1F7, 0x30);
 
-        while is_busy() {}
-        while !is_ready() {}
+        while is_busy() { unsafe { asm!("int 0x81") }; }
+        while !is_ready() { unsafe { asm!("int 0x81") }; }
 
         for i in 0..256 {
             let current_offset = bytes_written + i * 2;

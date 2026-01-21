@@ -106,3 +106,62 @@ impl<'a, T> Drop for IntMutexGuard<'a, T> {
         }
     }
 }
+
+pub struct YieldMutex<T> {
+    lock: AtomicBool,
+    data: UnsafeCell<T>,
+}
+
+impl<T: core::fmt::Debug> core::fmt::Debug for YieldMutex<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("YieldMutex")
+            .field("locked", &self.lock.load(Ordering::Relaxed))
+            .finish()
+    }
+}
+
+unsafe impl<T: Send> Sync for YieldMutex<T> {}
+unsafe impl<T: Send> Send for YieldMutex<T> {}
+
+pub struct YieldMutexGuard<'a, T> {
+    lock: &'a AtomicBool,
+    data: &'a mut T,
+}
+
+impl<T> YieldMutex<T> {
+    pub const fn new(data: T) -> Self {
+        Self {
+            lock: AtomicBool::new(false),
+            data: UnsafeCell::new(data),
+        }
+    }
+
+    pub fn lock(&self) -> YieldMutexGuard<'_, T> {
+        while self.lock.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+            unsafe { core::arch::asm!("int 0x81"); }
+        }
+        YieldMutexGuard {
+            lock: &self.lock,
+            data: unsafe { &mut *self.data.get() },
+        }
+    }
+}
+
+impl<'a, T> core::ops::Deref for YieldMutexGuard<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        self.data
+    }
+}
+
+impl<'a, T> core::ops::DerefMut for YieldMutexGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.data
+    }
+}
+
+impl<'a, T> Drop for YieldMutexGuard<'a, T> {
+    fn drop(&mut self) {
+        self.lock.store(false, Ordering::Release);
+    }
+}

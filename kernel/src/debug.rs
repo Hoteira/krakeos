@@ -1,4 +1,5 @@
 use crate::drivers::port::{inb, Port};
+use core::arch::asm;
 use core::fmt;
 #[allow(unused_imports)]
 
@@ -16,12 +17,9 @@ impl SerialDebug {
     }
 
     pub fn write_byte(&self, byte: u8) {
-        while (inb(COM1 + 5) & 0x20) == 0 {}
         match byte {
             b'\n' => {
                 self.port.outb(b'\r');
-
-                while (inb(COM1 + 5) & 0x20) == 0 {}
                 self.port.outb(b'\n');
             }
             byte => {

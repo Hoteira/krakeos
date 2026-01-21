@@ -1,4 +1,4 @@
-use crate::sync::Mutex;
+use crate::sync::{Mutex, YieldMutex};
 #[allow(dead_code)]
 use alloc::boxed::Box;
 use alloc::string::String;
@@ -19,7 +19,7 @@ pub struct Ext2 {
     inode_size: u16,
     cache_lba: Option<u64>,
     cache_data: [u8; 512],
-    pub lock: Mutex<()>,
+    pub lock: YieldMutex<()>,
 }
 
 impl Ext2 {
@@ -56,7 +56,7 @@ impl Ext2 {
             inode_size,
             cache_lba: None,
             cache_data: [0; 512],
-            lock: Mutex::new(()),
+            lock: YieldMutex::new(()),
         }))
     }
 }
@@ -578,6 +578,7 @@ impl VfsNode for Ext2Node {
                 let mut cache = crate::fs::cache::GLOBAL_PAGE_CACHE.lock();
                 cache.get_or_load(fs.disk_id, self.inode_idx as u64, block_idx, |dest| {
                     if phys != 0 {
+                        let _lock = fs.lock.lock();
                         unsafe { (*fs_ptr).read_disk_data(phys as u64 * block_size, dest) };
                     } else {
                         dest.fill(0);
@@ -1177,6 +1178,7 @@ impl VfsNode for Ext2Node {
             let mut cache = crate::fs::cache::GLOBAL_PAGE_CACHE.lock();
             cache.get_or_load(fs.disk_id, self.inode_idx as u64, block_idx, |dest| {
                 if phys != 0 {
+                    let _lock = fs.lock.lock();
                     unsafe { (*fs_ptr).read_disk_data(phys as u64 * block_size, dest) };
                 } else {
                     dest.fill(0);

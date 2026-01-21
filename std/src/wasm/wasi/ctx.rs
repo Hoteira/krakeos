@@ -3,6 +3,7 @@ use crate::rust_alloc::string::String;
 use crate::rust_alloc::boxed::Box;
 use super::env::WasiEnv;
 
+
 pub struct WasiCtx {
     pub resource_table: BTreeMap<i32, WasiResource>,
     pub next_resource_id: i32,
@@ -23,6 +24,7 @@ impl Default for WasiCtx {
     }
 }
 
+#[derive(Debug)]
 pub enum WasiResource {
     InputStream(InputStreamSource),
     OutputStream(OutputStreamSource),
@@ -31,21 +33,21 @@ pub enum WasiResource {
     Directory(String),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum PollableTarget {
     Timer(u64),
     Read(i32),
     Write(i32),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum InputStreamSource {
     Null,
     Stdin,
     File(usize),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum OutputStreamSource {
     Null,
     Stdout,

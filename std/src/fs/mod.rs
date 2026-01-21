@@ -17,6 +17,7 @@ pub struct Stat {
     pub _reserved: [u64; 1],
 }
 
+#[derive(Debug)]
 pub struct File {
     fd: usize,
 }

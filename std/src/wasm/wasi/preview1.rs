@@ -1,3 +1,4 @@
+use crate::debugln;
 use crate::rust_alloc::{format, string::String, string::ToString, vec, vec::Vec};
 use crate::wasm::{
     core::reader::types::{FuncType, NumType, ResultType, ValType},
@@ -792,14 +793,15 @@ fn path_readlink<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Resul
     let path = String::from_utf8_lossy(&pb).into_owned();
 
     let mut buf = vec![0u8; b_len as usize];
-    match wasi_ctx(store).env.path_readlink(fd, &path, &mut buf) {
+    let res = match wasi_ctx(store).env.path_readlink(fd, &path, &mut buf) {
         Ok(n) => {
             if write_bytes(store, b_ptr, &buf[..n]).is_err() { return Ok(vec![Value::I32(28)]); }
             if write_u32(store, n_ptr, n as u32).is_err() { return Ok(vec![Value::I32(28)]); }
             Ok(vec![Value::I32(0)])
         }
         Err(e) => Ok(vec![Value::I32(e as u32)])
-    }
+    };
+    res
 }
 
 fn fd_readdir<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {

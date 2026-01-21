@@ -4,24 +4,12 @@ use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, Ordering};
-
+use crate::debugln;
 use super::{PollFd, POLLERR, POLLIN, POLLNVAL, POLLOUT};
 
-static FS_LOCK: AtomicBool = AtomicBool::new(false);
+fn acquire_fs_lock() {}
 
-fn acquire_fs_lock() {
-    while FS_LOCK.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
-        unsafe {
-            core::arch::asm!("sti");
-            core::arch::asm!("hlt");
-            core::arch::asm!("cli");
-        }
-    }
-}
-
-fn release_fs_lock() {
-    FS_LOCK.store(false, Ordering::Release);
-}
+fn release_fs_lock() {}
 
 pub fn copy_string_from_user(ptr: *const u8, len: usize) -> String {
     if ptr.is_null() || len == 0 {
@@ -1101,6 +1089,7 @@ pub fn handle_utimensat(context: &mut CPUState) {
 }
 
 pub fn handle_readlinkat(context: &mut CPUState) {
+    crate::debugln!("SYS_READLINKAT: START");
     let dirfd = context.rdi as i32;
     let path_ptr = context.rsi as *const u8;
     let path_len = context.rdx as usize;
@@ -1108,7 +1097,9 @@ pub fn handle_readlinkat(context: &mut CPUState) {
     let buf_len = context.r8 as usize;
 
     let path = copy_string_from_user(path_ptr, path_len);
-    
+
+    debugln!("SYS_READLINKAT: PATH: {}", path);
+
     let base_path = if dirfd == -100 { // AT_FDCWD
         get_current_cwd()
     } else if dirfd >= 0 && (dirfd as usize) < 16 {
@@ -1116,27 +1107,31 @@ pub fn handle_readlinkat(context: &mut CPUState) {
         let current = tm.current_task;
         if current >= 0 {
             let proc = tm.tasks[current as usize].as_ref().unwrap().process.as_ref().unwrap();
+
+            // Helper to get CWD without re-locking TM (which get_current_cwd does)
+            let get_proc_cwd = || {
+                let cwd = proc.cwd.lock();
+                let cwd_len = cwd.iter().position(|&c| c == 0).unwrap_or(cwd.len());
+                String::from_utf8_lossy(&cwd[..cwd_len]).into_owned()
+            };
+
             let gfd = proc.fd_table.lock()[dirfd as usize];
             if gfd != -1 {
-                // Avoid recursive lock if get_file uses FS_LOCK (it doesn't, but let's be safe)
-                // Actually we haven't acquired FS_LOCK yet.
-                // But get_file accesses global array.
-                // We'll just grab path here without lock, assume safe for now.
                 acquire_fs_lock();
                 let handle_opt = crate::fs::vfs::get_file(gfd as usize);
                 release_fs_lock();
-                
+
                 if let Some(handle) = handle_opt {
                     if let crate::fs::vfs::FileHandle::File { node, .. } = handle {
                         if node.inode() == 2 {
                             String::from("@0xE0/")
                         } else {
-                            get_current_cwd()
+                            get_proc_cwd()
                         }
-                    } else { get_current_cwd() }
-                } else { get_current_cwd() }
-            } else { get_current_cwd() }
-        } else { get_current_cwd() }
+                    } else { get_proc_cwd() }
+                } else { get_proc_cwd() }
+            } else { get_proc_cwd() }
+        } else { String::from("@0xE0/") }
     } else if dirfd == 3 { // WASI Root
         String::from("@0xE0/")
     } else {
@@ -1144,15 +1139,23 @@ pub fn handle_readlinkat(context: &mut CPUState) {
     };
 
     let resolved = resolve_path(&base_path, &path);
+    crate::debugln!("SYS_READLINKAT: Resolved='{}'", resolved);
 
+    crate::debugln!("SYS_READLINKAT: Acquire FS Lock...");
     acquire_fs_lock();
+    crate::debugln!("SYS_READLINKAT: FS Lock Acquired. Opening...");
     let node_res = crate::fs::vfs::open(0, &resolved);
+    crate::debugln!("SYS_READLINKAT: Opened. Reading link...");
     let res = if let Ok(mut node) = node_res {
-        node.readlink()
+        let r = node.readlink();
+        crate::debugln!("SYS_READLINKAT: Read link done.");
+        r
     } else {
+        crate::debugln!("SYS_READLINKAT: Node not found.");
         Err(String::from("Node not found"))
     };
     release_fs_lock();
+    crate::debugln!("SYS_READLINKAT: Lock Released.");
 
     match res {
         Ok(target) => {
