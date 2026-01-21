@@ -55,7 +55,7 @@ pub fn main() {
         //run_wasm("@0xE0/wasm_test.wasm");
         //run_wasm("@0xE0/saltty.wasm");
 
-        run_wasm("@0xE0/apps/python/python.wasm");
+        //run_wasm("@0xE0/apps/python/python.wasm");
 
     });
 

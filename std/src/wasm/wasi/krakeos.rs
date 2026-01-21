@@ -159,17 +159,34 @@ impl WasiEnv for KrakeosWasiEnv {
 
     fn fd_read(&mut self, fd: i32, iovs: &mut [(&mut [u8])]) -> Result<usize, i32> {
         if fd == 0 {
-            // Stdin unimplemented for now
-            return Ok(0);
+            if iovs.is_empty() || iovs.iter().all(|b| b.is_empty()) {
+                return Ok(0);
+            }
+            loop {
+                let mut total = 0;
+                for buf in iovs.iter_mut() {
+                    let n = crate::os::file_read(0, buf);
+                    total += n;
+                    if n < buf.len() {
+                        break;
+                    }
+                }
+                if total > 0 {
+                    return Ok(total);
+                }
+                crate::os::yield_task();
+            }
         }
-        
+
         let wf = self.fd_table.get_mut(&fd).ok_or(8)?;
         use crate::io::Read;
         let mut total = 0;
         for buf in iovs {
             if let Ok(n) = wf.file.read(buf) {
                 total += n;
-                if n < buf.len() { break; }
+                if n < buf.len() {
+                    break;
+                }
             } else {
                 return Err(5);
             }
@@ -178,16 +195,31 @@ impl WasiEnv for KrakeosWasiEnv {
     }
 
     fn fd_pread(&mut self, fd: i32, iovs: &mut [(&mut [u8])], offset: u64) -> Result<usize, i32> {
+        if fd == 0 {
+            return Err(28); // EINVAL for stdin pread
+        }
         if let Some(wf) = self.fd_table.get(&fd) {
             let mut total = 0;
             let mut curr_offset = offset;
             for buf in iovs {
                 let len = buf.len();
-                let res = unsafe { syscall4(17, wf.file.as_raw_fd() as u64, buf.as_mut_ptr() as u64, len as u64, curr_offset) };
-                if res == u64::MAX { return Err(5); }
+                let res = unsafe {
+                    syscall4(
+                        17,
+                        wf.file.as_raw_fd() as u64,
+                        buf.as_mut_ptr() as u64,
+                        len as u64,
+                        curr_offset,
+                    )
+                };
+                if res == u64::MAX {
+                    return Err(5);
+                }
                 total += res as usize;
                 curr_offset += res;
-                if (res as usize) < len { break; }
+                if (res as usize) < len {
+                    break;
+                }
             }
             Ok(total)
         } else {
@@ -199,13 +231,7 @@ impl WasiEnv for KrakeosWasiEnv {
         let mut total = 0;
         if fd == 1 || fd == 2 {
             for buf in iovs {
-                // crate::debug_print! handles formatted string logic
-                if let Ok(s) = core::str::from_utf8(buf) {
-                    crate::debug_print!("{}", s);
-                } else {
-                    crate::debug_print!("{:?}", buf);
-                }
-                total += buf.len();
+                total += crate::os::file_write(fd as usize, buf);
             }
             return Ok(total);
         }

@@ -128,12 +128,13 @@ pub fn stream_write<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Re
             return Ok(vec![]);
         }
         match source {
-            OutputStreamSource::Stdout | OutputStreamSource::Stderr => {
-                let s = String::from_utf8_lossy(&buf);
-                crate::debug_print!("{}", s);
+            OutputStreamSource::Stdout => {
+                crate::os::file_write(1, &buf);
+            }
+            OutputStreamSource::Stderr => {
+                crate::os::file_write(2, &buf);
             }
             OutputStreamSource::File(fd) => {
-                crate::debugln!("WASI File Write (FD {}): {} bytes", fd, buf.len());
                 crate::os::file_write(fd, &buf);
             }
             OutputStreamSource::Null => {}
