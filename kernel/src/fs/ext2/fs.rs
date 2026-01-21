@@ -839,7 +839,7 @@ impl VfsNode for Ext2Node {
                                     unsafe { (*fs_ptr).read_inode(entry.inode) }
                                 };
 
-                                crate::debugln!("Ext2Node::find: '{}' in '{}'       : V", name, self.name);
+                                // crate::debugln!("Ext2Node::find: '{}' in '{}'       : V", name, self.name);
                                 return Ok(Box::new(Ext2Node {
                                     fs: self.fs,
                                     inode_idx: entry.inode,
@@ -855,7 +855,7 @@ impl VfsNode for Ext2Node {
             offset += block_size as u64;
         }
 
-        crate::debugln!("Ext2Node::find: '{}' in '{}'       : X", name, self.name);
+        // crate::debugln!("Ext2Node::find: '{}' in '{}'       : X", name, self.name);
         Err(String::from("File not found"))
     }
 
@@ -1374,6 +1374,10 @@ impl Ext2Node {
                         unsafe { (*fs_ptr).write_disk_data(read_off, &buf) };
                     }
 
+                    // Invalidate cache for this directory block
+                    let block_idx = (block_off / fs.block_size as u64) as u32;
+                    crate::fs::cache::GLOBAL_PAGE_CACHE.lock().invalidate(fs.disk_id, self.inode_idx as u64, block_idx);
+
 
                     let mut target_inode = {
                         let _lock = fs.lock.lock();
@@ -1515,7 +1519,7 @@ impl Ext2Node {
         let mut offset = 0;
         let total_size = self.size();
 
-        crate::debugln!("Ext2: add_dir_entry('{}', ino={}) into '{}' (size={})", name, inode_id, self.name, total_size);
+        // crate::debugln!("Ext2: add_dir_entry('{}', ino={}) into '{}' (size={})", name, inode_id, self.name, total_size);
 
         while offset < total_size {
             let block_off = offset - (offset % fs.block_size as u64);
@@ -1542,7 +1546,7 @@ impl Ext2Node {
                 let entry = unsafe { &mut *(ptr as *mut DirectoryEntry) };
 
                 if entry.rec_len == 0 {
-                    crate::debugln!("Ext2: Zero rec_len at pos {}, stopping block scan", block_pos);
+                    // crate::debugln!("Ext2: Zero rec_len at pos {}, stopping block scan", block_pos);
                     break;
                 }
 
@@ -1552,7 +1556,7 @@ impl Ext2Node {
                 let available = entry.rec_len as usize - used_aligned;
 
                 if available >= needed_len {
-                    crate::debugln!("Ext2: Found space in existing block {} at pos {} (avail={})", block_addr, block_pos, available);
+                    // crate::debugln!("Ext2: Found space in existing block {} at pos {} (avail={})", block_addr, block_pos, available);
                     let old_rec_len = entry.rec_len;
                     entry.rec_len = used_aligned as u16;
 
@@ -1574,6 +1578,10 @@ impl Ext2Node {
                         unsafe { (*fs_ptr).write_disk_data(read_off, &buf) };
                     }
 
+                    // Invalidate the cache for this directory block
+                    let block_idx = (block_off / fs.block_size as u64) as u32;
+                    crate::fs::cache::GLOBAL_PAGE_CACHE.lock().invalidate(fs.disk_id, self.inode_idx as u64, block_idx);
+
                     // Reload our own inode to ensure size/blocks are current
                     {
                         let _lock = fs.lock.lock();
@@ -1589,7 +1597,7 @@ impl Ext2Node {
             offset += fs.block_size as u64;
         }
 
-        crate::debugln!("Ext2: No space in existing blocks, allocating new block...");
+        // crate::debugln!("Ext2: No space in existing blocks, allocating new block...");
         let new_block = {
             let _lock = fs.lock.lock();
             unsafe { (*fs_ptr).alloc_block() }
@@ -1627,6 +1635,13 @@ impl Ext2Node {
             let _lock = fs.lock.lock();
             unsafe { (*fs_ptr).write_disk_data(new_block as u64 * fs.block_size as u64, &buf) };
         }
+
+        // Invalidate cache for the new block (although it shouldn't be in cache yet, safe to be sure)
+        // But more importantly, if we updated the inode (which we did), future 'get_block_address' calls are fine.
+        // If we previously tried to read this logical block index and it returned 0, it might be cached as all-zeros?
+        // GLOBAL_PAGE_CACHE uses (inode, block_idx) as key. If we tried to read block_idx N before it was allocated,
+        // Ext2Node::read would have filled it with zeros. We need to invalidate that.
+        crate::fs::cache::GLOBAL_PAGE_CACHE.lock().invalidate(fs.disk_id, self.inode_idx as u64, block_idx);
 
         Ok(())
     }

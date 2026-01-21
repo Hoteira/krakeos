@@ -36,7 +36,7 @@ pub fn instantiate_component<'a, T: Config>(
 
     if let Some(run_func) = run_func {
         if let crate::wasm::ExternVal::Func(func_addr) = *run_func {
-            crate::debugln!("Executing component export 'run'...");
+            // crate::debugln!("Executing component export 'run'...");
             store.invoke_unchecked(
                 func_addr,
                 crate::rust_alloc::vec::Vec::<crate::wasm::Value>::new(),
@@ -85,7 +85,7 @@ fn instantiate_component_internal<'a, T: Config>(
     all_instantiated_modules: &mut Vec<ModuleAddr>,
 ) -> Result<BTreeMap<String, ExternVal>, RuntimeError> {
     use crate::wasm::component::types::ComponentItem;
-    crate::debugln!("Instantiating Component...");
+    // crate::debugln!("Instantiating Component...");
 
     // Runtime Index Spaces
     let mut core_instances: Vec<BTreeMap<String, ExternVal>> = Vec::new();
@@ -108,7 +108,7 @@ fn instantiate_component_internal<'a, T: Config>(
             ComponentItem::Module(m) => core_modules.push(m),
             ComponentItem::Component(c) => nested_components.push(c),
             ComponentItem::Import(import) => {
-                crate::debugln!("  Resolving Component Import: '{}'...", import.name);
+                // crate::debugln!("  Resolving Component Import: '{}'...", import.name);
                 if let Some(module_exports) = linker.get_module_exports(&import.name) {
                     let mut export_map = BTreeMap::new();
                     for (name, val) in module_exports {
@@ -130,7 +130,7 @@ fn instantiate_component_internal<'a, T: Config>(
                             core_instances.push(BTreeMap::new());
                             continue;
                         }
-                        crate::debugln!("  Instantiating Core Module [Index {}]...", module_idx);
+                        // crate::debugln!("  Instantiating Core Module [Index {}]...", module_idx);
                         let module_node = core_modules[*module_idx as usize];
 
                         let module_bytes = &wasm[module_node.content.from
@@ -190,7 +190,7 @@ fn instantiate_component_internal<'a, T: Config>(
                             if !resolved {
                                 // 3. Hardcoded Fallback for saltty.wasm env/memory and __main_module__
                                 if import.module_name == "env" && import.name == "memory" {
-                                    crate::debugln!("    Synthesizing env.memory (fallback)...");
+                                    // crate::debugln!("    Synthesizing env.memory (fallback)...");
                                     let mem_ty = crate::wasm::core::reader::types::MemType {
                                         limits: crate::wasm::core::reader::types::Limits {
                                             min: 256, // 16 MiB
@@ -213,7 +213,7 @@ fn instantiate_component_internal<'a, T: Config>(
                                         );
                                         for inst in &core_instances {
                                             if let Some(val) = inst.get(target) {
-                                                crate::debugln!("      Found!");
+                                                // crate::debugln!("      Found!");
                                                 extern_vals.push(*val);
                                                 resolved = true;
                                                 break;

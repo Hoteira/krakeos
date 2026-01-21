@@ -217,7 +217,7 @@ pub(crate) fn read_mem<T: Config>(store: &Store<'_, T>, addr: u32, buf: &mut [u8
 
 fn get_screen_width_host<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
     let w = crate::graphics::get_screen_width();
-    crate::debugln!("WASM get_screen_width -> {}", w);
+    // crate::debugln!("WASM get_screen_width -> {}", w);
     Ok(vec![Value::I32(w as u32)])
 }
 

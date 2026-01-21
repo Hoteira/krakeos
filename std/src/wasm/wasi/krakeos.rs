@@ -559,7 +559,7 @@ impl WasiEnv for KrakeosWasiEnv {
     }
 
     fn proc_exit(&mut self, code: i32) -> Result<(), i32> {
-        crate::debugln!("WASI: proc_exit({}) - Soft Exit", code);
+        // crate::debugln!("WASI: proc_exit({}) - Soft Exit", code);
         Err(code)
     }
 

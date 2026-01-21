@@ -13,7 +13,7 @@ pub fn get_stdout<T: Config>(store: &mut Store<'_, T>, _: Vec<Value>) -> Result<
     let id = wasi.next_resource_id;
     wasi.next_resource_id += 1;
     wasi.resource_table.insert(id, WasiResource::OutputStream(OutputStreamSource::Stdout));
-    crate::debugln!("WASI P2: get_stdout -> handle {}", id);
+    // crate::debugln!("WASI P2: get_stdout -> handle {}", id);
     Ok(vec![Value::I32(id as u32)])
 }
 
@@ -22,7 +22,7 @@ pub fn get_stdin<T: Config>(store: &mut Store<'_, T>, _: Vec<Value>) -> Result<V
     let id = wasi.next_resource_id;
     wasi.next_resource_id += 1;
     wasi.resource_table.insert(id, WasiResource::InputStream(InputStreamSource::Stdin));
-    crate::debugln!("WASI P2: get_stdin -> handle {}", id);
+    // crate::debugln!("WASI P2: get_stdin -> handle {}", id);
     Ok(vec![Value::I32(id as u32)])
 }
 
@@ -31,7 +31,7 @@ pub fn get_stderr<T: Config>(store: &mut Store<'_, T>, _: Vec<Value>) -> Result<
     let id = wasi.next_resource_id;
     wasi.next_resource_id += 1;
     wasi.resource_table.insert(id, WasiResource::OutputStream(OutputStreamSource::Stderr));
-    crate::debugln!("WASI P2: get_stderr -> handle {}", id);
+    // crate::debugln!("WASI P2: get_stderr -> handle {}", id);
     Ok(vec![Value::I32(id as u32)])
 }
 

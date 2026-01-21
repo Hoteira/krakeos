@@ -44,12 +44,12 @@ impl ComponentSectionTy {
 }
 
 pub fn parse_component(wasm: &mut WasmReader) -> Result<ParsedComponent, ComponentError> {
-    crate::debugln!("Parsing Component...");
+    // crate::debugln!("Parsing Component...");
     let mut component = ParsedComponent::default();
 
     while !wasm.remaining_bytes().is_empty() {
         let (ty, size) = read_section_header(wasm)?;
-        crate::debugln!("Parsing Section: {:?} (Size: {}) at pc {:#x}", ty, size, wasm.pc);
+        // crate::debugln!("Parsing Section: {:?} (Size: {}) at pc {:#x}", ty, size, wasm.pc);
 
         // Handle sections that need absolute spans or skipping logic on the main reader
         match ty {
@@ -68,7 +68,7 @@ pub fn parse_component(wasm: &mut WasmReader) -> Result<ParsedComponent, Compone
                 continue;
             }
             ComponentSectionTy::Component => {
-                crate::debugln!("Parsing Nested Component Section...");
+                // crate::debugln!("Parsing Nested Component Section...");
                 let nested_len = size as usize;
                 let nested_bytes = wasm.make_span(nested_len).map_err(|_| ComponentError::UnexpectedEof)?;
 
@@ -263,7 +263,7 @@ pub fn parse_component(wasm: &mut WasmReader) -> Result<ParsedComponent, Compone
                 component.items.extend(aliases.into_iter().map(ComponentItem::Alias));
             }
             ComponentSectionTy::Start => {
-                crate::debugln!("Parsing Start Section...");
+                // crate::debugln!("Parsing Start Section...");
                 let func_idx = reader.read_var_u32().map_err(|_| ComponentError::MalformedVarU32)?;
                 let args = reader.read_vec(|w| w.read_var_u32()).map_err(|_| ComponentError::MalformedVarU32)?;
                 let results = reader.read_var_u32().map_err(|_| ComponentError::MalformedVarU32)?;
@@ -289,7 +289,7 @@ pub fn parse_component(wasm: &mut WasmReader) -> Result<ParsedComponent, Compone
         }
     }
 
-    crate::debugln!("Component Parsing Finished.");
+    // crate::debugln!("Component Parsing Finished.");
     Ok(component)
 }
 

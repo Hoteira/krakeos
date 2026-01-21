@@ -189,7 +189,7 @@ pub fn validate(wasm: &[u8]) -> Result<ValidationInfo<'_>, ValidationError> {
     })?
         .unwrap_or_default();
     for import in &imports {
-        crate::debugln!("[WASM Import] {}.{}", import.module_name, import.name);
+        // crate::debugln!("[WASM Import] {}.{}", import.module_name, import.name);
     }
     let imports_length = get_imports_length(&imports);
     while (skip_section(&mut wasm, &mut header)?).is_some() {}
