@@ -187,7 +187,25 @@ pub extern "C" fn main() -> i32 {
                                     let args_refs: Vec<&str> = parsed.args.iter().map(|s| s.as_str()).collect();
 
                                     if prog_path.ends_with(".wasm") {
-                                        builtins::run_wasm(prog_path);
+                                        let mut wasm_args = Vec::new();
+                                        let mut root_path = None;
+                                        let mut i = 0;
+
+                                        while i < parsed.args.len() {
+                                            if parsed.args[i] == "--dir" && i + 1 < parsed.args.len() {
+                                                root_path = Some(resolve_path(&cwd, &parsed.args[i+1]));
+                                                i += 2;
+                                            } else {
+                                                wasm_args.push(parsed.args[i].clone());
+                                                i += 1;
+                                            }
+                                        }
+
+                                        let mut final_args = Vec::new();
+                                        final_args.push(parsed.cmd.clone());
+                                        final_args.extend(wasm_args);
+
+                                        builtins::run_wasm(prog_path, final_args, root_path);
                                         // WASM runs in-process now, so no PID to track
                                         last_exit_code = 0; 
                                     } else {

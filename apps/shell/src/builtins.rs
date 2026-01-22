@@ -7,7 +7,7 @@ use std::fs::File;
 use std::wasm::{validate, Linker, Store};
 use std::thread;
 
-pub fn run_wasm(path: String) {
+pub fn run_wasm(path: String, args: Vec<String>, root_path: Option<String>) {
     let msg = format!("WASM: Starting WASI App: {}...\n", path);
     std::os::file_write(1, msg.as_bytes());
 
@@ -20,6 +20,9 @@ pub fn run_wasm(path: String) {
                 Ok(validation_info) => {
                     let mut store = Store::new(());
                     let mut linker = Linker::new();
+
+                    let root = root_path.unwrap_or_else(|| String::from("@0xE0"));
+                    store.wasi_ctx = Some(std::wasm::wasi::WasiCtx::new(args, root));
 
                     std::wasm::wasi::create_wasi_imports(&mut linker, &mut store);
                     std::wasm::wasi::create_wasi_p2_imports(&mut linker, &mut store);
@@ -83,12 +86,50 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
         std::os::file_write(out_fd, b"Available commands: help, clear, ls, cd, pwd, touch, mkdir, rm, mv, cp, cat, sleep, osfetch, echo, export, wasm\n");
         return 0;
     } else if cmd == "wasm" {
-        if !args.is_empty() {
-            let path_str = resolve_path(cwd, &args[0]);
-            run_wasm(path_str);
+        let mut root_path = None;
+        let mut actual_args = args.to_vec();
+        
+        // Parse --dir flag if it's the first argument
+        if !actual_args.is_empty() && actual_args[0] == "--dir" {
+            if actual_args.len() > 1 {
+                root_path = Some(resolve_path(cwd, &actual_args[1]));
+                actual_args.remove(0); // remove --dir
+                actual_args.remove(0); // remove path
+            } else {
+                std::os::file_write(out_fd, b"Error: --dir requires a path\n");
+                return 1;
+            }
+        }
+
+        if !actual_args.is_empty() {
+            let mut prog_name = actual_args[0].clone();
+            let mut prog_path = resolve_path(cwd, &prog_name);
+            
+            // If not found in current dir, search in PATH
+            if std::fs::File::open(&prog_path).is_err() && !prog_name.starts_with('@') && !prog_name.contains('/') {
+                let mut found = false;
+                for path_dir in path_env.split(';') {
+                    let p = format!("{}/{}", path_dir, prog_name);
+                    let p_wasm = if p.ends_with(".wasm") { p.clone() } else { format!("{}.wasm", p) };
+                    
+                    if std::fs::File::open(&p_wasm).is_ok() {
+                        prog_path = p_wasm;
+                        found = true;
+                        break;
+                    }
+                }
+                
+                if !found {
+                    let err = format!("wasm: file not found: {}\n", prog_name);
+                    std::os::file_write(out_fd, err.as_bytes());
+                    return 1;
+                }
+            }
+
+            run_wasm(prog_path, actual_args, root_path);
         } else {
-             std::os::file_write(out_fd, b"Usage: wasm <file.wasm>\n");
-             return 1;
+            std::os::file_write(out_fd, b"Usage: wasm [--dir <path>] <file.wasm> [args...]\n");
+            return 1;
         }
         return 0;
     } else if cmd == "export" {

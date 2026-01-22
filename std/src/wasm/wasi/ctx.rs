@@ -1,6 +1,7 @@
 use crate::rust_alloc::collections::BTreeMap;
 use crate::rust_alloc::string::String;
 use crate::rust_alloc::boxed::Box;
+use crate::rust_alloc::vec::Vec;
 use super::env::WasiEnv;
 
 
@@ -10,17 +11,22 @@ pub struct WasiCtx {
     pub env: Box<dyn WasiEnv>,
 }
 
-impl Default for WasiCtx {
-    fn default() -> Self {
+impl WasiCtx {
+    pub fn new(args: Vec<String>, root_path: String) -> Self {
         let mut resource_table = BTreeMap::new();
-        // Preopen the root directory at ID 3
         resource_table.insert(3, WasiResource::Directory(String::from("/")));
 
         Self {
             resource_table,
             next_resource_id: 4,
-            env: Box::new(super::krakeos::KrakeosWasiEnv::default()),
+            env: Box::new(super::krakeos::KrakeosWasiEnv::new(args, root_path)),
         }
+    }
+}
+
+impl Default for WasiCtx {
+    fn default() -> Self {
+        Self::new(Vec::new(), String::from("@0xE0"))
     }
 }
 

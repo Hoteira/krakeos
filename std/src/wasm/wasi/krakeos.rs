@@ -11,6 +11,8 @@ pub struct KrakeosWasiEnv {
     pub fd_table: BTreeMap<i32, WasiFile>,
     pub next_fd: i32,
     pub random_state: u64,
+    pub args: Vec<String>,
+    pub root_path: String,
 }
 
 pub struct WasiFile {
@@ -24,16 +26,28 @@ impl Default for KrakeosWasiEnv {
             fd_table: BTreeMap::new(),
             next_fd: 4, // 0,1,2 are reserved, 3 is preopened root
             random_state: 0,
+            args: Vec::new(),
+            root_path: String::from("@0xE0"),
         }
     }
 }
 
 impl KrakeosWasiEnv {
+    pub fn new(args: Vec<String>, root_path: String) -> Self {
+        Self {
+            fd_table: BTreeMap::new(),
+            next_fd: 4,
+            random_state: 0,
+            args,
+            root_path,
+        }
+    }
+
     fn resolve_path(&self, dirfd: i32, path: &str) -> Result<String, i32> {
         if path.contains("..") { return Err(76); } // ENOTCAPABLE
         
         let base = if dirfd == 3 {
-            "@0xE0"
+            &self.root_path
         } else if let Some(wf) = self.fd_table.get(&dirfd) {
             &wf.path
         } else {
@@ -51,7 +65,7 @@ impl KrakeosWasiEnv {
 
 impl WasiEnv for KrakeosWasiEnv {
     fn args_get(&self) -> Result<Vec<String>, i32> {
-        Ok(crate::env::args().collect())
+        Ok(self.args.clone())
     }
 
     fn environ_get(&self) -> Result<Vec<(String, String)>, i32> {
