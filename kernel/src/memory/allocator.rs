@@ -1,9 +1,9 @@
+use common::allocator::Heap;
 use core::{
     alloc::{GlobalAlloc, Layout},
-    sync::atomic::{AtomicBool, Ordering},
     cell::UnsafeCell,
+    sync::atomic::{AtomicBool, Ordering},
 };
-use common::allocator::Heap;
 
 pub struct Allocator {
     heap: UnsafeCell<Heap>,

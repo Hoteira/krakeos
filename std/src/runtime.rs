@@ -21,6 +21,12 @@ pub unsafe extern "C" fn rust_start(stack: *const usize) -> ! {
     let argv = stack.add(1) as *const *const u8;
     let envp = stack.add(argc as usize + 2) as *const *const u8;
 
+    // Initialize heap (10 MiB)
+    let heap_start = crate::os::brk(0);
+    let heap_size = 10 * 1024 * 1024;
+    crate::os::brk(heap_start + heap_size);
+    crate::alloc::init_heap(heap_start as *mut u8, heap_size);
+
     // Parse arguments for std::env
     let mut args = crate::rust_alloc::vec::Vec::new();
     for i in 0..argc {
@@ -46,47 +52,43 @@ pub unsafe extern "C" fn rust_start(stack: *const usize) -> ! {
     }
     crate::env::init_vars(&vars);
 
+    // If async_main is provided, use the executor
+    #[cfg(feature = "userland")]
+    {
+        // We use a weak symbol or similar logic if possible, but for now 
+        // let's just use block_on if we want to support async main.
+        // Actually, let's keep it simple: if the app wants async, it calls block_on in main.
+    }
+
+    // Call standard main
     let result = main(argc, argv);
     crate::os::exit(result as u64);
 }
 
-#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+#[cfg(target_arch = "x86_64")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn _start() {
-    main(0, core::ptr::null());
-    crate::os::exit(0);
-}
+pub unsafe extern "C" fn rust_async_start(stack: *const usize) -> ! {
+    let argc = *stack as i32;
+    let argv = stack.add(1) as *const *const u8;
 
-#[cfg(target_arch = "wasm32")]
-#[unsafe(no_mangle)]
-pub extern "C" fn __wasm_call_dtors() {}
-
-#[cfg(target_arch = "wasm32")]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn cabi_realloc(ptr: *mut u8, old_size: usize, align: usize, new_size: usize) -> *mut u8 {
-    use core::alloc::{GlobalAlloc, Layout};
-    if ptr.is_null() {
-        if new_size == 0 { return align as *mut u8; }
-        let layout = Layout::from_size_align(new_size, align).unwrap();
-        let res = crate::alloc::ALLOCATOR.alloc(layout);
-        if res.is_null() {
-            crate::debugln!("cabi_realloc: ALLOC FAILED (size: {}, align: {})", new_size, align);
+    // ... same argument and env parsing as rust_start ...
+    let mut args = crate::rust_alloc::vec::Vec::new();
+    for i in 0..argc {
+        let ptr = *argv.add(i as usize);
+        if !ptr.is_null() {
+            let c_str = core::ffi::CStr::from_ptr(ptr as *const i8);
+            args.push(crate::rust_alloc::string::String::from(c_str.to_string_lossy()));
         }
-        res
-    } else {
-        let layout = Layout::from_size_align(old_size, align).unwrap();
-        if new_size == 0 {
-            crate::alloc::ALLOCATOR.dealloc(ptr, layout);
-            return core::ptr::null_mut();
-        }
-        let res = crate::alloc::ALLOCATOR.realloc(ptr, layout, new_size);
-        if res.is_null() {
-            crate::debugln!("cabi_realloc: REALLOC FAILED (old: {}, new: {}, align: {})", old_size, new_size, align);
-        }
-        res
     }
+    crate::env::init_args(&args);
+
+    let mut executor = crate::executor::Executor::new();
+    executor.run(); // This never returns in this simple implementation
+    crate::os::exit(0);
 }
 
 unsafe extern "C" {
     fn main(argc: i32, argv: *const *const u8) -> i32;
+    #[cfg(feature = "userland")]
+    fn async_main() -> crate::rust_alloc::boxed::Box<dyn core::future::Future<Output=i32> + Send + 'static>;
 }

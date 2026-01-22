@@ -1,9 +1,9 @@
+use common::allocator::{align_up, Heap};
 use core::{
     alloc::{GlobalAlloc, Layout},
-    sync::atomic::{AtomicBool, Ordering},
     cell::UnsafeCell,
+    sync::atomic::{AtomicBool, Ordering},
 };
-use common::allocator::{Heap, align_up};
 
 pub struct Allocator {
     heap: UnsafeCell<Heap>,
@@ -69,7 +69,7 @@ unsafe fn grow_handler(min_size: usize) -> Option<(usize, usize)> {
 
             // Align requested size to page boundary (4096)
             let new_brk_req = align_up(current_brk + size, 4096);
-            
+
             // Request extension
             let new_brk = crate::os::brk(new_brk_req);
 

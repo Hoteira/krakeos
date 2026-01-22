@@ -247,6 +247,8 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
         } else {
             if pressed {
                 KEYBOARD_BUFFER.lock().push_back(key);
+                // Signal readiness for stdin (FD 0)
+                crate::interrupts::event_manager::signal_event(crate::interrupts::event_manager::AsyncEvent::Read(0));
             } else {}
 
 

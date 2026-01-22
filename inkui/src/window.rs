@@ -331,13 +331,14 @@ impl Window {
 
         for event in events.iter() {
             match event {
-                                Event::Resize(e) => {
-                                    if e.width > 0 && e.height > 0 && self.can_resize {
-                                        self.resize(e.width as usize, e.height as usize, self.can_move);
-                                    }
-                                }
-                                Event::Mouse(e) => {
-                                    let target_id = if let Some(widget) = self.find_interactive_widget_at(e.x as usize, e.y as usize) {                        Some(widget.get_id())
+                Event::Resize(e) => {
+                    if e.width > 0 && e.height > 0 && self.can_resize {
+                        self.resize(e.width as usize, e.height as usize, self.can_move);
+                    }
+                }
+                Event::Mouse(e) => {
+                    let target_id = if let Some(widget) = self.find_interactive_widget_at(e.x as usize, e.y as usize) {
+                        Some(widget.get_id())
                     } else {
                         None
                     };

@@ -193,7 +193,7 @@ pub extern "C" fn main() -> i32 {
 
                                         while i < parsed.args.len() {
                                             if parsed.args[i] == "--dir" && i + 1 < parsed.args.len() {
-                                                root_path = Some(resolve_path(&cwd, &parsed.args[i+1]));
+                                                root_path = Some(resolve_path(&cwd, &parsed.args[i + 1]));
                                                 i += 2;
                                             } else {
                                                 wasm_args.push(parsed.args[i].clone());
@@ -207,7 +207,7 @@ pub extern "C" fn main() -> i32 {
 
                                         builtins::run_wasm(prog_path, final_args, root_path);
                                         // WASM runs in-process now, so no PID to track
-                                        last_exit_code = 0; 
+                                        last_exit_code = 0;
                                     } else {
                                         let pid = std::os::spawn_with_fds(&prog_path, &args_refs, &map);
                                         if pid != usize::MAX {

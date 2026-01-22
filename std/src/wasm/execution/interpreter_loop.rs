@@ -1,4 +1,5 @@
 use super::{little_endian::LittleEndianBytes, store::Store};
+use crate::rust_alloc::vec::Vec;
 use crate::unreachable_validated;
 use crate::wasm::execution::config::Config;
 use crate::wasm::{
@@ -20,7 +21,6 @@ use crate::wasm::{
     execution::value_stack::Stack,
     RefType, RuntimeError, TrapError, ValType, Value,
 };
-use crate::rust_alloc::vec::Vec;
 use core::{
     num::NonZeroU32,
     {
@@ -2054,7 +2054,7 @@ pub fn run<T: Config>(
                     "Read instruction byte {second_instr} at wasm_binary[{}]",
                     wasm.pc
                 );
-                
+
                 decrement_fuel!(T::get_fd_extension_flat_cost(second_instr));
                 crate::wasm::execution::simd_instructions::execute_simd_instruction(
                     second_instr,
@@ -3055,7 +3055,7 @@ pub fn run<T: Config>(
                                 resumable.current_func_addr = current_func_addr;
                                 resumable.pc = prev_pc;
                                 resumable.stp = stp;
-                                return Ok(NonZeroU32::new(cost-*fuel));
+                                return Ok(NonZeroU32::new(cost - *fuel));
                             }
                         }
                         memory_init(
@@ -3096,7 +3096,7 @@ pub fn run<T: Config>(
                                 resumable.current_func_addr = current_func_addr;
                                 resumable.pc = prev_pc;
                                 resumable.stp = stp;
-                                return Ok(NonZeroU32::new(cost-*fuel));
+                                return Ok(NonZeroU32::new(cost - *fuel));
                             }
                         }
                         let mem_addr = *store
@@ -3130,7 +3130,7 @@ pub fn run<T: Config>(
                                 resumable.current_func_addr = current_func_addr;
                                 resumable.pc = prev_pc;
                                 resumable.stp = stp;
-                                return Ok(NonZeroU32::new(cost-*fuel));
+                                return Ok(NonZeroU32::new(cost - *fuel));
                             }
                         }
                         let mem_addr = *store
@@ -3164,7 +3164,7 @@ pub fn run<T: Config>(
                                 resumable.current_func_addr = current_func_addr;
                                 resumable.pc = prev_pc;
                                 resumable.stp = stp;
-                                return Ok(NonZeroU32::new(cost-*fuel));
+                                return Ok(NonZeroU32::new(cost - *fuel));
                             }
                         }
                         table_init(
@@ -3205,7 +3205,7 @@ pub fn run<T: Config>(
                                 resumable.current_func_addr = current_func_addr;
                                 resumable.pc = prev_pc;
                                 resumable.stp = stp;
-                                return Ok(NonZeroU32::new(cost-*fuel));
+                                return Ok(NonZeroU32::new(cost - *fuel));
                             }
                         }
                         let n = n as usize;
@@ -3265,7 +3265,7 @@ pub fn run<T: Config>(
                                 resumable.current_func_addr = current_func_addr;
                                 resumable.pc = prev_pc;
                                 resumable.stp = stp;
-                                return Ok(NonZeroU32::new(cost-*fuel));
+                                return Ok(NonZeroU32::new(cost - *fuel));
                             }
                         }
                         let pushed_value = match tab.grow(n, val) {
@@ -3314,7 +3314,7 @@ pub fn run<T: Config>(
                                 resumable.current_func_addr = current_func_addr;
                                 resumable.pc = prev_pc;
                                 resumable.stp = stp;
-                                return Ok(NonZeroU32::new(cost-*fuel));
+                                return Ok(NonZeroU32::new(cost - *fuel));
                             }
                         }
                         let n = n as usize;
@@ -3365,10 +3365,10 @@ pub fn run<T: Config>(
                 let func_to_call_addr = store.modules.get(current_module).func_addrs[local_func_idx];
                 let func_to_call_ty = store.functions.get(func_to_call_addr).ty();
                 let params: Vec<Value> = stack.pop_tail_iter(func_to_call_ty.params.valtypes.len()).collect();
-                
+
                 // Pop current frame
                 stack.pop_call_frame();
-                
+
                 // Push new args
                 for param in params {
                     stack.push_value::<T>(param)?;
@@ -3409,7 +3409,7 @@ pub fn run<T: Config>(
                             current_func_addr, // Placeholder, see logic below
                             &func_to_call_ty,
                             &wasm_func.locals,
-                            0, 0 // Placeholders
+                            0, 0, // Placeholders
                         )?;
                         // Re-fix the CallFrame
                         {
@@ -3431,11 +3431,11 @@ pub fn run<T: Config>(
                 let type_idx = wasm.read_var_u32().unwrap_validated() as TypeIdx;
                 let table_idx = wasm.read_var_u32().unwrap_validated() as TableIdx;
                 let i: u32 = stack.pop_value().try_into().unwrap_validated();
-                
+
                 let table_addr = store.modules.get(current_module).table_addrs[table_idx];
                 let tab = store.tables.get(table_addr);
                 let r = tab.elem.get(i as usize).ok_or(TrapError::TableAccessOutOfBounds)?;
-                
+
                 let func_addr = match r {
                     Ref::Func(a) => *a,
                     _ => return Err(TrapError::IndirectCallNullFuncRef.into()),
@@ -3446,7 +3446,7 @@ pub fn run<T: Config>(
                 let params: Vec<Value> = stack.pop_tail_iter(func_to_call_ty.params.valtypes.len()).collect();
                 stack.pop_call_frame();
                 for param in params { stack.push_value::<T>(param)?; }
-                
+
                 match store.functions.get(func_addr) {
                     FuncInst::HostFunc(host_func) => {
                         let hostcode = host_func.hostcode;
@@ -3484,17 +3484,22 @@ pub fn run<T: Config>(
                 match sub {
                     0x00 => { // notify
                         MemArg::read(wasm).unwrap_validated();
-                        stack.pop_value(); stack.pop_value();
+                        stack.pop_value();
+                        stack.pop_value();
                         stack.push_value::<T>(Value::I32(0))?;
                     }
                     0x01 => { // wait32
                         MemArg::read(wasm).unwrap_validated();
-                        stack.pop_value(); stack.pop_value(); stack.pop_value();
+                        stack.pop_value();
+                        stack.pop_value();
+                        stack.pop_value();
                         stack.push_value::<T>(Value::I32(0))?;
                     }
                     0x02 => { // wait64
                         MemArg::read(wasm).unwrap_validated();
-                        stack.pop_value(); stack.pop_value(); stack.pop_value();
+                        stack.pop_value();
+                        stack.pop_value();
+                        stack.pop_value();
                         stack.push_value::<T>(Value::I32(0))?;
                     }
                     0x10 | 0x12 | 0x13 | 0x14 | 0x15 | 0x16 => { // load (various)
@@ -3510,9 +3515,9 @@ pub fn run<T: Config>(
                             let val: i32 = mem.mem.load(idx)?;
                             stack.push_value::<T>(Value::I32(val as u32))?;
                         } else {
-                             // Fallback for others
-                             let val: i64 = mem.mem.load(idx)?;
-                             stack.push_value::<T>(Value::I64(val as u64))?;
+                            // Fallback for others
+                            let val: i64 = mem.mem.load(idx)?;
+                            stack.push_value::<T>(Value::I64(val as u64))?;
                         }
                     }
                     0x17 | 0x18 | 0x19 | 0x1A | 0x1B | 0x1C | 0x1D => { // store

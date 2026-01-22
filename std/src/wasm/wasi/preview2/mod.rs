@@ -133,6 +133,11 @@ pub fn create_wasi_p2_imports<T: Config>(linker: &mut Linker, store: &mut Store<
         define(linker, store, module, "[method]descriptor.write-via-stream", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], filesystem::filesystem_types_write_via_stream);
         define(linker, store, module, "[method]descriptor.append-via-stream", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], filesystem::filesystem_types_append_via_stream);
         define(linker, store, module, "[resource-drop]descriptor", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
+
+        // Also add __wasm_call_dtors to env for compatibility
+        let func_type = FuncType { params: ResultType { valtypes: vec![] }, returns: ResultType { valtypes: vec![] } };
+        let func_addr = store.func_alloc_unchecked(func_type, |_, _| Ok(vec![]));
+        let _ = linker.define_unchecked(String::from("env"), String::from("__wasm_call_dtors"), ExternVal::Func(func_addr));
     }
 }
 
@@ -276,13 +281,13 @@ fn krakeos_syscall_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -
             // The logs show Ext2Node::find calls, suggesting it works with path.
             // If the kernel expects (ptr, len, ...), then we should pass len.
             // If the kernel expects (ptr, flags, ...), then we have a mismatch if we pass len as flags.
-            
+
             // However, looking at 'read_mem_string' usage previously, it implies we were constructing a host string.
             // And 'res = unsafe { crate::sys::syscall(num, s_terminated.as_ptr() ... a2, a3) }'
             // We were passing 'a2' (len) as the 2nd argument to the HOST syscall.
             // If the HOST syscall is KrakeOS kernel, and if it expects (ptr, len, ...), then it's fine.
             // But 's_terminated' implies we are converting to C-string.
-            
+
             // Assumption: KrakeOS kernel syscalls called via 'crate::sys::syscall' expect (ptr, len, ...) for string arguments?
             // Or (ptr_to_c_string, ...)?
             // The previous code did: 'syscall(num, s_terminated.as_ptr(), a2, a3)'.
@@ -290,10 +295,11 @@ fn krakeos_syscall_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -
             // If the kernel expects (ptr, len), then s_terminated (C-string) might not be needed, just bytes.
             // But if we are in 'wasm_runner' (userland app), 'crate::sys::syscall' is the userland wrapper.
             // Let's assume KrakeOS syscalls take (ptr, len).
-            
+
             let res = unsafe { crate::sys::syscall(num, s_terminated.as_ptr() as u64, a2, a3) };
             return Ok(vec![Value::I64(res)]);
-        }        120 => { // SHM_GET - Do not return host pointers to WASM!
+        }
+        120 => { // SHM_GET - Do not return host pointers to WASM!
             crate::debugln!("WASM Syscall: SHM_GET blocked (returning 0)");
             return Ok(vec![Value::I64(0)]);
         }
@@ -315,15 +321,15 @@ fn krakeos_syscall_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -
             // "a3 is arg3".
             // Guest syscall(4, ptr, len, buf).
             // Host received: a1=ptr, a2=len, a3=buf.
-            
+
             // Old Host Code:
             // let s = read_mem_string(store, a1)?; // Reads until null.
             // let res = unsafe { syscall(num, s.as_ptr(), &mut stat, a3) };
             // write_bytes(store, a2, ...); // WROTE TO a2 (len)! Memory corruption!
-            
+
             // The Host was writing the stat struct to the address equal to the path length!
             // E.g. if path len is 20, it writes to address 20. Access Violation or corruption.
-            
+
             // Correct logic:
             // Guest passes: (ptr, len, buf_ptr).
             // Host should:
@@ -331,7 +337,7 @@ fn krakeos_syscall_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -
             // 2. Call Kernel STAT.
             //    If Kernel STAT takes (path_c_string, stat_buf), then call syscall(4, s.as_ptr(), &stat, 0).
             // 3. Write stat result to buf_ptr(a3).
-            
+
             let res = unsafe { crate::sys::syscall(num, s_terminated.as_ptr() as u64, &mut stat as *mut _ as u64, 0) };
             if res != u64::MAX {
                 write_bytes(store, a3 as u32, unsafe { core::slice::from_raw_parts(&stat as *const _ as *const u8, core::mem::size_of::<crate::fs::Stat>()) }).map_err(|_| HaltExecutionError(1))?;
@@ -366,7 +372,7 @@ fn krakeos_syscall_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -
         100 | 102 => { // ADD_WINDOW, UPDATE_WINDOW (a1 is Window struct ptr)
             let addr = a1 as u32;
             let wasm_base = store.get_wasm_base_ptr() as u64;
-            
+
             // Read WASM Window struct fields (32-bit offsets/pointers)
             let id = read_mem_u32(store, addr)? as usize;
             let buffer_off = read_mem_u32(store, addr + 4)? as u64;
@@ -378,10 +384,10 @@ fn krakeos_syscall_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -
             let z = read_mem_u32(store, addr + 32)? as usize;
             let width = read_mem_u32(store, addr + 36)? as usize;
             let height = read_mem_u32(store, addr + 40)? as usize;
-            
+
             let mut bools = [0u8; 4];
             read_mem(store, addr + 44, &mut bools).map_err(|_| HaltExecutionError(1))?;
-            
+
             let min_width = read_mem_u32(store, addr + 48)? as usize;
             let min_height = read_mem_u32(store, addr + 52)? as usize;
             let event_handler = read_mem_u32(store, addr + 56)? as usize;
@@ -394,23 +400,28 @@ fn krakeos_syscall_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -
                 back_buffer: if back_buffer_off != 0 { (wasm_base + back_buffer_off) as usize } else { 0 },
                 flipped: if flipped_off != 0 { (wasm_base + flipped_off) as usize } else { 0 },
                 pid,
-                x, y, z, width, height,
+                x,
+                y,
+                z,
+                width,
+                height,
                 can_move: bools[0] != 0,
                 can_resize: bools[1] != 0,
                 transparent: bools[2] != 0,
                 treat_as_transparent: bools[3] != 0,
-                min_width, min_height,
+                min_width,
+                min_height,
                 event_handler,
                 w_type: unsafe { core::mem::transmute(w_type_val) },
             };
 
             let res = unsafe { crate::sys::syscall(num, &host_win as *const _ as u64, a2, a3) };
-            
+
             // If ADD_WINDOW, update the ID back in WASM memory
             if num == 100 {
                 let _ = write_bytes(store, addr, &(res as u32).to_le_bytes());
             }
-            
+
             return Ok(vec![Value::I64(res)]);
         }
         103 => { // UPDATE_WINDOW_AREA (wid, x, y, w, h)
@@ -447,7 +458,7 @@ fn read_mem_string<T: Config>(store: &Store<'_, T>, addr: u32) -> Result<String,
         if b[0] == 0 { break; }
         res.push(b[0] as char);
         curr += 1;
-        if curr - addr > 1024 { break; } 
+        if curr - addr > 1024 { break; }
     }
     Ok(res)
 }

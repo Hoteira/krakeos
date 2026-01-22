@@ -13,7 +13,7 @@ fn main() {
     test_filesystem_basics();
     test_filesystem_directory_ops();
     test_filesystem_metadata_and_truncate();
-    
+
     println!("\n=== All Tests Completed ===");
 }
 
@@ -31,7 +31,7 @@ fn test_args_and_env() {
     for (i, arg) in env::args().enumerate() {
         println!("    [{}] {}", i, arg);
     }
-    
+
     println!("  Env Vars:");
     let vars: Vec<(String, String)> = env::vars().collect();
     if vars.is_empty() {
@@ -48,18 +48,18 @@ fn test_args_and_env() {
 
 fn test_clocks_and_sleep() {
     println!("\n[TEST] Clocks & Sleep");
-    
+
     // System Time
     let sys_time = SystemTime::now();
     println!("  SystemTime::now(): {:?}", sys_time);
-    
+
     // Monotonic Time
     let start = Instant::now();
     println!("  Sleeping for 100ms...");
     thread::sleep(Duration::from_millis(100));
     let elapsed = start.elapsed();
     println!("  Elapsed: {:?} (Expected ~100ms)", elapsed);
-    
+
     if elapsed.as_millis() < 50 || elapsed.as_millis() > 500 {
         println!("  [WARN] Sleep duration seems off!");
     } else {
@@ -70,7 +70,7 @@ fn test_clocks_and_sleep() {
 fn test_filesystem_basics() {
     println!("\n[TEST] Filesystem: Basics (Write/Read)");
     let filename = "test_file.txt";
-    
+
     // Cleanup
     let _ = fs::remove_file(filename);
 
@@ -110,7 +110,7 @@ fn test_filesystem_basics() {
             println!("  [FAIL] Content mismatch. Got: '{}'", content);
         }
     }
-    
+
     // Cleanup
     if let Err(e) = fs::remove_file(filename) {
         println!("  [WARN] Failed to remove test file: {}", e);
@@ -177,9 +177,9 @@ fn test_filesystem_directory_ops() {
     } else {
         println!("  [PASS] Renamed file to '{}'", renamed_file);
         if fs::metadata(renamed_file).is_ok() {
-             println!("  [PASS] Renamed file exists.");
+            println!("  [PASS] Renamed file exists.");
         } else {
-             println!("  [FAIL] Renamed file does not exist metadata check.");
+            println!("  [FAIL] Renamed file does not exist metadata check.");
         }
     }
 
@@ -196,7 +196,7 @@ fn test_filesystem_directory_ops() {
 fn test_filesystem_metadata_and_truncate() {
     println!("\n[TEST] Filesystem: Metadata, Seek & Truncate");
     let filename = "meta_test.bin";
-    
+
     {
         let mut f = fs::File::create(filename).unwrap();
         f.write_all(b"1234567890").unwrap();
@@ -243,16 +243,16 @@ fn test_filesystem_metadata_and_truncate() {
     {
         let mut f = fs::File::open(filename).unwrap();
         if let Err(e) = f.seek(SeekFrom::Start(2)) {
-             println!("  [FAIL] Seek failed: {}", e);
+            println!("  [FAIL] Seek failed: {}", e);
         } else {
-             let mut buf = [0u8; 1];
-             f.read_exact(&mut buf).unwrap();
-             println!("  Seek(2) -> Read: {} (Expected '3' or byte 51)", buf[0] as char);
-             if buf[0] == b'3' {
-                 println!("  [PASS] Seek and Read correct.");
-             } else {
-                 println!("  [FAIL] Seek content mismatch.");
-             }
+            let mut buf = [0u8; 1];
+            f.read_exact(&mut buf).unwrap();
+            println!("  Seek(2) -> Read: {} (Expected '3' or byte 51)", buf[0] as char);
+            if buf[0] == b'3' {
+                println!("  [PASS] Seek and Read correct.");
+            } else {
+                println!("  [FAIL] Seek content mismatch.");
+            }
         }
     }
 

@@ -1,5 +1,4 @@
-use crate::drivers::port::{inb, Port};
-use core::arch::asm;
+use crate::drivers::port::Port;
 use core::fmt;
 #[allow(unused_imports)]
 

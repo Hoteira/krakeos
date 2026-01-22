@@ -1,4 +1,4 @@
-use crate::rust_alloc::{vec, vec::Vec};
+use crate::rust_alloc::vec::Vec;
 use crate::wasm::execution::{
     config::Config,
     store::{HaltExecutionError, Store},

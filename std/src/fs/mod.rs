@@ -3,6 +3,9 @@ use crate::os::syscall;
 use rust_alloc::string::String;
 use rust_alloc::vec::Vec;
 
+pub mod async_file;
+pub use async_file::AsyncFile;
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct Stat {
@@ -86,36 +89,50 @@ impl File {
 
 impl Read for File {
     fn read(&mut self, buffer: &mut [u8]) -> Result<usize> {
-        let res = unsafe {
-            syscall(0, self.fd as u64, buffer.as_mut_ptr() as u64, buffer.len() as u64)
-        };
+        loop {
+            let res = unsafe {
+                syscall(0, self.fd as u64, buffer.as_mut_ptr() as u64, buffer.len() as u64)
+            };
 
-        if res == u64::MAX {
-            Err(Error::from_raw_os_error(5)) // EIO
-        } else {
-            Ok(res as usize)
+            if res == u64::MAX {
+                return Err(Error::from_raw_os_error(5)); // EIO
+            } else if res == u64::MAX - 1 {
+                crate::os::yield_task();
+                continue;
+            } else {
+                return Ok(res as usize);
+            }
         }
     }
 }
 
 impl Write for File {
     fn write(&mut self, buffer: &[u8]) -> Result<usize> {
-        let res = unsafe {
-            syscall(1, self.fd as u64, buffer.as_ptr() as u64, buffer.len() as u64)
-        };
+        let mut total_written = 0;
+        while total_written < buffer.len() {
+            let res = unsafe {
+                syscall(1, self.fd as u64, buffer[total_written..].as_ptr() as u64, (buffer.len() - total_written) as u64)
+            };
 
-        if res == u64::MAX {
-            Err(Error::from_raw_os_error(5)) // EIO
-        } else {
-            Ok(res as usize)
+            if res == u64::MAX {
+                return Err(Error::from_raw_os_error(5)); // EIO
+            } else if res == u64::MAX - 1 {
+                crate::os::yield_task();
+                continue;
+            } else if res == 0 {
+                if total_written > 0 { return Ok(total_written); }
+                return Err(Error::from_raw_os_error(5));
+            } else {
+                total_written += res as usize;
+            }
         }
+        Ok(total_written)
     }
 
     fn flush(&mut self) -> Result<()> {
         Ok(())
     }
 }
-
 impl Seek for File {
     fn seek(&mut self, pos: SeekFrom) -> Result<u64> {
         let (offset, whence) = match pos {

@@ -99,7 +99,7 @@ pub unsafe fn syscall(num: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
             preview2_bindings::get_screen_height() as u64
         }
         60 => { // EXIT
-             preview2_bindings::exit(arg1 as i32);
+            preview2_bindings::exit(arg1 as i32);
         }
         _ => {
             unsafe { preview2_bindings::krakeos_syscall(num, arg1, arg2, arg3) }

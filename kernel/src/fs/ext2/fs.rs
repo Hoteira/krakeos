@@ -1,4 +1,4 @@
-use crate::sync::{Mutex, YieldMutex};
+use crate::sync::YieldMutex;
 #[allow(dead_code)]
 use alloc::boxed::Box;
 use alloc::string::String;
@@ -550,7 +550,7 @@ impl VfsNode for Ext2Node {
         if self.kind() == FileType::Symlink && total_size < 60 {
             let mut data = [0u8; 60];
             let inode_block = self.inode.block;
-            
+
             unsafe {
                 core::ptr::copy_nonoverlapping(inode_block.as_ptr() as *const u8, data.as_mut_ptr(), 60);
             }
@@ -1214,21 +1214,21 @@ impl VfsNode for Ext2Node {
         let inode_num = src.inode() as u32;
         let fs = unsafe { &mut *self.fs };
         let fs_ptr = fs as *mut Ext2;
-        
+
         let mut src_inode = {
             let _lock = fs.lock.lock();
             unsafe { (*fs_ptr).read_inode(inode_num) }
         };
-        
+
         src_inode.links_count += 1;
         {
             let _lock = fs.lock.lock();
             unsafe { (*fs_ptr).write_inode(inode_num, &src_inode) };
         }
-        
+
         let file_type = if (src_inode.mode & 0xF000) == 0x4000 { 2 } else { 1 };
         self.add_directory_entry(inode_num, name, file_type)?;
-        
+
         Ok(())
     }
 
@@ -1242,7 +1242,7 @@ impl VfsNode for Ext2Node {
         let fs = unsafe { &mut *self.fs };
         let fs_ptr = fs as *mut Ext2;
         let _lock = fs.lock.lock();
-        
+
         self.inode.atime = atime as u32;
         self.inode.mtime = mtime as u32;
         unsafe { (*fs_ptr).write_inode(self.inode_idx, &self.inode) };

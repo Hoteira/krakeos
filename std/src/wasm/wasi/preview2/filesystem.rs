@@ -1,4 +1,3 @@
-use super::write_u32;
 use crate::rust_alloc::{vec, vec::Vec};
 use crate::wasm::{
     execution::{

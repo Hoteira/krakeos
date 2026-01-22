@@ -1,8 +1,8 @@
+use super::env::WasiEnv;
+use crate::rust_alloc::boxed::Box;
 use crate::rust_alloc::collections::BTreeMap;
 use crate::rust_alloc::string::String;
-use crate::rust_alloc::boxed::Box;
 use crate::rust_alloc::vec::Vec;
-use super::env::WasiEnv;
 
 
 pub struct WasiCtx {

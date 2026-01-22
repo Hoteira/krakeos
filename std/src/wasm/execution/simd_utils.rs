@@ -1,5 +1,3 @@
-
-use crate::rust_alloc::vec::Vec;
 use crate::wasm::execution::little_endian::LittleEndianBytes;
 use core::array;
 
@@ -378,9 +376,9 @@ pub fn i8x16_narrow_i16x8_s(a: [u8; 16], b: [u8; 16]) -> [u8; 16] {
     let lanes_a = to_lanes::<2, 8, i16>(a);
     let lanes_b = to_lanes::<2, 8, i16>(b);
     let mut res = [0i8; 16];
-    for i in 0..8 { 
+    for i in 0..8 {
         res[i] = lanes_a[i].clamp(i8::MIN as i16, i8::MAX as i16) as i8;
-        res[i+8] = lanes_b[i].clamp(i8::MIN as i16, i8::MAX as i16) as i8;
+        res[i + 8] = lanes_b[i].clamp(i8::MIN as i16, i8::MAX as i16) as i8;
     }
     from_lanes::<1, 16, i8>(res)
 }
@@ -388,9 +386,9 @@ pub fn i8x16_narrow_i16x8_u(a: [u8; 16], b: [u8; 16]) -> [u8; 16] {
     let lanes_a = to_lanes::<2, 8, i16>(a);
     let lanes_b = to_lanes::<2, 8, i16>(b);
     let mut res = [0u8; 16];
-    for i in 0..8 { 
+    for i in 0..8 {
         res[i] = lanes_a[i].clamp(0, u8::MAX as i16) as u8;
-        res[i+8] = lanes_b[i].clamp(0, u8::MAX as i16) as u8;
+        res[i + 8] = lanes_b[i].clamp(0, u8::MAX as i16) as u8;
     }
     res
 }
@@ -398,9 +396,9 @@ pub fn i16x8_narrow_i32x4_s(a: [u8; 16], b: [u8; 16]) -> [u8; 16] {
     let lanes_a = to_lanes::<4, 4, i32>(a);
     let lanes_b = to_lanes::<4, 4, i32>(b);
     let mut res = [0i16; 8];
-    for i in 0..4 { 
+    for i in 0..4 {
         res[i] = lanes_a[i].clamp(i16::MIN as i32, i16::MAX as i32) as i16;
-        res[i+4] = lanes_b[i].clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+        res[i + 4] = lanes_b[i].clamp(i16::MIN as i32, i16::MAX as i32) as i16;
     }
     from_lanes::<2, 8, i16>(res)
 }
@@ -408,9 +406,9 @@ pub fn i16x8_narrow_i32x4_u(a: [u8; 16], b: [u8; 16]) -> [u8; 16] {
     let lanes_a = to_lanes::<4, 4, i32>(a);
     let lanes_b = to_lanes::<4, 4, i32>(b);
     let mut res = [0u16; 8];
-    for i in 0..4 { 
+    for i in 0..4 {
         res[i] = lanes_a[i].clamp(0, u16::MAX as i32) as u16;
-        res[i+4] = lanes_b[i].clamp(0, u16::MAX as i32) as u16;
+        res[i + 4] = lanes_b[i].clamp(0, u16::MAX as i32) as u16;
     }
     from_lanes::<2, 8, u16>(res)
 }
@@ -427,7 +425,7 @@ pub fn i16x8_extend_low_i8x16_s(a: [u8; 16]) -> [u8; 16] {
 pub fn i16x8_extend_high_i8x16_s(a: [u8; 16]) -> [u8; 16] {
     let lanes_a = to_lanes::<1, 16, i8>(a);
     let mut res = [0i16; 8];
-    for i in 0..8 { res[i] = lanes_a[i+8] as i16; }
+    for i in 0..8 { res[i] = lanes_a[i + 8] as i16; }
     from_lanes::<2, 8, i16>(res)
 }
 pub fn i16x8_extend_low_i8x16_u(a: [u8; 16]) -> [u8; 16] {
@@ -439,7 +437,7 @@ pub fn i16x8_extend_low_i8x16_u(a: [u8; 16]) -> [u8; 16] {
 pub fn i16x8_extend_high_i8x16_u(a: [u8; 16]) -> [u8; 16] {
     let lanes_a = to_lanes::<1, 16, u8>(a);
     let mut res = [0u16; 8];
-    for i in 0..8 { res[i] = lanes_a[i+8] as u16; }
+    for i in 0..8 { res[i] = lanes_a[i + 8] as u16; }
     from_lanes::<2, 8, u16>(res)
 }
 
@@ -452,7 +450,7 @@ pub fn i32x4_extend_low_i16x8_s(a: [u8; 16]) -> [u8; 16] {
 pub fn i32x4_extend_high_i16x8_s(a: [u8; 16]) -> [u8; 16] {
     let lanes_a = to_lanes::<2, 8, i16>(a);
     let mut res = [0i32; 4];
-    for i in 0..4 { res[i] = lanes_a[i+4] as i32; }
+    for i in 0..4 { res[i] = lanes_a[i + 4] as i32; }
     from_lanes::<4, 4, i32>(res)
 }
 pub fn i32x4_extend_low_i16x8_u(a: [u8; 16]) -> [u8; 16] {
@@ -464,7 +462,7 @@ pub fn i32x4_extend_low_i16x8_u(a: [u8; 16]) -> [u8; 16] {
 pub fn i32x4_extend_high_i16x8_u(a: [u8; 16]) -> [u8; 16] {
     let lanes_a = to_lanes::<2, 8, u16>(a);
     let mut res = [0u32; 4];
-    for i in 0..4 { res[i] = lanes_a[i+4] as u32; }
+    for i in 0..4 { res[i] = lanes_a[i + 4] as u32; }
     from_lanes::<4, 4, u32>(res)
 }
 
@@ -477,7 +475,7 @@ pub fn i64x2_extend_low_i32x4_s(a: [u8; 16]) -> [u8; 16] {
 pub fn i64x2_extend_high_i32x4_s(a: [u8; 16]) -> [u8; 16] {
     let lanes_a = to_lanes::<4, 4, i32>(a);
     let mut res = [0i64; 2];
-    for i in 0..2 { res[i] = lanes_a[i+2] as i64; }
+    for i in 0..2 { res[i] = lanes_a[i + 2] as i64; }
     from_lanes::<8, 2, i64>(res)
 }
 pub fn i64x2_extend_low_i32x4_u(a: [u8; 16]) -> [u8; 16] {
@@ -489,7 +487,7 @@ pub fn i64x2_extend_low_i32x4_u(a: [u8; 16]) -> [u8; 16] {
 pub fn i64x2_extend_high_i32x4_u(a: [u8; 16]) -> [u8; 16] {
     let lanes_a = to_lanes::<4, 4, u32>(a);
     let mut res = [0u64; 2];
-    for i in 0..2 { res[i] = lanes_a[i+2] as u64; }
+    for i in 0..2 { res[i] = lanes_a[i + 2] as u64; }
     from_lanes::<8, 2, u64>(res)
 }
 
@@ -547,8 +545,8 @@ pub fn i32x4_dot_i16x8_s(a: [u8; 16], b: [u8; 16]) -> [u8; 16] {
     let lanes_b = to_lanes::<2, 8, i16>(b);
     let mut res = [0i32; 4];
     for i in 0..4 {
-        let lo = lanes_a[2*i] as i32 * lanes_b[2*i] as i32;
-        let hi = lanes_a[2*i+1] as i32 * lanes_b[2*i+1] as i32;
+        let lo = lanes_a[2 * i] as i32 * lanes_b[2 * i] as i32;
+        let hi = lanes_a[2 * i + 1] as i32 * lanes_b[2 * i + 1] as i32;
         res[i] = lo.wrapping_add(hi);
     }
     from_lanes::<4, 4, i32>(res)
@@ -577,7 +575,7 @@ pub fn i16x8_extmul_high_i8x16_s(a: [u8; 16], b: [u8; 16]) -> [u8; 16] {
     let la = to_lanes::<1, 16, i8>(a);
     let lb = to_lanes::<1, 16, i8>(b);
     let mut res = [0i16; 8];
-    for i in 0..8 { res[i] = (la[i+8] as i16) * (lb[i+8] as i16); }
+    for i in 0..8 { res[i] = (la[i + 8] as i16) * (lb[i + 8] as i16); }
     from_lanes::<2, 8, i16>(res)
 }
 pub fn i16x8_extmul_low_i8x16_u(a: [u8; 16], b: [u8; 16]) -> [u8; 16] {
@@ -591,7 +589,7 @@ pub fn i16x8_extmul_high_i8x16_u(a: [u8; 16], b: [u8; 16]) -> [u8; 16] {
     let la = to_lanes::<1, 16, u8>(a);
     let lb = to_lanes::<1, 16, u8>(b);
     let mut res = [0u16; 8];
-    for i in 0..8 { res[i] = (la[i+8] as u16) * (lb[i+8] as u16); }
+    for i in 0..8 { res[i] = (la[i + 8] as u16) * (lb[i + 8] as u16); }
     from_lanes::<2, 8, u16>(res)
 }
 
@@ -606,7 +604,7 @@ pub fn i32x4_extmul_high_i16x8_s(a: [u8; 16], b: [u8; 16]) -> [u8; 16] {
     let la = to_lanes::<2, 8, i16>(a);
     let lb = to_lanes::<2, 8, i16>(b);
     let mut res = [0i32; 4];
-    for i in 0..4 { res[i] = (la[i+4] as i32) * (lb[i+4] as i32); }
+    for i in 0..4 { res[i] = (la[i + 4] as i32) * (lb[i + 4] as i32); }
     from_lanes::<4, 4, i32>(res)
 }
 pub fn i32x4_extmul_low_i16x8_u(a: [u8; 16], b: [u8; 16]) -> [u8; 16] {
@@ -620,7 +618,7 @@ pub fn i32x4_extmul_high_i16x8_u(a: [u8; 16], b: [u8; 16]) -> [u8; 16] {
     let la = to_lanes::<2, 8, u16>(a);
     let lb = to_lanes::<2, 8, u16>(b);
     let mut res = [0u32; 4];
-    for i in 0..4 { res[i] = (la[i+4] as u32) * (lb[i+4] as u32); }
+    for i in 0..4 { res[i] = (la[i + 4] as u32) * (lb[i + 4] as u32); }
     from_lanes::<4, 4, u32>(res)
 }
 
@@ -635,7 +633,7 @@ pub fn i64x2_extmul_high_i32x4_s(a: [u8; 16], b: [u8; 16]) -> [u8; 16] {
     let la = to_lanes::<4, 4, i32>(a);
     let lb = to_lanes::<4, 4, i32>(b);
     let mut res = [0i64; 2];
-    for i in 0..2 { res[i] = (la[i+2] as i64) * (lb[i+2] as i64); }
+    for i in 0..2 { res[i] = (la[i + 2] as i64) * (lb[i + 2] as i64); }
     from_lanes::<8, 2, i64>(res)
 }
 pub fn i64x2_extmul_low_i32x4_u(a: [u8; 16], b: [u8; 16]) -> [u8; 16] {
@@ -649,7 +647,7 @@ pub fn i64x2_extmul_high_i32x4_u(a: [u8; 16], b: [u8; 16]) -> [u8; 16] {
     let la = to_lanes::<4, 4, u32>(a);
     let lb = to_lanes::<4, 4, u32>(b);
     let mut res = [0u64; 2];
-    for i in 0..2 { res[i] = (la[i+2] as u64) * (lb[i+2] as u64); }
+    for i in 0..2 { res[i] = (la[i + 2] as u64) * (lb[i + 2] as u64); }
     from_lanes::<8, 2, u64>(res)
 }
 
@@ -657,25 +655,25 @@ pub fn i64x2_extmul_high_i32x4_u(a: [u8; 16], b: [u8; 16]) -> [u8; 16] {
 pub fn i16x8_extadd_pairwise_i8x16_s(a: [u8; 16]) -> [u8; 16] {
     let la = to_lanes::<1, 16, i8>(a);
     let mut res = [0i16; 8];
-    for i in 0..8 { res[i] = (la[2*i] as i16) + (la[2*i+1] as i16); }
+    for i in 0..8 { res[i] = (la[2 * i] as i16) + (la[2 * i + 1] as i16); }
     from_lanes::<2, 8, i16>(res)
 }
 pub fn i16x8_extadd_pairwise_i8x16_u(a: [u8; 16]) -> [u8; 16] {
     let la = to_lanes::<1, 16, u8>(a);
     let mut res = [0u16; 8];
-    for i in 0..8 { res[i] = (la[2*i] as u16) + (la[2*i+1] as u16); }
+    for i in 0..8 { res[i] = (la[2 * i] as u16) + (la[2 * i + 1] as u16); }
     from_lanes::<2, 8, u16>(res)
 }
 pub fn i32x4_extadd_pairwise_i16x8_s(a: [u8; 16]) -> [u8; 16] {
     let la = to_lanes::<2, 8, i16>(a);
     let mut res = [0i32; 4];
-    for i in 0..4 { res[i] = (la[2*i] as i32) + (la[2*i+1] as i32); }
+    for i in 0..4 { res[i] = (la[2 * i] as i32) + (la[2 * i + 1] as i32); }
     from_lanes::<4, 4, i32>(res)
 }
 pub fn i32x4_extadd_pairwise_i16x8_u(a: [u8; 16]) -> [u8; 16] {
     let la = to_lanes::<2, 8, u16>(a);
     let mut res = [0u32; 4];
-    for i in 0..4 { res[i] = (la[2*i] as u32) + (la[2*i+1] as u32); }
+    for i in 0..4 { res[i] = (la[2 * i] as u32) + (la[2 * i + 1] as u32); }
     from_lanes::<4, 4, u32>(res)
 }
 
@@ -710,10 +708,7 @@ pub fn i32x4_trunc_sat_f32x4_s(a: [u8; 16]) -> [u8; 16] {
     let lanes = to_lanes::<4, 4, F32>(a);
     let res = array::from_fn(|i| {
         let f = lanes[i].0;
-        if f.is_nan() { 0 }
-        else if f >= 2147483648.0 { i32::MAX }
-        else if f < -2147483648.0 { i32::MIN }
-        else { f as i32 }
+        if f.is_nan() { 0 } else if f >= 2147483648.0 { i32::MAX } else if f < -2147483648.0 { i32::MIN } else { f as i32 }
     });
     from_lanes::<4, 4, i32>(res)
 }
@@ -721,10 +716,7 @@ pub fn i32x4_trunc_sat_f32x4_u(a: [u8; 16]) -> [u8; 16] {
     let lanes = to_lanes::<4, 4, F32>(a);
     let res = array::from_fn(|i| {
         let f = lanes[i].0;
-        if f.is_nan() { 0 }
-        else if f >= 4294967296.0 { u32::MAX }
-        else if f <= -1.0 { 0 }
-        else { f as u32 }
+        if f.is_nan() { 0 } else if f >= 4294967296.0 { u32::MAX } else if f <= -1.0 { 0 } else { f as u32 }
     });
     from_lanes::<4, 4, u32>(res)
 }
@@ -744,10 +736,7 @@ pub fn i32x4_trunc_sat_f64x2_s_zero(a: [u8; 16]) -> [u8; 16] {
     let mut res = [0i32; 4];
     for i in 0..2 {
         let f = lanes[i].0;
-        res[i] = if f.is_nan() { 0 }
-        else if f >= 2147483648.0 { i32::MAX }
-        else if f < -2147483648.0 { i32::MIN }
-        else { f as i32 };
+        res[i] = if f.is_nan() { 0 } else if f >= 2147483648.0 { i32::MAX } else if f < -2147483648.0 { i32::MIN } else { f as i32 };
     }
     // Upper lanes zeroed (already 0)
     from_lanes::<4, 4, i32>(res)
@@ -757,10 +746,7 @@ pub fn i32x4_trunc_sat_f64x2_u_zero(a: [u8; 16]) -> [u8; 16] {
     let mut res = [0u32; 4];
     for i in 0..2 {
         let f = lanes[i].0;
-        res[i] = if f.is_nan() { 0 }
-        else if f >= 4294967296.0 { u32::MAX }
-        else if f <= -1.0 { 0 }
-        else { f as u32 };
+        res[i] = if f.is_nan() { 0 } else if f >= 4294967296.0 { u32::MAX } else if f <= -1.0 { 0 } else { f as u32 };
     }
     from_lanes::<4, 4, u32>(res)
 }

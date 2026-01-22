@@ -272,19 +272,19 @@ impl<'a, T: Config> Store<'a, T> {
     pub fn global_alloc_unchecked(&mut self, global_type: GlobalType, val: Value) -> Result<GlobalAddr, RuntimeError> { Ok(self.alloc_global(global_type, val)) }
     pub fn global_type_unchecked(&self, global_addr: GlobalAddr) -> GlobalType { self.globals.get(global_addr).ty }
     pub fn global_read_unchecked(&self, global_addr: GlobalAddr) -> Value { self.globals.get(global_addr).value }
-        pub fn global_write_unchecked(&mut self, global_addr: GlobalAddr, val: Value) -> Result<(), RuntimeError> {
-            let gi = self.globals.get_mut(global_addr);
-            gi.value = val;
-            Ok(())
-        }
-    
-        pub fn get_wasm_base_ptr(&self) -> *mut u8 {
-            let module_addr = self.caller_module.unwrap_or(0);
-            let mem_addr = *self.modules.get(module_addr).mem_addrs.get(0).unwrap_or(&0);
-            self.memories.get(mem_addr).mem.get_base_ptr()
-        }
-    
-        pub fn access_fuel_mut_unchecked<R>(&mut self, _resumable_ref: &mut ResumableRef, _f: impl FnOnce(&mut Option<u32>) -> R) -> Result<R, RuntimeError> {
+    pub fn global_write_unchecked(&mut self, global_addr: GlobalAddr, val: Value) -> Result<(), RuntimeError> {
+        let gi = self.globals.get_mut(global_addr);
+        gi.value = val;
+        Ok(())
+    }
+
+    pub fn get_wasm_base_ptr(&self) -> *mut u8 {
+        let module_addr = self.caller_module.unwrap_or(0);
+        let mem_addr = *self.modules.get(module_addr).mem_addrs.get(0).unwrap_or(&0);
+        self.memories.get(mem_addr).mem.get_base_ptr()
+    }
+
+    pub fn access_fuel_mut_unchecked<R>(&mut self, _resumable_ref: &mut ResumableRef, _f: impl FnOnce(&mut Option<u32>) -> R) -> Result<R, RuntimeError> {
         Err(RuntimeError::Trap(TrapError::ReachedUnreachable))
     }
     pub fn invoke_without_fuel_unchecked(&mut self, func_addr: FuncAddr, params: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {

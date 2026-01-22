@@ -1,7 +1,6 @@
 use crate::rust_alloc::collections::BTreeMap;
 use crate::rust_alloc::format;
 use crate::rust_alloc::string::String;
-use crate::rust_alloc::string::ToString;
 use crate::rust_alloc::vec::Vec;
 use crate::wasm::component::types::{
     ComponentAliasKind, ComponentInstanceKind,

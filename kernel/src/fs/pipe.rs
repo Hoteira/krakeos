@@ -9,16 +9,25 @@ pub struct PipeBuffer {
     tail: usize,
     count: usize,
     closed: bool,
+    pub id: i32,
 }
 
 impl PipeBuffer {
     pub fn new() -> Self {
+        static mut NEXT_PIPE_ID: i32 = 1000;
+        let id = unsafe {
+            let val = NEXT_PIPE_ID;
+            NEXT_PIPE_ID += 1;
+            val
+        };
+
         PipeBuffer {
             buffer: [0; PIPE_SIZE],
             head: 0,
             tail: 0,
             count: 0,
             closed: false,
+            id,
         }
     }
 
@@ -35,6 +44,11 @@ impl PipeBuffer {
             self.count += 1;
             written += 1;
         }
+
+        if written > 0 {
+            crate::interrupts::event_manager::signal_event(crate::interrupts::event_manager::AsyncEvent::IO(self.id));
+        }
+
         written
     }
 
@@ -49,6 +63,11 @@ impl PipeBuffer {
             self.count -= 1;
             read += 1;
         }
+
+        if read > 0 {
+            crate::interrupts::event_manager::signal_event(crate::interrupts::event_manager::AsyncEvent::IO(self.id));
+        }
+
         read
     }
 }
@@ -89,5 +108,9 @@ impl Pipe {
     pub fn is_closed(&self) -> bool {
         let inner = self.inner.lock();
         inner.closed
+    }
+
+    pub fn id(&self) -> i32 {
+        self.inner.lock().id
     }
 }

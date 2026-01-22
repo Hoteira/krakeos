@@ -9,6 +9,7 @@ pub mod process;
 pub mod memory;
 pub mod window;
 pub mod misc;
+pub mod event;
 
 pub const SYS_READ: u64 = 0;
 pub const SYS_WRITE: u64 = 1;
@@ -69,6 +70,11 @@ pub const SYS_SPAWN_EXT: u64 = 114;
 pub const SYS_GET_DATE: u64 = 115;
 pub const SYS_DEBUG_PRINT: u64 = 999;
 pub const SYS_MOUNT: u64 = 165;
+
+pub const SYS_WAIT_FOR_EVENT: u64 = 130;
+pub const SYS_REGISTER_EVENT: u64 = 131;
+pub const SYS_SIGNAL_EVENT: u64 = 132;
+pub const SYS_SET_NONBLOCK: u64 = 133;
 
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
@@ -188,6 +194,11 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
         SYS_MOUNT => {
             context.rax = 0;
         }
+
+        SYS_WAIT_FOR_EVENT => event::handle_wait_for_event(context),
+        SYS_REGISTER_EVENT => event::handle_register_event(context),
+        SYS_SIGNAL_EVENT => event::handle_signal_event(context),
+        SYS_SET_NONBLOCK => fs::handle_set_nonblock(context),
 
         _ => {
             debugln!("[Syscall] Unknown syscall #{}", syscall_num);

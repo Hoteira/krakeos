@@ -1,11 +1,10 @@
-
 #![no_std]
 extern crate alloc;
 
 use alloc::boxed::Box;
 use alloc::format;
 use inkui::{Color, Display, Size, Widget, Window};
-use std::{println};
+use std::println;
 
 fn open_start_menu(_win: &mut Window, _id: usize) {
     std::os::print("Start Menu Clicked\n");
@@ -20,7 +19,6 @@ fn wifi_status(_win: &mut Window, _id: usize) {
 }
 
 pub fn main() {
-
     let screen_w = std::graphics::get_screen_width();
     let screen_total_h = std::graphics::get_screen_height();
     let screen_h = (screen_total_h * 4) / 100;

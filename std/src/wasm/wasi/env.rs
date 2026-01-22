@@ -57,7 +57,7 @@ pub trait WasiEnv {
     fn sched_yield(&mut self) -> Result<(), i32>;
     fn poll_oneoff(&mut self, in_events: &[u8], out_events: &mut [u8], nsubscriptions: u32) -> Result<u32, i32>; // simplified for now, struct handling is complex
     fn proc_exit(&mut self, code: i32) -> Result<(), i32>;
-    
+
     // Sockets
     fn sock_accept(&mut self, fd: i32, flags: u16) -> Result<i32, i32>;
     fn sock_recv(&mut self, fd: i32, ri_data: &mut [(&mut [u8])], ri_flags: u16) -> Result<(usize, u16), i32>;

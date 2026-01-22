@@ -1,11 +1,10 @@
+use super::{PollFd, POLLERR, POLLIN, POLLNVAL, POLLOUT};
+use crate::debugln;
 use crate::drivers::periferics::keyboard::KEYBOARD_BUFFER;
 use crate::interrupts::task::CPUState;
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, Ordering};
-use crate::debugln;
-use super::{PollFd, POLLERR, POLLIN, POLLNVAL, POLLOUT};
 
 fn acquire_fs_lock() {}
 
@@ -57,7 +56,7 @@ pub fn resolve_path(cwd: &str, path: &str) -> String {
 }
 
 pub fn handle_read(context: &mut CPUState) {
-    let _fd = context.rdi;
+    let fd = context.rdi as usize;
     let user_ptr = context.rsi as *mut u8;
     let user_len = context.rdx as usize;
     let mut bytes_written_to_user = 0;
@@ -66,6 +65,13 @@ pub fn handle_read(context: &mut CPUState) {
         context.rax = 0;
         return;
     }
+
+    let is_nonblock = {
+        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        if let Some(idx) = tm.current_task_idx() {
+            tm.tasks[idx].as_ref().unwrap().process.as_ref().unwrap().fd_nonblock.lock()[fd]
+        } else { false }
+    };
 
     loop {
         {
@@ -86,6 +92,11 @@ pub fn handle_read(context: &mut CPUState) {
             break;
         }
 
+        if is_nonblock {
+            context.rax = u64::MAX - 1; // EWOULDBLOCK
+            return;
+        }
+
 
         unsafe {
             core::arch::asm!("sti");
@@ -100,75 +111,94 @@ pub fn handle_read(context: &mut CPUState) {
 pub fn handle_poll(context: &mut CPUState) {
     let fds_ptr = context.rdi as *const PollFd;
     let nfds = context.rsi as usize;
-    let _timeout = context.rdx as i32;
+    let timeout_ms = context.rdx as i32;
 
     if fds_ptr.is_null() || nfds == 0 {
         context.rax = 0;
         return;
     }
 
-    let mut ready_count = 0;
+    let start_ticks = unsafe { crate::interrupts::task::SYSTEM_TICKS };
+    let end_ticks = if timeout_ms >= 0 { Some(start_ticks + timeout_ms as u64) } else { None };
 
-    {
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
-        let current = tm.current_task;
+    loop {
+        let mut ready_count = 0;
 
-        if current >= 0 {
-            if let Some(thread) = tm.tasks[current as usize].as_ref() {
-                let proc = thread.process.as_ref().expect("Thread has no process");
-                let fd_table = proc.fd_table.lock();
+        let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let current_idx = tm.current_task_idx().unwrap();
+        let mut em = crate::interrupts::event_manager::EVENT_MANAGER.int_lock();
 
-                for i in 0..nfds {
-                    unsafe {
-                        let pfd = &mut *(fds_ptr.add(i) as *mut PollFd);
-                        pfd.revents = 0;
+        if em.check_pending(current_idx, crate::interrupts::event_manager::AsyncEvent::Generic(current_idx as u64)) {
+            em.unregister_thread(current_idx);
+            context.rax = 0;
+            return;
+        }
 
-                        let fd = pfd.fd;
-                        if fd >= 0 && (fd as usize) < 16 {
-                            let global_fd = fd_table[fd as usize];
-                            if global_fd != -1 {
-                                acquire_fs_lock();
-                                let handle_opt = crate::fs::vfs::get_file(global_fd as usize);
-                                release_fs_lock();
+        // 1. Register interests and check readiness in one pass
+        for i in 0..nfds {
+            let pfd = unsafe { &mut *(fds_ptr.add(i) as *mut PollFd) };
+            pfd.revents = 0;
 
-                                if let Some(handle) = handle_opt {
-                                    use crate::fs::vfs::FileHandle;
-                                    match handle {
-                                        FileHandle::Pipe { pipe } => {
-                                            if (pfd.events & POLLIN) != 0 {
-                                                if pipe.available() > 0 {
-                                                    pfd.revents |= POLLIN;
-                                                }
-                                            }
-                                            if (pfd.events & POLLOUT) != 0 {
-                                                pfd.revents |= POLLOUT;
-                                            }
-                                        }
-                                        FileHandle::File { .. } => {
-                                            if (pfd.events & POLLIN) != 0 { pfd.revents |= POLLIN; }
-                                            if (pfd.events & POLLOUT) != 0 { pfd.revents |= POLLOUT; }
-                                        }
-                                    }
-                                } else {
-                                    pfd.revents = POLLERR;
-                                }
-                            } else {
-                                pfd.revents = POLLNVAL;
-                            }
-                        } else {
-                            pfd.revents = POLLNVAL;
-                        }
-
-                        if pfd.revents != 0 {
-                            ready_count += 1;
-                        }
-                    }
+            if pfd.fd == 0 {
+                em.register(current_idx, crate::interrupts::event_manager::AsyncEvent::Read(0));
+                if !KEYBOARD_BUFFER.lock().is_empty() {
+                    pfd.revents |= POLLIN;
                 }
+            } else if pfd.fd >= 0 && (pfd.fd as usize) < 16 {
+                let proc = tm.tasks[current_idx].as_ref().unwrap().process.as_ref().unwrap();
+                let gfd = proc.fd_table.lock()[pfd.fd as usize];
+                if gfd != -1 {
+                    if let Some(handle) = crate::fs::vfs::get_file(gfd as usize) {
+                        use crate::fs::vfs::FileHandle;
+                        match handle {
+                            FileHandle::Pipe { pipe } => {
+                                em.register(current_idx, crate::interrupts::event_manager::AsyncEvent::IO(pipe.id()));
+                                if (pfd.events & POLLIN) != 0 && pipe.available() > 0 { pfd.revents |= POLLIN; }
+                                if (pfd.events & POLLOUT) != 0 && pipe.available() < 4096 { pfd.revents |= POLLOUT; }
+                            }
+                            FileHandle::File { .. } => {
+                                // Regular files are always ready
+                                if (pfd.events & POLLIN) != 0 { pfd.revents |= POLLIN; }
+                                if (pfd.events & POLLOUT) != 0 { pfd.revents |= POLLOUT; }
+                            }
+                        }
+                    } else { pfd.revents = POLLERR; }
+                } else { pfd.revents = POLLNVAL; }
+            } else { pfd.revents = POLLNVAL; }
+
+            if pfd.revents != 0 { ready_count += 1; }
+        }
+
+        // Always register for generic wakeup
+        em.register(current_idx, crate::interrupts::event_manager::AsyncEvent::Generic(current_idx as u64));
+
+        if ready_count > 0 {
+            em.unregister_thread(current_idx);
+            context.rax = ready_count as u64;
+            return;
+        }
+
+        if let Some(end) = end_ticks {
+            if unsafe { crate::interrupts::task::SYSTEM_TICKS } >= end {
+                em.unregister_thread(current_idx);
+                context.rax = 0;
+                return;
             }
         }
-    }
 
-    context.rax = ready_count as u64;
+        if let Some(thread) = &mut tm.tasks[current_idx] {
+            thread.state = crate::interrupts::task::ThreadState::WaitingForEvent;
+        }
+
+        drop(em);
+        drop(tm);
+
+        unsafe {
+            core::arch::asm!("sti");
+            core::arch::asm!("int 0x81");
+            core::arch::asm!("cli");
+        }
+    }
 }
 
 pub fn handle_chdir(context: &mut CPUState) {
@@ -266,7 +296,7 @@ pub fn handle_create(context: &mut CPUState, syscall_num: u64) {
                 return;
             }
             crate::debugln!("SYS_CREATE: Success, opening new file...");
-            
+
             acquire_fs_lock();
             let open_res = crate::fs::vfs::open_file(0, &resolved);
             release_fs_lock();
@@ -329,11 +359,11 @@ pub fn handle_remove(context: &mut CPUState) {
 
     acquire_fs_lock();
     let parent_res = crate::fs::vfs::open(0, parent_path);
-    
+
     let remove_res = if let Ok(mut parent) = parent_res {
         parent.remove(name)
     } else { Err(String::from("Parent not found")) };
-    
+
     release_fs_lock();
 
     match remove_res {
@@ -359,12 +389,12 @@ pub fn handle_rename(context: &mut CPUState) {
     let (parent_new, _name_new) = if let Some(idx) = resolved_new.rfind('/') { (&resolved_new[..idx], &resolved_new[idx + 1..]) } else { ("", resolved_new.as_str()) };
 
     if parent_old != parent_new {
-         // This limitation might need lifting, but for now it's safer
+        // This limitation might need lifting, but for now it's safer
     }
 
     acquire_fs_lock();
     let parent_res = crate::fs::vfs::open(0, parent_old);
-    
+
     let rename_res = if let Ok(mut parent) = parent_res {
         let name_new = if let Some(idx) = resolved_new.rfind('/') { &resolved_new[idx + 1..] } else { resolved_new.as_str() };
         parent.rename(name_old, name_new)
@@ -420,9 +450,17 @@ pub fn handle_read_file(context: &mut CPUState) {
             context.rax = u64::MAX;
             return;
         }
+
+        let is_nonblock = {
+            let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+            if let Some(idx) = tm.current_task_idx() {
+                tm.tasks[idx].as_ref().unwrap().process.as_ref().unwrap().fd_nonblock.lock()[local_fd]
+            } else { false }
+        };
+
         let fd = fd_val as usize;
         let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr, len) };
-        
+
         acquire_fs_lock();
         let handle_opt = crate::fs::vfs::get_file(fd);
         let res = if let Some(handle) = handle_opt {
@@ -437,8 +475,12 @@ pub fn handle_read_file(context: &mut CPUState) {
                         Err(e) => Some(Err(e))
                     }
                 }
-                FileHandle::Pipe { pipe } => { 
-                    Some(Ok(pipe.read(buf)))
+                FileHandle::Pipe { pipe } => {
+                    if is_nonblock && pipe.available() == 0 {
+                        Some(Err(String::from("EWOULDBLOCK")))
+                    } else {
+                        Some(Ok(pipe.read(buf)))
+                    }
                 }
             }
         } else { None };
@@ -446,6 +488,7 @@ pub fn handle_read_file(context: &mut CPUState) {
 
         match res {
             Some(Ok(n)) => context.rax = n as u64,
+            Some(Err(e)) if e == "EWOULDBLOCK" => context.rax = u64::MAX - 1,
             Some(Err(_)) => context.rax = u64::MAX,
             None => context.rax = u64::MAX,
         }
@@ -488,7 +531,7 @@ pub fn handle_write_file(context: &mut CPUState) {
         }
         let fd = fd_val as usize;
         let buf = unsafe { core::slice::from_raw_parts(buf_ptr, len) };
-        
+
         acquire_fs_lock();
         let handle_opt = crate::fs::vfs::get_file(fd);
         let res = if let Some(handle) = handle_opt {
@@ -503,7 +546,7 @@ pub fn handle_write_file(context: &mut CPUState) {
                         Err(e) => Some(Err(e))
                     }
                 }
-                FileHandle::Pipe { pipe } => { 
+                FileHandle::Pipe { pipe } => {
                     Some(Ok(pipe.write(buf)))
                 }
             }
@@ -544,7 +587,7 @@ pub fn handle_read_dir(context: &mut CPUState) {
     if let Some(fd_val) = global_fd_opt {
         if fd_val != -1 {
             let fd = fd_val as usize;
-            
+
             acquire_fs_lock();
             let handle_opt = crate::fs::vfs::get_file(fd);
             let res = if let Some(handle) = handle_opt {
@@ -598,7 +641,7 @@ pub fn handle_stat(context: &mut CPUState) {
                 None
             };
             release_fs_lock();
-            
+
             stat_res
         }
     } else { // SYS_FSTAT
@@ -620,7 +663,7 @@ pub fn handle_stat(context: &mut CPUState) {
                         }
                     } else { None };
                     release_fs_lock();
-                    
+
                     stat_res
                 } else { None }
             } else { None }
@@ -681,9 +724,9 @@ pub fn handle_pipe(context: &mut CPUState) {
         context.rax = u64::MAX;
         return;
     }
-    
+
     acquire_fs_lock();
-    
+
     use crate::fs::vfs::{FileHandle, GLOBAL_FILE_REFCOUNT, OPEN_FILES};
     use crate::fs::pipe::Pipe;
     let mut g1 = -1;
@@ -707,7 +750,7 @@ pub fn handle_pipe(context: &mut CPUState) {
             GLOBAL_FILE_REFCOUNT[g2 as usize] = 1;
         }
         release_fs_lock();
-        
+
         let l1 = assign_local_fd(g1 as usize);
         let l2 = assign_local_fd(g2 as usize);
         if l1 != u64::MAX && l2 != u64::MAX {
@@ -737,7 +780,7 @@ pub fn handle_close(context: &mut CPUState) {
                     // We cannot use FS_LOCK because we hold Task Lock.
                     // This is a known issue but acceptable for single-user scenarios.
                     crate::fs::vfs::close_file(global as usize);
-                    
+
                     fd_table[local_fd] = -1;
                     context.rax = 0;
                     return;
@@ -877,7 +920,7 @@ pub fn handle_mmap_file(context: &mut CPUState) {
     if let Some(fd_val) = global_fd_opt {
         if fd_val != -1 {
             let fd = fd_val as usize;
-            
+
             acquire_fs_lock();
             let handle_opt = crate::fs::vfs::get_file(fd);
             let res = if let Some(handle) = handle_opt {
@@ -922,7 +965,7 @@ pub fn handle_pread64(context: &mut CPUState) {
         if fd_val != -1 {
             let fd = fd_val as usize;
             let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr, len) };
-            
+
             acquire_fs_lock();
             let handle_opt = crate::fs::vfs::get_file(fd);
             let res = if let Some(handle) = handle_opt {
@@ -965,7 +1008,7 @@ pub fn handle_pwrite64(context: &mut CPUState) {
         if fd_val != -1 {
             let fd = fd_val as usize;
             let buf = unsafe { core::slice::from_raw_parts(buf_ptr, len) };
-            
+
             acquire_fs_lock();
             let handle_opt = crate::fs::vfs::get_file(fd);
             let res = if let Some(handle) = handle_opt {
@@ -996,24 +1039,24 @@ pub fn handle_linkat(context: &mut CPUState) {
     let old_len = context.rdx as usize;
     let new_ptr = context.r8 as *const u8;
     let new_len = context.r9 as usize;
-    
+
     let old_path = copy_string_from_user(old_ptr, old_len);
     let new_path = copy_string_from_user(new_ptr, new_len);
-    
+
     let cwd_str = get_current_cwd();
     let resolved_old = resolve_path(&cwd_str, &old_path);
     let resolved_new = resolve_path(&cwd_str, &new_path);
-    
+
     acquire_fs_lock();
     let old_node_res = crate::fs::vfs::open(0, &resolved_old);
-    
+
     let res = if let Ok(mut old_node) = old_node_res {
         let (parent_path, name) = if let Some(idx) = resolved_new.rfind('/') {
             (&resolved_new[..idx], &resolved_new[idx + 1..])
         } else {
             ("", resolved_new.as_str())
         };
-        
+
         if let Ok(mut parent) = crate::fs::vfs::open(0, parent_path) {
             parent.link(name, &mut *old_node)
         } else {
@@ -1023,7 +1066,7 @@ pub fn handle_linkat(context: &mut CPUState) {
         Err(String::from("Old node not found"))
     };
     release_fs_lock();
-    
+
     match res {
         Ok(_) => context.rax = 0,
         Err(_) => context.rax = u64::MAX,
@@ -1035,19 +1078,19 @@ pub fn handle_symlinkat(context: &mut CPUState) {
     let target_len = context.rsi as usize;
     let new_ptr = context.r10 as *const u8;
     let new_len = context.r8 as usize;
-    
+
     let target = copy_string_from_user(target_ptr, target_len);
     let new_path = copy_string_from_user(new_ptr, new_len);
-    
+
     let cwd_str = get_current_cwd();
     let resolved_new = resolve_path(&cwd_str, &new_path);
-    
+
     let (parent_path, name) = if let Some(idx) = resolved_new.rfind('/') {
         (&resolved_new[..idx], &resolved_new[idx + 1..])
     } else {
         ("", resolved_new.as_str())
     };
-    
+
     acquire_fs_lock();
     let parent_res = crate::fs::vfs::open(0, parent_path);
     let res = if let Ok(mut parent) = parent_res {
@@ -1056,7 +1099,7 @@ pub fn handle_symlinkat(context: &mut CPUState) {
         Err(String::from("Parent not found"))
     };
     release_fs_lock();
-    
+
     match res {
         Ok(_) => context.rax = 0,
         Err(_) => context.rax = u64::MAX,
@@ -1068,11 +1111,11 @@ pub fn handle_utimensat(context: &mut CPUState) {
     let path_len = context.rdx as usize;
     let atime = context.r10 as u64;
     let mtime = context.r8 as u64;
-    
+
     let path = copy_string_from_user(path_ptr, path_len);
     let cwd_str = get_current_cwd();
     let resolved = resolve_path(&cwd_str, &path);
-    
+
     acquire_fs_lock();
     let node_res = crate::fs::vfs::open(0, &resolved);
     let res = if let Ok(mut node) = node_res {
@@ -1081,11 +1124,29 @@ pub fn handle_utimensat(context: &mut CPUState) {
         Err(String::from("Node not found"))
     };
     release_fs_lock();
-    
+
     match res {
         Ok(_) => context.rax = 0,
         Err(_) => context.rax = u64::MAX,
     }
+}
+
+pub fn handle_set_nonblock(context: &mut CPUState) {
+    let fd = context.rdi as usize;
+    let nonblock = context.rsi != 0;
+
+    let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    if let Some(current) = tm.current_task_idx() {
+        if let Some(thread) = tm.tasks[current].as_mut() {
+            let proc = thread.process.as_ref().expect("Thread has no process");
+            if fd < 16 {
+                proc.fd_nonblock.lock()[fd] = nonblock;
+                context.rax = 0;
+                return;
+            }
+        }
+    }
+    context.rax = u64::MAX;
 }
 
 pub fn handle_readlinkat(context: &mut CPUState) {

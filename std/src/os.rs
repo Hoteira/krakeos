@@ -1,5 +1,19 @@
 pub use crate::sys::{syscall, syscall4, syscall5, syscall6};
 
+use crate::sync::Mutex;
+use core::task::Waker;
+use rust_alloc::collections::BTreeMap;
+
+pub struct Reactor {
+    pub read_waiters: BTreeMap<i32, Waker>,
+    pub write_waiters: BTreeMap<i32, Waker>,
+}
+
+pub static REACTOR: Mutex<Reactor> = Mutex::new(Reactor {
+    read_waiters: BTreeMap::new(),
+    write_waiters: BTreeMap::new(),
+});
+
 pub fn print(s: &str) {
     file_write(1, s.as_bytes());
 }
@@ -32,8 +46,15 @@ pub fn read(buffer: &mut [u8]) -> usize {
 }
 
 pub fn file_read(fd: usize, buffer: &mut [u8]) -> usize {
-    unsafe {
-        syscall(0, fd as u64, buffer.as_mut_ptr() as u64, buffer.len() as u64) as usize
+    loop {
+        let n = unsafe {
+            syscall(0, fd as u64, buffer.as_mut_ptr() as u64, buffer.len() as u64) as usize
+        };
+        if n == usize::MAX - 1 { // EWOULDBLOCK
+            yield_task();
+            continue;
+        }
+        return n;
     }
 }
 
@@ -45,6 +66,10 @@ pub fn file_write(fd: usize, buffer: &[u8]) -> usize {
         };
         if n == usize::MAX {
             break;
+        }
+        if n == usize::MAX - 1 { // EWOULDBLOCK
+            yield_task();
+            continue;
         }
         if n == 0 {
             yield_task();
@@ -64,6 +89,12 @@ pub fn file_seek(fd: usize, offset: i64, whence: usize) -> u64 {
 pub fn file_truncate(fd: usize, length: u64) -> i32 {
     unsafe {
         syscall(77, fd as u64, length, 0) as i32
+    }
+}
+
+pub fn set_nonblocking(fd: usize, nonblocking: bool) -> i32 {
+    unsafe {
+        syscall(133, fd as u64, if nonblocking { 1 } else { 0 }, 0) as i32
     }
 }
 

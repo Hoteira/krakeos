@@ -1,4 +1,7 @@
 pub mod serial;
+pub mod async_io;
+
+pub use async_io::{AsyncRead, AsyncWrite};
 
 pub type Result<T> = core::result::Result<T, Error>;
 
@@ -8,8 +11,12 @@ pub struct Error {
 }
 
 impl Error {
-    pub fn from_raw_os_error(code: i32) -> Error {
-        Error { repr: code }
+    pub fn from_raw_os_error(code: i32) -> Self {
+        Self { repr: code }
+    }
+
+    pub fn is_would_block(&self) -> bool {
+        self.repr == -2
     }
 }
 

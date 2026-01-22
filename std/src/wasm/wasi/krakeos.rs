@@ -1,11 +1,10 @@
-use crate::{debugln, fs};
 use crate::rust_alloc::collections::BTreeMap;
 use crate::rust_alloc::format;
 use crate::rust_alloc::string::String;
-use crate::rust_alloc::string::ToString;
 use crate::rust_alloc::vec::Vec;
-use crate::sys::{syscall, syscall4, syscall5, syscall6};
+use crate::sys::{syscall4, syscall5, syscall6};
 use crate::wasm::wasi::env::{FdStat, FileStat, WasiEnv};
+use crate::fs;
 
 pub struct KrakeosWasiEnv {
     pub fd_table: BTreeMap<i32, WasiFile>,
@@ -45,7 +44,7 @@ impl KrakeosWasiEnv {
 
     fn resolve_path(&self, dirfd: i32, path: &str) -> Result<String, i32> {
         if path.contains("..") { return Err(76); } // ENOTCAPABLE
-        
+
         let base = if dirfd == 3 {
             &self.root_path
         } else if let Some(wf) = self.fd_table.get(&dirfd) {
@@ -53,12 +52,12 @@ impl KrakeosWasiEnv {
         } else {
             return Err(76); // ENOTCAPABLE
         };
-        
+
         let clean = path.trim_start_matches('.').trim_start_matches('/');
         if base.ends_with('/') {
-             Ok(format!("{}{}", base, clean))
+            Ok(format!("{}{}", base, clean))
         } else {
-             Ok(format!("{}/{}", base, clean))
+            Ok(format!("{}/{}", base, clean))
         }
     }
 }
@@ -232,7 +231,6 @@ impl WasiEnv for KrakeosWasiEnv {
                                 }
                             }
                         }
-                        crate::os::file_write(1, &buf[..n]);
                     }
                     total += n;
                     if n < buf.len() {
@@ -365,7 +363,7 @@ impl WasiEnv for KrakeosWasiEnv {
 
     fn path_open(&mut self, dirfd: i32, _dirflags: u32, path: &str, oflags: u32, _fs_rights_base: u64, _fs_rights_inheriting: u64, _fdflags: u16) -> Result<i32, i32> {
         let full_path = self.resolve_path(dirfd, path)?;
-        
+
         let res = if (oflags & 0x1) != 0 { fs::File::create(&full_path) } else { fs::File::open(&full_path) };
         match res {
             Ok(mut f) => {
@@ -476,100 +474,94 @@ impl WasiEnv for KrakeosWasiEnv {
     }
 
     fn poll_oneoff(&mut self, in_events: &[u8], out_events: &mut [u8], nsubscriptions: u32) -> Result<u32, i32> {
-        let mut events_written = 0;
-        let mut min_delay_ns = u64::MAX;
-        let mut has_delay = false;
+        let mut poll_fds = Vec::new();
+        let mut clock_deadline_ms: Option<u64> = None;
 
-        // 1. Scan for Clock Subscriptions to determine sleep time
         for i in 0..nsubscriptions as usize {
             let offset = i * 48;
             if offset + 48 > in_events.len() { break; }
-            
+
             let tag = in_events[offset + 8];
             if tag == 0 { // Clock
-                let timeout_bytes: [u8; 8] = in_events[offset+24..offset+32].try_into().unwrap();
+                let timeout_bytes: [u8; 8] = in_events[offset + 24..offset + 32].try_into().unwrap();
                 let timeout = u64::from_le_bytes(timeout_bytes);
-                
-                let flags_bytes: [u8; 2] = in_events[offset+40..offset+42].try_into().unwrap();
+                let flags_bytes: [u8; 2] = in_events[offset + 40..offset + 42].try_into().unwrap();
                 let flags = u16::from_le_bytes(flags_bytes);
-                
                 let is_abs = (flags & 1) != 0;
-                
-                let delay = if is_abs {
-                    let now = crate::os::get_system_ticks() * 1_000_000;
-                    timeout.saturating_sub(now)
-                } else {
-                    timeout
-                };
-                
-                if delay < min_delay_ns {
-                    min_delay_ns = delay;
-                    has_delay = true;
+
+                let deadline = if is_abs { timeout } else { (crate::os::get_system_ticks() * 1_000_000).wrapping_add(timeout) };
+                let deadline_ms = (deadline + 999_999) / 1_000_000;
+
+                if clock_deadline_ms.map(|d| deadline_ms < d).unwrap_or(true) {
+                    clock_deadline_ms = Some(deadline_ms);
                 }
+            } else if tag == 1 { // FdRead
+                let fd_bytes: [u8; 4] = in_events[offset + 16..offset + 20].try_into().unwrap();
+                let fd = i32::from_le_bytes(fd_bytes);
+                poll_fds.push(crate::os::PollFd { fd, events: crate::os::POLLIN, revents: 0 });
+            } else if tag == 2 { // FdWrite
+                let fd_bytes: [u8; 4] = in_events[offset + 16..offset + 20].try_into().unwrap();
+                let fd = i32::from_le_bytes(fd_bytes);
+                poll_fds.push(crate::os::PollFd { fd, events: crate::os::POLLOUT, revents: 0 });
             }
         }
 
-        // 2. Sleep if needed
-        if has_delay && min_delay_ns > 0 {
-            // Round up to nearest ms
-            let ms = (min_delay_ns + 999_999) / 1_000_000;
-            if ms > 0 {
-                crate::os::sleep(ms);
-            }
-        }
+        let timeout_ms = if let Some(deadline) = clock_deadline_ms {
+            let now = crate::os::get_system_ticks();
+            if deadline > now { (deadline - now) as i32 } else { 0 }
+        } else {
+            -1 // Block indefinitely
+        };
 
-        // 3. Generate Events
-        let now = crate::os::get_system_ticks() * 1_000_000;
-        
+        let mut events_written = 0;
+
+        // Use native poll
+        let _ = crate::os::poll(&mut poll_fds, timeout_ms);
+
+        let now_ns = crate::os::get_system_ticks() * 1_000_000;
+
         for i in 0..nsubscriptions as usize {
             let in_off = i * 48;
-            if in_off + 48 > in_events.len() { break; }
-            
-            let userdata_bytes: [u8; 8] = in_events[in_off..in_off+8].try_into().unwrap();
+            let userdata_bytes: [u8; 8] = in_events[in_off..in_off + 8].try_into().unwrap();
             let tag = in_events[in_off + 8];
-            
+
             let mut triggered = false;
-            
-            if tag == 0 { // Clock
-                let timeout_bytes: [u8; 8] = in_events[in_off+24..in_off+32].try_into().unwrap();
+            let mut error = 0u16;
+
+            if tag == 0 {
+                let timeout_bytes: [u8; 8] = in_events[in_off + 24..in_off + 32].try_into().unwrap();
                 let timeout = u64::from_le_bytes(timeout_bytes);
-                let flags_bytes: [u8; 2] = in_events[in_off+40..in_off+42].try_into().unwrap();
+                let flags_bytes: [u8; 2] = in_events[in_off + 40..in_off + 42].try_into().unwrap();
                 let flags = u16::from_le_bytes(flags_bytes);
                 let is_abs = (flags & 1) != 0;
-                
-                if is_abs {
-                    if now >= timeout { triggered = true; }
-                } else {
-                    triggered = true; // Relative always triggers after sleep
+                let deadline = if is_abs { timeout } else { 0 /* relative handled by sleep */ };
+                if !is_abs || now_ns >= deadline { triggered = true; }
+            } else {
+                let fd_bytes: [u8; 4] = in_events[in_off + 16..in_off + 20].try_into().unwrap();
+                let fd = i32::from_le_bytes(fd_bytes);
+                if let Some(pfd) = poll_fds.iter().find(|p| p.fd == fd) {
+                    if (tag == 1 && (pfd.revents & crate::os::POLLIN) != 0) ||
+                        (tag == 2 && (pfd.revents & crate::os::POLLOUT) != 0) {
+                        triggered = true;
+                    }
                 }
-            } else if tag == 2 { // FdWrite
-                // For now assume writes are always ready
-                triggered = true; 
-            } else if tag == 1 { // FdRead
-                // Stub: assume ready? Or not? 
-                // If we assume ready, `read` might block if we don't have non-blocking I/O.
-                // But for tests, we usually want to proceed.
-                triggered = true;
             }
-            
+
             if triggered {
-                let out_off = events_written * 32;
+                let out_off = events_written as usize * 32;
                 if out_off + 32 > out_events.len() { break; }
-                
-                // Write Event
-                out_events[out_off..out_off+8].copy_from_slice(&userdata_bytes);
-                out_events[out_off+8] = 0; // Error
-                out_events[out_off+9] = 0;
-                out_events[out_off+10] = tag; // Type
-                
-                // Zero rest
-                for j in 11..32 { out_events[out_off+j] = 0; }
-                
+
+                // Zero the 32-byte event chunk
+                for j in 0..32 { out_events[out_off + j] = 0; }
+
+                out_events[out_off..out_off + 8].copy_from_slice(&userdata_bytes);
+                out_events[out_off + 8..out_off + 10].copy_from_slice(&error.to_le_bytes());
+                out_events[out_off + 10] = tag;
                 events_written += 1;
             }
         }
 
-        Ok(events_written as u32)
+        Ok(events_written)
     }
 
     fn proc_exit(&mut self, code: i32) -> Result<(), i32> {
@@ -604,11 +596,11 @@ impl WasiEnv for KrakeosWasiEnv {
                     };
                     entries.push((e.name.clone(), wt, (i + 1) as u64));
                 }
-                
+
                 if cookie >= entries.len() as u64 {
                     return Ok(Vec::new());
                 }
-                
+
                 Ok(entries.into_iter().skip(cookie as usize).collect())
             }
             Err(_) => Err(28),

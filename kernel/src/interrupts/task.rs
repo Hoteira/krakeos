@@ -14,6 +14,7 @@ pub struct Process {
     pub pid: u64,
     pub pml4_phys: u64,
     pub fd_table: Mutex<[i16; 16]>,
+    pub fd_nonblock: Mutex<[bool; 16]>,
     pub cwd: Mutex<[u8; 128]>,
     pub terminal_width: Mutex<u16>,
     pub terminal_height: Mutex<u16>,
@@ -32,6 +33,7 @@ pub enum ThreadState {
     Sleeping,
     Blocked,
     Reserved,
+    WaitingForEvent,
 }
 
 #[repr(C, align(16))]
@@ -91,6 +93,7 @@ impl Process {
             pid,
             pml4_phys,
             fd_table: Mutex::new([-1; 16]),
+            fd_nonblock: Mutex::new([false; 16]),
             cwd: Mutex::new(cwd),
             terminal_width: Mutex::new(80),
             terminal_height: Mutex::new(25),
@@ -444,48 +447,74 @@ pub extern "C" fn yield_handler() {
 pub static mut SYSTEM_TICKS: u64 = 0;
 
 #[unsafe(no_mangle)]
+
 pub extern "C" fn switch_timer(rsp: u64) -> u64 {
     unsafe { common_switch(rsp, true) }
 }
 
+
 #[unsafe(no_mangle)]
+
 pub extern "C" fn switch_yield(rsp: u64) -> u64 {
     unsafe { common_switch(rsp, false) }
 }
+
 
 unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
     unsafe {
         if is_timer {
             SYSTEM_TICKS = SYSTEM_TICKS.wrapping_add(10);
         }
+
+
         let mut tm = TASK_MANAGER.lock();
 
+
+        if is_timer {
+
+
+            // Check timers and wake up threads
+
+            crate::interrupts::event_manager::EVENT_MANAGER.lock().check_timers(&mut tm, SYSTEM_TICKS);
+        }
+
+
         let current_task = tm.current_task;
+
         if current_task >= 0 {
             if let Some(thread) = &mut tm.tasks[current_task as usize] {
                 let fpu_ptr = thread.fpu_state.as_mut_ptr();
+
                 asm!("fxsave [{}]", in(reg) fpu_ptr);
             }
         }
 
+
         let (new_state, k_stack, pml4_phys) = tm.schedule(rsp as *mut CPUState);
 
+
         let current_task = tm.current_task;
+
         if current_task >= 0 {
             if let Some(thread) = &tm.tasks[current_task as usize] {
                 let fpu_ptr = thread.fpu_state.as_ptr();
+
                 asm!("fxrstor [{}]", in(reg) fpu_ptr);
             }
         }
 
+
         if k_stack != 0 {
             crate::tss::set_tss(k_stack);
+
             KERNEL_STACK_PTR = k_stack;
         }
+
 
         if is_timer {
             (*(&raw const crate::interrupts::pic::PICS)).end_interrupt(crate::interrupts::exceptions::TIMER_INT);
         }
+
 
         new_state as u64
     }

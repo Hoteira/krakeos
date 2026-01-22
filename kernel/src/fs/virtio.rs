@@ -497,12 +497,12 @@ unsafe fn send_command(out_phys: &[u64], out_lens: &[u32], in_phys: &[u64], in_l
             }
             core::hint::spin_loop();
         }
-        
+
         // core::arch::asm!("cli");
         vq.last_used_idx = vq.last_used_idx.wrapping_add(1);
 
         LOCK.store(false, Ordering::Release);
-        
+
         if int_enabled { core::arch::asm!("sti"); }
     }
 }

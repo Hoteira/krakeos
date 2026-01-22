@@ -1,5 +1,5 @@
 use super::{call_cabi_realloc, read_bytes, read_mem, write_bytes, write_u32};
-use crate::rust_alloc::{string::String, vec, vec::Vec};
+use crate::rust_alloc::{vec, vec::Vec};
 use crate::wasm::{
     execution::{
         config::Config,
@@ -63,6 +63,10 @@ pub fn stream_read<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Res
         if fd == 0 {
             loop {
                 let bytes_read = crate::os::file_read(0, &mut buf);
+                if bytes_read == usize::MAX - 1 { // EWOULDBLOCK
+                    crate::os::yield_task();
+                    continue;
+                }
                 if bytes_read > 0 {
                     unsafe {
                         if crate::wasm::wasi::ICRNL {
@@ -73,16 +77,21 @@ pub fn stream_read<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Res
                             }
                         }
                     }
-                    crate::os::file_write(1, &buf[..bytes_read]);
                     buf.truncate(bytes_read);
                     break buf;
                 }
                 crate::os::yield_task();
             }
         } else {
-            let bytes_read = crate::os::file_read(fd, &mut buf);
-            buf.truncate(bytes_read);
-            buf
+            loop {
+                let bytes_read = crate::os::file_read(fd, &mut buf);
+                if bytes_read == usize::MAX - 1 {
+                    crate::os::yield_task();
+                    continue;
+                }
+                buf.truncate(bytes_read);
+                break buf;
+            }
         }
     } else {
         Vec::new()
@@ -156,7 +165,14 @@ pub fn stream_write<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Re
                 crate::os::file_write(2, &buf);
             }
             OutputStreamSource::File(fd) => {
-                crate::os::file_write(fd, &buf);
+                loop {
+                    let n = crate::os::file_write(fd, &buf);
+                    if n == usize::MAX - 1 {
+                        crate::os::yield_task();
+                        continue;
+                    }
+                    break;
+                }
             }
             OutputStreamSource::Null => {}
         }
@@ -184,78 +200,83 @@ pub fn poll_poll<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Resul
         Some(Value::I32(v)) => *v as u32,
         _ => return Ok(vec![]),
     };
-    let mut pollables = Vec::new();
-    for i in 0..in_len {
-        let mut bytes = [0u8; 4];
-        if read_bytes(store, in_ptr + i * 4, &mut bytes).is_err() {
-            return Ok(vec![]);
-        }
-        let handle = i32::from_le_bytes(bytes);
-        pollables.push(handle);
-    }
-    let mut ready_indices = Vec::new();
-    let mut min_deadline: Option<u64> = None;
-    // Check readiness immediately
+
+    let mut poll_fds = Vec::new();
+    let mut clock_deadline_ns: Option<u64> = None;
+    let mut handles = Vec::new();
+
     {
         let wasi = store.wasi_ctx.as_ref().ok_or(HaltExecutionError(1))?;
-        let now = (crate::os::get_system_ticks() * 1_000_000) as u64;
-        for (idx, handle) in pollables.iter().enumerate() {
-            if let Some(WasiResource::Pollable(target)) = wasi.resource_table.get(handle) {
+        for i in 0..in_len {
+            let mut bytes = [0u8; 4];
+            if read_bytes(store, in_ptr + i * 4, &mut bytes).is_err() {
+                return Ok(vec![]);
+            }
+            let handle = i32::from_le_bytes(bytes);
+            handles.push(handle);
+
+            if let Some(WasiResource::Pollable(target)) = wasi.resource_table.get(&handle) {
                 match target {
                     PollableTarget::Timer(deadline) => {
-                        if now >= *deadline {
-                            ready_indices.push(idx as u32);
-                        } else {
-                            if min_deadline.map(|d| *deadline < d).unwrap_or(true) {
-                                min_deadline = Some(*deadline);
-                            }
+                        if clock_deadline_ns.map(|d| *deadline < d).unwrap_or(true) {
+                            clock_deadline_ns = Some(*deadline);
                         }
                     }
-                    PollableTarget::Read(_stream) => {
-                        ready_indices.push(idx as u32);
+                    PollableTarget::Read(h) => {
+                        poll_fds.push(crate::os::PollFd { fd: *h, events: crate::os::POLLIN, revents: 0 });
                     }
-                    PollableTarget::Write(_stream) => {
-                        ready_indices.push(idx as u32);
+                    PollableTarget::Write(h) => {
+                        poll_fds.push(crate::os::PollFd { fd: *h, events: crate::os::POLLOUT, revents: 0 });
                     }
                 }
             }
         }
     }
-    // If nothing ready and we have a timer, wait
-    if ready_indices.is_empty() {
-        if let Some(deadline) = min_deadline {
-            let now = (crate::os::get_system_ticks() * 1_000_000) as u64;
-            if deadline > now {
-                let wait_ns = deadline - now;
-                let wait_ms = wait_ns / 1_000_000;
-                if wait_ms > 0 {
-                    crate::os::sleep(wait_ms);
-                }
-            }
-            // Re-check timers
-            let wasi = store.wasi_ctx.as_ref().ok_or(HaltExecutionError(1))?;
-            let now = (crate::os::get_system_ticks() * 1_000_000) as u64;
-            for (idx, handle) in pollables.iter().enumerate() {
-                if let Some(WasiResource::Pollable(target)) = wasi.resource_table.get(handle) {
-                    if let PollableTarget::Timer(d) = target {
-                        if now >= *d {
-                            ready_indices.push(idx as u32);
+
+    let timeout_ms = if let Some(deadline) = clock_deadline_ns {
+        let now = crate::os::get_system_ticks() * 1_000_000;
+        if deadline > now { ((deadline - now) / 1_000_000) as i32 } else { 0 }
+    } else {
+        -1
+    };
+
+    if !poll_fds.is_empty() || timeout_ms >= 0 {
+        let _ = crate::os::poll(&mut poll_fds, timeout_ms);
+    }
+
+    let mut ready_indices = Vec::new();
+    {
+        let wasi = store.wasi_ctx.as_ref().ok_or(HaltExecutionError(1))?;
+        let now = crate::os::get_system_ticks() * 1_000_000;
+        for (idx, handle) in handles.iter().enumerate() {
+            if let Some(WasiResource::Pollable(target)) = wasi.resource_table.get(handle) {
+                match target {
+                    PollableTarget::Timer(d) => {
+                        if now >= *d { ready_indices.push(idx as u32); }
+                    }
+                    PollableTarget::Read(h) => {
+                        if let Some(pfd) = poll_fds.iter().find(|p| p.fd == *h) {
+                            if (pfd.revents & crate::os::POLLIN) != 0 { ready_indices.push(idx as u32); }
+                        }
+                    }
+                    PollableTarget::Write(h) => {
+                        if let Some(pfd) = poll_fds.iter().find(|p| p.fd == *h) {
+                            if (pfd.revents & crate::os::POLLOUT) != 0 { ready_indices.push(idx as u32); }
                         }
                     }
                 }
             }
         }
     }
-    // Write result
+
     let count = ready_indices.len() as u32;
     let out_ptr = if count > 0 {
         match call_cabi_realloc(store, count * 4, 4) {
             Ok(p) => p,
             Err(_) => return Ok(vec![]),
         }
-    } else {
-        0
-    };
+    } else { 0 };
+
     if count > 0 {
         let mut buf = Vec::with_capacity((count * 4) as usize);
         for idx in ready_indices {

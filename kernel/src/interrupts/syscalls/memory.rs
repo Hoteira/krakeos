@@ -23,7 +23,7 @@ pub fn handle_brk(context: &mut CPUState) {
             return;
         }
 
-        if new_brk > proc.heap_limit {
+        if new_brk < proc.heap_start || new_brk > proc.heap_limit {
             context.rax = u64::MAX;
             return;
         }
@@ -38,7 +38,6 @@ pub fn handle_brk(context: &mut CPUState) {
             let size = aligned_new - aligned_current;
             let pages = size / 4096;
 
-
             for i in 0..pages {
                 let virt = aligned_current + (i * 4096);
                 if let Some(phys) = pmm::allocate_frame(pid) {
@@ -51,16 +50,10 @@ pub fn handle_brk(context: &mut CPUState) {
                     return;
                 }
             }
-
-            *heap_end = new_brk;
-            context.rax = new_brk;
-        } else if aligned_new < aligned_current {
-            *heap_end = new_brk;
-            context.rax = new_brk;
-        } else {
-            *heap_end = new_brk;
-            context.rax = new_brk;
         }
+
+        *heap_end = new_brk;
+        context.rax = new_brk;
     } else {
         context.rax = 0;
     }
