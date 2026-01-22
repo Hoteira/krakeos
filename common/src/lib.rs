@@ -1,4 +1,5 @@
 #![no_std]
+pub mod allocator;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
