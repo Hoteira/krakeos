@@ -142,9 +142,4 @@ WASI syscalls, feel free to open a Pull Request.
 
 ## 📜 License
 
-Distributed under the MIT License. See `LICENSE` for more information.
-
-<br>
-<div align="center">
-  <sub>Built with ❤️ in Rust</sub>
-</div>
+Distributed under the AGPL / COMMERCIAL License. See `LICENSE` for more information.

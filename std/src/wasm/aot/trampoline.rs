@@ -296,6 +296,18 @@ pub unsafe extern "C" fn aot_i64_trunc_sat_f64_u(val: f64) -> u64 {
     val as u64
 }
 
+pub unsafe extern "C" fn aot_debug(pc: u64, opcode: u64) {
+    // crate::debugln!("[AOT TRACE] PC: {:#x}, Op: {:#04x}", pc, opcode);
+    // Only print the last few to avoid spam if desired, or all.
+    // For now all.
+    use crate::wasm::core::reader::types::opcode::opcode_byte_to_str;
+    // We can't easily use opcode_byte_to_str here because it might allocate or be large?
+    // It returns Cow<'static, str>. It should be fine.
+    
+    // Manual mapping or simple hex is safer for low level debug.
+    crate::debugln!("[AOT TRACE] PC: {:#x}, Op: {:#04x}", pc, opcode);
+}
+
 
 
 

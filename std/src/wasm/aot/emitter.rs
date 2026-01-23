@@ -1229,5 +1229,52 @@ impl Assembler {
             self.buf.emit_u32(disp as u32);
         }
     }
+
+    pub fn movsxd_r64_mem_base_idx(&mut self, dst: Reg, base: Reg, idx: Reg, offset: i32) {
+        // movsxd r64, [base + idx + offset] (Sign Extend 32 to 64)
+        // REX.W 63 /r
+        let dst_code = dst as u8;
+        let base_code = base as u8;
+        let idx_code = idx as u8;
+        let mut rex = 0x48;
+        if dst_code >= 8 { rex |= 0x04; }
+        if idx_code >= 8 { rex |= 0x02; }
+        if base_code >= 8 { rex |= 0x01; }
+        self.buf.emit_u8(rex);
+        self.buf.emit_u8(0x63);
+        self.emit_sib_mem(dst_code, base_code, idx_code, offset);
+    }
+
+    pub fn call_debug(&mut self, pc: u64, opcode: u64) {
+        // Save volatile registers
+        self.push_reg(Reg::RAX);
+        self.push_reg(Reg::RCX);
+        self.push_reg(Reg::RDX);
+        self.push_reg(Reg::RSI);
+        self.push_reg(Reg::RDI);
+        self.push_reg(Reg::R8);
+        self.push_reg(Reg::R9);
+        self.push_reg(Reg::R10);
+        self.push_reg(Reg::R11);
+        self.push_reg(Reg::RAX); // Align stack (9 pushes above, need even for 16-byte align)
+
+        self.mov_reg_imm64(Reg::RDI, pc);
+        self.mov_reg_imm64(Reg::RSI, opcode);
+        
+        let target = crate::wasm::aot::trampoline::aot_debug as usize;
+        self.mov_reg_imm64(Reg::RAX, target as u64);
+        self.call_reg(Reg::RAX);
+
+        self.pop_reg(Reg::RAX); // Pop alignment
+        self.pop_reg(Reg::R11);
+        self.pop_reg(Reg::R10);
+        self.pop_reg(Reg::R9);
+        self.pop_reg(Reg::R8);
+        self.pop_reg(Reg::RDI);
+        self.pop_reg(Reg::RSI);
+        self.pop_reg(Reg::RDX);
+        self.pop_reg(Reg::RCX);
+        self.pop_reg(Reg::RAX);
+    }
 }
 
