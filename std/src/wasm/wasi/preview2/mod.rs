@@ -175,6 +175,7 @@ pub(crate) fn find_cabi_realloc<T: Config>(store: &Store<'_, T>) -> Option<FuncA
             return Some(func.into_bare());
         }
     }
+    crate::debugln!("WASI P2 Error: 'cabi_realloc' not found in caller module!");
     None
 }
 
@@ -312,33 +313,6 @@ fn krakeos_syscall_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -
             s_terminated.push('\0');
             let mut stat = unsafe { core::mem::zeroed::<crate::fs::Stat>() };
             let res = unsafe { crate::sys::syscall(num, s_terminated.as_ptr() as u64, &mut stat as *mut _ as u64, 0) };
-            // Wait, Kernel syscall 4 (STAT) likely takes (path, stat_buf).
-            // But if we pass (ptr, buf, 0), where does the kernel get the length?
-            // If the kernel expects a C-string, s_terminated.as_ptr() is correct.
-            // If the kernel expects (ptr, len, buf), then we should pass a2 (len).
-            // Previous code: syscall(num, s_terminated.as_ptr(), &stat, a3). a3 was 0?
-            // In the OLD code: a3 was used as the 3rd arg to syscall. But a3 was what?
-            // "a3 is arg3".
-            // Guest syscall(4, ptr, len, buf).
-            // Host received: a1=ptr, a2=len, a3=buf.
-
-            // Old Host Code:
-            // let s = read_mem_string(store, a1)?; // Reads until null.
-            // let res = unsafe { syscall(num, s.as_ptr(), &mut stat, a3) };
-            // write_bytes(store, a2, ...); // WROTE TO a2 (len)! Memory corruption!
-
-            // The Host was writing the stat struct to the address equal to the path length!
-            // E.g. if path len is 20, it writes to address 20. Access Violation or corruption.
-
-            // Correct logic:
-            // Guest passes: (ptr, len, buf_ptr).
-            // Host should:
-            // 1. Read string using ptr(a1) and len(a2).
-            // 2. Call Kernel STAT.
-            //    If Kernel STAT takes (path_c_string, stat_buf), then call syscall(4, s.as_ptr(), &stat, 0).
-            // 3. Write stat result to buf_ptr(a3).
-
-            let res = unsafe { crate::sys::syscall(num, s_terminated.as_ptr() as u64, &mut stat as *mut _ as u64, 0) };
             if res != u64::MAX {
                 write_bytes(store, a3 as u32, unsafe { core::slice::from_raw_parts(&stat as *const _ as *const u8, core::mem::size_of::<crate::fs::Stat>()) }).map_err(|_| HaltExecutionError(1))?;
             }
@@ -442,6 +416,25 @@ fn krakeos_syscall_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -
             let res = unsafe { crate::sys::syscall(num, a1, a2, a3) };
             return Ok(vec![Value::I64(res)]);
         }
+        999 => { // DEBUG_PRINT (a1=ptr, a2=len)
+            let mut buf = vec![0u8; a2 as usize];
+            read_mem(store, a1 as u32, &mut buf).map_err(|_| HaltExecutionError(1))?;
+            let s = String::from_utf8_lossy(&buf);
+            crate::os::debug_print(&s);
+            return Ok(vec![Value::I64(0)]);
+        }
+        22 => { // PIPE (a1=ptr to [i32; 2])
+            let mut fds = [0i32; 2];
+            let res = unsafe { crate::sys::syscall(22, fds.as_mut_ptr() as u64, 0, 0) };
+            if res == 0 {
+                // Write fds back to WASM memory
+                let mut bytes = [0u8; 8];
+                bytes[0..4].copy_from_slice(&fds[0].to_le_bytes());
+                bytes[4..8].copy_from_slice(&fds[1].to_le_bytes());
+                write_bytes(store, a1 as u32, &bytes).map_err(|_| HaltExecutionError(1))?;
+            }
+            return Ok(vec![Value::I64(res)]);
+        }
         _ => {}
     }
 
@@ -487,7 +480,7 @@ fn krakeos_syscall5_host<T: Config>(_: &mut Store<'_, T>, args: Vec<Value>) -> R
     Ok(vec![Value::I64(res)])
 }
 
-fn krakeos_syscall6_host<T: Config>(_: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+fn krakeos_syscall6_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
     let get_arg = |i: usize| -> u64 {
         match args.get(i) {
             Some(Value::I64(v)) => *v,
@@ -496,8 +489,42 @@ fn krakeos_syscall6_host<T: Config>(_: &mut Store<'_, T>, args: Vec<Value>) -> R
         }
     };
     let num = get_arg(0);
+
+    if num == 59 { // SPAWN (path, path_len, argv, argv_len, fds, fds_len)
+        let path_ptr = get_arg(1) as u32;
+        let path_len = get_arg(2) as u32;
+        let argv_ptr = get_arg(3) as u32;
+        let argv_len = get_arg(4) as u32;
+        let fds_ptr = get_arg(5) as u32;
+        let fds_len = get_arg(6) as u32;
+
+        let mut path_buf = vec![0u8; path_len as usize];
+        read_mem(store, path_ptr, &mut path_buf).map_err(|_| HaltExecutionError(1))?;
+        let path = String::from_utf8_lossy(&path_buf);
+
+        let mut host_args = Vec::new();
+        for i in 0..argv_len {
+            let arg_ptr_ptr = argv_ptr + i * 4;
+            let arg_ptr = read_mem_u32(store, arg_ptr_ptr)? as u32;
+            let arg = read_mem_string(store, arg_ptr)?;
+            host_args.push(arg);
+        }
+        let host_args_refs: Vec<&str> = host_args.iter().map(|s| s.as_str()).collect();
+
+        let mut host_fds = Vec::new();
+        for i in 0..fds_len {
+            let fd_ptr = fds_ptr + i * 2;
+            let mut buf = [0u8; 2];
+            read_mem(store, fd_ptr, &mut buf).map_err(|_| HaltExecutionError(1))?;
+            host_fds.push((buf[0], buf[1]));
+        }
+
+        let pid = crate::os::spawn_with_fds(&path, &host_args_refs, &host_fds);
+        return Ok(vec![Value::I64(pid as u64)]);
+    }
+
     // 103: UPDATE_WINDOW_AREA(wid, x, y, w, h)
-    let res = unsafe { crate::sys::syscall5(num, get_arg(1), get_arg(2), get_arg(3), get_arg(4), get_arg(5)) };
+    let res = unsafe { crate::sys::syscall6(num, get_arg(1), get_arg(2), get_arg(3), get_arg(4), get_arg(5), get_arg(6)) };
     Ok(vec![Value::I64(res)])
 }
 

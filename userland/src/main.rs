@@ -1,6 +1,7 @@
 #![no_std]
 
 extern crate alloc;
+use alloc::string::{String, ToString};
 use inkui::{Color, Size, Widget, Window};
 use std::fs::File;
 use std::graphics::Items;
@@ -84,6 +85,8 @@ fn run_wasm(path: &str) {
 
                     std::wasm::wasi::create_wasi_imports(&mut linker, &mut store);
                     std::wasm::wasi::create_wasi_p2_imports(&mut linker, &mut store);
+
+                    store.wasi_ctx = Some(std::wasm::wasi::WasiCtx::new(alloc::vec![path.to_string()], String::from("@0xE0"), &[(0, 0), (1, 1), (2, 2)]));
 
                     if let Some(component) = &validation_info.component {
                         debugln!("WASI: [COMPONENT] Starting {}...", path);

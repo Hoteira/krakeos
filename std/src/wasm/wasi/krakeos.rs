@@ -8,6 +8,7 @@ use crate::fs;
 
 pub struct KrakeosWasiEnv {
     pub fd_table: BTreeMap<i32, WasiFile>,
+    pub stdio_map: [i32; 3],
     pub next_fd: i32,
     pub random_state: u64,
     pub args: Vec<String>,
@@ -23,6 +24,7 @@ impl Default for KrakeosWasiEnv {
     fn default() -> Self {
         Self {
             fd_table: BTreeMap::new(),
+            stdio_map: [0, 1, 2],
             next_fd: 4, // 0,1,2 are reserved, 3 is preopened root
             random_state: 0,
             args: Vec::new(),
@@ -32,9 +34,17 @@ impl Default for KrakeosWasiEnv {
 }
 
 impl KrakeosWasiEnv {
-    pub fn new(args: Vec<String>, root_path: String) -> Self {
+    pub fn new(args: Vec<String>, root_path: String, fds: &[(u8, u8)]) -> Self {
+        let mut stdio_map = [0, 1, 2];
+        for &(guest, host) in fds {
+            if guest < 3 {
+                stdio_map[guest as usize] = host as i32;
+            }
+        }
+
         Self {
             fd_table: BTreeMap::new(),
+            stdio_map,
             next_fd: 4,
             random_state: 0,
             args,
@@ -214,13 +224,17 @@ impl WasiEnv for KrakeosWasiEnv {
 
     fn fd_read(&mut self, fd: i32, iovs: &mut [(&mut [u8])]) -> Result<usize, i32> {
         if fd == 0 {
+            let host_fd = self.stdio_map[0] as usize;
             if iovs.is_empty() || iovs.iter().all(|b| b.is_empty()) {
                 return Ok(0);
             }
             loop {
                 let mut total = 0;
                 for buf in iovs.iter_mut() {
-                    let n = crate::os::file_read(0, buf);
+                    let n = crate::os::file_read(host_fd, buf);
+                    if n == usize::MAX - 1 {
+                        continue;
+                    }
                     if n > 0 {
                         unsafe {
                             if crate::wasm::wasi::ICRNL {
@@ -296,8 +310,19 @@ impl WasiEnv for KrakeosWasiEnv {
     fn fd_write(&mut self, fd: i32, iovs: &[&[u8]]) -> Result<usize, i32> {
         let mut total = 0;
         if fd == 1 || fd == 2 {
+            let host_fd = self.stdio_map[fd as usize] as usize;
             for buf in iovs {
-                total += crate::os::file_write(fd as usize, buf);
+                let mut written = 0;
+                while written < buf.len() {
+                    let n = crate::os::file_write(host_fd, &buf[written..]);
+                    if n == usize::MAX - 1 {
+                        crate::os::yield_task();
+                        continue;
+                    }
+                    if n == 0 { break; }
+                    written += n;
+                }
+                total += written;
             }
             return Ok(total);
         }
@@ -498,11 +523,13 @@ impl WasiEnv for KrakeosWasiEnv {
             } else if tag == 1 { // FdRead
                 let fd_bytes: [u8; 4] = in_events[offset + 16..offset + 20].try_into().unwrap();
                 let fd = i32::from_le_bytes(fd_bytes);
-                poll_fds.push(crate::os::PollFd { fd, events: crate::os::POLLIN, revents: 0 });
+                let host_fd = if fd < 3 { self.stdio_map[fd as usize] } else { fd };
+                poll_fds.push(crate::os::PollFd { fd: host_fd, events: crate::os::POLLIN, revents: 0 });
             } else if tag == 2 { // FdWrite
                 let fd_bytes: [u8; 4] = in_events[offset + 16..offset + 20].try_into().unwrap();
                 let fd = i32::from_le_bytes(fd_bytes);
-                poll_fds.push(crate::os::PollFd { fd, events: crate::os::POLLOUT, revents: 0 });
+                let host_fd = if fd < 3 { self.stdio_map[fd as usize] } else { fd };
+                poll_fds.push(crate::os::PollFd { fd: host_fd, events: crate::os::POLLOUT, revents: 0 });
             }
         }
 
@@ -605,5 +632,9 @@ impl WasiEnv for KrakeosWasiEnv {
             }
             Err(_) => Err(28),
         }
+    }
+
+    fn stdio_map(&self) -> [i32; 3] {
+        self.stdio_map
     }
 }

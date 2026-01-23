@@ -110,3 +110,25 @@ pub fn init_heap(base: *mut u8, size: usize) {
     }
     ALLOCATOR.unlock();
 }
+
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cabi_realloc(ptr: *mut u8, old_size: usize, align: usize, new_size: usize) -> *mut u8 {
+    use core::alloc::Layout;
+    let align = if align == 0 { 1 } else { align };
+    
+    if ptr.is_null() {
+        if new_size == 0 { return align as *mut u8; }
+        let layout = Layout::from_size_align(new_size, align).unwrap();
+        crate::rust_alloc::alloc::alloc(layout)
+    } else {
+        if new_size == 0 {
+            let layout = Layout::from_size_align(old_size, align).unwrap();
+            crate::rust_alloc::alloc::dealloc(ptr, layout);
+            return core::ptr::null_mut();
+        }
+        let layout = Layout::from_size_align(old_size, align).unwrap();
+        let new_ptr = crate::rust_alloc::alloc::realloc(ptr, layout, new_size);
+        new_ptr
+    }
+}

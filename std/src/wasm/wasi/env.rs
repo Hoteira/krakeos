@@ -66,4 +66,5 @@ pub trait WasiEnv {
 
     // Extensions/Extra
     fn fd_readdir(&mut self, fd: i32, cookie: u64) -> Result<Vec<(String, u8, u64)>, i32>; // name, type, inode
+    fn stdio_map(&self) -> [i32; 3];
 }

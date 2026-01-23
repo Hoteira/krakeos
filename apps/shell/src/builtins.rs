@@ -21,7 +21,7 @@ pub fn run_wasm(path: String, args: Vec<String>, root_path: Option<String>) {
                     let mut linker = Linker::new();
 
                     let root = root_path.unwrap_or_else(|| String::from("@0xE0"));
-                    store.wasi_ctx = Some(std::wasm::wasi::WasiCtx::new(args, root));
+                    store.wasi_ctx = Some(std::wasm::wasi::WasiCtx::new(args, root, &[(0, 0), (1, 1), (2, 2)]));
 
                     std::wasm::wasi::create_wasi_imports(&mut linker, &mut store);
                     std::wasm::wasi::create_wasi_p2_imports(&mut linker, &mut store);

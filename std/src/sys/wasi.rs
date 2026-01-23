@@ -41,35 +41,31 @@ pub unsafe fn syscall(num: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
     match num {
         0 => { // READ: fd, buf_ptr, buf_len
             let fd = arg1 as i32;
-            // let buf_ptr = arg2 as *mut u8;
-            // let buf_len = arg3 as usize;
-
             if fd == 0 {
                 let handle = preview2_bindings::get_stdin();
                 #[repr(C)]
-                struct RetArea {
-                    tag: u32,
-                    ptr: u32,
-                    len: u32,
-                }
+                struct RetArea { tag: u32, ptr: u32, len: u32 }
                 let mut ret_area = RetArea { tag: 1, ptr: 0, len: 0 };
-
+                // unsafe { crate::os::debug_print("Guest: calling input_stream_read\n"); }
                 preview2_bindings::input_stream_read(handle, arg3, &mut ret_area as *mut _ as *mut u8);
-
+                // unsafe { 
+                //     let msg = crate::rust_alloc::format!("Guest: read done. tag={} ptr={} len={}\n", ret_area.tag, ret_area.ptr, ret_area.len);
+                //     crate::os::debug_print(&msg);
+                // }
                 if ret_area.tag == 0 {
-                    let src_ptr = ret_area.ptr as *const u8;
                     let src_len = ret_area.len as usize;
                     let copy_len = if src_len < arg3 as usize { src_len } else { arg3 as usize };
                     if copy_len > 0 {
-                        core::ptr::copy_nonoverlapping(src_ptr, arg2 as *mut u8, copy_len);
-                        // Ideally free src_ptr here using cabi_realloc/free logic
+                        core::ptr::copy_nonoverlapping(ret_area.ptr as *const u8, arg2 as *mut u8, copy_len);
+                    }
+                    if copy_len == 0 && arg3 > 0 {
+                        return u64::MAX - 1; // EWOULDBLOCK
                     }
                     copy_len as u64
                 } else {
                     u64::MAX
                 }
             } else {
-                // Forward to Kernel
                 unsafe { preview2_bindings::krakeos_syscall(num, arg1, arg2, arg3) }
             }
         }
@@ -78,17 +74,11 @@ pub unsafe fn syscall(num: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
             if fd == 1 || fd == 2 {
                 let handle = if fd == 1 { preview2_bindings::get_stdout() } else { preview2_bindings::get_stderr() };
                 #[repr(C)]
-                struct ResultVal {
-                    tag: u32,
-                    _pad: u32,
-                    _val: u32,
-                }
+                struct ResultVal { tag: u32, _pad: u32, _val: u32 }
                 let mut ret_area = ResultVal { tag: 0, _pad: 0, _val: 0 };
-                // Call output-stream.write (4 args)
                 preview2_bindings::output_stream_blocking_write_and_flush(handle, arg2 as *const u8, arg3 as usize, &mut ret_area as *mut _ as *mut u8);
                 if ret_area.tag == 0 { arg3 } else { u64::MAX }
             } else {
-                // Forward to Kernel
                 unsafe { preview2_bindings::krakeos_syscall(num, arg1, arg2, arg3) }
             }
         }

@@ -1,5 +1,4 @@
 #![no_std]
-#![no_main]
 
 extern crate alloc;
 mod utils;
@@ -10,7 +9,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
-
+use std::debugln;
 use crate::builtins::execute_builtin;
 use crate::parser::parse_segment;
 use crate::utils::resolve_path;
@@ -18,9 +17,10 @@ use crate::utils::resolve_path;
 const STDIN_FD: usize = 0;
 const STDOUT_FD: usize = 1;
 
-#[unsafe(no_mangle)]
-pub extern "C" fn main() -> i32 {
+pub fn main() {
+    debugln!("[shell] main started\n");
     let welcome_icon = core::char::from_u32(0xE8F0).unwrap_or(' ');
+
     let welcome_msg = format!("\nWelcome to KrakeOS Shell {} \n> ", welcome_icon);
     std::os::file_write(STDOUT_FD, welcome_msg.as_bytes());
 

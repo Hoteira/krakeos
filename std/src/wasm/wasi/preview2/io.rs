@@ -61,11 +61,15 @@ pub fn stream_read<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Res
         let read_len = core::cmp::min(len_req, 1024 * 64) as usize;
         let mut buf = vec![0u8; read_len];
         if fd == 0 {
+            let host_fd = store.wasi_ctx.as_ref().unwrap().env.stdio_map()[0] as usize;
             loop {
-                let bytes_read = crate::os::file_read(0, &mut buf);
+                let bytes_read = crate::os::file_read(host_fd, &mut buf);
                 if bytes_read == usize::MAX - 1 { // EWOULDBLOCK
                     crate::os::yield_task();
                     continue;
+                }
+                if bytes_read > buf.len() {
+                    return Ok(vec![]);
                 }
                 if bytes_read > 0 {
                     unsafe {
@@ -157,12 +161,32 @@ pub fn stream_write<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Re
             let _ = write_u32(store, ret_ptr, 1);
             return Ok(vec![]);
         }
+        let wasi = store.wasi_ctx.as_ref().ok_or(HaltExecutionError(1))?;
+        let stdio_map = wasi.env.stdio_map();
         match source {
             OutputStreamSource::Stdout => {
-                crate::os::file_write(1, &buf);
+                let mut written = 0;
+                while written < buf.len() {
+                    let n = crate::os::file_write(stdio_map[1] as usize, &buf[written..]);
+                    if n == usize::MAX - 1 {
+                        crate::os::yield_task();
+                        continue;
+                    }
+                    if n == 0 { break; }
+                    written += n;
+                }
             }
             OutputStreamSource::Stderr => {
-                crate::os::file_write(2, &buf);
+                let mut written = 0;
+                while written < buf.len() {
+                    let n = crate::os::file_write(stdio_map[2] as usize, &buf[written..]);
+                    if n == usize::MAX - 1 {
+                        crate::os::yield_task();
+                        continue;
+                    }
+                    if n == 0 { break; }
+                    written += n;
+                }
             }
             OutputStreamSource::File(fd) => {
                 loop {
@@ -216,6 +240,7 @@ pub fn poll_poll<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Resul
             handles.push(handle);
 
             if let Some(WasiResource::Pollable(target)) = wasi.resource_table.get(&handle) {
+                let stdio_map = wasi.env.stdio_map();
                 match target {
                     PollableTarget::Timer(deadline) => {
                         if clock_deadline_ns.map(|d| *deadline < d).unwrap_or(true) {
@@ -223,10 +248,12 @@ pub fn poll_poll<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Resul
                         }
                     }
                     PollableTarget::Read(h) => {
-                        poll_fds.push(crate::os::PollFd { fd: *h, events: crate::os::POLLIN, revents: 0 });
+                        let host_fd = if *h < 3 { stdio_map[*h as usize] } else { *h };
+                        poll_fds.push(crate::os::PollFd { fd: host_fd, events: crate::os::POLLIN, revents: 0 });
                     }
                     PollableTarget::Write(h) => {
-                        poll_fds.push(crate::os::PollFd { fd: *h, events: crate::os::POLLOUT, revents: 0 });
+                        let host_fd = if *h < 3 { stdio_map[*h as usize] } else { *h };
+                        poll_fds.push(crate::os::PollFd { fd: host_fd, events: crate::os::POLLOUT, revents: 0 });
                     }
                 }
             }

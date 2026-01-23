@@ -18,8 +18,8 @@ copy "target\bits64pie\release\userland" "tree\user.elf"
 cargo build --package=term --target=bits64pie.json --release
 copy "target\bits64pie\release\term" "tree\sys\bin\term.elf"
 
-cargo build --package=shell --target=bits64pie.json --release
-copy "target\bits64pie\release\shell" "tree\sys\bin\shell.elf"
+cargo build --package=shell --target=wasm32-wasip2 --release
+copy "target\wasm32-wasip2\release\shell.wasm" "tree\sys\bin\shell.wasm"
 
 cargo build --package=sysmon --target=bits64pie.json --release
 copy "target\bits64pie\release\sysmon" "tree\sys\bin\sysmon.elf"

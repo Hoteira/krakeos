@@ -12,21 +12,21 @@ pub struct WasiCtx {
 }
 
 impl WasiCtx {
-    pub fn new(args: Vec<String>, root_path: String) -> Self {
+    pub fn new(args: Vec<String>, root_path: String, fds: &[(u8, u8)]) -> Self {
         let mut resource_table = BTreeMap::new();
         resource_table.insert(3, WasiResource::Directory(String::from("/")));
 
         Self {
             resource_table,
             next_resource_id: 4,
-            env: Box::new(super::krakeos::KrakeosWasiEnv::new(args, root_path)),
+            env: Box::new(super::krakeos::KrakeosWasiEnv::new(args, root_path, fds)),
         }
     }
 }
 
 impl Default for WasiCtx {
     fn default() -> Self {
-        Self::new(Vec::new(), String::from("@0xE0"))
+        Self::new(Vec::new(), String::from("@0xE0"), &[(0, 0), (1, 1), (2, 2)])
     }
 }
 
