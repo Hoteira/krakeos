@@ -16,6 +16,11 @@ impl Assembler {
         Self { buf: ExecutableBuffer::new() }
     }
 
+    pub fn ud2(&mut self) {
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0x0B);
+    }
+
     pub fn ret(&mut self) {
         self.buf.emit_u8(0xC3);
     }
@@ -714,4 +719,515 @@ impl Assembler {
         let modrm = 0xC0 | (6 << 3) | (src_code & 7);
         self.buf.emit_u8(modrm);
     }
+
+    pub fn not_reg(&mut self, dst: Reg) {
+        let dst_code = dst as u8;
+        let mut rex = 0x48;
+        if dst_code >= 8 { rex |= 0x01; }
+        self.buf.emit_u8(rex);
+        self.buf.emit_u8(0xF7);
+        let modrm = 0xC0 | (2 << 3) | (dst_code & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn neg_reg(&mut self, dst: Reg) {
+        let dst_code = dst as u8;
+        let mut rex = 0x48;
+        if dst_code >= 8 { rex |= 0x01; }
+        self.buf.emit_u8(rex);
+        self.buf.emit_u8(0xF7);
+        let modrm = 0xC0 | (3 << 3) | (dst_code & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn lzcnt_reg_reg(&mut self, dst: Reg, src: Reg) {
+        // F3 REX.W 0F BD /r
+        let dst_code = dst as u8;
+        let src_code = src as u8;
+        self.buf.emit_u8(0xF3);
+        let mut rex = 0x48;
+        if src_code >= 8 { rex |= 0x01; }
+        if dst_code >= 8 { rex |= 0x04; }
+        self.buf.emit_u8(rex);
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0xBD);
+        let modrm = 0xC0 | ((dst_code & 7) << 3) | (src_code & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn tzcnt_reg_reg(&mut self, dst: Reg, src: Reg) {
+        // F3 REX.W 0F BC /r
+        let dst_code = dst as u8;
+        let src_code = src as u8;
+        self.buf.emit_u8(0xF3);
+        let mut rex = 0x48;
+        if src_code >= 8 { rex |= 0x01; }
+        if dst_code >= 8 { rex |= 0x04; }
+        self.buf.emit_u8(rex);
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0xBC);
+        let modrm = 0xC0 | ((dst_code & 7) << 3) | (src_code & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn popcnt_reg_reg(&mut self, dst: Reg, src: Reg) {
+        // F3 REX.W 0F B8 /r
+        let dst_code = dst as u8;
+        let src_code = src as u8;
+        self.buf.emit_u8(0xF3);
+        let mut rex = 0x48;
+        if src_code >= 8 { rex |= 0x01; }
+        if dst_code >= 8 { rex |= 0x04; }
+        self.buf.emit_u8(rex);
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0xB8);
+        let modrm = 0xC0 | ((dst_code & 7) << 3) | (src_code & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn lzcnt_r32_r32(&mut self, dst: Reg, src: Reg) {
+        // F3 0F BD /r
+        let dst_code = dst as u8;
+        let src_code = src as u8;
+        self.buf.emit_u8(0xF3);
+        let mut rex = 0;
+        if src_code >= 8 { rex |= 0x01; }
+        if dst_code >= 8 { rex |= 0x04; }
+        if rex != 0 { self.buf.emit_u8(0x40 | rex); }
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0xBD);
+        let modrm = 0xC0 | ((dst_code & 7) << 3) | (src_code & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn tzcnt_r32_r32(&mut self, dst: Reg, src: Reg) {
+        // F3 0F BC /r
+        let dst_code = dst as u8;
+        let src_code = src as u8;
+        self.buf.emit_u8(0xF3);
+        let mut rex = 0;
+        if src_code >= 8 { rex |= 0x01; }
+        if dst_code >= 8 { rex |= 0x04; }
+        if rex != 0 { self.buf.emit_u8(0x40 | rex); }
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0xBC);
+        let modrm = 0xC0 | ((dst_code & 7) << 3) | (src_code & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn popcnt_r32_r32(&mut self, dst: Reg, src: Reg) {
+        // F3 0F B8 /r
+        let dst_code = dst as u8;
+        let src_code = src as u8;
+        self.buf.emit_u8(0xF3);
+        let mut rex = 0;
+        if src_code >= 8 { rex |= 0x01; }
+        if dst_code >= 8 { rex |= 0x04; }
+        if rex != 0 { self.buf.emit_u8(0x40 | rex); }
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0xB8);
+        let modrm = 0xC0 | ((dst_code & 7) << 3) | (src_code & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn rotl_r32_cl(&mut self, dst: Reg) {
+        let dst_code = dst as u8;
+        let mut rex = 0;
+        if dst_code >= 8 { rex |= 0x01; }
+        if rex != 0 { self.buf.emit_u8(0x40 | rex); }
+        self.buf.emit_u8(0xD3);
+        let modrm = 0xC0 | (0 << 3) | (dst_code & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn rotr_r32_cl(&mut self, dst: Reg) {
+        let dst_code = dst as u8;
+        let mut rex = 0;
+        if dst_code >= 8 { rex |= 0x01; }
+        if rex != 0 { self.buf.emit_u8(0x40 | rex); }
+        self.buf.emit_u8(0xD3);
+        let modrm = 0xC0 | (1 << 3) | (dst_code & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn rotl_reg_cl(&mut self, dst: Reg) {
+        let dst_code = dst as u8;
+        let mut rex = 0x48;
+        if dst_code >= 8 { rex |= 0x01; }
+        self.buf.emit_u8(rex);
+        self.buf.emit_u8(0xD3);
+        let modrm = 0xC0 | (0 << 3) | (dst_code & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn rotr_reg_cl(&mut self, dst: Reg) {
+        let dst_code = dst as u8;
+        let mut rex = 0x48;
+        if dst_code >= 8 { rex |= 0x01; }
+        self.buf.emit_u8(rex);
+        self.buf.emit_u8(0xD3);
+        let modrm = 0xC0 | (1 << 3) | (dst_code & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    // Float conversions and operations
+    pub fn cvtsi2ss_xmm_reg(&mut self, dst: u8, src: Reg) {
+        // F3 REX.W 0F 2A /r
+        let src_code = src as u8;
+        self.buf.emit_u8(0xF3);
+        let mut rex = 0x48; // 64-bit int to float
+        if src_code >= 8 { rex |= 0x01; }
+        if dst >= 8 { rex |= 0x04; }
+        self.buf.emit_u8(rex);
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0x2A);
+        let modrm = 0xC0 | ((dst & 7) << 3) | (src_code & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn cvtsi2sd_xmm_reg(&mut self, dst: u8, src: Reg) {
+        // F2 REX.W 0F 2A /r
+        let src_code = src as u8;
+        self.buf.emit_u8(0xF2);
+        let mut rex = 0x48; // 64-bit int to double
+        if src_code >= 8 { rex |= 0x01; }
+        if dst >= 8 { rex |= 0x04; }
+        self.buf.emit_u8(rex);
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0x2A);
+        let modrm = 0xC0 | ((dst & 7) << 3) | (src_code & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn cvtsi2ss_xmm_r32(&mut self, dst: u8, src: Reg) {
+        // F3 0F 2A /r (32-bit int)
+        let src_code = src as u8;
+        self.buf.emit_u8(0xF3);
+        let mut rex = 0;
+        if src_code >= 8 { rex |= 0x01; }
+        if dst >= 8 { rex |= 0x04; }
+        if rex != 0 { self.buf.emit_u8(0x40 | rex); }
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0x2A);
+        let modrm = 0xC0 | ((dst & 7) << 3) | (src_code & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn cvtsi2sd_xmm_r32(&mut self, dst: u8, src: Reg) {
+        // F2 0F 2A /r (32-bit int)
+        let src_code = src as u8;
+        self.buf.emit_u8(0xF2);
+        let mut rex = 0;
+        if src_code >= 8 { rex |= 0x01; }
+        if dst >= 8 { rex |= 0x04; }
+        if rex != 0 { self.buf.emit_u8(0x40 | rex); }
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0x2A);
+        let modrm = 0xC0 | ((dst & 7) << 3) | (src_code & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn cvttss2si_reg_xmm(&mut self, dst: Reg, src: u8) {
+        // F3 REX.W 0F 2C /r
+        let dst_code = dst as u8;
+        self.buf.emit_u8(0xF3);
+        let mut rex = 0x48;
+        if dst_code >= 8 { rex |= 0x01; }
+        if src >= 8 { rex |= 0x04; }
+        self.buf.emit_u8(rex);
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0x2C);
+        let modrm = 0xC0 | ((dst_code & 7) << 3) | (src & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn cvttsd2si_reg_xmm(&mut self, dst: Reg, src: u8) {
+        // F2 REX.W 0F 2C /r
+        let dst_code = dst as u8;
+        self.buf.emit_u8(0xF2);
+        let mut rex = 0x48;
+        if dst_code >= 8 { rex |= 0x01; }
+        if src >= 8 { rex |= 0x04; }
+        self.buf.emit_u8(rex);
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0x2C);
+        let modrm = 0xC0 | ((dst_code & 7) << 3) | (src & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn cvttss2si_r32_xmm(&mut self, dst: Reg, src: u8) {
+        // F3 0F 2C /r
+        let dst_code = dst as u8;
+        self.buf.emit_u8(0xF3);
+        let mut rex = 0;
+        if dst_code >= 8 { rex |= 0x01; }
+        if src >= 8 { rex |= 0x04; }
+        if rex != 0 { self.buf.emit_u8(0x40 | rex); }
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0x2C);
+        let modrm = 0xC0 | ((dst_code & 7) << 3) | (src & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn cvttsd2si_r32_xmm(&mut self, dst: Reg, src: u8) {
+        // F2 0F 2C /r
+        let dst_code = dst as u8;
+        self.buf.emit_u8(0xF2);
+        let mut rex = 0;
+        if dst_code >= 8 { rex |= 0x01; }
+        if src >= 8 { rex |= 0x04; }
+        if rex != 0 { self.buf.emit_u8(0x40 | rex); }
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0x2C);
+        let modrm = 0xC0 | ((dst_code & 7) << 3) | (src & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn cvtss2sd_xmm_xmm(&mut self, dst: u8, src: u8) {
+        // F3 0F 5A /r
+        self.buf.emit_u8(0xF3);
+        let mut rex = 0;
+        if dst >= 8 { rex |= 0x04; }
+        if src >= 8 { rex |= 0x01; }
+        if rex != 0 { self.buf.emit_u8(0x40 | rex); }
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0x5A);
+        let modrm = 0xC0 | ((dst & 7) << 3) | (src & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn cvtsd2ss_xmm_xmm(&mut self, dst: u8, src: u8) {
+        // F2 0F 5A /r
+        self.buf.emit_u8(0xF2);
+        let mut rex = 0;
+        if dst >= 8 { rex |= 0x04; }
+        if src >= 8 { rex |= 0x01; }
+        if rex != 0 { self.buf.emit_u8(0x40 | rex); }
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0x5A);
+        let modrm = 0xC0 | ((dst & 7) << 3) | (src & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn movd_xmm_r32(&mut self, dst: u8, src: Reg) {
+        // 66 0F 6E /r
+        let src_code = src as u8;
+        self.buf.emit_u8(0x66);
+        let mut rex = 0;
+        if dst >= 8 { rex |= 0x04; }
+        if src_code >= 8 { rex |= 0x01; }
+        if rex != 0 { self.buf.emit_u8(0x40 | rex); }
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0x6E);
+        let modrm = 0xC0 | ((dst & 7) << 3) | (src_code & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn movd_r32_xmm(&mut self, dst: Reg, src: u8) {
+        // 66 0F 7E /r
+        let dst_code = dst as u8;
+        self.buf.emit_u8(0x66);
+        let mut rex = 0;
+        if src >= 8 { rex |= 0x04; }
+        if dst_code >= 8 { rex |= 0x01; }
+        if rex != 0 { self.buf.emit_u8(0x40 | rex); }
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0x7E);
+        let modrm = 0xC0 | ((src & 7) << 3) | (dst_code & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn sqrtss_xmm_xmm(&mut self, dst: u8, src: u8) {
+        // F3 0F 51 /r
+        self.buf.emit_u8(0xF3);
+        let mut rex = 0;
+        if dst >= 8 { rex |= 0x04; }
+        if src >= 8 { rex |= 0x01; }
+        if rex != 0 { self.buf.emit_u8(0x40 | rex); }
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0x51);
+        let modrm = 0xC0 | ((dst & 7) << 3) | (src & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn sqrtsd_xmm_xmm(&mut self, dst: u8, src: u8) {
+        // F2 0F 51 /r
+        self.buf.emit_u8(0xF2);
+        let mut rex = 0;
+        if dst >= 8 { rex |= 0x04; }
+        if src >= 8 { rex |= 0x01; }
+        if rex != 0 { self.buf.emit_u8(0x40 | rex); }
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0x51);
+        let modrm = 0xC0 | ((dst & 7) << 3) | (src & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn roundss_xmm_xmm(&mut self, dst: u8, src: u8, mode: u8) {
+        // 66 0F 3A 0A /r ib
+        self.buf.emit_u8(0x66);
+        let mut rex = 0;
+        if dst >= 8 { rex |= 0x04; }
+        if src >= 8 { rex |= 0x01; }
+        if rex != 0 { self.buf.emit_u8(0x40 | rex); }
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0x3A);
+        self.buf.emit_u8(0x0A);
+        let modrm = 0xC0 | ((dst & 7) << 3) | (src & 7);
+        self.buf.emit_u8(modrm);
+        self.buf.emit_u8(mode);
+    }
+
+    pub fn roundsd_xmm_xmm(&mut self, dst: u8, src: u8, mode: u8) {
+        // 66 0F 3A 0B /r ib
+        self.buf.emit_u8(0x66);
+        let mut rex = 0;
+        if dst >= 8 { rex |= 0x04; }
+        if src >= 8 { rex |= 0x01; }
+        if rex != 0 { self.buf.emit_u8(0x40 | rex); }
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0x3A);
+        self.buf.emit_u8(0x0B);
+        let modrm = 0xC0 | ((dst & 7) << 3) | (src & 7);
+        self.buf.emit_u8(modrm);
+        self.buf.emit_u8(mode);
+    }
+
+    pub fn minss_xmm_xmm(&mut self, dst: u8, src: u8) {
+        // F3 0F 5D /r
+        self.buf.emit_u8(0xF3);
+        let mut rex = 0;
+        if dst >= 8 { rex |= 0x04; }
+        if src >= 8 { rex |= 0x01; }
+        if rex != 0 { self.buf.emit_u8(0x40 | rex); }
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0x5D);
+        let modrm = 0xC0 | ((dst & 7) << 3) | (src & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn maxss_xmm_xmm(&mut self, dst: u8, src: u8) {
+        // F3 0F 5F /r
+        self.buf.emit_u8(0xF3);
+        let mut rex = 0;
+        if dst >= 8 { rex |= 0x04; }
+        if src >= 8 { rex |= 0x01; }
+        if rex != 0 { self.buf.emit_u8(0x40 | rex); }
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0x5F);
+        let modrm = 0xC0 | ((dst & 7) << 3) | (src & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn minsd_xmm_xmm(&mut self, dst: u8, src: u8) {
+        // F2 0F 5D /r
+        self.buf.emit_u8(0xF2);
+        let mut rex = 0;
+        if dst >= 8 { rex |= 0x04; }
+        if src >= 8 { rex |= 0x01; }
+        if rex != 0 { self.buf.emit_u8(0x40 | rex); }
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0x5D);
+        let modrm = 0xC0 | ((dst & 7) << 3) | (src & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn maxsd_xmm_xmm(&mut self, dst: u8, src: u8) {
+        // F2 0F 5F /r
+        self.buf.emit_u8(0xF2);
+        let mut rex = 0;
+        if dst >= 8 { rex |= 0x04; }
+        if src >= 8 { rex |= 0x01; }
+        if rex != 0 { self.buf.emit_u8(0x40 | rex); }
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0x5F);
+        let modrm = 0xC0 | ((dst & 7) << 3) | (src & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn andps_xmm_xmm(&mut self, dst: u8, src: u8) {
+        // 0F 54 /r
+        let mut rex = 0;
+        if dst >= 8 { rex |= 0x04; }
+        if src >= 8 { rex |= 0x01; }
+        if rex != 0 { self.buf.emit_u8(0x40 | rex); }
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0x54);
+        let modrm = 0xC0 | ((dst & 7) << 3) | (src & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn orps_xmm_xmm(&mut self, dst: u8, src: u8) {
+        // 0F 56 /r
+        let mut rex = 0;
+        if dst >= 8 { rex |= 0x04; }
+        if src >= 8 { rex |= 0x01; }
+        if rex != 0 { self.buf.emit_u8(0x40 | rex); }
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0x56);
+        let modrm = 0xC0 | ((dst & 7) << 3) | (src & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn xorps_xmm_xmm(&mut self, dst: u8, src: u8) {
+        // 0F 57 /r
+        let mut rex = 0;
+        if dst >= 8 { rex |= 0x04; }
+        if src >= 8 { rex |= 0x01; }
+        if rex != 0 { self.buf.emit_u8(0x40 | rex); }
+        self.buf.emit_u8(0x0F);
+        self.buf.emit_u8(0x57);
+        let modrm = 0xC0 | ((dst & 7) << 3) | (src & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn jmp_reg(&mut self, reg: Reg) {
+        // FF /4
+        let r = reg as u8;
+        let mut rex = 0;
+        if r >= 8 { rex |= 0x01; }
+        if rex != 0 { self.buf.emit_u8(0x40 | rex); }
+        self.buf.emit_u8(0xFF);
+        let modrm = 0xC0 | (4 << 3) | (r & 7);
+        self.buf.emit_u8(modrm);
+    }
+
+    pub fn lea_rip_reg(&mut self, dst: Reg, disp: i32) {
+        // REX.W 8D /r
+        let dst_code = dst as u8;
+        let mut rex = 0x48;
+        if dst_code >= 8 { rex |= 0x04; }
+        self.buf.emit_u8(rex);
+        self.buf.emit_u8(0x8D);
+        let modrm = 0x05 | ((dst_code & 7) << 3); // Mod=00, R/M=101 (RIP relative)
+        self.buf.emit_u8(modrm);
+        self.buf.emit_u32(disp as u32);
+    }
+
+    pub fn movsxd_r64_mem_base_idx_scale4(&mut self, dst: Reg, base: Reg, idx: Reg, disp: i32) {
+        // movsxd r64, [base + idx*4 + disp]
+        // REX.W 63 /r
+        let dst_code = dst as u8;
+        let base_code = base as u8;
+        let idx_code = idx as u8;
+        let mut rex = 0x48;
+        if dst_code >= 8 { rex |= 0x04; }
+        if base_code >= 8 { rex |= 0x01; }
+        if idx_code >= 8 { rex |= 0x02; }
+        self.buf.emit_u8(rex);
+        self.buf.emit_u8(0x63);
+        // ModRM with SIB
+        let mod_bits = if disp == 0 { 0x00 } else if disp >= -128 && disp <= 127 { 0x40 } else { 0x80 };
+        let modrm = mod_bits | ((dst_code & 7) << 3) | 0x04; // 0x04 indicates SIB
+        self.buf.emit_u8(modrm);
+        // SIB: scale=2 (4 bytes) -> 10, index, base
+        let sib = (2 << 6) | ((idx_code & 7) << 3) | (base_code & 7);
+        self.buf.emit_u8(sib);
+        if mod_bits == 0x40 {
+            self.buf.emit_u8(disp as u8);
+        } else if mod_bits == 0x80 {
+            self.buf.emit_u32(disp as u32);
+        }
+    }
 }
+

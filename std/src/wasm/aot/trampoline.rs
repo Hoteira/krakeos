@@ -176,6 +176,127 @@ pub unsafe extern "C" fn aot_memory_grow<T: Config>(store_ptr: *mut (), mem_idx:
 
 }
 
+pub unsafe extern "C" fn aot_memory_copy<T: Config>(store_ptr: *mut (), dst: u32, src: u32, len: u32, mem_idx_dst: u32, mem_idx_src: u32, module_addr: usize) {
+    let store = &mut *(store_ptr as *mut Store<T>);
+    let module = store.modules.get(module_addr);
+    let mem_addr_dst = module.mem_addrs[mem_idx_dst as usize];
+    let mem_addr_src = module.mem_addrs[mem_idx_src as usize];
+    
+    // Check bounds roughly (Store implementation handles details but we need to resolve addresses)
+    // Actually, Store has a `copy` method on LinearMemory, but we need to access two memories.
+    // Since KrakeOS/Wasm usually has one memory (index 0), mem_addr_dst == mem_addr_src.
+    
+    let mem_dst = store.memories.get(mem_addr_dst);
+    // Unsafe hack to get a second mutable reference if they are different, or same.
+    // Since we are single-threaded here effectively:
+    let mem_src = store.memories.get(mem_addr_src); 
+    
+    // We can use the Store::mem_copy method if we exposed it or implemented it.
+    // Or just use LinearMemory::copy.
+    // LinearMemory::copy takes &self and &other.
+    
+    if let Err(_) = mem_dst.mem.copy(dst as usize, &mem_src.mem, src as usize, len as usize) {
+        crate::debugln!("[AOT Trap] memory.copy out of bounds");
+        // Trap
+    }
+}
+
+pub unsafe extern "C" fn aot_memory_fill<T: Config>(store_ptr: *mut (), dst: u32, val: u32, len: u32, mem_idx: u32, module_addr: usize) {
+    let store = &mut *(store_ptr as *mut Store<T>);
+    let mem_addr = store.modules.get(module_addr).mem_addrs[mem_idx as usize];
+    let mem = store.memories.get(mem_addr);
+    if let Err(_) = mem.mem.fill(dst as usize, val as u8, len as usize) {
+        crate::debugln!("[AOT Trap] memory.fill out of bounds");
+    }
+}
+
+pub unsafe extern "C" fn aot_memory_init<T: Config>(store_ptr: *mut (), dst: u32, src: u32, len: u32, data_idx: u32, mem_idx: u32, module_addr: usize) {
+    let store = &mut *(store_ptr as *mut Store<T>);
+    let module = store.modules.get(module_addr);
+    let mem_addr = module.mem_addrs[mem_idx as usize];
+    let data_addr = module.data_addrs[data_idx as usize];
+    
+    let mem = store.memories.get(mem_addr);
+    let data = store.data.get(data_addr);
+    
+    if let Err(_) = mem.mem.init(dst as usize, &data.data, src as usize, len as usize) {
+        crate::debugln!("[AOT Trap] memory.init out of bounds");
+    }
+}
+
+pub unsafe extern "C" fn aot_data_drop<T: Config>(store_ptr: *mut (), data_idx: u32, module_addr: usize) {
+    let store = &mut *(store_ptr as *mut Store<T>);
+    let module = store.modules.get(module_addr);
+    let data_addr = module.data_addrs[data_idx as usize];
+    // In many implementations data.drop just clears the segment.
+    // For now we might do nothing or clear it if `DataInst` supports it.
+    // Our DataInst is `pub struct DataInst { pub data: Vec<u8> }`
+    // We can clear the vec.
+    let data = store.data.get_mut(data_addr);
+    data.data.clear();
+}
+
+// Saturating Truncation Trampolines
+// Input: value in XMM0 (f32/f64)
+// Output: result in RAX (i32/i64)
+
+pub unsafe extern "C" fn aot_i32_trunc_sat_f32_s(val: f32) -> i32 {
+    if val.is_nan() { return 0; }
+    if val >= 2147483648.0 { return i32::MAX; }
+    if val <= -2147483649.0 { return i32::MIN; }
+    val as i32
+}
+
+pub unsafe extern "C" fn aot_i32_trunc_sat_f32_u(val: f32) -> u32 {
+    if val.is_nan() { return 0; }
+    if val >= 4294967296.0 { return u32::MAX; }
+    if val <= -1.0 { return 0; }
+    val as u32
+}
+
+pub unsafe extern "C" fn aot_i32_trunc_sat_f64_s(val: f64) -> i32 {
+    if val.is_nan() { return 0; }
+    if val >= 2147483648.0 { return i32::MAX; }
+    if val <= -2147483649.0 { return i32::MIN; }
+    val as i32
+}
+
+pub unsafe extern "C" fn aot_i32_trunc_sat_f64_u(val: f64) -> u32 {
+    if val.is_nan() { return 0; }
+    if val >= 4294967296.0 { return u32::MAX; }
+    if val <= -1.0 { return 0; }
+    val as u32
+}
+
+pub unsafe extern "C" fn aot_i64_trunc_sat_f32_s(val: f32) -> i64 {
+    if val.is_nan() { return 0; }
+    if val >= 9223372036854775808.0 { return i64::MAX; }
+    if val <= -9223372036854775809.0 { return i64::MIN; }
+    val as i64
+}
+
+pub unsafe extern "C" fn aot_i64_trunc_sat_f32_u(val: f32) -> u64 {
+    if val.is_nan() { return 0; }
+    if val >= 18446744073709551616.0 { return u64::MAX; }
+    if val <= -1.0 { return 0; }
+    val as u64
+}
+
+pub unsafe extern "C" fn aot_i64_trunc_sat_f64_s(val: f64) -> i64 {
+    if val.is_nan() { return 0; }
+    if val >= 9223372036854775808.0 { return i64::MAX; }
+    if val <= -9223372036854775809.0 { return i64::MIN; }
+    val as i64
+}
+
+pub unsafe extern "C" fn aot_i64_trunc_sat_f64_u(val: f64) -> u64 {
+    if val.is_nan() { return 0; }
+    if val >= 18446744073709551616.0 { return u64::MAX; }
+    if val <= -1.0 { return 0; }
+    val as u64
+}
+
+
 
 
 
