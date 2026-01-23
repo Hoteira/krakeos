@@ -5,6 +5,7 @@ pub mod component;
 pub mod execution;
 pub mod wasi;
 pub mod validation;
+pub mod aot;
 pub use core::error::ValidationError;
 pub use core::reader::span::Span;
 pub use core::reader::types::data::DataSegment;

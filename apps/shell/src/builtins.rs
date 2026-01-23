@@ -6,8 +6,8 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::wasm::{validate, Linker, Store};
 
-pub fn run_wasm(path: String, args: Vec<String>, root_path: Option<String>) {
-    let msg = format!("WASM: Starting WASI App: {}...\n", path);
+pub fn run_wasm(path: String, args: Vec<String>, root_path: Option<String>, aot_enabled: bool) {
+    let msg = format!("WASM: Starting WASI App: {} (AOT: {})...\n", path, aot_enabled);
     std::os::file_write(1, msg.as_bytes());
 
     if let Ok(mut file) = File::open(&path) {
@@ -32,6 +32,10 @@ pub fn run_wasm(path: String, args: Vec<String>, root_path: Option<String>) {
                         ).map(|_| ())
                     } else {
                         linker.module_instantiate(&mut store, &validation_info, None).and_then(|instance| {
+                            if aot_enabled {
+                                let _ = store.compile_module_aot(instance.module_addr);
+                            }
+
                             let entry_point = store
                                 .instance_export(instance.module_addr, "run")
                                 .ok()
@@ -86,17 +90,26 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
         return 0;
     } else if cmd == "wasm" {
         let mut root_path = None;
+        let mut aot_enabled = false;
         let mut actual_args = args.to_vec();
 
-        // Parse --dir flag if it's the first argument
-        if !actual_args.is_empty() && actual_args[0] == "--dir" {
-            if actual_args.len() > 1 {
-                root_path = Some(resolve_path(cwd, &actual_args[1]));
-                actual_args.remove(0); // remove --dir
-                actual_args.remove(0); // remove path
+        // Parse flags
+        let mut i = 0;
+        while i < actual_args.len() {
+            if actual_args[i] == "--dir" {
+                if i + 1 < actual_args.len() {
+                    root_path = Some(resolve_path(cwd, &actual_args[i + 1]));
+                    actual_args.remove(i); // remove --dir
+                    actual_args.remove(i); // remove path
+                } else {
+                    std::os::file_write(out_fd, b"Error: --dir requires a path\n");
+                    return 1;
+                }
+            } else if actual_args[i] == "--aot" {
+                aot_enabled = true;
+                actual_args.remove(i);
             } else {
-                std::os::file_write(out_fd, b"Error: --dir requires a path\n");
-                return 1;
+                i += 1;
             }
         }
 
@@ -125,9 +138,9 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
                 }
             }
 
-            run_wasm(prog_path, actual_args, root_path);
+            run_wasm(prog_path, actual_args, root_path, aot_enabled);
         } else {
-            std::os::file_write(out_fd, b"Usage: wasm [--dir <path>] <file.wasm> [args...]\n");
+            std::os::file_write(out_fd, b"Usage: wasm [--dir <path>] [--aot] <file.wasm> [args...]\n");
             return 1;
         }
         return 0;

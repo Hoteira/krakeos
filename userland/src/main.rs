@@ -50,22 +50,21 @@ pub fn main() {
     //std::os::exec("@0xE0/sys/bin/taskbar.elf");
 
     std::thread::spawn(|| {
-        run_wasm("@0xE0/apps/taskbar.wasm");
-        //run_wasm("@0xE0/wasm_test.wasm");
-        //run_wasm("@0xE0/saltty.wasm");
-
-        //run_wasm("@0xE0/apps/python/python.wasm");
-
+        run_wasm("@0xE0/apps/aot_test.wasm", true);
     });
 
-    std::os::exec("@0xE0/sys/bin/term.elf");
+    std::thread::spawn(|| {
+        run_wasm("@0xE0/apps/taskbar.wasm", false);
+    });
+
+    std::os::spawn("@0xE0/sys/bin/term.elf");
 
     loop {
         std::os::yield_task();
     }
 }
 
-fn run_wasm(path: &str) {
+fn run_wasm(path: &str, enable_aot: bool) {
     use alloc::vec;
     use alloc::vec::Vec;
     use std::wasm::{validate, Linker, Store};
@@ -103,6 +102,10 @@ fn run_wasm(path: &str) {
                         debugln!("WASI: [INTERPRETER] Starting {}...", path);
                         match linker.module_instantiate(&mut store, &validation_info, None) {
                             Ok(instance) => {
+                                if enable_aot {
+                                    let _ = store.compile_module_aot(instance.module_addr);
+                                }
+
                                 // Try "run" first (WASI Preview 2 convention), then "_start" as fallback
                                 let entry_point = store
                                     .instance_export(instance.module_addr, "run")

@@ -136,6 +136,12 @@ impl<'b, T: Config> Store<'b, T> {
         let returns = self.invoke_without_fuel_unchecked(func_addr, params)?;
         Ok(unsafe { wrap_vec_elements(returns, self.id) })
     }
+    
+    pub fn compile_module_aot(&mut self, module_addr: Stored<ModuleAddr>) -> Result<(), RuntimeError> {
+        let module_addr = module_addr.try_unwrap_into_bare(self.id)?;
+        self.compile_module_aot_unchecked(module_addr);
+        Ok(())
+    }
 }
 impl Linker {
     pub fn define(&mut self, module_name: String, name: String, val: StoredExternVal) -> Result<(), RuntimeError> {

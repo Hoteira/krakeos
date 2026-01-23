@@ -26,10 +26,10 @@ use crate::wasm::execution::store::addrs::{
 };
 use crate::wasm::execution::value::{Ref, Value};
 use crate::wasm::execution::{run_const_span, Stack};
-use crate::wasm::{RefType, RuntimeError, TrapError, ValidationInfo};
+use crate::wasm::{RefType, RuntimeError, TrapError, ValidationInfo, ValType};
 use core::sync::atomic::{AtomicU64, Ordering};
 use instances::{
-    DataInst, ElemInst, FuncInst, GlobalInst, HostFuncInst, MemInst, ModuleInst, TableInst,
+    AotFuncInst, DataInst, ElemInst, FuncInst, GlobalInst, HostFuncInst, MemInst, ModuleInst, TableInst,
     WasmFuncInst,
 };
 use linear_memory::LinearMemory;
@@ -70,6 +70,55 @@ impl<'a, T: Config> Store<'a, T> {
             wasi_ctx: None,
         }
     }
+
+    pub fn compile_module_aot_unchecked(&mut self, module_addr: ModuleAddr) {
+        crate::os::debug_print(&crate::rust_alloc::format!("[AOT] Compiling module {}...\n", module_addr));
+        let module_inst = self.modules.get(module_addr);
+        
+        let func_addrs = module_inst.func_addrs.clone();
+        
+        // Collect function types map
+        let mut func_types: crate::rust_alloc::collections::BTreeMap<usize, crate::wasm::core::reader::types::FuncType> = crate::rust_alloc::collections::BTreeMap::new();
+        for &addr in &func_addrs {
+            let f = self.functions.get(addr);
+            func_types.insert(addr, f.ty());
+        }
+
+        let mut compiled_count = 0;
+
+        for (i, &func_addr) in func_addrs.iter().enumerate() {
+            // Check if it is a WasmFunc
+            let is_wasm = matches!(self.functions.get(func_addr), FuncInst::WasmFunc(_));
+            
+            if is_wasm {
+                let wasm_func = if let FuncInst::WasmFunc(f) = self.functions.get(func_addr) {
+                    f
+                } else {
+                    continue;
+                };
+
+                let module_inst = self.modules.get(module_addr);
+                
+                match crate::wasm::aot::compiler::compile_function::<T>(wasm_func, module_inst, module_addr, &func_types) {
+                    Ok(code) => {
+                        let function_type = wasm_func.function_type.clone();
+                        let aot_inst = FuncInst::AotFunc(AotFuncInst {
+                            function_type,
+                            code,
+                        });
+                        *self.functions.get_mut(func_addr) = aot_inst;
+                        compiled_count += 1;
+                        crate::os::debug_print(&crate::rust_alloc::format!("[AOT] Func {} compiled.\n", i));
+                    },
+                    Err(e) => {
+                        crate::os::debug_print(&crate::rust_alloc::format!("[AOT] Func {} failed: {:?}\n", i, e));
+                    }
+                }
+            }
+        }
+        crate::os::debug_print(&crate::rust_alloc::format!("[AOT] Compiled {} functions.\n", compiled_count));
+    }
+
     pub fn module_instantiate_unchecked(
         &mut self,
         validation_info: &ValidationInfo<'a>,
@@ -223,6 +272,60 @@ impl<'a, T: Config> Store<'a, T> {
     pub fn resume_unchecked(&mut self, mut resumable_ref: ResumableRef) -> Result<RunState, RuntimeError> {
         match resumable_ref {
             ResumableRef::Fresh(FreshResumableRef { func_addr, params, maybe_fuel }) => {
+                
+                // Pre-check for AotFunc to avoid holding borrow of self during execution
+                let aot_data = if let FuncInst::AotFunc(aot_func_inst) = self.functions.get(func_addr) {
+                    Some((aot_func_inst.code.ptr(), aot_func_inst.function_type.clone()))
+                } else {
+                    None
+                };
+
+                if let Some((code_ptr, function_type)) = aot_data {
+                    // AOT Execution Path
+                    
+                    // Unpack params to u64 array
+                    let mut raw_params: Vec<u64> = params.iter().map(|v| match v {
+                        Value::I32(i) => *i as u64,
+                        Value::I64(i) => *i,
+                        Value::F32(f) => f.to_bits() as u64,
+                        Value::F64(f) => f.to_bits(),
+                        Value::Ref(r) => match r {
+                            Ref::Null(_) => 0,
+                            Ref::Func(addr) => *addr as u64,
+                            Ref::Extern(addr) => addr.0 as u64,
+                        },
+                        Value::V128(_) => 0,
+                    }).collect();
+                    
+                    // Function pointer cast
+                    let func_ptr: extern "C" fn(*mut (), *const u64, *mut u64, u64) = unsafe { core::mem::transmute(code_ptr) };
+                    
+                    let result_count = function_type.returns.valtypes.len();
+                    let mut raw_results = vec![0u64; result_count];
+                    let mem_base = self.get_wasm_base_ptr() as u64;
+                    let store_ptr = self as *mut Store<T> as *mut ();
+                    
+                    // Execution
+                    func_ptr(store_ptr, raw_params.as_ptr(), raw_results.as_mut_ptr(), mem_base);
+                    
+                    // Repack results
+                    let mut results = Vec::new();
+                    for (i, &raw) in raw_results.iter().enumerate() {
+                        let ty = function_type.returns.valtypes[i];
+                        let val = match ty {
+                            ValType::NumType(crate::wasm::NumType::I32) => Value::I32(raw as u32),
+                            ValType::NumType(crate::wasm::NumType::I64) => Value::I64(raw),
+                            ValType::NumType(crate::wasm::NumType::F32) => Value::F32(crate::wasm::execution::value::F32::from_bits(raw as u32)),
+                            ValType::NumType(crate::wasm::NumType::F64) => Value::F64(crate::wasm::execution::value::F64::from_bits(raw)),
+                            _ => Value::I64(0),
+                        };
+                        results.push(val);
+                    }
+                    
+                    return Ok(RunState::Finished { values: results, maybe_remaining_fuel: maybe_fuel });
+                }
+
+                // Standard Interpreter/Host Path
                 let func_inst = self.functions.get(func_addr);
                 match func_inst {
                     FuncInst::HostFunc(host_func_inst) => {
@@ -240,6 +343,7 @@ impl<'a, T: Config> Store<'a, T> {
                             Some(required_fuel) => Ok(RunState::Resumable { resumable_ref: ResumableRef::Invoked(self.dormitory.insert(resumable)), required_fuel }),
                         }
                     }
+                    FuncInst::AotFunc(_) => unreachable!("AOT func should have been handled above"),
                 }
             }
             _ => Err(RuntimeError::Trap(TrapError::ReachedUnreachable)),

@@ -4,6 +4,7 @@ use super::{
 };
 use crate::rust_alloc::{collections::btree_map::BTreeMap, string::String, vec, vec::Vec};
 use crate::wasm::{
+    aot::memory::ExecutableBuffer,
     core::{
         indices::TypeIdx,
         reader::{
@@ -20,6 +21,12 @@ use crate::wasm::{
 pub enum FuncInst<T: crate::wasm::execution::config::Config> {
     WasmFunc(WasmFuncInst),
     HostFunc(HostFuncInst<T>),
+    AotFunc(AotFuncInst),
+}
+#[derive(Debug)]
+pub struct AotFuncInst {
+    pub function_type: FuncType,
+    pub code: ExecutableBuffer,
 }
 #[derive(Debug)]
 pub struct WasmFuncInst {
@@ -40,6 +47,7 @@ impl<T: crate::wasm::execution::config::Config> FuncInst<T> {
         match self {
             FuncInst::WasmFunc(wasm_func_inst) => wasm_func_inst.function_type.clone(),
             FuncInst::HostFunc(host_func_inst) => host_func_inst.function_type.clone(),
+            FuncInst::AotFunc(aot_func_inst) => aot_func_inst.function_type.clone(),
         }
     }
 }

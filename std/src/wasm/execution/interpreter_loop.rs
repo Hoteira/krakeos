@@ -1,5 +1,5 @@
 use super::{little_endian::LittleEndianBytes, store::Store};
-use crate::rust_alloc::vec::Vec;
+use crate::rust_alloc::{vec, vec::Vec};
 use crate::unreachable_validated;
 use crate::wasm::execution::config::Config;
 use crate::wasm::{
@@ -220,6 +220,45 @@ pub fn run<T: Config>(
                         current_function_end_marker = wasm_func_to_call_inst.code_expr.from()
                             + wasm_func_to_call_inst.code_expr.len();
                     }
+                    FuncInst::AotFunc(aot_func_inst) => {
+                        let code_ptr = aot_func_inst.code.ptr();
+                        let params = stack
+                            .pop_tail_iter(func_to_call_ty.params.valtypes.len())
+                            .collect::<Vec<_>>();
+                        
+                        let mut raw_params: Vec<u64> = params.iter().map(|v| match v {
+                            Value::I32(i) => *i as u64,
+                            Value::I64(i) => *i,
+                            Value::F32(f) => f.to_bits() as u64,
+                            Value::F64(f) => f.to_bits(),
+                            Value::Ref(r) => match r {
+                                Ref::Null(_) => 0,
+                                Ref::Func(addr) => *addr as u64,
+                                Ref::Extern(addr) => addr.0 as u64,
+                            },
+                            Value::V128(_) => 0,
+                        }).collect();
+                        
+                        let func_ptr: extern "C" fn(*mut (), *const u64, *mut u64, u64) = unsafe { core::mem::transmute(code_ptr) };
+                        let result_count = func_to_call_ty.returns.valtypes.len();
+                        let mut raw_results = vec![0u64; result_count];
+                        let mem_base = store.get_wasm_base_ptr() as u64;
+                        let store_ptr = store as *mut Store<T> as *mut ();
+                        
+                        func_ptr(store_ptr, raw_params.as_ptr(), raw_results.as_mut_ptr(), mem_base);
+                        
+                        for (i, &raw) in raw_results.iter().enumerate() {
+                            let ty = func_to_call_ty.returns.valtypes[i];
+                            let val = match ty {
+                                ValType::NumType(crate::wasm::NumType::I32) => Value::I32(raw as u32),
+                                ValType::NumType(crate::wasm::NumType::I64) => Value::I64(raw),
+                                ValType::NumType(crate::wasm::NumType::F32) => Value::F32(crate::wasm::execution::value::F32::from_bits(raw as u32)),
+                                ValType::NumType(crate::wasm::NumType::F64) => Value::F64(crate::wasm::execution::value::F64::from_bits(raw)),
+                                _ => Value::I64(0),
+                            };
+                            stack.push_value::<T>(val)?;
+                        }
+                    }
                 }
                 trace!("Instruction: CALL");
             }
@@ -306,6 +345,44 @@ pub fn run<T: Config>(
                         stp = wasm_func_to_call_inst.stp;
                         current_function_end_marker = wasm_func_to_call_inst.code_expr.from()
                             + wasm_func_to_call_inst.code_expr.len();
+                    }
+                    FuncInst::AotFunc(aot_func_inst) => {
+                        let code_ptr = aot_func_inst.code.ptr();
+                        let params = stack
+                            .pop_tail_iter(func_to_call_ty.params.valtypes.len())
+                            .collect::<Vec<_>>();
+                        
+                        let mut raw_params: Vec<u64> = params.iter().map(|v| match v {
+                            Value::I32(i) => *i as u64,
+                            Value::I64(i) => *i,
+                            Value::F32(f) => f.to_bits() as u64,
+                            Value::F64(f) => f.to_bits(),
+                            Value::Ref(r) => match r {
+                                Ref::Null(_) => 0,
+                                Ref::Func(addr) => *addr as u64,
+                                Ref::Extern(addr) => addr.0 as u64,
+                            },
+                            Value::V128(_) => 0,
+                        }).collect();
+                        
+                        let func_ptr: extern "C" fn(*mut (), *const u64, *mut u64, u64) = unsafe { core::mem::transmute(code_ptr) };
+                        let result_count = func_to_call_ty.returns.valtypes.len();
+                        let mut raw_results = vec![0u64; result_count];
+                        let mem_base = store.get_wasm_base_ptr() as u64;
+                        
+                        func_ptr(core::ptr::null_mut(), raw_params.as_ptr(), raw_results.as_mut_ptr(), mem_base);
+                        
+                        for (i, &raw) in raw_results.iter().enumerate() {
+                            let ty = func_to_call_ty.returns.valtypes[i];
+                            let val = match ty {
+                                ValType::NumType(crate::wasm::NumType::I32) => Value::I32(raw as u32),
+                                ValType::NumType(crate::wasm::NumType::I64) => Value::I64(raw),
+                                ValType::NumType(crate::wasm::NumType::F32) => Value::F32(crate::wasm::execution::value::F32::from_bits(raw as u32)),
+                                ValType::NumType(crate::wasm::NumType::F64) => Value::F64(crate::wasm::execution::value::F64::from_bits(raw)),
+                                _ => Value::I64(0),
+                            };
+                            stack.push_value::<T>(val)?;
+                        }
                     }
                 }
                 trace!("Instruction: CALL_INDIRECT");
@@ -3366,8 +3443,8 @@ pub fn run<T: Config>(
                 let func_to_call_ty = store.functions.get(func_to_call_addr).ty();
                 let params: Vec<Value> = stack.pop_tail_iter(func_to_call_ty.params.valtypes.len()).collect();
 
-                // Pop current frame
-                stack.pop_call_frame();
+                // Pop current frame and capture return info
+                let (ret_func, ret_pc, ret_stp) = stack.pop_call_frame();
 
                 // Push new args
                 for param in params {
@@ -3383,46 +3460,82 @@ pub fn run<T: Config>(
                         let returns = hostcode(store, args).map_err(|HaltExecutionError(code)| RuntimeError::HostFunctionHaltedExecution(code))?;
                         store.caller_module = None;
                         for ret in returns { stack.push_value::<T>(ret)?; }
-                        // Since we popped the frame, we need to handle return? 
-                        // Actually, if we pop frame, we are back to caller's caller.
-                        // If host func returns, we just push values and continue in caller's caller?
-                        // This seems correct for host functions.
+                        
+                        // Restore state to caller
+                        current_func_addr = ret_func;
+                        if stack.call_frame_count() == 0 {
+                            // If no more frames, we are done
+                            break;
+                        }
+                        let FuncInst::WasmFunc(ret_func_inst) = store.functions.get(ret_func) else { unreachable!() };
+                        current_module = ret_func_inst.module_addr;
+                        wasm.full_wasm_binary = store.modules.get(current_module).wasm_bytecode;
+                        wasm.pc = ret_pc;
+                        stp = ret_stp;
+                        current_function_end_marker = ret_func_inst.code_expr.from() + ret_func_inst.code_expr.len();
                     }
                     FuncInst::WasmFunc(wasm_func) => {
                         stack.push_call_frame::<T>(
-                            // Use the *original* return_func_addr from the frame we just popped?
-                            // Wait, `pop_call_frame` returns (func_addr, pc, stp).
-                            // We need to preserve the *caller's* caller.
-                            // `current_func_addr` was the one we just left.
-                            // We need to use `maybe_return_func_addr` from the popped frame?
-                            // No, `pop_call_frame` removes the frame. The top of `stack.frames` is now the caller.
-                            // When we push new frame, `return_func_addr` should be the *current* top frame's function?
-                            // Or rather, the one that *called* the function we just left.
-                            // But `push_call_frame` takes `return_func_addr`.
-                            // If we popped, `stack.frames` top is the caller.
-                            // We should pass `stack.current_call_frame().return_func_addr`? No.
-                            // The `return_func_addr` field in CallFrame is "who called me".
-                            // If we do tail call, we want the new frame to point to "who called me (the one we just left)".
-                            // So we pass the same `return_func_addr` as the frame we popped.
-                            // I need to capture it from `pop_call_frame`.
-                            // But `pop_call_frame` returns it.
-                            current_func_addr, // Placeholder, see logic below
+                            ret_func, // Correctly point to the original caller
                             &func_to_call_ty,
                             &wasm_func.locals,
-                            0, 0, // Placeholders
+                            ret_pc, 
+                            ret_stp,
                         )?;
-                        // Re-fix the CallFrame
-                        {
-                            let frame = stack.frames.last_mut().unwrap();
-                            // frame.return_func_addr = ... ; // We need the info from popped frame.
-                            // Implementing fully correct tail call requires `pop_call_frame` return values.
-                        }
                         current_func_addr = func_to_call_addr;
                         current_module = wasm_func.module_addr;
                         wasm.full_wasm_binary = store.modules.get(current_module).wasm_bytecode;
                         wasm.move_start_to(wasm_func.code_expr).unwrap_validated();
                         stp = wasm_func.stp;
                         current_function_end_marker = wasm_func.code_expr.from() + wasm_func.code_expr.len();
+                    }
+                    FuncInst::AotFunc(aot_func_inst) => {
+                        let code_ptr = aot_func_inst.code.ptr();
+                        let params = stack.pop_tail_iter(func_to_call_ty.params.valtypes.len()).collect::<Vec<_>>();
+                        
+                        let mut raw_params: Vec<u64> = params.iter().map(|v| match v {
+                            Value::I32(i) => *i as u64,
+                            Value::I64(i) => *i,
+                            Value::F32(f) => f.to_bits() as u64,
+                            Value::F64(f) => f.to_bits(),
+                            Value::Ref(r) => match r {
+                                Ref::Null(_) => 0,
+                                Ref::Func(addr) => *addr as u64,
+                                Ref::Extern(addr) => addr.0 as u64,
+                            },
+                            Value::V128(_) => 0,
+                        }).collect();
+                        
+                        let func_ptr: extern "C" fn(*mut (), *const u64, *mut u64, u64) = unsafe { core::mem::transmute(code_ptr) };
+                        let result_count = func_to_call_ty.returns.valtypes.len();
+                        let mut raw_results = vec![0u64; result_count];
+                        let mem_base = store.get_wasm_base_ptr() as u64;
+                        
+                        func_ptr(core::ptr::null_mut(), raw_params.as_ptr(), raw_results.as_mut_ptr(), mem_base);
+                        
+                        for (i, &raw) in raw_results.iter().enumerate() {
+                            let ty = func_to_call_ty.returns.valtypes[i];
+                            let val = match ty {
+                                ValType::NumType(crate::wasm::NumType::I32) => Value::I32(raw as u32),
+                                ValType::NumType(crate::wasm::NumType::I64) => Value::I64(raw),
+                                ValType::NumType(crate::wasm::NumType::F32) => Value::F32(crate::wasm::execution::value::F32::from_bits(raw as u32)),
+                                ValType::NumType(crate::wasm::NumType::F64) => Value::F64(crate::wasm::execution::value::F64::from_bits(raw)),
+                                _ => Value::I64(0),
+                            };
+                            stack.push_value::<T>(val)?;
+                        }
+
+                        // Restore state to caller
+                        current_func_addr = ret_func;
+                        if stack.call_frame_count() == 0 {
+                            break;
+                        }
+                        let FuncInst::WasmFunc(ret_func_inst) = store.functions.get(ret_func) else { unreachable!() };
+                        current_module = ret_func_inst.module_addr;
+                        wasm.full_wasm_binary = store.modules.get(current_module).wasm_bytecode;
+                        wasm.pc = ret_pc;
+                        stp = ret_stp;
+                        current_function_end_marker = ret_func_inst.code_expr.from() + ret_func_inst.code_expr.len();
                     }
                 }
             }
@@ -3444,7 +3557,9 @@ pub fn run<T: Config>(
                 // (Similar tail call logic as RETURN_CALL but with dynamic func_addr)
                 let func_to_call_ty = store.functions.get(func_addr).ty();
                 let params: Vec<Value> = stack.pop_tail_iter(func_to_call_ty.params.valtypes.len()).collect();
-                stack.pop_call_frame();
+                
+                let (ret_func, ret_pc, ret_stp) = stack.pop_call_frame();
+                
                 for param in params { stack.push_value::<T>(param)?; }
 
                 match store.functions.get(func_addr) {
@@ -3455,15 +3570,69 @@ pub fn run<T: Config>(
                         let returns = hostcode(store, args).map_err(|HaltExecutionError(code)| RuntimeError::HostFunctionHaltedExecution(code))?;
                         store.caller_module = None;
                         for ret in returns { stack.push_value::<T>(ret)?; }
+                        
+                        current_func_addr = ret_func;
+                        if stack.call_frame_count() == 0 { break; }
+                        let FuncInst::WasmFunc(ret_func_inst) = store.functions.get(ret_func) else { unreachable!() };
+                        current_module = ret_func_inst.module_addr;
+                        wasm.full_wasm_binary = store.modules.get(current_module).wasm_bytecode;
+                        wasm.pc = ret_pc;
+                        stp = ret_stp;
+                        current_function_end_marker = ret_func_inst.code_expr.from() + ret_func_inst.code_expr.len();
                     }
                     FuncInst::WasmFunc(wasm_func) => {
-                        stack.push_call_frame::<T>(current_func_addr, &func_to_call_ty, &wasm_func.locals, 0, 0)?;
+                        stack.push_call_frame::<T>(ret_func, &func_to_call_ty, &wasm_func.locals, ret_pc, ret_stp)?;
                         current_func_addr = func_addr;
                         current_module = wasm_func.module_addr;
                         wasm.full_wasm_binary = store.modules.get(current_module).wasm_bytecode;
                         wasm.move_start_to(wasm_func.code_expr).unwrap_validated();
                         stp = wasm_func.stp;
                         current_function_end_marker = wasm_func.code_expr.from() + wasm_func.code_expr.len();
+                    }
+                    FuncInst::AotFunc(aot_func_inst) => {
+                        let code_ptr = aot_func_inst.code.ptr();
+                        let params = stack.pop_tail_iter(func_to_call_ty.params.valtypes.len()).collect::<Vec<_>>();
+                        
+                        let mut raw_params: Vec<u64> = params.iter().map(|v| match v {
+                            Value::I32(i) => *i as u64,
+                            Value::I64(i) => *i,
+                            Value::F32(f) => f.to_bits() as u64,
+                            Value::F64(f) => f.to_bits(),
+                            Value::Ref(r) => match r {
+                                Ref::Null(_) => 0,
+                                Ref::Func(addr) => *addr as u64,
+                                Ref::Extern(addr) => addr.0 as u64,
+                            },
+                            Value::V128(_) => 0,
+                        }).collect();
+                        
+                        let func_ptr: extern "C" fn(*mut (), *const u64, *mut u64, u64) = unsafe { core::mem::transmute(code_ptr) };
+                        let result_count = func_to_call_ty.returns.valtypes.len();
+                        let mut raw_results = vec![0u64; result_count];
+                        let mem_base = store.get_wasm_base_ptr() as u64;
+                        
+                        func_ptr(core::ptr::null_mut(), raw_params.as_ptr(), raw_results.as_mut_ptr(), mem_base);
+                        
+                        for (i, &raw) in raw_results.iter().enumerate() {
+                            let ty = func_to_call_ty.returns.valtypes[i];
+                            let val = match ty {
+                                ValType::NumType(crate::wasm::NumType::I32) => Value::I32(raw as u32),
+                                ValType::NumType(crate::wasm::NumType::I64) => Value::I64(raw),
+                                ValType::NumType(crate::wasm::NumType::F32) => Value::F32(crate::wasm::execution::value::F32::from_bits(raw as u32)),
+                                ValType::NumType(crate::wasm::NumType::F64) => Value::F64(crate::wasm::execution::value::F64::from_bits(raw)),
+                                _ => Value::I64(0),
+                            };
+                            stack.push_value::<T>(val)?;
+                        }
+
+                        current_func_addr = ret_func;
+                        if stack.call_frame_count() == 0 { break; }
+                        let FuncInst::WasmFunc(ret_func_inst) = store.functions.get(ret_func) else { unreachable!() };
+                        current_module = ret_func_inst.module_addr;
+                        wasm.full_wasm_binary = store.modules.get(current_module).wasm_bytecode;
+                        wasm.pc = ret_pc;
+                        stp = ret_stp;
+                        current_function_end_marker = ret_func_inst.code_expr.from() + ret_func_inst.code_expr.len();
                     }
                 }
             }

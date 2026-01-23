@@ -4,6 +4,7 @@ members = [
     "apps/shell",
     "apps/sysmon",
     "apps/fps_test",
+    "apps/aot_test",
     "apps/tmap",
     "apps/cat",
     "apps/taskbar",

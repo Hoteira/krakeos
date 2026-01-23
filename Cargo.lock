@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "aot_test"
+version = "0.1.0"
+dependencies = [
+ "std",
+]
+
+[[package]]
 name = "asvgard"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
