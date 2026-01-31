@@ -8,7 +8,6 @@ members = [
     "apps/tmap",
     "apps/cat",
     "apps/taskbar",
-    "apps/wasm_test",
     "libs/libc",
     "elfic",
     "inkui",
