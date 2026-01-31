@@ -7,6 +7,7 @@ use crate::rust_alloc::string::String;
 use crate::rust_alloc::vec;
 use crate::rust_alloc::vec::Vec;
 use crate::wasm::core::indices::TypeIdx;
+use crate::wasm::core::reader::WasmReader;
 use crate::wasm::core::reader::span::Span;
 use crate::wasm::core::reader::types::data::{DataModeActive, DataSegment};
 use crate::wasm::core::reader::types::element::{ActiveElem, ElemItems, ElemMode, ElemType};
@@ -15,28 +16,28 @@ use crate::wasm::core::reader::types::global::GlobalType;
 use crate::wasm::core::reader::types::{
     ExternType, FuncType, ImportSubTypeRelation, MemType, TableType,
 };
-use crate::wasm::core::reader::WasmReader;
 use crate::wasm::execution::config::Config;
 use crate::wasm::execution::interpreter_loop::{self, memory_init, table_init};
 use crate::wasm::execution::resumable::{
     Dormitory, FreshResumableRef, Resumable, ResumableRef, RunState,
 };
 use crate::wasm::execution::store::addrs::{
-    AddrVec, ComponentInstAddr, DataAddr, ElemAddr, FuncAddr, GlobalAddr, MemAddr, ModuleAddr, TableAddr,
+    AddrVec, ComponentInstAddr, DataAddr, ElemAddr, FuncAddr, GlobalAddr, MemAddr, ModuleAddr,
+    TableAddr,
 };
 use crate::wasm::execution::value::{Ref, Value};
-use crate::wasm::execution::{run_const_span, Stack};
-use crate::wasm::{RefType, RuntimeError, TrapError, ValidationInfo, ValType};
+use crate::wasm::execution::{Stack, run_const_span};
+use crate::wasm::{RefType, RuntimeError, TrapError, ValType, ValidationInfo};
 use core::sync::atomic::{AtomicU64, Ordering};
 use instances::{
-    AotFuncInst, DataInst, ElemInst, FuncInst, GlobalInst, HostFuncInst, MemInst, ModuleInst, TableInst,
+    DataInst, ElemInst, FuncInst, GlobalInst, HostFuncInst, MemInst, ModuleInst, TableInst,
     WasmFuncInst,
 };
 use linear_memory::LinearMemory;
 pub mod addrs;
+pub mod component;
 pub(crate) mod instances;
 pub(crate) mod linear_memory;
-pub mod component;
 pub struct Store<'a, T: Config> {
     pub functions: AddrVec<FuncAddr, FuncInst<T>>,
     pub tables: AddrVec<TableAddr, TableInst>,
@@ -71,54 +72,6 @@ impl<'a, T: Config> Store<'a, T> {
         }
     }
 
-    pub fn compile_module_aot_unchecked(&mut self, module_addr: ModuleAddr) {
-        crate::os::debug_print(&crate::rust_alloc::format!("[AOT] Compiling module {}...\n", module_addr));
-        let module_inst = self.modules.get(module_addr);
-        
-        let func_addrs = module_inst.func_addrs.clone();
-        
-        // Collect function types map
-        let mut func_types: crate::rust_alloc::collections::BTreeMap<usize, crate::wasm::core::reader::types::FuncType> = crate::rust_alloc::collections::BTreeMap::new();
-        for &addr in &func_addrs {
-            let f = self.functions.get(addr);
-            func_types.insert(addr, f.ty());
-        }
-
-        let mut compiled_count = 0;
-
-        for (i, &func_addr) in func_addrs.iter().enumerate() {
-            // Check if it is a WasmFunc
-            let is_wasm = matches!(self.functions.get(func_addr), FuncInst::WasmFunc(_));
-            
-            if is_wasm {
-                let wasm_func = if let FuncInst::WasmFunc(f) = self.functions.get(func_addr) {
-                    f
-                } else {
-                    continue;
-                };
-
-                let module_inst = self.modules.get(module_addr);
-                
-                match crate::wasm::aot::compiler::compile_function::<T>(wasm_func, module_inst, module_addr, &func_types) {
-                    Ok(code) => {
-                        let function_type = wasm_func.function_type.clone();
-                        let aot_inst = FuncInst::AotFunc(AotFuncInst {
-                            function_type,
-                            code,
-                        });
-                        *self.functions.get_mut(func_addr) = aot_inst;
-                        compiled_count += 1;
-                        crate::os::debug_print(&crate::rust_alloc::format!("[AOT] Func {} compiled.\n", i));
-                    },
-                    Err(e) => {
-                        crate::os::debug_print(&crate::rust_alloc::format!("[AOT] Func {} failed: {:?}\n", i, e));
-                    }
-                }
-            }
-        }
-        crate::os::debug_print(&crate::rust_alloc::format!("[AOT] Compiled {} functions.\n", compiled_count));
-    }
-
     pub fn module_instantiate_unchecked(
         &mut self,
         validation_info: &ValidationInfo<'a>,
@@ -147,7 +100,10 @@ impl<'a, T: Config> Store<'a, T> {
             .zip(validation_info.func_blocks_stps.iter())
             .map(|(ty_idx, (span, stp))| self.alloc_func((*ty_idx, (*span, *stp)), module_addr))
             .collect();
-        self.modules.get_mut(module_addr).func_addrs.extend(func_addrs);
+        self.modules
+            .get_mut(module_addr)
+            .func_addrs
+            .extend(func_addrs);
         let maybe_global_init_vals: Result<Vec<Value>, _> = validation_info
             .globals
             .iter()
@@ -158,44 +114,90 @@ impl<'a, T: Config> Store<'a, T> {
             })
             .collect();
         let global_init_vals = maybe_global_init_vals?;
-        let mut element_init_ref_lists: Vec<Vec<Ref>> = Vec::with_capacity(validation_info.elements.len());
+        let mut element_init_ref_lists: Vec<Vec<Ref>> =
+            Vec::with_capacity(validation_info.elements.len());
         for elem in &validation_info.elements {
             let mut new_list = Vec::new();
             match &elem.init {
                 ElemItems::RefFuncs(ref_funcs) => {
                     for func_idx in ref_funcs {
-                        let func_addr = *self.modules.get(module_addr).func_addrs.get(*func_idx as usize).unwrap_validated();
+                        let func_addr = *self
+                            .modules
+                            .get(module_addr)
+                            .func_addrs
+                            .get(*func_idx as usize)
+                            .unwrap_validated();
                         new_list.push(Ref::Func(func_addr));
                     }
                 }
                 ElemItems::Exprs(_, exprs) => {
                     for expr in exprs {
-                        new_list.push(run_const_span(validation_info.wasm, expr, module_addr, self)?.unwrap_validated().try_into().unwrap_validated())
+                        new_list.push(
+                            run_const_span(validation_info.wasm, expr, module_addr, self)?
+                                .unwrap_validated()
+                                .try_into()
+                                .unwrap_validated(),
+                        )
                     }
                 }
             }
             element_init_ref_lists.push(new_list);
         }
-        let table_addrs: Vec<TableAddr> = validation_info.tables.iter().map(|t| self.alloc_table(*t, Ref::Null(t.et))).collect();
-        let mem_addrs: Vec<MemAddr> = validation_info.memories.iter().map(|m| self.alloc_mem(*m)).collect();
-        let global_addrs: Vec<GlobalAddr> = validation_info.globals.iter().zip(global_init_vals).map(|(g, v)| self.alloc_global(g.ty, v)).collect();
-        let elem_addrs = validation_info.elements.iter().zip(element_init_ref_lists).map(|(e, r)| self.alloc_elem(e.ty(), r)).collect();
-        let data_addrs = validation_info.data.iter().map(|d| self.alloc_data(&d.init)).collect();
+        let table_addrs: Vec<TableAddr> = validation_info
+            .tables
+            .iter()
+            .map(|t| self.alloc_table(*t, Ref::Null(t.et)))
+            .collect();
+        let mem_addrs: Vec<MemAddr> = validation_info
+            .memories
+            .iter()
+            .map(|m| self.alloc_mem(*m))
+            .collect();
+        let global_addrs: Vec<GlobalAddr> = validation_info
+            .globals
+            .iter()
+            .zip(global_init_vals)
+            .map(|(g, v)| self.alloc_global(g.ty, v))
+            .collect();
+        let elem_addrs = validation_info
+            .elements
+            .iter()
+            .zip(element_init_ref_lists)
+            .map(|(e, r)| self.alloc_elem(e.ty(), r))
+            .collect();
+        let data_addrs = validation_info
+            .data
+            .iter()
+            .map(|d| self.alloc_data(&d.init))
+            .collect();
         let mut table_addrs_mod: Vec<TableAddr> = extern_vals.iter().tables().collect();
         table_addrs_mod.extend(table_addrs);
         let mut mem_addrs_mod: Vec<MemAddr> = extern_vals.iter().mems().collect();
         mem_addrs_mod.extend(mem_addrs);
-        self.modules.get_mut(module_addr).global_addrs.extend(global_addrs);
-        let export_insts: BTreeMap<String, ExternVal> = validation_info.exports.iter().map(|Export { name, desc }| {
-            let module_inst = self.modules.get(module_addr);
-            let value = match desc {
-                ExportDesc::FuncIdx(func_idx) => ExternVal::Func(module_inst.func_addrs[*func_idx]),
-                ExportDesc::TableIdx(table_idx) => ExternVal::Table(table_addrs_mod[*table_idx]),
-                ExportDesc::MemIdx(mem_idx) => ExternVal::Mem(mem_addrs_mod[*mem_idx]),
-                ExportDesc::GlobalIdx(global_idx) => ExternVal::Global(module_inst.global_addrs[*global_idx]),
-            };
-            (String::from(name), value)
-        }).collect();
+        self.modules
+            .get_mut(module_addr)
+            .global_addrs
+            .extend(global_addrs);
+        let export_insts: BTreeMap<String, ExternVal> = validation_info
+            .exports
+            .iter()
+            .map(|Export { name, desc }| {
+                let module_inst = self.modules.get(module_addr);
+                let value = match desc {
+                    ExportDesc::FuncIdx(func_idx) => {
+                        ExternVal::Func(module_inst.func_addrs[*func_idx])
+                    }
+                    ExportDesc::TableIdx(table_idx) => {
+                        ExternVal::Table(table_addrs_mod[*table_idx])
+                    }
+                    ExportDesc::MemIdx(mem_idx) => ExternVal::Mem(mem_addrs_mod[*mem_idx]),
+                    ExportDesc::GlobalIdx(global_idx) => {
+                        ExternVal::Global(module_inst.global_addrs[*global_idx])
+                    }
+                };
+                (String::from(name), value)
+            })
+            .collect();
         let module_inst = self.modules.get_mut(module_addr);
         module_inst.table_addrs = table_addrs_mod;
         module_inst.mem_addrs = mem_addrs_mod;
@@ -203,11 +205,35 @@ impl<'a, T: Config> Store<'a, T> {
         module_inst.data_addrs = data_addrs;
         module_inst.exports = export_insts;
         // Initialize active element segments
-        for (i, ElemType { init: elem_items, mode }) in validation_info.elements.iter().enumerate() {
-            if let ElemMode::Active(ActiveElem { table_idx, init_expr }) = mode {
+        for (
+            i,
+            ElemType {
+                init: elem_items,
+                mode,
+            },
+        ) in validation_info.elements.iter().enumerate()
+        {
+            if let ElemMode::Active(ActiveElem {
+                table_idx,
+                init_expr,
+            }) = mode
+            {
                 let n = elem_items.len() as u32;
-                let d: i32 = run_const_span(validation_info.wasm, init_expr, module_addr, self)?.unwrap_validated().try_into().unwrap_validated();
-                table_init(&self.modules, &mut self.tables, &self.elements, module_addr, i, *table_idx as usize, n, 0, d)?;
+                let d: i32 = run_const_span(validation_info.wasm, init_expr, module_addr, self)?
+                    .unwrap_validated()
+                    .try_into()
+                    .unwrap_validated();
+                table_init(
+                    &self.modules,
+                    &mut self.tables,
+                    &self.elements,
+                    module_addr,
+                    i,
+                    *table_idx as usize,
+                    n,
+                    0,
+                    d,
+                )?;
                 elem_drop(&self.modules, &mut self.elements, module_addr, i)?;
             } else if let ElemMode::Declarative = mode {
                 elem_drop(&self.modules, &mut self.elements, module_addr, i)?;
@@ -215,23 +241,63 @@ impl<'a, T: Config> Store<'a, T> {
         }
         // Initialize active data segments
         for (i, DataSegment { init, mode }) in validation_info.data.iter().enumerate() {
-            if let crate::wasm::core::reader::types::data::DataMode::Active(DataModeActive { memory_idx, offset }) = mode {
-                if *memory_idx != 0 { return Err(RuntimeError::MoreThanOneMemory); }
+            if let crate::wasm::core::reader::types::data::DataMode::Active(DataModeActive {
+                memory_idx,
+                offset,
+            }) = mode
+            {
+                if *memory_idx != 0 {
+                    return Err(RuntimeError::MoreThanOneMemory);
+                }
                 let n = init.len() as u32;
-                let d: i32 = run_const_span(validation_info.wasm, offset, module_addr, self)?.unwrap_validated().try_into().unwrap_validated();
-                memory_init(&self.modules, &mut self.memories, &self.data, module_addr, i, 0, n, 0, d)?;
+                let d: i32 = run_const_span(validation_info.wasm, offset, module_addr, self)?
+                    .unwrap_validated()
+                    .try_into()
+                    .unwrap_validated();
+                memory_init(
+                    &self.modules,
+                    &mut self.memories,
+                    &self.data,
+                    module_addr,
+                    i,
+                    0,
+                    n,
+                    0,
+                    d,
+                )?;
                 data_drop(&self.modules, &mut self.data, module_addr, i)?;
             }
         }
         let maybe_remaining_fuel = if let Some(func_idx) = validation_info.start {
             let func_addr = self.modules.get(module_addr).func_addrs[func_idx];
-            let RunState::Finished { maybe_remaining_fuel, .. } = self.invoke_unchecked(func_addr, Vec::new(), maybe_fuel)? else { return Err(RuntimeError::OutOfFuel); };
+            let RunState::Finished {
+                maybe_remaining_fuel,
+                ..
+            } = self.invoke_unchecked(func_addr, Vec::new(), maybe_fuel)?
+            else {
+                return Err(RuntimeError::OutOfFuel);
+            };
             maybe_remaining_fuel
-        } else { maybe_fuel };
-        Ok(InstantiationOutcome { module_addr, maybe_remaining_fuel })
+        } else {
+            maybe_fuel
+        };
+        Ok(InstantiationOutcome {
+            module_addr,
+            maybe_remaining_fuel,
+        })
     }
-    pub fn func_alloc_unchecked(&mut self, func_type: FuncType, host_func: for<'x> fn(&mut Store<'x, T>, Vec<Value>) -> Result<Vec<Value>, HaltExecutionError>) -> FuncAddr {
-        self.functions.insert(FuncInst::HostFunc(HostFuncInst { function_type: func_type, hostcode: host_func }))
+    pub fn func_alloc_unchecked(
+        &mut self,
+        func_type: FuncType,
+        host_func: for<'x> fn(
+            &mut Store<'x, T>,
+            Vec<Value>,
+        ) -> Result<Vec<Value>, HaltExecutionError>,
+    ) -> FuncAddr {
+        self.functions.insert(FuncInst::HostFunc(HostFuncInst {
+            function_type: func_type,
+            hostcode: host_func,
+        }))
     }
     pub fn func_type_unchecked(&self, func_addr: FuncAddr) -> FuncType {
         self.functions.get(func_addr).ty()
@@ -240,15 +306,30 @@ impl<'a, T: Config> Store<'a, T> {
         let (ty, (span, stp)) = func;
         let mut reader = WasmReader::new(self.modules.get(module_addr).wasm_bytecode);
         reader.move_start_to(span).unwrap_validated();
-        let (locals, bytes_read) = reader.measure_num_read_bytes(crate::wasm::validation::code::read_declared_locals).unwrap_validated();
+        let (locals, bytes_read) = reader
+            .measure_num_read_bytes(crate::wasm::validation::code::read_declared_locals)
+            .unwrap_validated();
         let code_expr = reader.make_span(span.len() - bytes_read).unwrap_validated();
-        self.functions.insert(FuncInst::WasmFunc(WasmFuncInst { function_type: self.modules.get(module_addr).types[ty].clone(), _ty: ty, locals, code_expr, stp, module_addr }))
+        self.functions.insert(FuncInst::WasmFunc(WasmFuncInst {
+            function_type: self.modules.get(module_addr).types[ty].clone(),
+            _ty: ty,
+            locals,
+            code_expr,
+            stp,
+            module_addr,
+        }))
     }
     fn alloc_table(&mut self, ty: TableType, reff: Ref) -> TableAddr {
-        self.tables.insert(TableInst { ty, elem: vec![reff; ty.lim.min as usize] })
+        self.tables.insert(TableInst {
+            ty,
+            elem: vec![reff; ty.lim.min as usize],
+        })
     }
     fn alloc_mem(&mut self, ty: MemType) -> MemAddr {
-        self.memories.insert(MemInst { ty, mem: LinearMemory::new_with_initial_pages(ty.limits.min.try_into().unwrap_validated()) })
+        self.memories.insert(MemInst {
+            ty,
+            mem: LinearMemory::new_with_initial_pages(ty.limits.min.try_into().unwrap_validated()),
+        })
     }
     fn alloc_global(&mut self, ty: GlobalType, value: Value) -> GlobalAddr {
         self.globals.insert(GlobalInst { ty, value })
@@ -257,126 +338,191 @@ impl<'a, T: Config> Store<'a, T> {
         self.elements.insert(ElemInst { _ty, references })
     }
     fn alloc_data(&mut self, bytes: &[u8]) -> DataAddr {
-        self.data.insert(DataInst { data: Vec::from(bytes) })
+        self.data.insert(DataInst {
+            data: Vec::from(bytes),
+        })
     }
-    pub fn invoke_unchecked(&mut self, func_addr: FuncAddr, params: Vec<Value>, maybe_fuel: Option<u32>) -> Result<RunState, RuntimeError> {
+    pub fn invoke_unchecked(
+        &mut self,
+        func_addr: FuncAddr,
+        params: Vec<Value>,
+        maybe_fuel: Option<u32>,
+    ) -> Result<RunState, RuntimeError> {
         self.resume_unchecked(self.create_resumable_unchecked(func_addr, params, maybe_fuel)?)
     }
-    pub fn create_resumable_unchecked(&self, func_addr: FuncAddr, params: Vec<Value>, maybe_fuel: Option<u32>) -> Result<ResumableRef, RuntimeError> {
+    pub fn create_resumable_unchecked(
+        &self,
+        func_addr: FuncAddr,
+        params: Vec<Value>,
+        maybe_fuel: Option<u32>,
+    ) -> Result<ResumableRef, RuntimeError> {
         let func_inst = self.functions.get(func_addr);
         let func_ty = func_inst.ty();
         let param_types = params.iter().map(|v| v.to_ty()).collect::<Vec<_>>();
-        if func_ty.params.valtypes != param_types { return Err(RuntimeError::FunctionInvocationSignatureMismatch); }
-        Ok(ResumableRef::Fresh(FreshResumableRef { func_addr, params, maybe_fuel }))
+        if func_ty.params.valtypes != param_types {
+            return Err(RuntimeError::FunctionInvocationSignatureMismatch);
+        }
+        Ok(ResumableRef::Fresh(FreshResumableRef {
+            func_addr,
+            params,
+            maybe_fuel,
+        }))
     }
-    pub fn resume_unchecked(&mut self, mut resumable_ref: ResumableRef) -> Result<RunState, RuntimeError> {
+    pub fn resume_unchecked(
+        &mut self,
+        mut resumable_ref: ResumableRef,
+    ) -> Result<RunState, RuntimeError> {
         match resumable_ref {
-            ResumableRef::Fresh(FreshResumableRef { func_addr, params, maybe_fuel }) => {
-                
-                // Pre-check for AotFunc to avoid holding borrow of self during execution
-                let aot_data = if let FuncInst::AotFunc(aot_func_inst) = self.functions.get(func_addr) {
-                    Some((aot_func_inst.code.ptr(), aot_func_inst.function_type.clone()))
-                } else {
-                    None
-                };
-
-                if let Some((code_ptr, function_type)) = aot_data {
-                    // AOT Execution Path
-                    
-                    // Unpack params to u64 array
-                    let mut raw_params: Vec<u64> = params.iter().map(|v| match v {
-                        Value::I32(i) => *i as u64,
-                        Value::I64(i) => *i,
-                        Value::F32(f) => f.to_bits() as u64,
-                        Value::F64(f) => f.to_bits(),
-                        Value::Ref(r) => match r {
-                            Ref::Null(_) => 0,
-                            Ref::Func(addr) => *addr as u64,
-                            Ref::Extern(addr) => addr.0 as u64,
-                        },
-                        Value::V128(_) => 0,
-                    }).collect();
-                    
-                    // Function pointer cast
-                    let func_ptr: extern "C" fn(*mut (), *const u64, *mut u64, u64) = unsafe { core::mem::transmute(code_ptr) };
-                    
-                    let result_count = function_type.returns.valtypes.len();
-                    let mut raw_results = vec![0u64; result_count];
-                    let mem_base = self.get_wasm_base_ptr() as u64;
-                    let store_ptr = self as *mut Store<T> as *mut ();
-                    
-                    // Execution
-                    func_ptr(store_ptr, raw_params.as_ptr(), raw_results.as_mut_ptr(), mem_base);
-                    
-                    // Repack results
-                    let mut results = Vec::new();
-                    for (i, &raw) in raw_results.iter().enumerate() {
-                        let ty = function_type.returns.valtypes[i];
-                        let val = match ty {
-                            ValType::NumType(crate::wasm::NumType::I32) => Value::I32(raw as u32),
-                            ValType::NumType(crate::wasm::NumType::I64) => Value::I64(raw),
-                            ValType::NumType(crate::wasm::NumType::F32) => Value::F32(crate::wasm::execution::value::F32::from_bits(raw as u32)),
-                            ValType::NumType(crate::wasm::NumType::F64) => Value::F64(crate::wasm::execution::value::F64::from_bits(raw)),
-                            _ => Value::I64(0),
-                        };
-                        results.push(val);
-                    }
-                    
-                    return Ok(RunState::Finished { values: results, maybe_remaining_fuel: maybe_fuel });
-                }
-
+            ResumableRef::Fresh(FreshResumableRef {
+                func_addr,
+                params,
+                maybe_fuel,
+            }) => {
                 // Standard Interpreter/Host Path
                 let func_inst = self.functions.get(func_addr);
                 match func_inst {
                     FuncInst::HostFunc(host_func_inst) => {
                         let hostcode = host_func_inst.hostcode;
-                        let returns = hostcode(self, params).map_err(|HaltExecutionError(code)| RuntimeError::HostFunctionHaltedExecution(code))?;
-                        Ok(RunState::Finished { values: returns, maybe_remaining_fuel: maybe_fuel })
+                        let returns =
+                            hostcode(self, params).map_err(|HaltExecutionError(code)| {
+                                RuntimeError::HostFunctionHaltedExecution(code)
+                            })?;
+                        Ok(RunState::Finished {
+                            values: returns,
+                            maybe_remaining_fuel: maybe_fuel,
+                        })
                     }
                     FuncInst::WasmFunc(wasm_func_inst) => {
                         let mut stack = Stack::new_with_values(params);
-                        stack.push_call_frame::<T>(usize::MAX, &wasm_func_inst.function_type, &wasm_func_inst.locals, usize::MAX, usize::MAX)?;
-                        let mut resumable = Resumable { current_func_addr: func_addr, stack, pc: wasm_func_inst.code_expr.from, stp: wasm_func_inst.stp, maybe_fuel };
+                        stack.push_call_frame::<T>(
+                            usize::MAX,
+                            &wasm_func_inst.function_type,
+                            &wasm_func_inst.locals,
+                            usize::MAX,
+                            usize::MAX,
+                        )?;
+                        let mut resumable = Resumable {
+                            current_func_addr: func_addr,
+                            stack,
+                            pc: wasm_func_inst.code_expr.from,
+                            stp: wasm_func_inst.stp,
+                            maybe_fuel,
+                        };
                         let result = interpreter_loop::run(&mut resumable, self)?;
                         match result {
-                            None => Ok(RunState::Finished { values: resumable.stack.into_values(), maybe_remaining_fuel: resumable.maybe_fuel }),
-                            Some(required_fuel) => Ok(RunState::Resumable { resumable_ref: ResumableRef::Invoked(self.dormitory.insert(resumable)), required_fuel }),
+                            None => Ok(RunState::Finished {
+                                values: resumable.stack.into_values(),
+                                maybe_remaining_fuel: resumable.maybe_fuel,
+                            }),
+                            Some(required_fuel) => Ok(RunState::Resumable {
+                                resumable_ref: ResumableRef::Invoked(
+                                    self.dormitory.insert(resumable),
+                                ),
+                                required_fuel,
+                            }),
                         }
                     }
-                    FuncInst::AotFunc(_) => unreachable!("AOT func should have been handled above"),
                 }
             }
             _ => Err(RuntimeError::Trap(TrapError::ReachedUnreachable)),
         }
     }
-    pub fn instance_export_unchecked(&self, module_addr: ModuleAddr, name: &str) -> Result<ExternVal, RuntimeError> {
-        self.modules.get(module_addr).exports.get(name).copied().ok_or(RuntimeError::UnknownExport)
+    pub fn instance_export_unchecked(
+        &self,
+        module_addr: ModuleAddr,
+        name: &str,
+    ) -> Result<ExternVal, RuntimeError> {
+        self.modules
+            .get(module_addr)
+            .exports
+            .get(name)
+            .copied()
+            .ok_or(RuntimeError::UnknownExport)
     }
-    pub fn table_alloc_unchecked(&mut self, table_type: TableType, r#ref: Ref) -> Result<TableAddr, RuntimeError> { Ok(self.alloc_table(table_type, r#ref)) }
-    pub fn table_type_unchecked(&self, table_addr: TableAddr) -> TableType { self.tables.get(table_addr).ty }
+    pub fn table_alloc_unchecked(
+        &mut self,
+        table_type: TableType,
+        r#ref: Ref,
+    ) -> Result<TableAddr, RuntimeError> {
+        Ok(self.alloc_table(table_type, r#ref))
+    }
+    pub fn table_type_unchecked(&self, table_addr: TableAddr) -> TableType {
+        self.tables.get(table_addr).ty
+    }
     pub fn table_read_unchecked(&self, table_addr: TableAddr, i: u32) -> Result<Ref, RuntimeError> {
-        self.tables.get(table_addr).elem.get(i as usize).copied().ok_or(RuntimeError::Trap(TrapError::TableOrElementAccessOutOfBounds))
+        self.tables
+            .get(table_addr)
+            .elem
+            .get(i as usize)
+            .copied()
+            .ok_or(RuntimeError::Trap(
+                TrapError::TableOrElementAccessOutOfBounds,
+            ))
     }
-    pub fn table_write_unchecked(&mut self, table_addr: TableAddr, i: u32, r#ref: Ref) -> Result<(), RuntimeError> {
+    pub fn table_write_unchecked(
+        &mut self,
+        table_addr: TableAddr,
+        i: u32,
+        r#ref: Ref,
+    ) -> Result<(), RuntimeError> {
         let ti = self.tables.get_mut(table_addr);
-        *ti.elem.get_mut(i as usize).ok_or(RuntimeError::Trap(TrapError::TableOrElementAccessOutOfBounds))? = r#ref;
+        *ti.elem.get_mut(i as usize).ok_or(RuntimeError::Trap(
+            TrapError::TableOrElementAccessOutOfBounds,
+        ))? = r#ref;
         Ok(())
     }
-    pub fn table_size_unchecked(&self, table_addr: TableAddr) -> u32 { self.tables.get(table_addr).elem.len() as u32 }
-    pub fn mem_alloc_unchecked(&mut self, mem_type: MemType) -> MemAddr { self.alloc_mem(mem_type) }
-    pub fn mem_type_unchecked(&self, mem_addr: MemAddr) -> MemType { self.memories.get(mem_addr).ty }
+    pub fn table_size_unchecked(&self, table_addr: TableAddr) -> u32 {
+        self.tables.get(table_addr).elem.len() as u32
+    }
+    pub fn mem_alloc_unchecked(&mut self, mem_type: MemType) -> MemAddr {
+        self.alloc_mem(mem_type)
+    }
+    pub fn mem_type_unchecked(&self, mem_addr: MemAddr) -> MemType {
+        self.memories.get(mem_addr).ty
+    }
     pub fn mem_read_unchecked(&self, mem_addr: MemAddr, i: u32) -> Result<u8, RuntimeError> {
-        self.memories.get(mem_addr).mem.load::<1, u8>(i as usize).map_err(|_| RuntimeError::Trap(TrapError::MemoryOrDataAccessOutOfBounds))
+        self.memories
+            .get(mem_addr)
+            .mem
+            .load::<1, u8>(i as usize)
+            .map_err(|_| RuntimeError::Trap(TrapError::MemoryOrDataAccessOutOfBounds))
     }
-    pub fn mem_write_unchecked(&self, mem_addr: MemAddr, i: u32, byte: u8) -> Result<(), RuntimeError> {
-        self.memories.get(mem_addr).mem.store::<1, u8>(i as usize, byte).map_err(|_| RuntimeError::Trap(TrapError::MemoryOrDataAccessOutOfBounds))
+    pub fn mem_write_unchecked(
+        &self,
+        mem_addr: MemAddr,
+        i: u32,
+        byte: u8,
+    ) -> Result<(), RuntimeError> {
+        self.memories
+            .get(mem_addr)
+            .mem
+            .store::<1, u8>(i as usize, byte)
+            .map_err(|_| RuntimeError::Trap(TrapError::MemoryOrDataAccessOutOfBounds))
     }
-    pub fn mem_size_unchecked(&self, mem_addr: MemAddr) -> u32 { self.memories.get(mem_addr).size() as u32 }
-    pub fn mem_grow_unchecked(&mut self, mem_addr: MemAddr, n: u32) -> Result<(), RuntimeError> { self.memories.get_mut(mem_addr).grow(n) }
-    pub fn global_alloc_unchecked(&mut self, global_type: GlobalType, val: Value) -> Result<GlobalAddr, RuntimeError> { Ok(self.alloc_global(global_type, val)) }
-    pub fn global_type_unchecked(&self, global_addr: GlobalAddr) -> GlobalType { self.globals.get(global_addr).ty }
-    pub fn global_read_unchecked(&self, global_addr: GlobalAddr) -> Value { self.globals.get(global_addr).value }
-    pub fn global_write_unchecked(&mut self, global_addr: GlobalAddr, val: Value) -> Result<(), RuntimeError> {
+    pub fn mem_size_unchecked(&self, mem_addr: MemAddr) -> u32 {
+        self.memories.get(mem_addr).size() as u32
+    }
+    pub fn mem_grow_unchecked(&mut self, mem_addr: MemAddr, n: u32) -> Result<(), RuntimeError> {
+        self.memories.get_mut(mem_addr).grow(n)
+    }
+    pub fn global_alloc_unchecked(
+        &mut self,
+        global_type: GlobalType,
+        val: Value,
+    ) -> Result<GlobalAddr, RuntimeError> {
+        Ok(self.alloc_global(global_type, val))
+    }
+    pub fn global_type_unchecked(&self, global_addr: GlobalAddr) -> GlobalType {
+        self.globals.get(global_addr).ty
+    }
+    pub fn global_read_unchecked(&self, global_addr: GlobalAddr) -> Value {
+        self.globals.get(global_addr).value
+    }
+    pub fn global_write_unchecked(
+        &mut self,
+        global_addr: GlobalAddr,
+        val: Value,
+    ) -> Result<(), RuntimeError> {
         let gi = self.globals.get_mut(global_addr);
         gi.value = val;
         Ok(())
@@ -388,10 +534,18 @@ impl<'a, T: Config> Store<'a, T> {
         self.memories.get(mem_addr).mem.get_base_ptr()
     }
 
-    pub fn access_fuel_mut_unchecked<R>(&mut self, _resumable_ref: &mut ResumableRef, _f: impl FnOnce(&mut Option<u32>) -> R) -> Result<R, RuntimeError> {
+    pub fn access_fuel_mut_unchecked<R>(
+        &mut self,
+        _resumable_ref: &mut ResumableRef,
+        _f: impl FnOnce(&mut Option<u32>) -> R,
+    ) -> Result<R, RuntimeError> {
         Err(RuntimeError::Trap(TrapError::ReachedUnreachable))
     }
-    pub fn invoke_without_fuel_unchecked(&mut self, func_addr: FuncAddr, params: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
+    pub fn invoke_without_fuel_unchecked(
+        &mut self,
+        func_addr: FuncAddr,
+        params: Vec<Value>,
+    ) -> Result<Vec<Value>, RuntimeError> {
         match self.invoke_unchecked(func_addr, params, None)? {
             RunState::Finished { values, .. } => Ok(values),
             _ => unreachable!(),
@@ -409,7 +563,12 @@ impl StoreId {
 #[derive(Debug, Copy, Clone)]
 pub struct HaltExecutionError(pub i32);
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum ExternVal { Func(FuncAddr), Table(TableAddr), Mem(MemAddr), Global(GlobalAddr) }
+pub enum ExternVal {
+    Func(FuncAddr),
+    Table(TableAddr),
+    Mem(MemAddr),
+    Global(GlobalAddr),
+}
 impl ExternVal {
     pub fn extern_type<'a, T: Config>(&self, store: &Store<'a, T>) -> ExternType {
         match self {
@@ -419,22 +578,54 @@ impl ExternVal {
             ExternVal::Global(addr) => ExternType::Global(store.globals.get(*addr).ty),
         }
     }
-    pub fn as_func(self) -> Option<FuncAddr> { if let ExternVal::Func(a) = self { Some(a) } else { None } }
+    pub fn as_func(self) -> Option<FuncAddr> {
+        if let ExternVal::Func(a) = self {
+            Some(a)
+        } else {
+            None
+        }
+    }
 }
 pub trait ExternFilterable {
-    fn funcs(self) -> impl Iterator<Item=FuncAddr>;
-    fn globals(self) -> impl Iterator<Item=GlobalAddr>;
-    fn tables(self) -> impl Iterator<Item=TableAddr>;
-    fn mems(self) -> impl Iterator<Item=MemAddr>;
+    fn funcs(self) -> impl Iterator<Item = FuncAddr>;
+    fn globals(self) -> impl Iterator<Item = GlobalAddr>;
+    fn tables(self) -> impl Iterator<Item = TableAddr>;
+    fn mems(self) -> impl Iterator<Item = MemAddr>;
 }
 impl<'a, I> ExternFilterable for I
 where
-    I: Iterator<Item=&'a ExternVal>,
+    I: Iterator<Item = &'a ExternVal>,
 {
-    fn funcs(self) -> impl Iterator<Item=FuncAddr> { self.filter_map(|v| v.as_func()) }
-    fn globals(self) -> impl Iterator<Item=GlobalAddr> { self.filter_map(|v| if let ExternVal::Global(a) = v { Some(*a) } else { None }) }
-    fn tables(self) -> impl Iterator<Item=TableAddr> { self.filter_map(|v| if let ExternVal::Table(a) = v { Some(*a) } else { None }) }
-    fn mems(self) -> impl Iterator<Item=MemAddr> { self.filter_map(|v| if let ExternVal::Mem(a) = v { Some(*a) } else { None }) }
+    fn funcs(self) -> impl Iterator<Item = FuncAddr> {
+        self.filter_map(|v| v.as_func())
+    }
+    fn globals(self) -> impl Iterator<Item = GlobalAddr> {
+        self.filter_map(|v| {
+            if let ExternVal::Global(a) = v {
+                Some(*a)
+            } else {
+                None
+            }
+        })
+    }
+    fn tables(self) -> impl Iterator<Item = TableAddr> {
+        self.filter_map(|v| {
+            if let ExternVal::Table(a) = v {
+                Some(*a)
+            } else {
+                None
+            }
+        })
+    }
+    fn mems(self) -> impl Iterator<Item = MemAddr> {
+        self.filter_map(|v| {
+            if let ExternVal::Mem(a) = v {
+                Some(*a)
+            } else {
+                None
+            }
+        })
+    }
 }
 pub struct InstantiationOutcome {
     pub module_addr: ModuleAddr,

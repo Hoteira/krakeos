@@ -1,18 +1,18 @@
 #![no_std]
 
 extern crate alloc;
-mod utils;
-mod parser;
 mod builtins;
+mod parser;
+mod utils;
 
+use crate::builtins::execute_builtin;
+use crate::parser::parse_segment;
+use crate::utils::resolve_path;
 use alloc::format;
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 use std::debugln;
-use crate::builtins::execute_builtin;
-use crate::parser::parse_segment;
-use crate::utils::resolve_path;
 
 const STDIN_FD: usize = 0;
 const STDOUT_FD: usize = 1;
@@ -50,7 +50,9 @@ pub fn main() {
 
                         for (i, segment) in segments.iter().enumerate() {
                             let parsed = parse_segment(segment);
-                            if parsed.cmd.is_empty() { continue; }
+                            if parsed.cmd.is_empty() {
+                                continue;
+                            }
 
                             let mut stdin_fd = 0;
                             let mut close_stdin = false;
@@ -79,7 +81,8 @@ pub fn main() {
                             if let Some(outfile) = parsed.output_file {
                                 let path = resolve_path(&cwd, &outfile);
                                 let res = if parsed.append_mode {
-                                    std::fs::File::open(&path).or_else(|_| std::fs::File::create(&path))
+                                    std::fs::File::open(&path)
+                                        .or_else(|_| std::fs::File::create(&path))
                                 } else {
                                     std::fs::File::create(&path)
                                 };
@@ -114,12 +117,21 @@ pub fn main() {
                             }
 
                             let is_builtin = match parsed.cmd.as_str() {
-                                "cd" | "ls" | "pwd" | "help" | "clear" | "touch" | "mkdir" | "rm" | "mv" | "cp" | "sleep" | "osfetch" | "echo" | "cat" | "export" | "wasm" => true,
-                                _ => false
+                                "cd" | "ls" | "pwd" | "help" | "clear" | "touch" | "mkdir"
+                                | "rm" | "mv" | "cp" | "sleep" | "osfetch" | "echo" | "cat"
+                                | "export" | "wasm" => true,
+                                _ => false,
                             };
 
                             if is_builtin {
-                                last_exit_code = execute_builtin(&parsed.cmd, &parsed.args, &mut cwd, &mut path_env, stdin_fd, stdout_fd) as usize;
+                                last_exit_code = execute_builtin(
+                                    &parsed.cmd,
+                                    &parsed.args,
+                                    &mut cwd,
+                                    &mut path_env,
+                                    stdin_fd,
+                                    stdout_fd,
+                                ) as usize;
                             } else {
                                 let mut prog_path = String::new();
                                 let mut found = false;
@@ -140,7 +152,9 @@ pub fn main() {
                                             break;
                                         }
 
-                                        if !parsed.cmd.ends_with(".elf") && !parsed.cmd.ends_with(".wasm") {
+                                        if !parsed.cmd.ends_with(".elf")
+                                            && !parsed.cmd.ends_with(".wasm")
+                                        {
                                             let p_elf = format!("{}/{}.elf", path_dir, parsed.cmd);
                                             if let Ok(_) = std::fs::File::open(&p_elf) {
                                                 prog_path = p_elf;
@@ -148,7 +162,8 @@ pub fn main() {
                                                 break;
                                             }
 
-                                            let p_wasm = format!("{}/{}.wasm", path_dir, parsed.cmd);
+                                            let p_wasm =
+                                                format!("{}/{}.wasm", path_dir, parsed.cmd);
                                             if let Ok(_) = std::fs::File::open(&p_wasm) {
                                                 prog_path = p_wasm;
                                                 found = true;
@@ -156,49 +171,56 @@ pub fn main() {
                                             }
                                         }
 
-                                        if !found && (path_dir.ends_with("/apps") || path_dir == "@0xE0/apps") {
+                                        if !found
+                                            && (path_dir.ends_with("/apps")
+                                                || path_dir == "@0xE0/apps")
+                                        {
                                             let apps_dir = format!("{}/{}", path_dir, parsed.cmd);
                                             if let Ok(entries) = std::fs::read_dir(&apps_dir) {
                                                 for entry in entries {
-                                                    if entry.file_type == std::fs::FileType::File && entry.name.ends_with(".elf") {
-                                                        prog_path = format!("{}/{}", apps_dir, entry.name);
+                                                    if entry.file_type == std::fs::FileType::File
+                                                        && entry.name.ends_with(".elf")
+                                                    {
+                                                        prog_path =
+                                                            format!("{}/{}", apps_dir, entry.name);
                                                         found = true;
                                                         break;
                                                     }
-                                                    if entry.file_type == std::fs::FileType::File && entry.name.ends_with(".wasm") {
-                                                        prog_path = format!("{}/{}", apps_dir, entry.name);
+                                                    if entry.file_type == std::fs::FileType::File
+                                                        && entry.name.ends_with(".wasm")
+                                                    {
+                                                        prog_path =
+                                                            format!("{}/{}", apps_dir, entry.name);
                                                         found = true;
                                                         break;
                                                     }
                                                 }
                                             }
                                         }
-                                        if found { break; }
+                                        if found {
+                                            break;
+                                        }
                                     }
                                 }
 
                                 if found {
-                                    let map = [
-                                        (0, stdin_fd as u8),
-                                        (1, stdout_fd as u8),
-                                        (2, 2)
-                                    ];
+                                    let map = [(0, stdin_fd as u8), (1, stdout_fd as u8), (2, 2)];
 
-                                    let args_refs: Vec<&str> = parsed.args.iter().map(|s| s.as_str()).collect();
+                                    let args_refs: Vec<&str> =
+                                        parsed.args.iter().map(|s| s.as_str()).collect();
 
                                     if prog_path.ends_with(".wasm") {
                                         let mut wasm_args = Vec::new();
                                         let mut root_path = None;
-                                        let mut aot_enabled = false;
                                         let mut i = 0;
 
                                         while i < parsed.args.len() {
-                                            if parsed.args[i] == "--dir" && i + 1 < parsed.args.len() {
-                                                root_path = Some(resolve_path(&cwd, &parsed.args[i + 1]));
+                                            if parsed.args[i] == "--dir"
+                                                && i + 1 < parsed.args.len()
+                                            {
+                                                root_path =
+                                                    Some(resolve_path(&cwd, &parsed.args[i + 1]));
                                                 i += 2;
-                                            } else if parsed.args[i] == "--aot" {
-                                                aot_enabled = true;
-                                                i += 1;
                                             } else {
                                                 wasm_args.push(parsed.args[i].clone());
                                                 i += 1;
@@ -209,11 +231,12 @@ pub fn main() {
                                         final_args.push(parsed.cmd.clone());
                                         final_args.extend(wasm_args);
 
-                                        builtins::run_wasm(prog_path, final_args, root_path, aot_enabled);
+                                        builtins::run_wasm(prog_path, final_args, root_path);
                                         // WASM runs in-process now, so no PID to track
                                         last_exit_code = 0;
                                     } else {
-                                        let pid = std::os::spawn_with_fds(&prog_path, &args_refs, &map);
+                                        let pid =
+                                            std::os::spawn_with_fds(&prog_path, &args_refs, &map);
                                         if pid != usize::MAX {
                                             children_pids.push(pid);
                                         } else {
@@ -229,8 +252,12 @@ pub fn main() {
                                 }
                             }
 
-                            if close_stdin && stdin_fd > 2 { std::os::file_close(stdin_fd); }
-                            if close_stdout && stdout_fd > 2 { std::os::file_close(stdout_fd); }
+                            if close_stdin && stdin_fd > 2 {
+                                std::os::file_close(stdin_fd);
+                            }
+                            if close_stdout && stdout_fd > 2 {
+                                std::os::file_close(stdout_fd);
+                            }
 
                             prev_pipe_read = next_pipe_read;
                         }

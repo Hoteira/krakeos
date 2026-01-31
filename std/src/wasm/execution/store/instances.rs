@@ -1,10 +1,10 @@
 use super::{
-    addrs::{DataAddr, ElemAddr, FuncAddr, GlobalAddr, MemAddr, ModuleAddr, TableAddr},
     ExternVal, HaltExecutionError, Store,
+    addrs::{DataAddr, ElemAddr, FuncAddr, GlobalAddr, MemAddr, ModuleAddr, TableAddr},
 };
 use crate::rust_alloc::{collections::btree_map::BTreeMap, string::String, vec, vec::Vec};
 use crate::wasm::{
-    aot::memory::ExecutableBuffer,
+    GlobalType, Limits, RefType, RuntimeError, TrapError, ValType, Value,
     core::{
         indices::TypeIdx,
         reader::{
@@ -15,18 +15,11 @@ use crate::wasm::{
     },
     execution::store::linear_memory::LinearMemory,
     execution::value::Ref,
-    GlobalType, Limits, RefType, RuntimeError, TrapError, ValType, Value,
 };
 #[derive(Debug)]
 pub enum FuncInst<T: crate::wasm::execution::config::Config> {
     WasmFunc(WasmFuncInst),
     HostFunc(HostFuncInst<T>),
-    AotFunc(AotFuncInst),
-}
-#[derive(Debug)]
-pub struct AotFuncInst {
-    pub function_type: FuncType,
-    pub code: ExecutableBuffer,
 }
 #[derive(Debug)]
 pub struct WasmFuncInst {
@@ -40,14 +33,14 @@ pub struct WasmFuncInst {
 #[derive(Debug)]
 pub struct HostFuncInst<T: crate::wasm::execution::config::Config> {
     pub function_type: FuncType,
-    pub hostcode: for<'a> fn(&mut Store<'a, T>, Vec<Value>) -> Result<Vec<Value>, HaltExecutionError>,
+    pub hostcode:
+        for<'a> fn(&mut Store<'a, T>, Vec<Value>) -> Result<Vec<Value>, HaltExecutionError>,
 }
 impl<T: crate::wasm::execution::config::Config> FuncInst<T> {
     pub fn ty(&self) -> FuncType {
         match self {
             FuncInst::WasmFunc(wasm_func_inst) => wasm_func_inst.function_type.clone(),
             FuncInst::HostFunc(host_func_inst) => host_func_inst.function_type.clone(),
-            FuncInst::AotFunc(aot_func_inst) => aot_func_inst.function_type.clone(),
         }
     }
 }

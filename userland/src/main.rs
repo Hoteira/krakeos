@@ -47,12 +47,6 @@ pub fn main() {
 
     println!("Desktop Environment Initialized.");
 
-    //std::os::exec("@0xE0/sys/bin/taskbar.elf");
-
-    std::thread::spawn(|| {
-        run_wasm("@0xE0/apps/aot_test.wasm", true);
-    });
-
     std::thread::spawn(|| {
         run_wasm("@0xE0/apps/taskbar.wasm", false);
     });
@@ -102,9 +96,6 @@ fn run_wasm(path: &str, enable_aot: bool) {
                         debugln!("WASI: [INTERPRETER] Starting {}...", path);
                         match linker.module_instantiate(&mut store, &validation_info, None) {
                             Ok(instance) => {
-                                if enable_aot {
-                                    let _ = store.compile_module_aot(instance.module_addr);
-                                }
 
                                 // Try "run" first (WASI Preview 2 convention), then "_start" as fallback
                                 let entry_point = store

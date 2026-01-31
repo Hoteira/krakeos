@@ -3,31 +3,27 @@ use crate::rust_alloc::{vec, vec::Vec};
 use crate::unreachable_validated;
 use crate::wasm::execution::config::Config;
 use crate::wasm::{
+    RefType, RuntimeError, TrapError, ValType, Value,
     core::indices::{DataIdx, ElemIdx, GlobalIdx},
     core::{
         indices::{FuncIdx, LabelIdx, LocalIdx, TableIdx, TypeIdx},
         reader::{
-            types::{memarg::MemArg, BlockType},
             WasmReadable, WasmReader,
+            types::{BlockType, memarg::MemArg},
         },
         sidetable::Sidetable,
     },
     execution::assert_validated::UnwrapValidatedExt,
     execution::resumable::Resumable,
+    execution::store::HaltExecutionError,
     execution::store::addrs::{AddrVec, DataAddr, ElemAddr, MemAddr, ModuleAddr, TableAddr},
     execution::store::instances::{FuncInst, ModuleInst},
-    execution::store::HaltExecutionError,
-    execution::value::{self, Ref, F32, F64},
+    execution::value::{self, F32, F64, Ref},
     execution::value_stack::Stack,
-    RefType, RuntimeError, TrapError, ValType, Value,
 };
 use core::{
     num::NonZeroU32,
-    {
-        array,
-        iter::zip,
-        ops::Neg,
-    },
+    {array, iter::zip, ops::Neg},
 };
 pub fn run<T: Config>(
     resumable: &mut Resumable,
@@ -61,17 +57,21 @@ pub fn run<T: Config>(
                         *fuel -= $cost;
                     } else {
                         resumable.current_func_addr = current_func_addr;
-                        resumable.pc = prev_pc;  
+                        resumable.pc = prev_pc;
                         resumable.stp = stp;
-                        return Ok(NonZeroU32::new($cost-*fuel));
+                        return Ok(NonZeroU32::new($cost - *fuel));
                     }
                 }
-            }
+            };
         }
         let first_instr_byte = match wasm.read_u8() {
             Ok(b) => b,
             Err(e) => {
-                crate::debugln!("WASM Interpreter error (fetch) at PC {:#x}: {:?}", wasm.pc, e);
+                crate::debugln!(
+                    "WASM Interpreter error (fetch) at PC {:#x}: {:?}",
+                    wasm.pc,
+                    e
+                );
                 return Err(TrapError::ReachedUnreachable.into());
             }
         };
@@ -99,7 +99,9 @@ pub fn run<T: Config>(
                 let FuncInst::WasmFunc(current_wasm_func_inst) =
                     store.functions.get(current_func_addr)
                 else {
-                    unreachable!("function addresses on the stack always correspond to native wasm functions")
+                    unreachable!(
+                        "function addresses on the stack always correspond to native wasm functions"
+                    )
                 };
                 current_module = current_wasm_func_inst.module_addr;
                 wasm.full_wasm_binary = store.modules.get(current_module).wasm_bytecode;
@@ -116,20 +118,35 @@ pub fn run<T: Config>(
                 if test_val != 0 {
                     stp += 1;
                 } else {
-                    do_sidetable_control_transfer::<T>(wasm, stack, &mut stp, &store.modules.get(current_module).sidetable)?;
+                    do_sidetable_control_transfer::<T>(
+                        wasm,
+                        stack,
+                        &mut stp,
+                        &store.modules.get(current_module).sidetable,
+                    )?;
                 }
                 trace!("Instruction: IF");
             }
             ELSE => {
                 decrement_fuel!(T::get_flat_cost(ELSE));
-                do_sidetable_control_transfer::<T>(wasm, stack, &mut stp, &store.modules.get(current_module).sidetable)?;
+                do_sidetable_control_transfer::<T>(
+                    wasm,
+                    stack,
+                    &mut stp,
+                    &store.modules.get(current_module).sidetable,
+                )?;
             }
             BR_IF => {
                 decrement_fuel!(T::get_flat_cost(BR_IF));
                 wasm.read_var_u32().unwrap_validated();
                 let test_val: i32 = stack.pop_value().try_into().unwrap_validated();
                 if test_val != 0 {
-                    do_sidetable_control_transfer::<T>(wasm, stack, &mut stp, &store.modules.get(current_module).sidetable)?;
+                    do_sidetable_control_transfer::<T>(
+                        wasm,
+                        stack,
+                        &mut stp,
+                        &store.modules.get(current_module).sidetable,
+                    )?;
                 } else {
                     stp += 1;
                 }
@@ -148,12 +165,22 @@ pub fn run<T: Config>(
                 } else {
                     stp += case_val;
                 }
-                do_sidetable_control_transfer::<T>(wasm, stack, &mut stp, &store.modules.get(current_module).sidetable)?;
+                do_sidetable_control_transfer::<T>(
+                    wasm,
+                    stack,
+                    &mut stp,
+                    &store.modules.get(current_module).sidetable,
+                )?;
             }
             BR => {
                 decrement_fuel!(T::get_flat_cost(BR));
                 wasm.read_var_u32().unwrap_validated();
-                do_sidetable_control_transfer::<T>(wasm, stack, &mut stp, &store.modules.get(current_module).sidetable)?;
+                do_sidetable_control_transfer::<T>(
+                    wasm,
+                    stack,
+                    &mut stp,
+                    &store.modules.get(current_module).sidetable,
+                )?;
             }
             BLOCK => {
                 decrement_fuel!(T::get_flat_cost(BLOCK));
@@ -165,7 +192,12 @@ pub fn run<T: Config>(
             }
             RETURN => {
                 decrement_fuel!(T::get_flat_cost(RETURN));
-                do_sidetable_control_transfer::<T>(wasm, stack, &mut stp, &store.modules.get(current_module).sidetable)?;
+                do_sidetable_control_transfer::<T>(
+                    wasm,
+                    stack,
+                    &mut stp,
+                    &store.modules.get(current_module).sidetable,
+                )?;
             }
             CALL => {
                 decrement_fuel!(T::get_flat_cost(CALL));
@@ -176,7 +208,10 @@ pub fn run<T: Config>(
                     else {
                         unreachable!()
                     };
-                    store.modules.get(current_wasm_func_inst.module_addr).func_addrs[local_func_idx]
+                    store
+                        .modules
+                        .get(current_wasm_func_inst.module_addr)
+                        .func_addrs[local_func_idx]
                 };
                 let func_to_call_ty = store.functions.get(func_to_call_addr).ty();
                 trace!("Instruction: call [{func_to_call_addr:?}]");
@@ -220,45 +255,6 @@ pub fn run<T: Config>(
                         current_function_end_marker = wasm_func_to_call_inst.code_expr.from()
                             + wasm_func_to_call_inst.code_expr.len();
                     }
-                    FuncInst::AotFunc(aot_func_inst) => {
-                        let code_ptr = aot_func_inst.code.ptr();
-                        let params = stack
-                            .pop_tail_iter(func_to_call_ty.params.valtypes.len())
-                            .collect::<Vec<_>>();
-                        
-                        let mut raw_params: Vec<u64> = params.iter().map(|v| match v {
-                            Value::I32(i) => *i as u64,
-                            Value::I64(i) => *i,
-                            Value::F32(f) => f.to_bits() as u64,
-                            Value::F64(f) => f.to_bits(),
-                            Value::Ref(r) => match r {
-                                Ref::Null(_) => 0,
-                                Ref::Func(addr) => *addr as u64,
-                                Ref::Extern(addr) => addr.0 as u64,
-                            },
-                            Value::V128(_) => 0,
-                        }).collect();
-                        
-                        let func_ptr: extern "C" fn(*mut (), *const u64, *mut u64, u64) = unsafe { core::mem::transmute(code_ptr) };
-                        let result_count = func_to_call_ty.returns.valtypes.len();
-                        let mut raw_results = vec![0u64; result_count];
-                        let mem_base = store.get_wasm_base_ptr() as u64;
-                        let store_ptr = store as *mut Store<T> as *mut ();
-                        
-                        func_ptr(store_ptr, raw_params.as_ptr(), raw_results.as_mut_ptr(), mem_base);
-                        
-                        for (i, &raw) in raw_results.iter().enumerate() {
-                            let ty = func_to_call_ty.returns.valtypes[i];
-                            let val = match ty {
-                                ValType::NumType(crate::wasm::NumType::I32) => Value::I32(raw as u32),
-                                ValType::NumType(crate::wasm::NumType::I64) => Value::I64(raw),
-                                ValType::NumType(crate::wasm::NumType::F32) => Value::F32(crate::wasm::execution::value::F32::from_bits(raw as u32)),
-                                ValType::NumType(crate::wasm::NumType::F64) => Value::F64(crate::wasm::execution::value::F64::from_bits(raw)),
-                                _ => Value::I64(0),
-                            };
-                            stack.push_value::<T>(val)?;
-                        }
-                    }
                 }
                 trace!("Instruction: CALL");
             }
@@ -284,7 +280,11 @@ pub fn run<T: Config>(
                     .elem
                     .get(i as usize)
                     .ok_or_else(|| {
-                        crate::debugln!("WASM Trap: TableAccessOutOfBounds (i={}) at PC {:#x}", i, wasm.pc);
+                        crate::debugln!(
+                            "WASM Trap: TableAccessOutOfBounds (i={}) at PC {:#x}",
+                            i,
+                            wasm.pc
+                        );
                         TrapError::TableAccessOutOfBounds
                     })
                     .and_then(|r| {
@@ -345,44 +345,6 @@ pub fn run<T: Config>(
                         stp = wasm_func_to_call_inst.stp;
                         current_function_end_marker = wasm_func_to_call_inst.code_expr.from()
                             + wasm_func_to_call_inst.code_expr.len();
-                    }
-                    FuncInst::AotFunc(aot_func_inst) => {
-                        let code_ptr = aot_func_inst.code.ptr();
-                        let params = stack
-                            .pop_tail_iter(func_to_call_ty.params.valtypes.len())
-                            .collect::<Vec<_>>();
-                        
-                        let mut raw_params: Vec<u64> = params.iter().map(|v| match v {
-                            Value::I32(i) => *i as u64,
-                            Value::I64(i) => *i,
-                            Value::F32(f) => f.to_bits() as u64,
-                            Value::F64(f) => f.to_bits(),
-                            Value::Ref(r) => match r {
-                                Ref::Null(_) => 0,
-                                Ref::Func(addr) => *addr as u64,
-                                Ref::Extern(addr) => addr.0 as u64,
-                            },
-                            Value::V128(_) => 0,
-                        }).collect();
-                        
-                        let func_ptr: extern "C" fn(*mut (), *const u64, *mut u64, u64) = unsafe { core::mem::transmute(code_ptr) };
-                        let result_count = func_to_call_ty.returns.valtypes.len();
-                        let mut raw_results = vec![0u64; result_count];
-                        let mem_base = store.get_wasm_base_ptr() as u64;
-                        
-                        func_ptr(core::ptr::null_mut(), raw_params.as_ptr(), raw_results.as_mut_ptr(), mem_base);
-                        
-                        for (i, &raw) in raw_results.iter().enumerate() {
-                            let ty = func_to_call_ty.returns.valtypes[i];
-                            let val = match ty {
-                                ValType::NumType(crate::wasm::NumType::I32) => Value::I32(raw as u32),
-                                ValType::NumType(crate::wasm::NumType::I64) => Value::I64(raw),
-                                ValType::NumType(crate::wasm::NumType::F32) => Value::F32(crate::wasm::execution::value::F32::from_bits(raw as u32)),
-                                ValType::NumType(crate::wasm::NumType::F64) => Value::F64(crate::wasm::execution::value::F64::from_bits(raw)),
-                                _ => Value::I64(0),
-                            };
-                            stack.push_value::<T>(val)?;
-                        }
                     }
                 }
                 trace!("Instruction: CALL_INDIRECT");
@@ -451,8 +413,7 @@ pub fn run<T: Config>(
                 stack.push_value::<T>(global.value)?;
                 trace!(
                     "Instruction: global.get '{}' [<GLOBAL>] -> [{:?}]",
-                    global_idx,
-                    global.value
+                    global_idx, global.value
                 );
             }
             GLOBAL_SET => {
@@ -486,9 +447,7 @@ pub fn run<T: Config>(
                 stack.push_value::<T>((*val).into())?;
                 trace!(
                     "Instruction: table.get '{}' [{}] -> [{}]",
-                    table_idx,
-                    i,
-                    val
+                    table_idx, i, val
                 );
             }
             TABLE_SET => {
@@ -506,15 +465,16 @@ pub fn run<T: Config>(
                 tab.elem
                     .get_mut(i as usize)
                     .ok_or_else(|| {
-                        crate::debugln!("WASM Trap: TableOrElementAccessOutOfBounds at PC {:#x}", wasm.pc);
+                        crate::debugln!(
+                            "WASM Trap: TableOrElementAccessOutOfBounds at PC {:#x}",
+                            wasm.pc
+                        );
                         TrapError::TableOrElementAccessOutOfBounds
                     })
                     .map(|r| *r = val)?;
                 trace!(
                     "Instruction: table.set '{}' [{} {}] -> []",
-                    table_idx,
-                    i,
-                    val
+                    table_idx, i, val
                 );
             }
             UNREACHABLE => {
@@ -534,7 +494,11 @@ pub fn run<T: Config>(
                 let mem_inst = store.memories.get(mem_addr);
                 let idx = calculate_mem_address(&memarg, relative_address)?;
                 let data = mem_inst.mem.load(idx).map_err(|e| {
-                    crate::debugln!("WASM Trap: MemoryAccessOutOfBounds (load i32, addr={:#x}) at PC {:#x}", idx, wasm.pc);
+                    crate::debugln!(
+                        "WASM Trap: MemoryAccessOutOfBounds (load i32, addr={:#x}) at PC {:#x}",
+                        idx,
+                        wasm.pc
+                    );
                     e
                 })?;
                 stack.push_value::<T>(Value::I32(data))?;
@@ -762,7 +726,11 @@ pub fn run<T: Config>(
                 let mem = store.memories.get(mem_addr);
                 let idx = calculate_mem_address(&memarg, relative_address)?;
                 mem.mem.store(idx, data_to_store).map_err(|e| {
-                    crate::debugln!("WASM Trap: MemoryAccessOutOfBounds (store i32, addr={:#x}) at PC {:#x}", idx, wasm.pc);
+                    crate::debugln!(
+                        "WASM Trap: MemoryAccessOutOfBounds (store i32, addr={:#x}) at PC {:#x}",
+                        idx,
+                        wasm.pc
+                    );
                     e
                 })?;
                 trace!("Instruction: i32.store [{relative_address} {data_to_store}] -> []");
@@ -2141,10 +2109,10 @@ pub fn run<T: Config>(
                     current_module,
                 )?;
             }
-            /* 
+            /*
                 use crate::wasm::core::reader::types::opcode::fd_extensions::*;
                 use crate::wasm::execution::simd_utils::*;
-                
+
                 // Helper closure to pop a V128 (as [u8; 16])
                 let mut pop_v128 = || -> [u8; 16] {
                     stack.pop_value().try_into().unwrap_validated()
@@ -3046,7 +3014,11 @@ pub fn run<T: Config>(
                 let second_instr = match wasm.read_var_u32() {
                     Ok(v) => v,
                     Err(e) => {
-                        crate::debugln!("WASM Interpreter error (fetch FC) at PC {:#x}: {:?}", wasm.pc, e);
+                        crate::debugln!(
+                            "WASM Interpreter error (fetch FC) at PC {:#x}: {:?}",
+                            wasm.pc,
+                            e
+                        );
                         return Err(TrapError::ReachedUnreachable.into());
                     }
                 };
@@ -3121,14 +3093,21 @@ pub fn run<T: Config>(
                         let n: i32 = stack.pop_value().try_into().unwrap_validated();
                         let s: i32 = stack.pop_value().try_into().unwrap_validated();
                         let d: i32 = stack.pop_value().try_into().unwrap_validated();
-                        let cost = T::get_fc_extension_flat_cost(MEMORY_INIT) + (n as u32 * T::get_fc_extension_cost_per_element(MEMORY_INIT));
+                        let cost = T::get_fc_extension_flat_cost(MEMORY_INIT)
+                            + (n as u32 * T::get_fc_extension_cost_per_element(MEMORY_INIT));
                         if let Some(fuel) = &mut resumable.maybe_fuel {
                             if *fuel >= cost {
                                 *fuel -= cost;
                             } else {
-                                stack.push_value::<T>(Value::I32(d as u32)).unwrap_validated();
-                                stack.push_value::<T>(Value::I32(s as u32)).unwrap_validated();
-                                stack.push_value::<T>(Value::I32(n as u32)).unwrap_validated();
+                                stack
+                                    .push_value::<T>(Value::I32(d as u32))
+                                    .unwrap_validated();
+                                stack
+                                    .push_value::<T>(Value::I32(s as u32))
+                                    .unwrap_validated();
+                                stack
+                                    .push_value::<T>(Value::I32(n as u32))
+                                    .unwrap_validated();
                                 resumable.current_func_addr = current_func_addr;
                                 resumable.pc = prev_pc;
                                 resumable.stp = stp;
@@ -3149,11 +3128,14 @@ pub fn run<T: Config>(
                         trace!("Instruction: memory.init");
                     }
                     DATA_DROP => {
-                        decrement_fuel!(
-                            T::get_fc_extension_flat_cost(DATA_DROP)
-                        );
+                        decrement_fuel!(T::get_fc_extension_flat_cost(DATA_DROP));
                         let data_idx = wasm.read_var_u32().unwrap_validated() as DataIdx;
-                        data_drop(&store.modules, &mut store.data, current_module, data_idx as usize)?;
+                        data_drop(
+                            &store.modules,
+                            &mut store.data,
+                            current_module,
+                            data_idx as usize,
+                        )?;
                         trace!("Instruction: data.drop");
                     }
                     MEMORY_COPY => {
@@ -3162,14 +3144,21 @@ pub fn run<T: Config>(
                         let n: i32 = stack.pop_value().try_into().unwrap_validated();
                         let s: i32 = stack.pop_value().try_into().unwrap_validated();
                         let d: i32 = stack.pop_value().try_into().unwrap_validated();
-                        let cost = T::get_fc_extension_flat_cost(MEMORY_COPY) + (n as u32 * T::get_fc_extension_cost_per_element(MEMORY_COPY));
+                        let cost = T::get_fc_extension_flat_cost(MEMORY_COPY)
+                            + (n as u32 * T::get_fc_extension_cost_per_element(MEMORY_COPY));
                         if let Some(fuel) = &mut resumable.maybe_fuel {
                             if *fuel >= cost {
                                 *fuel -= cost;
                             } else {
-                                stack.push_value::<T>(Value::I32(d as u32)).unwrap_validated();
-                                stack.push_value::<T>(Value::I32(s as u32)).unwrap_validated();
-                                stack.push_value::<T>(Value::I32(n as u32)).unwrap_validated();
+                                stack
+                                    .push_value::<T>(Value::I32(d as u32))
+                                    .unwrap_validated();
+                                stack
+                                    .push_value::<T>(Value::I32(s as u32))
+                                    .unwrap_validated();
+                                stack
+                                    .push_value::<T>(Value::I32(n as u32))
+                                    .unwrap_validated();
                                 resumable.current_func_addr = current_func_addr;
                                 resumable.pc = prev_pc;
                                 resumable.stp = stp;
@@ -3196,14 +3185,21 @@ pub fn run<T: Config>(
                         let n: i32 = stack.pop_value().try_into().unwrap_validated();
                         let val: i32 = stack.pop_value().try_into().unwrap_validated();
                         let d: i32 = stack.pop_value().try_into().unwrap_validated();
-                        let cost = T::get_fc_extension_flat_cost(MEMORY_FILL) + (n as u32 * T::get_fc_extension_cost_per_element(MEMORY_FILL));
+                        let cost = T::get_fc_extension_flat_cost(MEMORY_FILL)
+                            + (n as u32 * T::get_fc_extension_cost_per_element(MEMORY_FILL));
                         if let Some(fuel) = &mut resumable.maybe_fuel {
                             if *fuel >= cost {
                                 *fuel -= cost;
                             } else {
-                                stack.push_value::<T>(Value::I32(d as u32)).unwrap_validated();
-                                stack.push_value::<T>(Value::I32(val as u32)).unwrap_validated();
-                                stack.push_value::<T>(Value::I32(n as u32)).unwrap_validated();
+                                stack
+                                    .push_value::<T>(Value::I32(d as u32))
+                                    .unwrap_validated();
+                                stack
+                                    .push_value::<T>(Value::I32(val as u32))
+                                    .unwrap_validated();
+                                stack
+                                    .push_value::<T>(Value::I32(n as u32))
+                                    .unwrap_validated();
                                 resumable.current_func_addr = current_func_addr;
                                 resumable.pc = prev_pc;
                                 resumable.stp = stp;
@@ -3217,11 +3213,8 @@ pub fn run<T: Config>(
                             .first()
                             .unwrap_validated();
                         let mem = store.memories.get(mem_addr);
-                        mem.mem.fill(
-                            d.try_into().unwrap(),
-                            val as u8,
-                            n.try_into().unwrap(),
-                        )?;
+                        mem.mem
+                            .fill(d.try_into().unwrap(), val as u8, n.try_into().unwrap())?;
                         trace!("Instruction: memory.fill");
                     }
                     TABLE_INIT => {
@@ -3230,14 +3223,21 @@ pub fn run<T: Config>(
                         let n: i32 = stack.pop_value().try_into().unwrap_validated();
                         let s: i32 = stack.pop_value().try_into().unwrap_validated();
                         let d: i32 = stack.pop_value().try_into().unwrap_validated();
-                        let cost = T::get_fc_extension_flat_cost(TABLE_INIT) + (n as u32 * T::get_fc_extension_cost_per_element(TABLE_INIT));
+                        let cost = T::get_fc_extension_flat_cost(TABLE_INIT)
+                            + (n as u32 * T::get_fc_extension_cost_per_element(TABLE_INIT));
                         if let Some(fuel) = &mut resumable.maybe_fuel {
                             if *fuel >= cost {
                                 *fuel -= cost;
                             } else {
-                                stack.push_value::<T>(Value::I32(d as u32)).unwrap_validated();
-                                stack.push_value::<T>(Value::I32(s as u32)).unwrap_validated();
-                                stack.push_value::<T>(Value::I32(n as u32)).unwrap_validated();
+                                stack
+                                    .push_value::<T>(Value::I32(d as u32))
+                                    .unwrap_validated();
+                                stack
+                                    .push_value::<T>(Value::I32(s as u32))
+                                    .unwrap_validated();
+                                stack
+                                    .push_value::<T>(Value::I32(n as u32))
+                                    .unwrap_validated();
                                 resumable.current_func_addr = current_func_addr;
                                 resumable.pc = prev_pc;
                                 resumable.stp = stp;
@@ -3258,11 +3258,14 @@ pub fn run<T: Config>(
                         trace!("Instruction: table.init");
                     }
                     ELEM_DROP => {
-                        decrement_fuel!(
-                            T::get_fc_extension_flat_cost(ELEM_DROP)
-                        );
+                        decrement_fuel!(T::get_fc_extension_flat_cost(ELEM_DROP));
                         let elem_idx = wasm.read_var_u32().unwrap_validated() as ElemIdx;
-                        elem_drop(&store.modules, &mut store.elements, current_module, elem_idx as usize)?;
+                        elem_drop(
+                            &store.modules,
+                            &mut store.elements,
+                            current_module,
+                            elem_idx as usize,
+                        )?;
                         trace!("Instruction: elem.drop");
                     }
                     TABLE_COPY => {
@@ -3271,14 +3274,21 @@ pub fn run<T: Config>(
                         let n: i32 = stack.pop_value().try_into().unwrap_validated();
                         let s: i32 = stack.pop_value().try_into().unwrap_validated();
                         let d: i32 = stack.pop_value().try_into().unwrap_validated();
-                        let cost = T::get_fc_extension_flat_cost(TABLE_COPY) + (n as u32 * T::get_fc_extension_cost_per_element(TABLE_COPY));
+                        let cost = T::get_fc_extension_flat_cost(TABLE_COPY)
+                            + (n as u32 * T::get_fc_extension_cost_per_element(TABLE_COPY));
                         if let Some(fuel) = &mut resumable.maybe_fuel {
                             if *fuel >= cost {
                                 *fuel -= cost;
                             } else {
-                                stack.push_value::<T>(Value::I32(d as u32)).unwrap_validated();
-                                stack.push_value::<T>(Value::I32(s as u32)).unwrap_validated();
-                                stack.push_value::<T>(Value::I32(n as u32)).unwrap_validated();
+                                stack
+                                    .push_value::<T>(Value::I32(d as u32))
+                                    .unwrap_validated();
+                                stack
+                                    .push_value::<T>(Value::I32(s as u32))
+                                    .unwrap_validated();
+                                stack
+                                    .push_value::<T>(Value::I32(n as u32))
+                                    .unwrap_validated();
                                 resumable.current_func_addr = current_func_addr;
                                 resumable.pc = prev_pc;
                                 resumable.stp = stp;
@@ -3332,7 +3342,8 @@ pub fn run<T: Config>(
                         let sz = tab.len() as u32;
                         let n: u32 = stack.pop_value().try_into().unwrap_validated();
                         let val: Ref = stack.pop_value().try_into().unwrap_validated();
-                        let cost = T::get_fc_extension_flat_cost(TABLE_GROW) + (n as u32 * T::get_fc_extension_cost_per_element(TABLE_GROW));
+                        let cost = T::get_fc_extension_flat_cost(TABLE_GROW)
+                            + (n as u32 * T::get_fc_extension_cost_per_element(TABLE_GROW));
                         if let Some(fuel) = &mut resumable.maybe_fuel {
                             if *fuel >= cost {
                                 *fuel -= cost;
@@ -3353,9 +3364,7 @@ pub fn run<T: Config>(
                         trace!("Instruction: table.grow");
                     }
                     TABLE_SIZE => {
-                        decrement_fuel!(
-                            T::get_fc_extension_flat_cost(TABLE_SIZE)
-                        );
+                        decrement_fuel!(T::get_fc_extension_flat_cost(TABLE_SIZE));
                         let table_idx = wasm.read_var_u32().unwrap_validated() as TableIdx;
                         let table_addr = *store
                             .modules
@@ -3380,14 +3389,19 @@ pub fn run<T: Config>(
                         let n: i32 = stack.pop_value().try_into().unwrap_validated();
                         let val: Ref = stack.pop_value().try_into().unwrap_validated();
                         let i: i32 = stack.pop_value().try_into().unwrap_validated();
-                        let cost = T::get_fc_extension_flat_cost(TABLE_FILL) + (n as u32 * T::get_fc_extension_cost_per_element(TABLE_FILL));
+                        let cost = T::get_fc_extension_flat_cost(TABLE_FILL)
+                            + (n as u32 * T::get_fc_extension_cost_per_element(TABLE_FILL));
                         if let Some(fuel) = &mut resumable.maybe_fuel {
                             if *fuel >= cost {
                                 *fuel -= cost;
                             } else {
-                                stack.push_value::<T>(Value::I32(i as u32)).unwrap_validated();
+                                stack
+                                    .push_value::<T>(Value::I32(i as u32))
+                                    .unwrap_validated();
                                 stack.push_value::<T>(Value::Ref(val)).unwrap_validated();
-                                stack.push_value::<T>(Value::I32(n as u32)).unwrap_validated();
+                                stack
+                                    .push_value::<T>(Value::I32(n as u32))
+                                    .unwrap_validated();
                                 resumable.current_func_addr = current_func_addr;
                                 resumable.pc = prev_pc;
                                 resumable.stp = stp;
@@ -3414,11 +3428,21 @@ pub fn run<T: Config>(
             CATCH => {
                 decrement_fuel!(T::get_flat_cost(CATCH));
                 wasm.read_var_u32().unwrap_validated();
-                do_sidetable_control_transfer::<T>(wasm, stack, &mut stp, &store.modules.get(current_module).sidetable)?;
+                do_sidetable_control_transfer::<T>(
+                    wasm,
+                    stack,
+                    &mut stp,
+                    &store.modules.get(current_module).sidetable,
+                )?;
             }
             CATCH_ALL => {
                 decrement_fuel!(T::get_flat_cost(CATCH_ALL));
-                do_sidetable_control_transfer::<T>(wasm, stack, &mut stp, &store.modules.get(current_module).sidetable)?;
+                do_sidetable_control_transfer::<T>(
+                    wasm,
+                    stack,
+                    &mut stp,
+                    &store.modules.get(current_module).sidetable,
+                )?;
             }
             DELEGATE => {
                 decrement_fuel!(T::get_flat_cost(DELEGATE));
@@ -3439,9 +3463,12 @@ pub fn run<T: Config>(
             RETURN_CALL => {
                 decrement_fuel!(T::get_flat_cost(RETURN_CALL));
                 let local_func_idx = wasm.read_var_u32().unwrap_validated() as FuncIdx;
-                let func_to_call_addr = store.modules.get(current_module).func_addrs[local_func_idx];
+                let func_to_call_addr =
+                    store.modules.get(current_module).func_addrs[local_func_idx];
                 let func_to_call_ty = store.functions.get(func_to_call_addr).ty();
-                let params: Vec<Value> = stack.pop_tail_iter(func_to_call_ty.params.valtypes.len()).collect();
+                let params: Vec<Value> = stack
+                    .pop_tail_iter(func_to_call_ty.params.valtypes.len())
+                    .collect();
 
                 // Pop current frame and capture return info
                 let (ret_func, ret_pc, ret_stp) = stack.pop_call_frame();
@@ -3455,31 +3482,42 @@ pub fn run<T: Config>(
                 match store.functions.get(func_to_call_addr) {
                     FuncInst::HostFunc(host_func) => {
                         let hostcode = host_func.hostcode;
-                        let args = stack.pop_tail_iter(func_to_call_ty.params.valtypes.len()).collect();
+                        let args = stack
+                            .pop_tail_iter(func_to_call_ty.params.valtypes.len())
+                            .collect();
                         store.caller_module = Some(current_module);
-                        let returns = hostcode(store, args).map_err(|HaltExecutionError(code)| RuntimeError::HostFunctionHaltedExecution(code))?;
+                        let returns =
+                            hostcode(store, args).map_err(|HaltExecutionError(code)| {
+                                RuntimeError::HostFunctionHaltedExecution(code)
+                            })?;
                         store.caller_module = None;
-                        for ret in returns { stack.push_value::<T>(ret)?; }
-                        
+                        for ret in returns {
+                            stack.push_value::<T>(ret)?;
+                        }
+
                         // Restore state to caller
                         current_func_addr = ret_func;
                         if stack.call_frame_count() == 0 {
                             // If no more frames, we are done
                             break;
                         }
-                        let FuncInst::WasmFunc(ret_func_inst) = store.functions.get(ret_func) else { unreachable!() };
+                        let FuncInst::WasmFunc(ret_func_inst) = store.functions.get(ret_func)
+                        else {
+                            unreachable!()
+                        };
                         current_module = ret_func_inst.module_addr;
                         wasm.full_wasm_binary = store.modules.get(current_module).wasm_bytecode;
                         wasm.pc = ret_pc;
                         stp = ret_stp;
-                        current_function_end_marker = ret_func_inst.code_expr.from() + ret_func_inst.code_expr.len();
+                        current_function_end_marker =
+                            ret_func_inst.code_expr.from() + ret_func_inst.code_expr.len();
                     }
                     FuncInst::WasmFunc(wasm_func) => {
                         stack.push_call_frame::<T>(
                             ret_func, // Correctly point to the original caller
                             &func_to_call_ty,
                             &wasm_func.locals,
-                            ret_pc, 
+                            ret_pc,
                             ret_stp,
                         )?;
                         current_func_addr = func_to_call_addr;
@@ -3487,55 +3525,8 @@ pub fn run<T: Config>(
                         wasm.full_wasm_binary = store.modules.get(current_module).wasm_bytecode;
                         wasm.move_start_to(wasm_func.code_expr).unwrap_validated();
                         stp = wasm_func.stp;
-                        current_function_end_marker = wasm_func.code_expr.from() + wasm_func.code_expr.len();
-                    }
-                    FuncInst::AotFunc(aot_func_inst) => {
-                        let code_ptr = aot_func_inst.code.ptr();
-                        let params = stack.pop_tail_iter(func_to_call_ty.params.valtypes.len()).collect::<Vec<_>>();
-                        
-                        let mut raw_params: Vec<u64> = params.iter().map(|v| match v {
-                            Value::I32(i) => *i as u64,
-                            Value::I64(i) => *i,
-                            Value::F32(f) => f.to_bits() as u64,
-                            Value::F64(f) => f.to_bits(),
-                            Value::Ref(r) => match r {
-                                Ref::Null(_) => 0,
-                                Ref::Func(addr) => *addr as u64,
-                                Ref::Extern(addr) => addr.0 as u64,
-                            },
-                            Value::V128(_) => 0,
-                        }).collect();
-                        
-                        let func_ptr: extern "C" fn(*mut (), *const u64, *mut u64, u64) = unsafe { core::mem::transmute(code_ptr) };
-                        let result_count = func_to_call_ty.returns.valtypes.len();
-                        let mut raw_results = vec![0u64; result_count];
-                        let mem_base = store.get_wasm_base_ptr() as u64;
-                        
-                        func_ptr(core::ptr::null_mut(), raw_params.as_ptr(), raw_results.as_mut_ptr(), mem_base);
-                        
-                        for (i, &raw) in raw_results.iter().enumerate() {
-                            let ty = func_to_call_ty.returns.valtypes[i];
-                            let val = match ty {
-                                ValType::NumType(crate::wasm::NumType::I32) => Value::I32(raw as u32),
-                                ValType::NumType(crate::wasm::NumType::I64) => Value::I64(raw),
-                                ValType::NumType(crate::wasm::NumType::F32) => Value::F32(crate::wasm::execution::value::F32::from_bits(raw as u32)),
-                                ValType::NumType(crate::wasm::NumType::F64) => Value::F64(crate::wasm::execution::value::F64::from_bits(raw)),
-                                _ => Value::I64(0),
-                            };
-                            stack.push_value::<T>(val)?;
-                        }
-
-                        // Restore state to caller
-                        current_func_addr = ret_func;
-                        if stack.call_frame_count() == 0 {
-                            break;
-                        }
-                        let FuncInst::WasmFunc(ret_func_inst) = store.functions.get(ret_func) else { unreachable!() };
-                        current_module = ret_func_inst.module_addr;
-                        wasm.full_wasm_binary = store.modules.get(current_module).wasm_bytecode;
-                        wasm.pc = ret_pc;
-                        stp = ret_stp;
-                        current_function_end_marker = ret_func_inst.code_expr.from() + ret_func_inst.code_expr.len();
+                        current_function_end_marker =
+                            wasm_func.code_expr.from() + wasm_func.code_expr.len();
                     }
                 }
             }
@@ -3547,7 +3538,10 @@ pub fn run<T: Config>(
 
                 let table_addr = store.modules.get(current_module).table_addrs[table_idx];
                 let tab = store.tables.get(table_addr);
-                let r = tab.elem.get(i as usize).ok_or(TrapError::TableAccessOutOfBounds)?;
+                let r = tab
+                    .elem
+                    .get(i as usize)
+                    .ok_or(TrapError::TableAccessOutOfBounds)?;
 
                 let func_addr = match r {
                     Ref::Func(a) => *a,
@@ -3556,83 +3550,62 @@ pub fn run<T: Config>(
 
                 // (Similar tail call logic as RETURN_CALL but with dynamic func_addr)
                 let func_to_call_ty = store.functions.get(func_addr).ty();
-                let params: Vec<Value> = stack.pop_tail_iter(func_to_call_ty.params.valtypes.len()).collect();
-                
+                let params: Vec<Value> = stack
+                    .pop_tail_iter(func_to_call_ty.params.valtypes.len())
+                    .collect();
+
                 let (ret_func, ret_pc, ret_stp) = stack.pop_call_frame();
-                
-                for param in params { stack.push_value::<T>(param)?; }
+
+                for param in params {
+                    stack.push_value::<T>(param)?;
+                }
 
                 match store.functions.get(func_addr) {
                     FuncInst::HostFunc(host_func) => {
                         let hostcode = host_func.hostcode;
-                        let args = stack.pop_tail_iter(func_to_call_ty.params.valtypes.len()).collect();
+                        let args = stack
+                            .pop_tail_iter(func_to_call_ty.params.valtypes.len())
+                            .collect();
                         store.caller_module = Some(current_module);
-                        let returns = hostcode(store, args).map_err(|HaltExecutionError(code)| RuntimeError::HostFunctionHaltedExecution(code))?;
+                        let returns =
+                            hostcode(store, args).map_err(|HaltExecutionError(code)| {
+                                RuntimeError::HostFunctionHaltedExecution(code)
+                            })?;
                         store.caller_module = None;
-                        for ret in returns { stack.push_value::<T>(ret)?; }
-                        
+                        for ret in returns {
+                            stack.push_value::<T>(ret)?;
+                        }
+
                         current_func_addr = ret_func;
-                        if stack.call_frame_count() == 0 { break; }
-                        let FuncInst::WasmFunc(ret_func_inst) = store.functions.get(ret_func) else { unreachable!() };
+                        if stack.call_frame_count() == 0 {
+                            break;
+                        }
+                        let FuncInst::WasmFunc(ret_func_inst) = store.functions.get(ret_func)
+                        else {
+                            unreachable!()
+                        };
                         current_module = ret_func_inst.module_addr;
                         wasm.full_wasm_binary = store.modules.get(current_module).wasm_bytecode;
                         wasm.pc = ret_pc;
                         stp = ret_stp;
-                        current_function_end_marker = ret_func_inst.code_expr.from() + ret_func_inst.code_expr.len();
+                        current_function_end_marker =
+                            ret_func_inst.code_expr.from() + ret_func_inst.code_expr.len();
                     }
                     FuncInst::WasmFunc(wasm_func) => {
-                        stack.push_call_frame::<T>(ret_func, &func_to_call_ty, &wasm_func.locals, ret_pc, ret_stp)?;
+                        stack.push_call_frame::<T>(
+                            ret_func,
+                            &func_to_call_ty,
+                            &wasm_func.locals,
+                            ret_pc,
+                            ret_stp,
+                        )?;
                         current_func_addr = func_addr;
                         current_module = wasm_func.module_addr;
                         wasm.full_wasm_binary = store.modules.get(current_module).wasm_bytecode;
                         wasm.move_start_to(wasm_func.code_expr).unwrap_validated();
                         stp = wasm_func.stp;
-                        current_function_end_marker = wasm_func.code_expr.from() + wasm_func.code_expr.len();
-                    }
-                    FuncInst::AotFunc(aot_func_inst) => {
-                        let code_ptr = aot_func_inst.code.ptr();
-                        let params = stack.pop_tail_iter(func_to_call_ty.params.valtypes.len()).collect::<Vec<_>>();
-                        
-                        let mut raw_params: Vec<u64> = params.iter().map(|v| match v {
-                            Value::I32(i) => *i as u64,
-                            Value::I64(i) => *i,
-                            Value::F32(f) => f.to_bits() as u64,
-                            Value::F64(f) => f.to_bits(),
-                            Value::Ref(r) => match r {
-                                Ref::Null(_) => 0,
-                                Ref::Func(addr) => *addr as u64,
-                                Ref::Extern(addr) => addr.0 as u64,
-                            },
-                            Value::V128(_) => 0,
-                        }).collect();
-                        
-                        let func_ptr: extern "C" fn(*mut (), *const u64, *mut u64, u64) = unsafe { core::mem::transmute(code_ptr) };
-                        let result_count = func_to_call_ty.returns.valtypes.len();
-                        let mut raw_results = vec![0u64; result_count];
-                        let mem_base = store.get_wasm_base_ptr() as u64;
-                        
-                        func_ptr(core::ptr::null_mut(), raw_params.as_ptr(), raw_results.as_mut_ptr(), mem_base);
-                        
-                        for (i, &raw) in raw_results.iter().enumerate() {
-                            let ty = func_to_call_ty.returns.valtypes[i];
-                            let val = match ty {
-                                ValType::NumType(crate::wasm::NumType::I32) => Value::I32(raw as u32),
-                                ValType::NumType(crate::wasm::NumType::I64) => Value::I64(raw),
-                                ValType::NumType(crate::wasm::NumType::F32) => Value::F32(crate::wasm::execution::value::F32::from_bits(raw as u32)),
-                                ValType::NumType(crate::wasm::NumType::F64) => Value::F64(crate::wasm::execution::value::F64::from_bits(raw)),
-                                _ => Value::I64(0),
-                            };
-                            stack.push_value::<T>(val)?;
-                        }
-
-                        current_func_addr = ret_func;
-                        if stack.call_frame_count() == 0 { break; }
-                        let FuncInst::WasmFunc(ret_func_inst) = store.functions.get(ret_func) else { unreachable!() };
-                        current_module = ret_func_inst.module_addr;
-                        wasm.full_wasm_binary = store.modules.get(current_module).wasm_bytecode;
-                        wasm.pc = ret_pc;
-                        stp = ret_stp;
-                        current_function_end_marker = ret_func_inst.code_expr.from() + ret_func_inst.code_expr.len();
+                        current_function_end_marker =
+                            wasm_func.code_expr.from() + wasm_func.code_expr.len();
                     }
                 }
             }
@@ -3651,27 +3624,31 @@ pub fn run<T: Config>(
             ATOMIC_PREFIX => {
                 let sub = wasm.read_var_u32().unwrap_validated();
                 match sub {
-                    0x00 => { // notify
+                    0x00 => {
+                        // notify
                         MemArg::read(wasm).unwrap_validated();
                         stack.pop_value();
                         stack.pop_value();
                         stack.push_value::<T>(Value::I32(0))?;
                     }
-                    0x01 => { // wait32
-                        MemArg::read(wasm).unwrap_validated();
-                        stack.pop_value();
-                        stack.pop_value();
-                        stack.pop_value();
-                        stack.push_value::<T>(Value::I32(0))?;
-                    }
-                    0x02 => { // wait64
+                    0x01 => {
+                        // wait32
                         MemArg::read(wasm).unwrap_validated();
                         stack.pop_value();
                         stack.pop_value();
                         stack.pop_value();
                         stack.push_value::<T>(Value::I32(0))?;
                     }
-                    0x10 | 0x12 | 0x13 | 0x14 | 0x15 | 0x16 => { // load (various)
+                    0x02 => {
+                        // wait64
+                        MemArg::read(wasm).unwrap_validated();
+                        stack.pop_value();
+                        stack.pop_value();
+                        stack.pop_value();
+                        stack.push_value::<T>(Value::I32(0))?;
+                    }
+                    0x10 | 0x12 | 0x13 | 0x14 | 0x15 | 0x16 => {
+                        // load (various)
                         let memarg = MemArg::read(wasm).unwrap_validated();
                         let addr: u32 = stack.pop_value().try_into().unwrap_validated();
                         // Mapping to standard load for single-threaded interpreter
@@ -3689,7 +3666,8 @@ pub fn run<T: Config>(
                             stack.push_value::<T>(Value::I64(val as u64))?;
                         }
                     }
-                    0x17 | 0x18 | 0x19 | 0x1A | 0x1B | 0x1C | 0x1D => { // store
+                    0x17 | 0x18 | 0x19 | 0x1A | 0x1B | 0x1C | 0x1D => {
+                        // store
                         let memarg = MemArg::read(wasm).unwrap_validated();
                         let val = stack.pop_value();
                         let addr: u32 = stack.pop_value().try_into().unwrap_validated();
@@ -3722,7 +3700,8 @@ pub fn run<T: Config>(
                 let sub = wasm.read_var_u32().unwrap_validated();
                 // GC Instructions stub
                 match sub {
-                    0x00 => { // struct.new
+                    0x00 => {
+                        // struct.new
                         wasm.read_var_u32().unwrap_validated(); // type index
                         // Pop args, push struct ref
                         // unimplemented!

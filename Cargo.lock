@@ -107,7 +107,6 @@ version = "0.1.0"
 dependencies = [
  "inkui",
  "std",
- "titanf",
 ]
 
 [[package]]
@@ -120,9 +119,9 @@ dependencies = [
 
 [[package]]
 name = "titanf"
-version = "2.3.2"
+version = "2.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bba9755926057338db3485efbb7f9fac7cc641107800ac8f839ab313b612e43a"
+checksum = "310fa5e06b2266907fa7453e5887a3e5da57c07ba7d728a33c1122331523e74c"
 
 [[package]]
 name = "tmap"
@@ -135,10 +134,8 @@ dependencies = [
 name = "userland"
 version = "0.1.0"
 dependencies = [
- "asvgard",
  "inkui",
  "std",
- "titanf",
 ]
 
 [[package]]

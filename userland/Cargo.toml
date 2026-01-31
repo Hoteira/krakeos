@@ -7,5 +7,3 @@ edition = "2024"
 [dependencies]
 std = { path = "../std" }
 inkui = { path = "../inkui" }
-asvgard = { version = "0.2.3", default-features = false }
-titanf = { version = "2.3.2", default-features = false }

@@ -1,11 +1,10 @@
 #[macro_use]
 mod log_wrapper;
-pub mod core;
 pub mod component;
+pub mod core;
 pub mod execution;
-pub mod wasi;
 pub mod validation;
-pub mod aot;
+pub mod wasi;
 pub use core::error::ValidationError;
 pub use core::reader::span::Span;
 pub use core::reader::types::data::DataSegment;
@@ -21,4 +20,4 @@ pub use execution::linker::Linker;
 pub use execution::store::ExternVal;
 pub use execution::store::Store;
 pub use execution::value::Value;
-pub use validation::{validate, ValidationInfo};
+pub use validation::{ValidationInfo, validate};
