@@ -6,22 +6,28 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::wasm::{validate, Linker, Store};
 
-pub fn run_wasm(path: String, args: Vec<String>, root_path: Option<String>, aot_enabled: bool) {
-    let msg = format!("WASM: Starting WASI App: {} (AOT: {})...\n", path, aot_enabled);
+pub fn run_wasm(path: String, args: Vec<String>, root_path: Option<String>) {
+    let msg = format!("WASM: Starting WASI App: {}...\n", path);
     std::os::file_write(1, msg.as_bytes());
 
     if let Ok(mut file) = File::open(&path) {
         let size = file.size();
         let mut buffer = Vec::with_capacity(size);
         if file.read_to_end(&mut buffer).is_ok() {
-            unsafe { std::wasm::wasi::ICRNL = true; }
+            unsafe {
+                std::wasm::wasi::ICRNL = true;
+            }
             match validate(&buffer) {
                 Ok(validation_info) => {
                     let mut store = Store::new(());
                     let mut linker = Linker::new();
 
                     let root = root_path.unwrap_or_else(|| String::from("@0xE0"));
-                    store.wasi_ctx = Some(std::wasm::wasi::WasiCtx::new(args, root, &[(0, 0), (1, 1), (2, 2)]));
+                    store.wasi_ctx = Some(std::wasm::wasi::WasiCtx::new(
+                        args,
+                        root,
+                        &[(0, 0), (1, 1), (2, 2)],
+                    ));
 
                     std::wasm::wasi::create_wasi_imports(&mut linker, &mut store);
                     std::wasm::wasi::create_wasi_p2_imports(&mut linker, &mut store);
@@ -29,30 +35,29 @@ pub fn run_wasm(path: String, args: Vec<String>, root_path: Option<String>, aot_
                     let res = if let Some(component) = &validation_info.component {
                         std::wasm::execution::component_executor::instantiate_component(
                             &mut store, &linker, component, &buffer,
-                        ).map(|_| ())
+                        )
+                        .map(|_| ())
                     } else {
-                        linker.module_instantiate(&mut store, &validation_info, None).and_then(|instance| {
-                            if aot_enabled {
-                                let _ = store.compile_module_aot(instance.module_addr);
-                            }
+                        linker
+                            .module_instantiate(&mut store, &validation_info, None)
+                            .and_then(|instance| {
+                                let entry_point = store
+                                    .instance_export(instance.module_addr, "run")
+                                    .ok()
+                                    .and_then(|e| e.as_func())
+                                    .or_else(|| {
+                                        store
+                                            .instance_export(instance.module_addr, "_start")
+                                            .ok()
+                                            .and_then(|e| e.as_func())
+                                    });
 
-                            let entry_point = store
-                                .instance_export(instance.module_addr, "run")
-                                .ok()
-                                .and_then(|e| e.as_func())
-                                .or_else(|| {
-                                    store
-                                        .instance_export(instance.module_addr, "_start")
-                                        .ok()
-                                        .and_then(|e| e.as_func())
-                                });
-
-                            if let Some(func_addr) = entry_point {
-                                store.invoke(func_addr, Vec::new(), None).map(|_| ())
-                            } else {
-                                Ok(())
-                            }
-                        })
+                                if let Some(func_addr) = entry_point {
+                                    store.invoke(func_addr, Vec::new(), None).map(|_| ())
+                                } else {
+                                    Ok(())
+                                }
+                            })
                     };
 
                     if let Err(e) = res {
@@ -76,7 +81,9 @@ pub fn run_wasm(path: String, args: Vec<String>, root_path: Option<String>, aot_
                     std::os::file_write(1, msg.as_bytes());
                 }
             }
-            unsafe { std::wasm::wasi::ICRNL = false; }
+            unsafe {
+                std::wasm::wasi::ICRNL = false;
+            }
         }
     } else {
         let msg = format!("WASM: WASM file not found at {}\n", path);
@@ -84,13 +91,19 @@ pub fn run_wasm(path: String, args: Vec<String>, root_path: Option<String>, aot_
     }
 }
 
-pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &mut String, in_fd: usize, out_fd: usize) -> i32 {
+pub fn execute_builtin(
+    cmd: &str,
+    args: &[String],
+    cwd: &mut String,
+    path_env: &mut String,
+    in_fd: usize,
+    out_fd: usize,
+) -> i32 {
     if cmd == "help" {
         std::os::file_write(out_fd, b"Available commands: help, clear, ls, cd, pwd, touch, mkdir, rm, mv, cp, cat, sleep, osfetch, echo, export, wasm\n");
         return 0;
     } else if cmd == "wasm" {
         let mut root_path = None;
-        let mut aot_enabled = false;
         let mut actual_args = args.to_vec();
 
         // Parse flags
@@ -105,9 +118,6 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
                     std::os::file_write(out_fd, b"Error: --dir requires a path\n");
                     return 1;
                 }
-            } else if actual_args[i] == "--aot" {
-                aot_enabled = true;
-                actual_args.remove(i);
             } else {
                 i += 1;
             }
@@ -118,11 +128,18 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
             let mut prog_path = resolve_path(cwd, &prog_name);
 
             // If not found in current dir, search in PATH
-            if std::fs::File::open(&prog_path).is_err() && !prog_name.starts_with('@') && !prog_name.contains('/') {
+            if std::fs::File::open(&prog_path).is_err()
+                && !prog_name.starts_with('@')
+                && !prog_name.contains('/')
+            {
                 let mut found = false;
                 for path_dir in path_env.split(';') {
                     let p = format!("{}/{}", path_dir, prog_name);
-                    let p_wasm = if p.ends_with(".wasm") { p.clone() } else { format!("{}.wasm", p) };
+                    let p_wasm = if p.ends_with(".wasm") {
+                        p.clone()
+                    } else {
+                        format!("{}.wasm", p)
+                    };
 
                     if std::fs::File::open(&p_wasm).is_ok() {
                         prog_path = p_wasm;
@@ -138,9 +155,12 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
                 }
             }
 
-            run_wasm(prog_path, actual_args, root_path, aot_enabled);
+            run_wasm(prog_path, actual_args, root_path);
         } else {
-            std::os::file_write(out_fd, b"Usage: wasm [--dir <path>] [--aot] <file.wasm> [args...]\n");
+            std::os::file_write(
+                out_fd,
+                b"Usage: wasm [--dir <path>] <file.wasm> [args...]\n",
+            );
             return 1;
         }
         return 0;
@@ -201,7 +221,10 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
         let s = total_seconds % 60;
 
         let mut info: Vec<String> = Vec::new();
-        info.push(format!("{}{}user@{}krakeos{}", p_pink, white, p_blue, reset));
+        info.push(format!(
+            "{}{}user@{}krakeos{}",
+            p_pink, white, p_blue, reset
+        ));
         info.push(format!("{}-----------------{}", gray, reset));
 
         let mut os_line = String::from(p_cyan);
@@ -293,7 +316,9 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
             if a_string.chars().count() > ascii_width {
                 let mut new_s = String::new();
                 for (idx, c) in a_string.chars().enumerate() {
-                    if idx >= ascii_width { break; }
+                    if idx >= ascii_width {
+                        break;
+                    }
                     new_s.push(c);
                 }
                 a_string = new_s;
@@ -320,7 +345,9 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
             let mut buf = [0u8; 1024];
             loop {
                 let n = std::os::file_read(in_fd, &mut buf);
-                if n == 0 { break; }
+                if n == 0 {
+                    break;
+                }
                 std::os::file_write(out_fd, &buf[0..n]);
             }
         } else {
@@ -352,7 +379,11 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
         std::os::file_write(out_fd, b"\n");
         return 0;
     } else if cmd == "ls" {
-        let target = if args.is_empty() { cwd.as_str() } else { &args[0] };
+        let target = if args.is_empty() {
+            cwd.as_str()
+        } else {
+            &args[0]
+        };
         let full_path = resolve_path(cwd, target);
         match std::fs::read_dir(&full_path) {
             Ok(entries) => {
@@ -449,7 +480,9 @@ pub fn execute_builtin(cmd: &str, args: &[String], cwd: &mut String, path_env: &
                     let mut buf = [0u8; 1024];
                     loop {
                         match src.read(&mut buf) {
-                            Ok(n) if n > 0 => { let _ = dst.write(&buf[0..n]); }
+                            Ok(n) if n > 0 => {
+                                let _ = dst.write(&buf[0..n]);
+                            }
                             _ => break,
                         }
                     }
