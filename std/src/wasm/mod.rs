@@ -1,23 +1,17 @@
 #[macro_use]
 mod log_wrapper;
-pub mod component;
-pub mod core;
-pub mod execution;
-pub mod validation;
+pub mod common;
+pub mod interpreter;
+pub mod aot;
 pub mod wasi;
-pub use core::error::ValidationError;
-pub use core::reader::span::Span;
-pub use core::reader::types::data::DataSegment;
-pub use core::reader::types::element::ElemType;
-pub use core::reader::types::export::ExportDesc;
-pub use core::reader::types::global::GlobalType;
-pub use core::reader::types::import::ImportDesc;
-pub use core::reader::types::{Limits, NumType, RefType, ValType};
-pub use execution::checked;
-pub use execution::checked::{Stored, StoredExternVal};
-pub use execution::error::{RuntimeError, TrapError};
-pub use execution::linker::Linker;
-pub use execution::store::ExternVal;
-pub use execution::store::Store;
-pub use execution::value::Value;
-pub use validation::{ValidationInfo, validate};
+pub mod component;
+
+pub use common::validation::{ValidationInfo, validate};
+pub use common::error::ValidationError;
+pub use common::interop::Linker;
+pub use common::runtime_error::{RuntimeError, TrapError};
+pub use common::value::Value;
+pub use common::reader::span::Span;
+pub use common::reader::types::{Limits, NumType, RefType, ValType};
+pub use interpreter::store::{Store, ExternVal};
+pub use interpreter::resumable::ResumableRef;

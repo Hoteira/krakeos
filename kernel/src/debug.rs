@@ -81,14 +81,10 @@ macro_rules! debugln {
     ($($arg:tt)*) => ($crate::debug_print!("{}\n", format_args!($($arg)*)));
 }
 
-
-
 #[macro_export]
 macro_rules! print {
     ($($arg:tt)*) => ($crate::debug_print!("{}", format_args!($($arg)*)));
 }
-
-
 
 #[macro_export]
 

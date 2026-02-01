@@ -1,10 +1,7 @@
 use crate::rust_alloc::{vec, vec::Vec};
 use crate::wasm::{
-    execution::{
-        config::Config,
-        store::{HaltExecutionError, Store},
-        value::Value,
-    },
+    common::{config::Config, value::Value},
+    interpreter::store::{HaltExecutionError, Store},
     wasi::ctx::{PollableTarget, WasiResource},
 };
 

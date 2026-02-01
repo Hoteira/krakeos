@@ -33,27 +33,27 @@ pub fn run_wasm(path: String, args: Vec<String>, root_path: Option<String>) {
                     std::wasm::wasi::create_wasi_p2_imports(&mut linker, &mut store);
 
                     let res = if let Some(component) = &validation_info.component {
-                        std::wasm::execution::component_executor::instantiate_component(
+                        std::wasm::interpreter::component_executor::instantiate_component(
                             &mut store, &linker, component, &buffer,
                         )
                         .map(|_| ())
                     } else {
                         linker
-                            .module_instantiate(&mut store, &validation_info, None)
+                            .module_instantiate_unchecked(&mut store, &validation_info, None)
                             .and_then(|instance| {
                                 let entry_point = store
-                                    .instance_export(instance.module_addr, "run")
+                                    .instance_export_unchecked(instance.module_addr, "run")
                                     .ok()
                                     .and_then(|e| e.as_func())
                                     .or_else(|| {
                                         store
-                                            .instance_export(instance.module_addr, "_start")
+                                            .instance_export_unchecked(instance.module_addr, "_start")
                                             .ok()
                                             .and_then(|e| e.as_func())
                                     });
 
                                 if let Some(func_addr) = entry_point {
-                                    store.invoke(func_addr, Vec::new(), None).map(|_| ())
+                                    store.invoke_unchecked(func_addr, Vec::new(), None).map(|_| ())
                                 } else {
                                     Ok(())
                                 }
@@ -211,8 +211,8 @@ pub fn execute_builtin(
             "",
         ];
 
-        let screen_w = std::graphics::get_screen_width();
-        let screen_h = std::graphics::get_screen_height();
+        let screen_w = std::os::graphics::get_screen_width();
+        let screen_h = std::os::graphics::get_screen_height();
 
         let ticks = std::os::get_system_ticks();
         let total_seconds = ticks / 1000;

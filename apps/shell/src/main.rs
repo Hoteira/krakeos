@@ -263,7 +263,7 @@ pub fn main() {
                         }
 
                         for pid in children_pids {
-                            last_exit_code = std::os::waitpid(pid);
+                            last_exit_code = std::os::waitpid(pid as u64) as usize;
                         }
 
                         if last_exit_code != 0 {

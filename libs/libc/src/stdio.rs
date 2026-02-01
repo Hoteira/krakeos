@@ -241,7 +241,7 @@ pub unsafe extern "C" fn fwrite(p: *const c_void, s: usize, n: usize, st: *mut c
 pub unsafe extern "C" fn fseek(st: *mut c_void, o: c_long, w: c_int) -> c_int {
     if st.is_null() || st as usize <= 2 { return -1; }
     let f = &mut *(st as *mut std::fs::File);
-    if std::os::file_seek(f.as_raw_fd(), o as i64, w as usize) != u64::MAX { 0 } else { -1 }
+    if std::os::file_seek(f.as_raw_fd(), o as i64, w as i32) != -1 { 0 } else { -1 }
 }
 
 #[unsafe(no_mangle)]
@@ -249,7 +249,7 @@ pub unsafe extern "C" fn ftell(st: *mut c_void) -> c_long {
     if st.is_null() || st as usize <= 2 { return -1; }
     let f = &mut *(st as *mut std::fs::File);
     let r = std::os::file_seek(f.as_raw_fd(), 0, 1);
-    if r != u64::MAX { r as c_long } else { -1 }
+    if r != -1 { r as c_long } else { -1 }
 }
 
 #[unsafe(no_mangle)]

@@ -2,32 +2,28 @@
 #![feature(lang_items)]
 
 extern crate alloc as rust_alloc;
-pub mod io;
-pub mod memory;
+
 pub mod alloc;
-pub mod os;
-pub mod sys;
-pub mod graphics;
-pub use common as event_queue;
-pub mod sync;
-pub mod fs;
-pub mod math;
-pub mod time;
-pub mod thread;
 pub mod env;
+pub mod fs;
+pub mod future;
+pub mod io;
+pub mod math;
+pub mod memory;
+pub mod os;
 pub mod process;
 pub mod rt;
-pub mod future;
+pub mod sync;
+pub mod sys;
 pub mod task;
-pub mod executor;
+pub mod thread;
+pub mod time;
+
 #[macro_use]
 pub mod wasm;
 
 #[cfg(feature = "userland")]
-pub mod runtime;
-
-#[cfg(feature = "userland")]
-#[panic_handler]
+#[cfg_attr(not(test), panic_handler)]
 fn panic(info: &core::panic::PanicInfo) -> ! {
     crate::debugln!("[USER PANIC] {}", info);
     crate::os::exit(1);

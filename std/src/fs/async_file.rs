@@ -1,6 +1,6 @@
 use crate::fs::File;
 use crate::io::{AsyncRead, AsyncWrite, Read, Write};
-use crate::os::set_nonblocking;
+use crate::os::set_nonblock;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 
@@ -10,7 +10,7 @@ pub struct AsyncFile {
 
 impl AsyncFile {
     pub fn new(file: File) -> Self {
-        set_nonblocking(file.as_raw_fd(), true);
+        set_nonblock(file.as_raw_fd(), true);
         AsyncFile { inner: file }
     }
 }

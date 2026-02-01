@@ -4,15 +4,15 @@ extern crate alloc;
 use alloc::string::{String, ToString};
 use inkui::{Color, Size, Widget, Window};
 use std::fs::File;
-use std::graphics::Items;
+use std::os::Items;
 use std::io::Read;
 use std::{debugln, println};
 
 pub fn main() {
     println!("Starting Userland Shell...");
 
-    let width = std::graphics::get_screen_width();
-    let height = std::graphics::get_screen_height();
+    let width = std::os::graphics::get_screen_width();
+    let height = std::os::graphics::get_screen_height();
     println!("Detected Screen Resolution: {}x{}", width, height);
 
     let mut win_wallpaper = Window::new("Wallpaper", width, height);
@@ -83,7 +83,7 @@ fn run_wasm(path: &str, enable_aot: bool) {
 
                     if let Some(component) = &validation_info.component {
                         debugln!("WASI: [COMPONENT] Starting {}...", path);
-                        match std::wasm::execution::component_executor::instantiate_component(
+                        match std::wasm::interpreter::component_executor::instantiate_component(
                             &mut store, &linker, component, &buffer,
                         ) {
                             Ok(_) => {
@@ -94,23 +94,23 @@ fn run_wasm(path: &str, enable_aot: bool) {
                     } else {
                         // 1. Run using Interpreter
                         debugln!("WASI: [INTERPRETER] Starting {}...", path);
-                        match linker.module_instantiate(&mut store, &validation_info, None) {
+                        match linker.module_instantiate_unchecked(&mut store, &validation_info, None) {
                             Ok(instance) => {
 
                                 // Try "run" first (WASI Preview 2 convention), then "_start" as fallback
                                 let entry_point = store
-                                    .instance_export(instance.module_addr, "run")
+                                    .instance_export_unchecked(instance.module_addr, "run")
                                     .ok()
                                     .and_then(|e| e.as_func())
                                     .or_else(|| {
                                         store
-                                            .instance_export(instance.module_addr, "_start")
+                                            .instance_export_unchecked(instance.module_addr, "_start")
                                             .ok()
                                             .and_then(|e| e.as_func())
                                     });
 
                                 if let Some(func_addr) = entry_point {
-                                    let _ = store.invoke(func_addr, Vec::new(), None);
+                                    let _ = store.invoke_unchecked(func_addr, Vec::new(), None);
                                     debugln!("WASI: [INTERPRETER] Finished {}.", path);
                                 }
                             }

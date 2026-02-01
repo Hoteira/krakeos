@@ -22,7 +22,7 @@ pub mod time;
 pub mod pthread;
 
 #[cfg(feature = "userland")]
-pub use std::runtime::*;
+pub use std::rt::runtime::*;
 
 #[unsafe(no_mangle)]
 pub static mut errno: c_int = 0;

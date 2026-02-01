@@ -6,7 +6,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::slice;
 use core::sync::atomic::{AtomicBool, Ordering};
-use std::graphics::{self, Items};
+use std::os::graphics::{self, Items};
 use std::os::syscall;
 use std::sync::Mutex;
 
@@ -97,7 +97,7 @@ impl Window {
 
         let pid = std::process::get_pid();
         let q_name = alloc::format!("events_{}", pid);
-        let event_queue_ptr = std::memory::shm_get(&q_name, 8192) as usize;
+        let event_queue_ptr = std::memory::shm_get(&q_name, 8192).unwrap_or(0) as usize;
 
         Window {
             id: 0,
@@ -260,7 +260,7 @@ impl Window {
 
         // 2. Drain shared queue
         if self.event_queue_ptr != 0 && self.event_queue_ptr != usize::MAX {
-            let q = unsafe { &*(self.event_queue_ptr as *const std::event_queue::SharedEventQueue) };
+            let q = unsafe { &*(self.event_queue_ptr as *const std::os::SharedEventQueue) };
             while let Some(e) = q.pop() {
                 if e.get_window_id() == self.id as u32 || e.get_window_id() == 0 {
                     vec.push(e);

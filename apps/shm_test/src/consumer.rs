@@ -1,19 +1,17 @@
 #![no_std]
-#![no_main]
 
 extern crate alloc;
 use std::os;
 
-#[unsafe(no_mangle)]
-pub extern "C" fn main() -> i32 {
+pub fn main() {
     os::debug_print("SHM Consumer: Starting...\n");
 
     // Request existing shared memory named "test_shm"
-    if let Some(ptr) = os::shm_get("test_shm", 4096) {
+    if let Some(addr) = os::shm_get("test_shm", 4096) {
         os::debug_print("SHM Consumer: Got pointer. Reading message...\n");
 
         unsafe {
-            let mut curr = ptr;
+            let mut curr = addr as *const u8;
             let mut buf = [0u8; 64];
             let mut i = 0;
             while *curr != 0 && i < 63 {
@@ -30,6 +28,4 @@ pub extern "C" fn main() -> i32 {
     } else {
         os::debug_print("SHM Consumer: Failed to get SHM. Did the producer run?\n");
     }
-
-    0
 }

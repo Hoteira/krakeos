@@ -1,6 +1,6 @@
 use crate::sync::Mutex;
 use alloc::vec::Vec;
-pub use common::{Event, KeyboardEvent, MouseEvent, ResizeEvent};
+pub use std::os::krakeos::events::{Event, KeyboardEvent, MouseEvent, ResizeEvent};
 
 pub const QUEUE_SIZE: usize = 256;
 
@@ -41,7 +41,7 @@ impl EventQueue {
             let proc = thread.process.as_ref().unwrap();
             let q_virt = proc.shared_event_queue;
             if q_virt != 0 {
-                let q = unsafe { &*(q_virt as *const common::SharedEventQueue) };
+                let q = unsafe { &*(q_virt as *const std::os::krakeos::events::SharedEventQueue) };
                 return q.push(event);
             }
         }

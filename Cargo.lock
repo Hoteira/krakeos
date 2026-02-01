@@ -26,10 +26,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "common"
-version = "0.1.0"
-
-[[package]]
 name = "elfic"
 version = "0.1.0"
 
@@ -46,7 +42,6 @@ name = "inkui"
 version = "0.1.0"
 dependencies = [
  "asvgard",
- "common",
  "std",
  "titanf",
 ]
@@ -55,8 +50,8 @@ dependencies = [
 name = "kernel"
 version = "0.1.0"
 dependencies = [
- "common",
  "elfic",
+ "std",
 ]
 
 [[package]]
@@ -88,11 +83,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "std"
+name = "shm_test"
 version = "0.1.0"
 dependencies = [
- "common",
+ "std",
 ]
+
+[[package]]
+name = "std"
+version = "0.1.0"
 
 [[package]]
 name = "sysmon"
