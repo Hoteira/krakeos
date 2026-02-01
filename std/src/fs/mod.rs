@@ -1,10 +1,10 @@
 use crate::io::{Error, Read, Result, Seek, SeekFrom, Write};
-use crate::os::syscall;
 use rust_alloc::string::String;
 use rust_alloc::vec::Vec;
 
 pub mod async_file;
 pub use async_file::AsyncFile;
+use crate::sys::syscall;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]

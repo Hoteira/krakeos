@@ -1,12 +1,15 @@
 use crate::rust_alloc::{string::String, vec, vec::Vec};
 use crate::wasm::{
-    core::reader::types::{FuncType, NumType, ResultType, ValType},
-    execution::{
-        checked::AbstractStored,
+    common::{
+        checked::{AbstractStored, Stored},
         config::Config,
-        linker::Linker,
-        store::{addrs::FuncAddr, ExternVal, HaltExecutionError, Store},
+        interop::Linker,
+        reader::types::{FuncType, NumType, ResultType, ValType},
         value::Value,
+    },
+    interpreter::{
+        resumable::RunState,
+        store::{addrs::FuncAddr, ExternVal, HaltExecutionError, Store},
     },
 };
 
@@ -170,7 +173,7 @@ pub(crate) fn resource_drop<T: Config>(store: &mut Store<'_, T>, args: Vec<Value
 
 pub(crate) fn find_cabi_realloc<T: Config>(store: &Store<'_, T>) -> Option<FuncAddr> {
     let module_addr = store.caller_module?;
-    if let Ok(export) = store.instance_export(unsafe { crate::wasm::execution::checked::Stored::from_bare(module_addr, store.id) }, "cabi_realloc") {
+    if let Ok(export) = store.instance_export(unsafe { Stored::from_bare(module_addr, store.id) }, "cabi_realloc") {
         if let Some(func) = export.as_func() {
             return Some(func.into_bare());
         }
@@ -183,7 +186,7 @@ pub(crate) fn call_cabi_realloc<T: Config>(store: &mut Store<'_, T>, new_size: u
     let cabi_realloc_addr = find_cabi_realloc(store).ok_or(HaltExecutionError(1))?;
     let args = vec![Value::I32(0), Value::I32(0), Value::I32(align), Value::I32(new_size)];
     match store.invoke_unchecked(cabi_realloc_addr, args, None) {
-        Ok(crate::wasm::execution::resumable::RunState::Finished { values, .. }) => {
+        Ok(RunState::Finished { values, .. }) => {
             if let Some(Value::I32(ptr)) = values.first() {
                 Ok(*ptr as u32)
             } else {
@@ -222,7 +225,7 @@ pub(crate) fn read_mem<T: Config>(store: &Store<'_, T>, addr: u32, buf: &mut [u8
 }
 
 fn get_screen_width_host<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-    let w = crate::graphics::get_screen_width();
+    let w = crate::os::graphics::get_screen_width();
     // crate::debugln!("WASM get_screen_width -> {}", w);
     Ok(vec![Value::I32(w as u32)])
 }
@@ -368,7 +371,7 @@ fn krakeos_syscall_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -
             let w_type_val = read_mem_u32(store, addr + 60)?;
 
             // Reconstruct Host Window struct
-            let host_win = crate::graphics::Window {
+            let host_win = crate::os::graphics::Window {
                 id,
                 buffer: if buffer_off != 0 { (wasm_base + buffer_off) as usize } else { 0 },
                 back_buffer: if back_buffer_off != 0 { (wasm_base + back_buffer_off) as usize } else { 0 },
@@ -404,7 +407,7 @@ fn krakeos_syscall_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -
             panic!("WASM Syscall stub: UPDATE_WINDOW_AREA (should be handled in syscall6_host)");
         }
         104 => { // GET_EVENTS (a1=wid, a2=buf, a3=max)
-            let event_size = core::mem::size_of::<crate::graphics::Event>();
+            let event_size = core::mem::size_of::<crate::os::graphics::Event>();
             let mut buf = vec![0u8; a3 as usize * event_size];
             let res = unsafe { crate::sys::syscall(num, a1, buf.as_mut_ptr() as u64, a3) };
             if res != u64::MAX && res > 0 {
@@ -529,6 +532,6 @@ fn krakeos_syscall6_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) 
 }
 
 fn get_screen_height_host<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-    Ok(vec![Value::I32(crate::graphics::get_screen_height() as u32)])
+    Ok(vec![Value::I32(crate::os::graphics::get_screen_height() as u32)])
 }
 

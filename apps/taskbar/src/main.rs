@@ -4,6 +4,7 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::format;
 use inkui::{Color, Display, Size, Widget, Window};
+use std::os::{get_screen_height, get_screen_width, Items};
 use std::println;
 
 fn open_start_menu(_win: &mut Window, _id: usize) {
@@ -19,12 +20,12 @@ fn wifi_status(_win: &mut Window, _id: usize) {
 }
 
 pub fn main() {
-    let screen_w = std::graphics::get_screen_width();
-    let screen_total_h = std::graphics::get_screen_height();
+    let screen_w = get_screen_width();
+    let screen_total_h = get_screen_height();
     let screen_h = (screen_total_h * 4) / 100;
 
     let mut win = Window::new("Taskbar", screen_w, screen_h);
-    win.w_type = std::graphics::Items::Bar;
+    win.w_type = Items::Bar;
     win.x = 0;
     win.y = 0;
 

@@ -1,9 +1,9 @@
 use crate::rust_alloc::borrow::ToOwned;
 use crate::rust_alloc::string::String;
 use crate::rust_alloc::vec::Vec;
-use crate::wasm::core::error::ValidationError;
-use crate::wasm::core::reader::span::Span;
-use crate::wasm::core::reader::{WasmReadable, WasmReader};
+use crate::wasm::common::error::ValidationError;
+use crate::wasm::common::reader::span::Span;
+use crate::wasm::common::reader::{WasmReadable, WasmReader};
 
 // WASM Component Model Section IDs:
 // 0:  Custom

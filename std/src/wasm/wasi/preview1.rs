@@ -1,12 +1,14 @@
 use super::ctx::WasiCtx;
 use crate::rust_alloc::{format, string::String, vec, vec::Vec};
 use crate::wasm::{
-    core::reader::types::{FuncType, NumType, ResultType, ValType},
-    execution::{
+    common::{
         config::Config,
-        linker::Linker,
-        store::{ExternVal, HaltExecutionError, Store},
+        reader::types::{FuncType, NumType, ResultType, ValType},
         value::Value,
+        interop::Linker,
+    },
+    interpreter::{
+        store::{ExternVal, HaltExecutionError, Store},
     },
 };
 

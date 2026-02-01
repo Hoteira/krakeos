@@ -1,11 +1,8 @@
 use super::{call_cabi_realloc, read_bytes, read_mem, write_bytes, write_u32};
 use crate::rust_alloc::{vec, vec::Vec};
 use crate::wasm::{
-    execution::{
-        config::Config,
-        store::{HaltExecutionError, Store},
-        value::Value,
-    },
+    common::{config::Config, value::Value},
+    interpreter::store::{HaltExecutionError, Store},
     wasi::ctx::{InputStreamSource, OutputStreamSource, PollableTarget, WasiResource},
 };
 

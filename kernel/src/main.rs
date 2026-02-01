@@ -31,6 +31,9 @@ const PAT_MSR: u32 = 0x277;
 use crate::memory::address::PhysAddr;
 use crate::memory::paging::{active_level_4_table, phys_to_virt};
 
+#[global_allocator]
+static ALLOCATOR: std::alloc::Allocator = std::alloc::Allocator::new();
+
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".start")]
 pub extern "C" fn _start(bootinfo_ptr: u64) -> ! {
@@ -72,7 +75,7 @@ pub extern "C" fn _start(bootinfo_ptr: u64) -> ! {
     let heap_virt_ptr = phys_to_virt(PhysAddr::new(heap_phys_addr)).as_mut_ptr::<u8>();
 
 
-    crate::memory::allocator::init_heap(heap_virt_ptr, heap_size as usize);
+    ALLOCATOR.init(heap_virt_ptr, heap_size as usize);
 
     debugln!("SIGNPOST: Heap initialized.");
 

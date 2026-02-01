@@ -1,9 +1,8 @@
 use super::{call_cabi_realloc, write_bytes, write_u32};
 use crate::rust_alloc::{vec, vec::Vec};
-use crate::wasm::execution::{
-    config::Config,
-    store::{HaltExecutionError, Store},
-    value::Value,
+use crate::wasm::{
+    common::{config::Config, value::Value},
+    interpreter::store::{HaltExecutionError, Store},
 };
 
 pub fn get_random_bytes<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {

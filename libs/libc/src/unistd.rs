@@ -114,7 +114,7 @@ pub unsafe extern "C" fn wait(status: *mut c_int) -> c_int {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn waitpid(pid: c_int, status: *mut c_int, _options: c_int) -> c_int {
-    let res = std::os::waitpid(pid as usize);
+    let res = std::os::waitpid(pid as u64);
     if !status.is_null() {
         *status = (res as c_int) << 8;
     }

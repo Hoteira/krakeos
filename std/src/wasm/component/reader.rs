@@ -1,8 +1,8 @@
 use super::error::ComponentError;
 use super::types::*;
 use crate::rust_alloc::borrow::ToOwned;
-use crate::wasm::core::error::ValidationError;
-use crate::wasm::core::reader::{WasmReadable, WasmReader};
+use crate::wasm::common::error::ValidationError;
+use crate::wasm::common::reader::{WasmReadable, WasmReader};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComponentSectionTy {

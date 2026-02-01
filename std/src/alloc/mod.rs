@@ -1,4 +1,5 @@
-use common::allocator::{align_up, Heap};
+pub mod heap;
+use self::heap::{align_up, Heap};
 use core::{
     alloc::{GlobalAlloc, Layout},
     cell::UnsafeCell,
@@ -20,7 +21,18 @@ impl Allocator {
         }
     }
 
-    fn lock(&self) {
+    fn lock(&self) -> u64 {
+        let rflags: u64;
+        #[cfg(not(feature = "userland"))]
+        unsafe {
+            core::arch::asm!("pushfq; pop {}", out(reg) rflags);
+            core::arch::asm!("cli");
+        }
+        #[cfg(feature = "userland")]
+        {
+            rflags = 0;
+        }
+
         while self
             .lock
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
@@ -28,10 +40,26 @@ impl Allocator {
         {
             core::hint::spin_loop();
         }
+        rflags
     }
 
-    fn unlock(&self) {
+    fn unlock(&self, rflags: u64) {
         self.lock.store(false, Ordering::Release);
+        #[cfg(not(feature = "userland"))]
+        unsafe {
+            if (rflags & 0x200) != 0 {
+                core::arch::asm!("sti");
+            }
+        }
+    }
+
+    pub fn init(&self, base: *mut u8, size: usize) {
+        let flags = self.lock();
+        unsafe {
+            let heap = &mut *self.heap.get();
+            heap.init(base, size);
+        }
+        self.unlock(flags);
     }
 }
 
@@ -84,31 +112,35 @@ unsafe fn grow_handler(min_size: usize) -> Option<(usize, usize)> {
 
 unsafe impl GlobalAlloc for Allocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        self.lock();
+        let flags = self.lock();
         let heap = &mut *self.heap.get();
         let ptr = heap.alloc(layout, |min| grow_handler(min));
-        self.unlock();
+        self.unlock(flags);
         ptr
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        self.lock();
+        let flags = self.lock();
         let heap = &mut *self.heap.get();
         heap.dealloc(ptr, layout);
-        self.unlock();
+        self.unlock(flags);
     }
 }
 
-#[global_allocator]
+#[cfg(feature = "userland")]
+#[cfg_attr(not(test), global_allocator)]
+pub static ALLOCATOR: Allocator = Allocator::new();
+
+#[cfg(not(feature = "userland"))]
 pub static ALLOCATOR: Allocator = Allocator::new();
 
 pub fn init_heap(base: *mut u8, size: usize) {
-    ALLOCATOR.lock();
+    let flags = ALLOCATOR.lock();
     unsafe {
         let heap = &mut *ALLOCATOR.heap.get();
         heap.init(base, size);
     }
-    ALLOCATOR.unlock();
+    ALLOCATOR.unlock(flags);
 }
 
 #[cfg(target_arch = "wasm32")]

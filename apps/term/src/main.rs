@@ -40,25 +40,25 @@ fn run_wasm(path: &str, fds: [(u8, u8); 3]) {
                     store.wasi_ctx = Some(std::wasm::wasi::WasiCtx::new(vec![path.to_string()], String::from("@0xE0"), &fds));
 
                     if let Some(component) = &validation_info.component {
-                        let _ = std::wasm::execution::component_executor::instantiate_component(
+                        let _ = std::wasm::interpreter::component_executor::instantiate_component(
                             &mut store, &linker, component, &buffer,
                         );
                     } else {
-                        match linker.module_instantiate(&mut store, &validation_info, None) {
+                        match linker.module_instantiate_unchecked(&mut store, &validation_info, None) {
                             Ok(instance) => {
                                 let entry_point = store
-                                    .instance_export(instance.module_addr, "run")
+                                    .instance_export_unchecked(instance.module_addr, "run")
                                     .ok()
                                     .and_then(|e| e.as_func())
                                     .or_else(|| {
                                         store
-                                            .instance_export(instance.module_addr, "_start")
+                                            .instance_export_unchecked(instance.module_addr, "_start")
                                             .ok()
                                             .and_then(|e| e.as_func())
                                     });
 
                                 if let Some(func_addr) = entry_point {
-                                    match store.invoke(func_addr, Vec::new(), None) {
+                                    match store.invoke_unchecked(func_addr, Vec::new(), None) {
                                         Ok(_) => {},
                                         Err(e) => {
                                             std::debugln!("[term] WASM: Invoke error: {:?}", e);
@@ -142,8 +142,8 @@ fn main() {
         std::os::ioctl(0, std::os::TIOCSWINSZ, &ws as *const _ as u64);
     }
 
-    let screen_w = std::graphics::get_screen_width();
-    let screen_h = std::graphics::get_screen_height();
+    let screen_w = std::os::graphics::get_screen_width();
+    let screen_h = std::os::graphics::get_screen_height();
     let x = (screen_w / 2).saturating_sub(width / 2);
     let y = (screen_h / 2).saturating_sub(height / 2);
 
@@ -209,7 +209,7 @@ fn main() {
     win.draw();
     win.update();
 
-    std::os::set_nonblocking(unsafe { TERM_READ_FD }, true);
+    std::os::set_nonblock(unsafe { TERM_READ_FD }, true);
 
     let mut term_buffer = TerminalBuffer::new();
     let mut pipe_buf = [0u8; 4096];
