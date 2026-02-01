@@ -172,6 +172,6 @@ pub fn load_idt() {
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
-    crate::debugln!("KERNEL PANIC: {}", info);
+    crate::debugln!("[KERNEL PANIC] >> {}", info);
     loop {}
 }
