@@ -120,22 +120,6 @@ pub extern "C" fn aot_f64_max(a: f64, b: f64) -> f64 { F64(a).max(F64(b)).0 }
 pub extern "C" fn aot_f64_copysign(a: f64, b: f64) -> f64 { a.copysign(b) }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_i32_trunc_sat_f32_s(a: f32) -> i32 {
-    if a.is_nan() { 0 }
-    else if a >= 2147483648.0 { i32::MAX }
-    else if a < -2147483648.0 { i32::MIN }
-    else { a as i32 }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn aot_i32_trunc_sat_f32_u(a: f32) -> u32 {
-    if a.is_nan() { 0 }
-    else if a >= 4294967296.0 { u32::MAX }
-    else if a <= -1.0 { 0 }
-    else { a as u32 }
-}
-
-#[unsafe(no_mangle)]
 pub extern "C" fn aot_f32_convert_i64_u(a: u64) -> f32 { a as f32 }
 
 #[unsafe(no_mangle)]
