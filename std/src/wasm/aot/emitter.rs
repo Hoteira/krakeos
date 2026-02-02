@@ -137,6 +137,12 @@ impl X64Emitter {
         self.modrm(3, src as u8, dst as u8);
     }
 
+    pub fn mov_reg32_reg32(&mut self, dst: Reg, src: Reg) {
+        self.rex(false, src as u8, 0, dst as u8);
+        self.emit_u8(0x89);
+        self.modrm(3, src as u8, dst as u8);
+    }
+
     pub fn mov_reg_imm64(&mut self, dst: Reg, imm: u64) {
         self.rex(true, 0, 0, dst as u8);
         self.emit_u8(0xB8 + (dst as u8 & 7));
@@ -192,6 +198,25 @@ impl X64Emitter {
         self.modrm(3, src as u8, dst as u8);
     }
 
+    pub fn bsf_reg_reg(&mut self, dst: Reg, src: Reg) {
+        self.rex(true, dst as u8, 0, src as u8);
+        self.emit_u8(0x0F); self.emit_u8(0xBC);
+        self.modrm(3, dst as u8, src as u8);
+    }
+
+    pub fn bsr_reg_reg(&mut self, dst: Reg, src: Reg) {
+        self.rex(true, dst as u8, 0, src as u8);
+        self.emit_u8(0x0F); self.emit_u8(0xBD);
+        self.modrm(3, dst as u8, src as u8);
+    }
+
+    pub fn popcnt_reg_reg(&mut self, dst: Reg, src: Reg) {
+        self.emit_u8(0xF3);
+        self.rex(true, dst as u8, 0, src as u8);
+        self.emit_u8(0x0F); self.emit_u8(0xB8);
+        self.modrm(3, dst as u8, src as u8);
+    }
+
     pub fn cmp_reg_reg(&mut self, dst: Reg, src: Reg) {
         self.rex(true, src as u8, 0, dst as u8);
         self.emit_u8(0x39);
@@ -204,8 +229,22 @@ impl X64Emitter {
         self.modrm(3, src as u8, dst as u8);
     }
 
+    pub fn test_reg_imm32(&mut self, reg: Reg, imm: u32) {
+        self.rex(true, 0, 0, reg as u8);
+        self.emit_u8(0xF7);
+        self.modrm(3, 0, reg as u8);
+        self.emit_u32(imm);
+    }
+
     pub fn sub_reg_imm32(&mut self, reg: Reg, imm: u32) {
         self.rex(true, 0, 0, reg as u8);
+        self.emit_u8(0x81);
+        self.modrm(3, 5, reg as u8);
+        self.emit_u32(imm);
+    }
+
+    pub fn sub_reg32_imm32(&mut self, reg: Reg, imm: u32) {
+        self.rex(false, 0, 0, reg as u8);
         self.emit_u8(0x81);
         self.modrm(3, 5, reg as u8);
         self.emit_u32(imm);
@@ -218,8 +257,22 @@ impl X64Emitter {
         self.emit_u32(imm);
     }
 
+    pub fn add_reg32_imm32(&mut self, reg: Reg, imm: u32) {
+        self.rex(false, 0, 0, reg as u8);
+        self.emit_u8(0x81);
+        self.modrm(3, 0, reg as u8);
+        self.emit_u32(imm);
+    }
+
     pub fn cmp_reg_imm32(&mut self, reg: Reg, imm: u32) {
         self.rex(true, 0, 0, reg as u8);
+        self.emit_u8(0x81);
+        self.modrm(3, 7, reg as u8);
+        self.emit_u32(imm);
+    }
+
+    pub fn cmp_reg32_imm32(&mut self, reg: Reg, imm: u32) {
+        self.rex(false, 0, 0, reg as u8);
         self.emit_u8(0x81);
         self.modrm(3, 7, reg as u8);
         self.emit_u32(imm);
@@ -319,6 +372,14 @@ impl X64Emitter {
         self.emit_u8(0x66); self.rex(false, dst as u8, 0, src as u8);
         self.emit_u8(0x0F); self.emit_u8(0x54); self.modrm(3, dst as u8, src as u8);
     }
+    pub fn orps_xmm_xmm(&mut self, dst: XmmReg, src: XmmReg) {
+        self.rex(false, dst as u8, 0, src as u8);
+        self.emit_u8(0x0F); self.emit_u8(0x56); self.modrm(3, dst as u8, src as u8);
+    }
+    pub fn orpd_xmm_xmm(&mut self, dst: XmmReg, src: XmmReg) {
+        self.emit_u8(0x66); self.rex(false, dst as u8, 0, src as u8);
+        self.emit_u8(0x0F); self.emit_u8(0x56); self.modrm(3, dst as u8, src as u8);
+    }
     pub fn xorpd_xmm_xmm(&mut self, dst: XmmReg, src: XmmReg) {
         self.emit_u8(0x66); self.rex(false, dst as u8, 0, src as u8);
         self.emit_u8(0x0F); self.emit_u8(0x57); self.modrm(3, dst as u8, src as u8);
@@ -389,10 +450,33 @@ impl X64Emitter {
         self.emit_u8(0xF3); self.rex(true, dst as u8, 0, src as u8);
         self.emit_u8(0x0F); self.emit_u8(0x2C); self.modrm(3, dst as u8, src as u8);
     }
+    pub fn cvttss2si_reg32_xmm(&mut self, dst: Reg, src: XmmReg) {
+        self.emit_u8(0xF3); self.rex(false, dst as u8, 0, src as u8);
+        self.emit_u8(0x0F); self.emit_u8(0x2C); self.modrm(3, dst as u8, src as u8);
+    }
     pub fn cvttsd2si_reg_xmm(&mut self, dst: Reg, src: XmmReg) {
         self.emit_u8(0xF2); self.rex(true, dst as u8, 0, src as u8);
         self.emit_u8(0x0F); self.emit_u8(0x2C); self.modrm(3, dst as u8, src as u8);
     }
+    pub fn cvttsd2si_reg32_xmm(&mut self, dst: Reg, src: XmmReg) {
+        self.emit_u8(0xF2); self.rex(false, dst as u8, 0, src as u8);
+        self.emit_u8(0x0F); self.emit_u8(0x2C); self.modrm(3, dst as u8, src as u8);
+    }
+
+    pub fn roundss_xmm_xmm_imm8(&mut self, dst: XmmReg, src: XmmReg, imm: u8) {
+        self.emit_u8(0x66); self.rex(false, dst as u8, 0, src as u8);
+        self.emit_u8(0x0F); self.emit_u8(0x3A); self.emit_u8(0x0A);
+        self.modrm(3, dst as u8, src as u8);
+        self.emit_u8(imm);
+    }
+
+    pub fn roundsd_xmm_xmm_imm8(&mut self, dst: XmmReg, src: XmmReg, imm: u8) {
+        self.emit_u8(0x66); self.rex(false, dst as u8, 0, src as u8);
+        self.emit_u8(0x0F); self.emit_u8(0x3A); self.emit_u8(0x0B);
+        self.modrm(3, dst as u8, src as u8);
+        self.emit_u8(imm);
+    }
+
     pub fn cvtsd2ss_xmm_xmm(&mut self, dst: XmmReg, src: XmmReg) {
         self.emit_u8(0xF2); self.rex(false, dst as u8, 0, src as u8);
         self.emit_u8(0x0F); self.emit_u8(0x5A); self.modrm(3, dst as u8, src as u8);
