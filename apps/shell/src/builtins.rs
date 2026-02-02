@@ -6,8 +6,12 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::wasm::{validate, Linker, Store};
 
-pub fn run_wasm(path: String, args: Vec<String>, root_path: Option<String>) {
-    let msg = format!("WASM: Starting WASI App: {}...\n", path);
+pub fn run_wasm(path: String, args: Vec<String>, root_path: Option<String>, use_aot: bool) {
+    let msg = if use_aot {
+        format!("WASM: Starting WASI App (AOT): {}...\n", path)
+    } else {
+        format!("WASM: Starting WASI App: {}...\n", path)
+    };
     std::os::file_write(1, msg.as_bytes());
 
     if let Ok(mut file) = File::open(&path) {
@@ -20,6 +24,7 @@ pub fn run_wasm(path: String, args: Vec<String>, root_path: Option<String>) {
             match validate(&buffer) {
                 Ok(validation_info) => {
                     let mut store = Store::new(());
+                    store.aot_enabled = use_aot;
                     let mut linker = Linker::new();
 
                     let root = root_path.unwrap_or_else(|| String::from("@0xE0"));
@@ -104,6 +109,7 @@ pub fn execute_builtin(
         return 0;
     } else if cmd == "wasm" {
         let mut root_path = None;
+        let mut use_aot = false;
         let mut actual_args = args.to_vec();
 
         // Parse flags
@@ -118,6 +124,9 @@ pub fn execute_builtin(
                     std::os::file_write(out_fd, b"Error: --dir requires a path\n");
                     return 1;
                 }
+            } else if actual_args[i] == "--aot" {
+                use_aot = true;
+                actual_args.remove(i);
             } else {
                 i += 1;
             }
@@ -155,15 +164,15 @@ pub fn execute_builtin(
                 }
             }
 
-            run_wasm(prog_path, actual_args, root_path);
+            run_wasm(prog_path, actual_args, root_path, use_aot);
         } else {
             std::os::file_write(
                 out_fd,
-                b"Usage: wasm [--dir <path>] <file.wasm> [args...]\n",
+                b"Usage: wasm [--dir <path>] [--aot] <file.wasm> [args...]\n",
             );
             return 1;
         }
-        return 0;
+
     } else if cmd == "export" {
         if !args.is_empty() {
             let arg = &args[0];

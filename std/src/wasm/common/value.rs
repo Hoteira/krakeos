@@ -386,6 +386,30 @@ impl Value {
             ValType::VecType => Self::V128([0; 16]),
         }
     }
+    pub fn to_u128(&self) -> u128 {
+        match self {
+            Value::I32(x) => *x as u128,
+            Value::I64(x) => *x as u128,
+            Value::F32(x) => x.to_bits() as u128,
+            Value::F64(x) => x.to_bits() as u128,
+            Value::V128(x) => u128::from_le_bytes(*x),
+            Value::Ref(Ref::Func(addr)) => *addr as u128,
+            Value::Ref(_) => 0,
+        }
+    }
+
+    pub fn from_u128(val: u128, ty: ValType) -> Self {
+        match ty {
+            ValType::NumType(NumType::I32) => Value::I32(val as u32),
+            ValType::NumType(NumType::I64) => Value::I64(val as u64),
+            ValType::NumType(NumType::F32) => Value::F32(F32::from_bits(val as u32)),
+            ValType::NumType(NumType::F64) => Value::F64(F64::from_bits(val as u64)),
+            ValType::VecType => Value::V128(val.to_le_bytes()),
+            ValType::RefType(crate::wasm::common::reader::types::RefType::FuncRef) => Value::Ref(Ref::Func(val as usize)),
+            _ => Value::I32(0),
+        }
+    }
+
     pub fn to_ty(&self) -> ValType {
         match self {
             Value::I32(_) => ValType::NumType(NumType::I32),
@@ -393,8 +417,8 @@ impl Value {
             Value::F32(_) => ValType::NumType(NumType::F32),
             Value::F64(_) => ValType::NumType(NumType::F64),
             Value::Ref(Ref::Null(ref_type)) => ValType::RefType(*ref_type),
-            Value::Ref(Ref::Func(_)) => ValType::RefType(RefType::FuncRef),
-            Value::Ref(Ref::Extern(_)) => ValType::RefType(RefType::ExternRef),
+            Value::Ref(Ref::Func(_)) => ValType::RefType(crate::wasm::common::reader::types::RefType::FuncRef),
+            Value::Ref(Ref::Extern(_)) => ValType::RefType(crate::wasm::common::reader::types::RefType::ExternRef),
             Value::V128(_) => ValType::VecType,
         }
     }

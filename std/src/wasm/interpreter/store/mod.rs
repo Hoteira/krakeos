@@ -61,6 +61,8 @@ pub struct Store<'a, T: Config> {
     pub(crate) data: AddrVec<DataAddr, DataInst>,
     pub(crate) modules: AddrVec<ModuleAddr, ModuleInst<'a>>,
     pub(crate) component_instances: AddrVec<ComponentInstAddr, ComponentInst>,
+    pub(crate) aot_modules: Vec<crate::wasm::aot::runtime::AotModule>,
+    pub aot_enabled: bool,
     pub(crate) id: StoreId,
     pub user_data: T,
     pub(crate) dormitory: Dormitory,
@@ -79,6 +81,8 @@ impl<'a, T: Config> Store<'a, T> {
             data: AddrVec::default(),
             modules: AddrVec::default(),
             component_instances: AddrVec::default(),
+            aot_modules: Vec::new(),
+            aot_enabled: false,
             id: StoreId::new(),
             dormitory: Dormitory::default(),
             user_data,
@@ -277,6 +281,22 @@ impl<'a, T: Config> Store<'a, T> {
                 data_drop(&self.modules, &mut self.data, module_addr, i)?;
             }
         }
+
+        // --- AOT Compilation ---
+        if self.aot_enabled {
+            let mut compiler = crate::wasm::aot::AotCompiler::<T>::new(validation_info);
+            let aot_module = compiler.compile_module();
+            for (i, offset) in aot_module.func_offsets.iter().enumerate() {
+                let func_idx = validation_info.imports_length.imported_functions + i;
+                let func_addr = self.modules.get(module_addr).func_addrs[func_idx];
+                if let FuncInst::WasmFunc(wasm_func) = self.functions.get_mut(func_addr) {
+                    wasm_func.aot_ptr = Some(unsafe { aot_module.code_ptr.add(*offset) as usize });
+                }
+            }
+            self.aot_modules.push(aot_module);
+        }
+        // -----------------------
+
         let maybe_remaining_fuel = if let Some(func_idx) = validation_info.start {
             let func_addr = self.modules.get(module_addr).func_addrs[func_idx];
             let RunState::Finished {
@@ -326,6 +346,7 @@ impl<'a, T: Config> Store<'a, T> {
             code_expr,
             stp,
             module_addr,
+            aot_ptr: None,
         }))
     }
     fn alloc_table(&mut self, ty: TableType, reff: Ref) -> TableAddr {
@@ -401,31 +422,86 @@ impl<'a, T: Config> Store<'a, T> {
                         })
                     }
                     FuncInst::WasmFunc(wasm_func_inst) => {
-                        let mut stack = Stack::new_with_values(params);
+                        let aot_ptr = wasm_func_inst.aot_ptr;
+                        let func_type = wasm_func_inst.function_type.clone();
+                        let module_addr = wasm_func_inst.module_addr;
+
+                        if let Some(aot_ptr) = aot_ptr {
+                            if let Some(mut fuel) = maybe_fuel {
+                                let mem_addr = self.modules.get(module_addr).mem_addrs.get(0).copied();
+                                let (memory_base, memory_size) = if let Some(mem_addr) = mem_addr {
+                                    let mem = &self.memories.get(mem_addr).mem;
+                                    (mem.get_base_ptr(), mem.len())
+                                } else {
+                                    (core::ptr::null_mut(), 0)
+                                };
+
+                                let stack_size = 1024 * 1024; // 1MB stack
+                                let stack_ptr = unsafe { crate::memory::malloc(stack_size) } as *mut u128;
+                                let locals_size = 1024 * 16;
+                                let locals_ptr = unsafe { crate::memory::malloc(locals_size) } as *mut u128;
+
+                                let mut ctx = crate::wasm::aot::runtime::AotContext {
+                                    store: self as *mut _ as *mut usize,
+                                    fuel: &mut fuel as *mut u32,
+                                    memory_base,
+                                    memory_size,
+                                    stack_base: stack_ptr,
+                                    locals_base: locals_ptr,
+                                };
+
+                                // Initialize parameters in locals
+                                for (i, param) in params.iter().enumerate() {
+                                    unsafe { *ctx.locals_base.add(i) = param.to_u128(); }
+                                }
+
+                                type AotFuncWithRet = extern "C" fn(ctx: &mut crate::wasm::aot::runtime::AotContext) -> *mut u128;
+                                let f_ret: AotFuncWithRet = unsafe { core::mem::transmute(aot_ptr) };
+                                let final_sp = f_ret(&mut ctx);
+                                
+                                let mut results = Vec::new();
+                                let num_returns = func_type.returns.valtypes.len();
+                                for i in 0..num_returns {
+                                    let val_ptr = unsafe { final_sp.add(i) };
+                                    let val_type = func_type.returns.valtypes[num_returns - 1 - i];
+                                    let val = Value::from_u128(unsafe { *val_ptr }, val_type);
+                                    results.push(val);
+                                }
+                                results.reverse();
+
+                                return Ok(RunState::Finished {
+                                    values: results,
+                                    maybe_remaining_fuel: Some(fuel),
+                                });
+                            }
+                        }
+
+                        // Fallback to interpreter
+                        let mut stack = Stack::new();
+                        for param in params {
+                            stack.push_value::<T>(param)?;
+                        }
                         stack.push_call_frame::<T>(
-                            usize::MAX,
+                            0, // dummy return func
                             &wasm_func_inst.function_type,
                             &wasm_func_inst.locals,
-                            usize::MAX,
-                            usize::MAX,
+                            0, // return addr
+                            0, // return stp
                         )?;
                         let mut resumable = Resumable {
-                            current_func_addr: func_addr,
                             stack,
-                            pc: wasm_func_inst.code_expr.from,
+                            pc: wasm_func_inst.code_expr.from(),
                             stp: wasm_func_inst.stp,
+                            current_func_addr: func_addr,
                             maybe_fuel,
                         };
-                        let result = crate::wasm::interpreter::loop_executor::run(&mut resumable, self)?;
-                        match result {
+                        match loop_executor::run::<T>(&mut resumable, self)? {
                             None => Ok(RunState::Finished {
                                 values: resumable.stack.into_values(),
                                 maybe_remaining_fuel: resumable.maybe_fuel,
                             }),
                             Some(required_fuel) => Ok(RunState::Resumable {
-                                resumable_ref: ResumableRef::Invoked(
-                                    self.dormitory.insert(resumable),
-                                ),
+                                resumable_ref: ResumableRef::Invoked(self.dormitory.insert(resumable)),
                                 required_fuel,
                             }),
                         }
@@ -558,6 +634,32 @@ impl<'a, T: Config> Store<'a, T> {
             RunState::Finished { values, .. } => Ok(values),
             _ => unreachable!(),
         }
+    }
+    pub fn compile_all(&mut self) {
+        let validation_info = ValidationInfo {
+            wasm: &[], // Not used for this purpose
+            types: Vec::new(),
+            imports: Vec::new(),
+            functions: Vec::new(),
+            tables: Vec::new(),
+            memories: Vec::new(),
+            globals: Vec::new(),
+            exports: Vec::new(),
+            func_blocks_stps: Vec::new(),
+            sidetable: Vec::new(),
+            data: Vec::new(),
+            start: None,
+            elements: Vec::new(),
+            imports_length: crate::wasm::common::validation::ImportsLength {
+                imported_functions: 0,
+                imported_globals: 0,
+                imported_memories: 0,
+                imported_tables: 0,
+            },
+            component: None,
+        };
+        // This is a placeholder since we don't have the original validation info here.
+        // In a real scenario, we'd store it or re-validate.
     }
 }
 

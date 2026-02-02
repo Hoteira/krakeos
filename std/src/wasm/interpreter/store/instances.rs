@@ -31,6 +31,7 @@ pub struct WasmFuncInst {
     pub code_expr: Span,
     pub stp: usize,
     pub module_addr: ModuleAddr,
+    pub aot_ptr: Option<usize>,
 }
 
 #[derive(Debug)]
