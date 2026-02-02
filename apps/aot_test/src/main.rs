@@ -2,6 +2,7 @@
 
 // This function should be AOT compiled as it uses only supported instructions
 use core::format_args;
+use std::println;
 
 #[inline(never)]
 fn arithmetic_test(a: i32, b: i32) -> i32 {
@@ -45,23 +46,26 @@ fn memory_test() -> i32 {
 
 
 pub fn main() {
+    println!("========================================================== Starting AOT Extended Test...");
     let res = arithmetic_test(20, 10);
     // add=30, sub=10, mul=200, div=2, rem=0
     // logic = (30 & 10) | (200 ^ 2) = 10 | 202 = 202 (11001010)
     // shift = (202 << 1) >> 1 = 202
     // res = 202 + 0 = 202
     
-    std::debugln!("Arithmetic Result: {}", res);
+    println!("Arithmetic Result: {}", res);
     
     let loop_res = loop_test(10); // sum 0..9 = 45
-    std::debugln!("Loop Result: {}", loop_res);
+    println!("Loop Result: {}", loop_res);
 
     let mem_res = memory_test();
-    std::debugln!("Memory Result: {}", mem_res);
+    println!("Memory Result: {}", mem_res);
 
     if res == 202 && loop_res == 45 && mem_res == 30 {
-        std::debugln!("AOT Extended Test: SUCCESS");
+        println!("AOT Extended Test: SUCCESS");
     } else {
-        std::debugln!("AOT Extended Test: FAILURE");
+        println!("AOT Extended Test: FAILURE");
     }
+
+    println!("========================================================== Ending AOT Extended Test...");
 }

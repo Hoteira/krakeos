@@ -221,6 +221,21 @@ fn instantiate_component_internal<'a, T: Config>(
                         if let Ok(outcome) =
                             store.module_instantiate_unchecked(&validation_info, extern_vals, None)
                         {
+                            // --- AOT Compilation ---
+                            if store.aot_enabled {
+                                let mut compiler = crate::wasm::aot::AotCompiler::<T>::new(&validation_info);
+                                let aot_module = compiler.compile_module();
+                                for (i, offset) in aot_module.func_offsets.iter().enumerate() {
+                                    let func_idx = validation_info.imports_length.imported_functions + i;
+                                    let func_addr = store.modules.get(outcome.module_addr).func_addrs[func_idx];
+                                    if let crate::wasm::interpreter::store::instances::FuncInst::WasmFunc(wasm_func) = store.functions.get_mut(func_addr) {
+                                        wasm_func.aot_ptr = Some(unsafe { aot_module.code_ptr.add(*offset) as usize });
+                                    }
+                                }
+                                store.aot_modules.push(aot_module);
+                            }
+                            // -----------------------
+
                             let module_inst = store.modules.get(outcome.module_addr);
                             core_instances.push(module_inst.exports.clone());
                             all_instantiated_modules.push(outcome.module_addr);
@@ -359,6 +374,21 @@ fn instantiate_component_internal<'a, T: Config>(
                             extern_vals.clone(),
                             None,
                         ) {
+                            // --- AOT Compilation ---
+                            if store.aot_enabled {
+                                let mut compiler = crate::wasm::aot::AotCompiler::<T>::new(&validation_info);
+                                let aot_module = compiler.compile_module();
+                                for (i, offset) in aot_module.func_offsets.iter().enumerate() {
+                                    let func_idx = validation_info.imports_length.imported_functions + i;
+                                    let func_addr = store.modules.get(outcome.module_addr).func_addrs[func_idx];
+                                    if let crate::wasm::interpreter::store::instances::FuncInst::WasmFunc(wasm_func) = store.functions.get_mut(func_addr) {
+                                        wasm_func.aot_ptr = Some(unsafe { aot_module.code_ptr.add(*offset) as usize });
+                                    }
+                                }
+                                store.aot_modules.push(aot_module);
+                            }
+                            // -----------------------
+
                             let module_inst = store.modules.get(outcome.module_addr);
                             instances.push(module_inst.exports.clone());
                             all_instantiated_modules.push(outcome.module_addr);

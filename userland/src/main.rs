@@ -47,6 +47,8 @@ pub fn main() {
 
     println!("Desktop Environment Initialized.");
 
+    run_wasm("@0xE0/apps/aot_test.wasm", true);
+
     std::thread::spawn(|| {
         run_wasm("@0xE0/apps/taskbar.wasm", false);
     });
@@ -74,6 +76,7 @@ fn run_wasm(path: &str, enable_aot: bool) {
                     debugln!("WASM: Module {} parsed and validated successfully.", path);
 
                     let mut store = Store::new(());
+                    store.aot_enabled = enable_aot;
                     let mut linker = Linker::new();
 
                     std::wasm::wasi::create_wasi_imports(&mut linker, &mut store);
@@ -92,8 +95,12 @@ fn run_wasm(path: &str, enable_aot: bool) {
                             Err(e) => debugln!("WASM: Component Execution error: {:?}", e),
                         }
                     } else {
-                        // 1. Run using Interpreter
-                        debugln!("WASI: [INTERPRETER] Starting {}...", path);
+                        // 1. Run using Interpreter or AOT
+                        if enable_aot {
+                            debugln!("WASI: [AOT] Starting {}...", path);
+                        } else {
+                            debugln!("WASI: [INTERPRETER] Starting {}...", path);
+                        }
                         match linker.module_instantiate_unchecked(&mut store, &validation_info, None) {
                             Ok(instance) => {
 
@@ -111,7 +118,11 @@ fn run_wasm(path: &str, enable_aot: bool) {
 
                                 if let Some(func_addr) = entry_point {
                                     let _ = store.invoke_unchecked(func_addr, Vec::new(), None);
-                                    debugln!("WASI: [INTERPRETER] Finished {}.", path);
+                                    if enable_aot {
+                                        debugln!("WASI: [AOT] Finished {}.", path);
+                                    } else {
+                                        debugln!("WASI: [INTERPRETER] Finished {}.", path);
+                                    }
                                 }
                             }
                             Err(e) => debugln!("WASM: Instantiation error: {:?}", e),
