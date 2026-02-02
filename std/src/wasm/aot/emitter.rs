@@ -167,8 +167,20 @@ impl X64Emitter {
         self.modrm(3, src as u8, dst as u8);
     }
 
+    pub fn add_reg32_reg32(&mut self, dst: Reg, src: Reg) {
+        self.rex(false, src as u8, 0, dst as u8);
+        self.emit_u8(0x01);
+        self.modrm(3, src as u8, dst as u8);
+    }
+
     pub fn sub_reg_reg(&mut self, dst: Reg, src: Reg) {
         self.rex(true, src as u8, 0, dst as u8);
+        self.emit_u8(0x29);
+        self.modrm(3, src as u8, dst as u8);
+    }
+
+    pub fn sub_reg32_reg32(&mut self, dst: Reg, src: Reg) {
+        self.rex(false, src as u8, 0, dst as u8);
         self.emit_u8(0x29);
         self.modrm(3, src as u8, dst as u8);
     }
@@ -180,8 +192,21 @@ impl X64Emitter {
         self.modrm(3, dst as u8, src as u8);
     }
 
+    pub fn imul_reg32_reg32(&mut self, dst: Reg, src: Reg) {
+        self.rex(false, dst as u8, 0, src as u8);
+        self.emit_u8(0x0F);
+        self.emit_u8(0xAF);
+        self.modrm(3, dst as u8, src as u8);
+    }
+
     pub fn xor_reg_reg(&mut self, dst: Reg, src: Reg) {
         self.rex(true, src as u8, 0, dst as u8);
+        self.emit_u8(0x31);
+        self.modrm(3, src as u8, dst as u8);
+    }
+
+    pub fn xor_reg32_reg32(&mut self, dst: Reg, src: Reg) {
+        self.rex(false, src as u8, 0, dst as u8);
         self.emit_u8(0x31);
         self.modrm(3, src as u8, dst as u8);
     }
@@ -192,8 +217,20 @@ impl X64Emitter {
         self.modrm(3, src as u8, dst as u8);
     }
 
+    pub fn and_reg32_reg32(&mut self, dst: Reg, src: Reg) {
+        self.rex(false, src as u8, 0, dst as u8);
+        self.emit_u8(0x21);
+        self.modrm(3, src as u8, dst as u8);
+    }
+
     pub fn or_reg_reg(&mut self, dst: Reg, src: Reg) {
         self.rex(true, src as u8, 0, dst as u8);
+        self.emit_u8(0x09);
+        self.modrm(3, src as u8, dst as u8);
+    }
+
+    pub fn or_reg32_reg32(&mut self, dst: Reg, src: Reg) {
+        self.rex(false, src as u8, 0, dst as u8);
         self.emit_u8(0x09);
         self.modrm(3, src as u8, dst as u8);
     }
@@ -203,9 +240,19 @@ impl X64Emitter {
         self.emit_u8(0x0F); self.emit_u8(0xBC);
         self.modrm(3, dst as u8, src as u8);
     }
+    pub fn bsf_reg32_reg32(&mut self, dst: Reg, src: Reg) {
+        self.rex(false, dst as u8, 0, src as u8);
+        self.emit_u8(0x0F); self.emit_u8(0xBC);
+        self.modrm(3, dst as u8, src as u8);
+    }
 
     pub fn bsr_reg_reg(&mut self, dst: Reg, src: Reg) {
         self.rex(true, dst as u8, 0, src as u8);
+        self.emit_u8(0x0F); self.emit_u8(0xBD);
+        self.modrm(3, dst as u8, src as u8);
+    }
+    pub fn bsr_reg32_reg32(&mut self, dst: Reg, src: Reg) {
+        self.rex(false, dst as u8, 0, src as u8);
         self.emit_u8(0x0F); self.emit_u8(0xBD);
         self.modrm(3, dst as u8, src as u8);
     }
@@ -216,9 +263,21 @@ impl X64Emitter {
         self.emit_u8(0x0F); self.emit_u8(0xB8);
         self.modrm(3, dst as u8, src as u8);
     }
+    pub fn popcnt_reg32_reg32(&mut self, dst: Reg, src: Reg) {
+        self.emit_u8(0xF3);
+        self.rex(false, dst as u8, 0, src as u8);
+        self.emit_u8(0x0F); self.emit_u8(0xB8);
+        self.modrm(3, dst as u8, src as u8);
+    }
 
     pub fn cmp_reg_reg(&mut self, dst: Reg, src: Reg) {
         self.rex(true, src as u8, 0, dst as u8);
+        self.emit_u8(0x39);
+        self.modrm(3, src as u8, dst as u8);
+    }
+
+    pub fn cmp_reg32_reg32(&mut self, dst: Reg, src: Reg) {
+        self.rex(false, src as u8, 0, dst as u8);
         self.emit_u8(0x39);
         self.modrm(3, src as u8, dst as u8);
     }
@@ -532,20 +591,44 @@ impl X64Emitter {
         self.rex(true, 0, 0, reg as u8);
         self.emit_u8(0xD3); self.modrm(3, 4, reg as u8);
     }
+    pub fn shl_reg32_cl(&mut self, reg: Reg) {
+        self.rex(false, 0, 0, reg as u8);
+        self.emit_u8(0xD3); self.modrm(3, 4, reg as u8);
+    }
+
     pub fn shr_reg_cl(&mut self, reg: Reg) {
         self.rex(true, 0, 0, reg as u8);
         self.emit_u8(0xD3); self.modrm(3, 5, reg as u8);
     }
+    pub fn shr_reg32_cl(&mut self, reg: Reg) {
+        self.rex(false, 0, 0, reg as u8);
+        self.emit_u8(0xD3); self.modrm(3, 5, reg as u8);
+    }
+
     pub fn sar_reg_cl(&mut self, reg: Reg) {
         self.rex(true, 0, 0, reg as u8);
         self.emit_u8(0xD3); self.modrm(3, 7, reg as u8);
     }
+    pub fn sar_reg32_cl(&mut self, reg: Reg) {
+        self.rex(false, 0, 0, reg as u8);
+        self.emit_u8(0xD3); self.modrm(3, 7, reg as u8);
+    }
+
     pub fn rol_reg_cl(&mut self, reg: Reg) {
         self.rex(true, 0, 0, reg as u8);
         self.emit_u8(0xD3); self.modrm(3, 0, reg as u8);
     }
+    pub fn rol_reg32_cl(&mut self, reg: Reg) {
+        self.rex(false, 0, 0, reg as u8);
+        self.emit_u8(0xD3); self.modrm(3, 0, reg as u8);
+    }
+
     pub fn ror_reg_cl(&mut self, reg: Reg) {
         self.rex(true, 0, 0, reg as u8);
+        self.emit_u8(0xD3); self.modrm(3, 1, reg as u8);
+    }
+    pub fn ror_reg32_cl(&mut self, reg: Reg) {
+        self.rex(false, 0, 0, reg as u8);
         self.emit_u8(0xD3); self.modrm(3, 1, reg as u8);
     }
 

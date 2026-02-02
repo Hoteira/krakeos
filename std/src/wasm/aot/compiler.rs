@@ -17,6 +17,7 @@ pub struct AotCompiler<'a, T: Config> {
     pub stack_depth: usize,
     pub func_labels: Vec<usize>,
     pub trap_label: usize,
+    pub result_count: usize,
     _phantom: core::marker::PhantomData<T>,
 }
 
@@ -28,6 +29,7 @@ pub struct ControlBlock {
     pub start_label: Option<usize>,
 }
 
+#[derive(PartialEq)]
 pub enum ControlBlockKind {
     Block,
     Loop,
@@ -51,6 +53,7 @@ impl<'a, T: Config> AotCompiler<'a, T> {
             stack_depth: 0,
             func_labels,
             trap_label,
+            result_count: 0,
             _phantom: core::marker::PhantomData,
         }
     }
@@ -59,7 +62,9 @@ impl<'a, T: Config> AotCompiler<'a, T> {
         let mut func_offsets = Vec::new();
         
         self.emitter.bind_label(self.trap_label);
-        self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0x0B);
+        // self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0x0B); // UD2
+        self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_trap as usize as u64);
+        self.emitter.call_reg(Reg::RAX);
 
         for i in 0..self.validation_info.functions.len() {
             let func_idx = self.validation_info.imports_length.imported_functions + i;
@@ -78,6 +83,7 @@ impl<'a, T: Config> AotCompiler<'a, T> {
 
         let type_idx = self.validation_info.functions[local_func_idx];
         let func_type = &self.validation_info.types[type_idx];
+        self.result_count = func_type.returns.valtypes.len();
 
         self.emitter.push_reg(Reg::RBP);
         self.emitter.mov_reg_reg(Reg::RBP, Reg::RSP);
@@ -112,14 +118,36 @@ impl<'a, T: Config> AotCompiler<'a, T> {
         }
 
         self.emitter.bind_label(end_label);
-        self.emitter.mov_reg_reg(Reg::RAX, Reg::RSP);
-        self.emitter.pop_reg(Reg::R15);
-        self.emitter.pop_reg(Reg::R14);
-        self.emitter.pop_reg(Reg::R13);
-        self.emitter.pop_reg(Reg::R12);
-        self.emitter.pop_reg(Reg::RBX);
+
+        // Epilogue: Restore registers and setup return value
+        if self.result_count == 1 {
+            self.emitter.pop_wasm_stack(Reg::RAX); // Save result to RAX
+        }
+
+        // Restore callee-saved registers from [RBP - offset]
+        // RBP - 8: RBX
+        // RBP - 16: R12
+        // RBP - 24: R13
+        // RBP - 32: R14
+        // RBP - 40: R15
+        self.emitter.mov_reg_mem64(Reg::RBX, Reg::RBP, -8);
+        self.emitter.mov_reg_mem64(Reg::R12, Reg::RBP, -16);
+        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -24);
+        self.emitter.mov_reg_mem64(Reg::R14, Reg::RBP, -32);
+        self.emitter.mov_reg_mem64(Reg::R15, Reg::RBP, -40);
+
         self.emitter.mov_reg_reg(Reg::RSP, Reg::RBP);
         self.emitter.pop_reg(Reg::RBP);
+        
+        self.emitter.pop_reg(Reg::RCX); // Pop return address
+        
+        if self.result_count == 1 {
+            self.emitter.sub_reg_imm32(Reg::RSP, 16);
+            self.emitter.mov_mem64_reg(Reg::RSP, 0, Reg::RAX); // Push result
+        }
+        
+        self.emitter.mov_reg_reg(Reg::RAX, Reg::RSP); // Return new SP
+        self.emitter.push_reg(Reg::RCX); // Push return address
         self.emitter.ret();
     }
 
@@ -169,19 +197,25 @@ impl<'a, T: Config> AotCompiler<'a, T> {
 
             Instruction::GlobalGet(idx) => {
                 self.emitter.sub_reg_imm32(Reg::RSP, 16);
+                self.emitter.push_reg(Reg::RDI);
                 self.emitter.mov_reg_reg(Reg::RDX, Reg::RSP);
+                self.emitter.add_reg_imm32(Reg::RDX, 8);
                 self.emitter.mov_reg_imm64(Reg::RSI, idx as u64);
                 self.emitter.mov_reg_reg(Reg::RDI, Reg::RDI);
                 self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_global_get as usize as u64);
                 self.emitter.call_reg(Reg::RAX);
+                self.emitter.pop_reg(Reg::RDI);
                 self.stack_depth += 1;
             }
             Instruction::GlobalSet(idx) => {
+                self.emitter.push_reg(Reg::RDI);
                 self.emitter.mov_reg_reg(Reg::RDX, Reg::RSP);
+                self.emitter.add_reg_imm32(Reg::RDX, 8);
                 self.emitter.mov_reg_imm64(Reg::RSI, idx as u64);
                 self.emitter.mov_reg_reg(Reg::RDI, Reg::RDI);
                 self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_global_set as usize as u64);
                 self.emitter.call_reg(Reg::RAX);
+                self.emitter.pop_reg(Reg::RDI);
                 self.emitter.add_reg_imm32(Reg::RSP, 16);
                 self.stack_depth -= 1;
             }
@@ -197,32 +231,32 @@ impl<'a, T: Config> AotCompiler<'a, T> {
                 self.stack_depth += 1;
             }
             Instruction::F32Const(val) => {
-                self.emitter.mov_reg_imm64(Reg::RAX, val as u64);
+                self.emitter.mov_reg_imm64(Reg::RAX, val.to_bits() as u64);
                 self.emitter.push_wasm_stack(Reg::RAX);
                 self.stack_depth += 1;
             }
             Instruction::F64Const(val) => {
-                self.emitter.mov_reg_imm64(Reg::RAX, val as u64);
+                self.emitter.mov_reg_imm64(Reg::RAX, val.to_bits());
                 self.emitter.push_wasm_stack(Reg::RAX);
                 self.stack_depth += 1;
             }
 
-            Instruction::I32Add => self.emit_binop_i32(|e| e.add_reg_reg(Reg::RAX, Reg::RBX)),
-            Instruction::I32Sub => self.emit_binop_i32(|e| e.sub_reg_reg(Reg::RAX, Reg::RBX)),
-            Instruction::I32Mul => self.emit_binop_i32(|e| e.imul_reg_reg(Reg::RAX, Reg::RBX)),
+            Instruction::I32Add => self.emit_binop_i32(|e| e.add_reg32_reg32(Reg::RAX, Reg::RBX)),
+            Instruction::I32Sub => self.emit_binop_i32(|e| e.sub_reg32_reg32(Reg::RAX, Reg::RBX)),
+            Instruction::I32Mul => self.emit_binop_i32(|e| e.imul_reg32_reg32(Reg::RAX, Reg::RBX)),
             Instruction::I32DivS => self.emit_trampoline_binop(crate::wasm::aot::trampoline::aot_i32_div_s as usize),
             Instruction::I32DivU => self.emit_trampoline_binop(crate::wasm::aot::trampoline::aot_i32_div_u as usize),
             Instruction::I32RemS => self.emit_trampoline_binop(crate::wasm::aot::trampoline::aot_i32_rem_s as usize),
             Instruction::I32RemU => self.emit_trampoline_binop(crate::wasm::aot::trampoline::aot_i32_rem_u as usize),
-            Instruction::I32And => self.emit_binop_i32(|e| e.and_reg_reg(Reg::RAX, Reg::RBX)),
-            Instruction::I32Or => self.emit_binop_i32(|e| e.or_reg_reg(Reg::RAX, Reg::RBX)),
-            Instruction::I32Xor => self.emit_binop_i32(|e| e.xor_reg_reg(Reg::RAX, Reg::RBX)),
+            Instruction::I32And => self.emit_binop_i32(|e| e.and_reg32_reg32(Reg::RAX, Reg::RBX)),
+            Instruction::I32Or => self.emit_binop_i32(|e| e.or_reg32_reg32(Reg::RAX, Reg::RBX)),
+            Instruction::I32Xor => self.emit_binop_i32(|e| e.xor_reg32_reg32(Reg::RAX, Reg::RBX)),
             
-            Instruction::I32Shl => self.emit_shift_i32(|e| e.shl_reg_cl(Reg::RAX)),
-            Instruction::I32ShrS => self.emit_shift_i32(|e| e.sar_reg_cl(Reg::RAX)),
-            Instruction::I32ShrU => self.emit_shift_i32(|e| e.shr_reg_cl(Reg::RAX)),
-            Instruction::I32Rotl => self.emit_shift_i32(|e| e.rol_reg_cl(Reg::RAX)),
-            Instruction::I32Rotr => self.emit_shift_i32(|e| e.ror_reg_cl(Reg::RAX)),
+            Instruction::I32Shl => self.emit_shift_i32(|e| e.shl_reg32_cl(Reg::RAX)),
+            Instruction::I32ShrS => self.emit_shift_i32(|e| e.sar_reg32_cl(Reg::RAX)),
+            Instruction::I32ShrU => self.emit_shift_i32(|e| e.shr_reg32_cl(Reg::RAX)),
+            Instruction::I32Rotl => self.emit_shift_i32(|e| e.rol_reg32_cl(Reg::RAX)),
+            Instruction::I32Rotr => self.emit_shift_i32(|e| e.ror_reg32_cl(Reg::RAX)),
 
             Instruction::I64Shl => self.emit_shift_i64(|e| e.shl_reg_cl(Reg::RAX)),
             Instruction::I64ShrS => self.emit_shift_i64(|e| e.sar_reg_cl(Reg::RAX)),
@@ -257,7 +291,7 @@ impl<'a, T: Config> AotCompiler<'a, T> {
             }
             Instruction::I32Clz => {
                 self.emitter.pop_wasm_stack(Reg::RAX);
-                self.emitter.bsr_reg_reg(Reg::RCX, Reg::RAX);
+                self.emitter.bsr_reg32_reg32(Reg::RCX, Reg::RAX);
                 self.emitter.mov_reg_imm64(Reg::RDX, 31);
                 self.emitter.sub_reg_reg(Reg::RDX, Reg::RCX);
                 self.emitter.mov_reg_imm64(Reg::RAX, 32);
@@ -266,14 +300,14 @@ impl<'a, T: Config> AotCompiler<'a, T> {
             }
             Instruction::I32Ctz => {
                 self.emitter.pop_wasm_stack(Reg::RAX);
-                self.emitter.bsf_reg_reg(Reg::RCX, Reg::RAX);
+                self.emitter.bsf_reg32_reg32(Reg::RCX, Reg::RAX);
                 self.emitter.mov_reg_imm64(Reg::RAX, 32);
                 self.emitter.emit_u8(0x48); self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0x45); self.emitter.emit_u8(0xC1); // cmovnz rax, rcx
                 self.emitter.push_wasm_stack(Reg::RAX);
             }
             Instruction::I32Popcnt => {
                 self.emitter.pop_wasm_stack(Reg::RAX);
-                self.emitter.popcnt_reg_reg(Reg::RAX, Reg::RAX);
+                self.emitter.popcnt_reg32_reg32(Reg::RAX, Reg::RAX);
                 self.emitter.push_wasm_stack(Reg::RAX);
             }
             
@@ -469,7 +503,7 @@ impl<'a, T: Config> AotCompiler<'a, T> {
             }
             Instruction::I64ExtendI32U => {
                 self.emitter.pop_wasm_stack(Reg::RAX);
-                self.emitter.mov_reg_reg(Reg::RAX, Reg::RAX);
+                self.emitter.mov_reg32_reg32(Reg::RAX, Reg::RAX);
                 self.emitter.push_wasm_stack(Reg::RAX);
             }
             Instruction::I32Extend8S => {
@@ -521,6 +555,7 @@ impl<'a, T: Config> AotCompiler<'a, T> {
 
             Instruction::F32ConvertI32S => {
                 self.emitter.pop_wasm_stack(Reg::RAX);
+                self.emitter.movsxd_reg_reg(Reg::RAX, Reg::RAX);
                 self.emitter.cvtsi2ss_xmm_reg(XmmReg::XMM0, Reg::RAX);
                 self.emitter.push_v128(XmmReg::XMM0);
             }
@@ -540,6 +575,7 @@ impl<'a, T: Config> AotCompiler<'a, T> {
             }
             Instruction::F64ConvertI32S => {
                 self.emitter.pop_wasm_stack(Reg::RAX);
+                self.emitter.movsxd_reg_reg(Reg::RAX, Reg::RAX);
                 self.emitter.cvtsi2sd_xmm_reg(XmmReg::XMM0, Reg::RAX);
                 self.emitter.push_v128(XmmReg::XMM0);
             }
@@ -679,24 +715,25 @@ impl<'a, T: Config> AotCompiler<'a, T> {
                 self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_memory_grow as usize as u64);
                 self.emitter.call_reg(Reg::RAX);
                 self.emitter.pop_reg(Reg::RDI);
+                self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16);
                 self.emitter.push_wasm_stack(Reg::RAX);
             }
 
             Instruction::TableGet(idx) => {
                 self.emitter.pop_wasm_stack(Reg::RAX);
                 self.emitter.push_reg(Reg::RDI);
-                self.emitter.mov_reg_reg(Reg::RSI, Reg::RAX);
-                self.emitter.mov_reg_imm64(Reg::RDX, idx as u64);
+                self.emitter.mov_reg_imm64(Reg::RSI, idx as u64);
+                self.emitter.mov_reg_reg(Reg::RDX, Reg::RAX);
                 self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_table_get as usize as u64);
                 self.emitter.call_reg(Reg::RAX);
                 self.emitter.pop_reg(Reg::RDI);
                 self.emitter.push_wasm_stack(Reg::RAX);
             }
             Instruction::TableSet(idx) => {
+                self.emitter.pop_wasm_stack(Reg::RCX);
                 self.emitter.pop_wasm_stack(Reg::RDX);
-                self.emitter.pop_wasm_stack(Reg::RSI);
                 self.emitter.push_reg(Reg::RDI);
-                self.emitter.mov_reg_imm64(Reg::RCX, idx as u64);
+                self.emitter.mov_reg_imm64(Reg::RSI, idx as u64);
                 self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_table_set as usize as u64);
                 self.emitter.call_reg(Reg::RAX);
                 self.emitter.pop_reg(Reg::RDI);
@@ -705,11 +742,14 @@ impl<'a, T: Config> AotCompiler<'a, T> {
 
             Instruction::Call(idx) => {
                 if idx < self.validation_info.imports_length.imported_functions {
+                    self.emitter.push_reg(Reg::RDI);
                     self.emitter.mov_reg_reg(Reg::RDX, Reg::RSP);
+                    self.emitter.add_reg_imm32(Reg::RDX, 8);
                     self.emitter.mov_reg_imm64(Reg::RSI, idx as u64);
                     self.emitter.mov_reg_reg(Reg::RDI, Reg::RDI);
                     self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_call_host as usize as u64);
                     self.emitter.call_reg(Reg::RAX);
+                    self.emitter.pop_reg(Reg::RDI);
                     self.emitter.mov_reg_reg(Reg::RSP, Reg::RAX);
                 } else {
                     let label = self.func_labels[idx];
@@ -764,14 +804,45 @@ impl<'a, T: Config> AotCompiler<'a, T> {
             }
             Instruction::Br(label_idx) => {
                 let cb = &self.control_stack[self.control_stack.len() - 1 - label_idx as usize];
+                let target_depth = cb.stack_depth_before + (if cb.kind == ControlBlockKind::Loop { 0 } else { 0 }); 
+                // Note: Block/Loop params/results handling is simplified here. 
+                // We assume arity is handled by values left on stack.
+                // But we must pop the *excess* locals pushed inside the block.
+                // Actually, WASM Br semantics: pop results of the block, unwind stack, push results back.
+                // My stack is just values.
+                // Assuming validation passed:
+                // We need to drop (current_depth - target_depth) values.
+                // BUT we must preserve the 'arity' values if Br carries values.
+                // In MVP, Br doesn't carry values except for Loop args or Block results?
+                // A simplified approach: Just restore RSP to (target_depth * 16) + stack_base.
+                // Or: add RSP, (current - target) * 16.
+                
+                let drop_count = self.stack_depth.saturating_sub(target_depth); // Simplified
+                if drop_count > 0 {
+                    self.emitter.add_reg_imm32(Reg::RSP, (drop_count * 16) as u32);
+                }
+
                 self.emitter.jmp_label(cb.start_label.unwrap_or(cb.end_label));
             }
             Instruction::BrIf(label_idx) => {
                 self.emitter.pop_wasm_stack(Reg::RAX);
                 self.emitter.test_reg_reg(Reg::RAX, Reg::RAX);
+                self.stack_depth -= 1; // Condition popped
+                
                 let cb = &self.control_stack[self.control_stack.len() - 1 - label_idx as usize];
-                self.emitter.jcc_label(0x85, cb.start_label.unwrap_or(cb.end_label));
-                self.stack_depth -= 1;
+                let target_depth = cb.stack_depth_before;
+                let drop_count = self.stack_depth.saturating_sub(target_depth);
+                
+                let skip_label = self.emitter.new_label();
+                self.emitter.jcc_label(0x84, skip_label); // JZ (Zero) -> Skip jump
+                
+                // If taking the branch, unwind stack
+                if drop_count > 0 {
+                    self.emitter.add_reg_imm32(Reg::RSP, (drop_count * 16) as u32);
+                }
+                self.emitter.jmp_label(cb.start_label.unwrap_or(cb.end_label));
+                
+                self.emitter.bind_label(skip_label);
             }
             Instruction::BrTable(targets, default) => {
                 self.emitter.pop_wasm_stack(Reg::RAX);
@@ -789,6 +860,41 @@ impl<'a, T: Config> AotCompiler<'a, T> {
                 self.emitter.jmp_label(default_target);
                 self.stack_depth -= 1;
             }
+            Instruction::If(_) => {
+                self.emitter.pop_wasm_stack(Reg::RAX);
+                self.emitter.test_reg_reg(Reg::RAX, Reg::RAX);
+                
+                let else_label = self.emitter.new_label();
+                let end_label = self.emitter.new_label();
+                
+                // If 0 (false), jump to else_label
+                self.emitter.jcc_label(0x84, else_label); // JE (Zero)
+                
+                self.stack_depth -= 1;
+                self.control_stack.push(ControlBlock {
+                    kind: ControlBlockKind::If,
+                    stack_depth_before: self.stack_depth,
+                    end_label,
+                    else_label: Some(else_label),
+                    start_label: None,
+                });
+            }
+            Instruction::Else => {
+                let cb = self.control_stack.last_mut().expect("Control stack underflow");
+                if let Some(else_label) = cb.else_label.take() {
+                    self.emitter.jmp_label(cb.end_label);
+                    self.emitter.bind_label(else_label);
+                    // Reset stack depth to what it was at the start of If (for the Else branch)
+                    // But wait, the Then block might have pushed values?
+                    // WASM validation ensures stack balance.
+                    // But for AOT code generation, our `stack_depth` tracker reflects the end of Then block.
+                    // We need to reset it to `stack_depth_before` for the Else block?
+                    // Yes, because Else block starts with the same stack as If start.
+                    self.stack_depth = cb.stack_depth_before;
+                } else {
+                    // Should not happen in valid WASM
+                }
+            }
             Instruction::End => {
                 let mut cb = self.control_stack.pop().expect("Control stack underflow");
                 if let Some(else_label) = cb.else_label {
@@ -797,12 +903,28 @@ impl<'a, T: Config> AotCompiler<'a, T> {
                 self.emitter.bind_label(cb.end_label);
             }
             
+            Instruction::Return => {
+                // Unwind stack to initial depth + result
+                // stack_depth counts 16-byte slots.
+                // We want to unwind until `self.result_count` slots remain on top of "base".
+                // Actually, just unwind EVERYTHING except results, then jump to end.
+                // But `end_label` expects `RSP` to point to results.
+                // So we unwind `stack_depth - result_count`.
+                
+                let drop_count = self.stack_depth.saturating_sub(self.result_count);
+                if drop_count > 0 {
+                    self.emitter.add_reg_imm32(Reg::RSP, (drop_count * 16) as u32);
+                }
+                self.emitter.jmp_label(self.control_stack[0].end_label);
+            }
+            
             Instruction::FdExtension(sub) => self.compile_simd(sub, reader),
             Instruction::FcExtension(sub) => self.compile_fc(sub, reader),
             Instruction::Atomic(sub) => self.compile_atomic(sub),
 
             _ => {
-                self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0x0B);
+                // self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0x0B);
+                panic!("Unimplemented instruction in AOT: {:?}", instr);
             }
         }
     }
@@ -956,7 +1078,7 @@ impl<'a, T: Config> AotCompiler<'a, T> {
     fn emit_relop_i32(&mut self, set_opcode: u8) {
         self.emitter.pop_wasm_stack(Reg::RBX);
         self.emitter.pop_wasm_stack(Reg::RAX);
-        self.emitter.cmp_reg_reg(Reg::RAX, Reg::RBX);
+        self.emitter.cmp_reg32_reg32(Reg::RAX, Reg::RBX);
         self.emitter.emit_u8(0x0F); self.emitter.emit_u8(set_opcode); self.emitter.emit_u8(0xC0);
         self.emitter.emit_u8(0x48); self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0xB6); self.emitter.emit_u8(0xC0);
         self.emitter.push_wasm_stack(Reg::RAX);
@@ -1341,8 +1463,8 @@ impl<'a, T: Config> AotCompiler<'a, T> {
                 self.emitter.pop_wasm_stack(Reg::RDX); // s
                 self.emitter.pop_wasm_stack(Reg::RSI); // d
                 self.emitter.push_reg(Reg::RDI);
-                self.emitter.mov_reg_imm64(Reg::R8, y as u64);
-                self.emitter.mov_reg_imm64(Reg::R9, x as u64);
+                self.emitter.mov_reg_imm64(Reg::R8, x as u64);
+                self.emitter.mov_reg_imm64(Reg::R9, y as u64);
                 self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_table_copy as usize as u64);
                 self.emitter.call_reg(Reg::RAX);
                 self.emitter.pop_reg(Reg::RDI);
@@ -1350,10 +1472,10 @@ impl<'a, T: Config> AotCompiler<'a, T> {
             }
             0x0F => { // table.grow
                 let idx = reader.read_var_u32().unwrap();
-                self.emitter.pop_wasm_stack(Reg::RCX); // n
-                self.emitter.pop_wasm_stack(Reg::RDX); // val
+                self.emitter.pop_wasm_stack(Reg::RDX); // n
+                self.emitter.pop_wasm_stack(Reg::RSI); // val
                 self.emitter.push_reg(Reg::RDI);
-                self.emitter.mov_reg_imm64(Reg::RSI, idx as u64);
+                self.emitter.mov_reg_imm64(Reg::RCX, idx as u64);
                 self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_table_grow as usize as u64);
                 self.emitter.call_reg(Reg::RAX);
                 self.emitter.pop_reg(Reg::RDI);

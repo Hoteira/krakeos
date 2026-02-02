@@ -19,6 +19,7 @@ pub mod task;
 pub mod thread;
 pub mod time;
 
+#[cfg(feature = "userland")]
 #[macro_use]
 pub mod wasm;
 
