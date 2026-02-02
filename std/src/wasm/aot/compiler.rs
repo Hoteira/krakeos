@@ -126,7 +126,7 @@ impl<'a, T: Config> AotCompiler<'a, T> {
     fn emit_fuel_check(&mut self, cost: u32) {
         self.emitter.mov_reg_mem64(Reg::RAX, Reg::RDI, 8);
         self.emitter.emit_u8(0x8B); self.emitter.modrm(0, Reg::RCX as u8, Reg::RAX as u8);
-        self.emitter.sub_reg_imm32(Reg::RCX, cost);
+        self.emitter.sub_reg32_imm32(Reg::RCX, cost);
         self.emitter.emit_u8(0x89); self.emitter.modrm(0, Reg::RCX as u8, Reg::RAX as u8);
         self.emitter.jcc_label(0x88, self.trap_label);
     }
@@ -196,6 +196,16 @@ impl<'a, T: Config> AotCompiler<'a, T> {
                 self.emitter.push_wasm_stack(Reg::RAX);
                 self.stack_depth += 1;
             }
+            Instruction::F32Const(val) => {
+                self.emitter.mov_reg_imm64(Reg::RAX, val as u64);
+                self.emitter.push_wasm_stack(Reg::RAX);
+                self.stack_depth += 1;
+            }
+            Instruction::F64Const(val) => {
+                self.emitter.mov_reg_imm64(Reg::RAX, val as u64);
+                self.emitter.push_wasm_stack(Reg::RAX);
+                self.stack_depth += 1;
+            }
 
             Instruction::I32Add => self.emit_binop_i32(|e| e.add_reg_reg(Reg::RAX, Reg::RBX)),
             Instruction::I32Sub => self.emit_binop_i32(|e| e.sub_reg_reg(Reg::RAX, Reg::RBX)),
@@ -204,6 +214,9 @@ impl<'a, T: Config> AotCompiler<'a, T> {
             Instruction::I32DivU => self.emit_trampoline_binop(crate::wasm::aot::trampoline::aot_i32_div_u as usize),
             Instruction::I32RemS => self.emit_trampoline_binop(crate::wasm::aot::trampoline::aot_i32_rem_s as usize),
             Instruction::I32RemU => self.emit_trampoline_binop(crate::wasm::aot::trampoline::aot_i32_rem_u as usize),
+            Instruction::I32And => self.emit_binop_i32(|e| e.and_reg_reg(Reg::RAX, Reg::RBX)),
+            Instruction::I32Or => self.emit_binop_i32(|e| e.or_reg_reg(Reg::RAX, Reg::RBX)),
+            Instruction::I32Xor => self.emit_binop_i32(|e| e.xor_reg_reg(Reg::RAX, Reg::RBX)),
             
             Instruction::I32Shl => self.emit_shift_i32(|e| e.shl_reg_cl(Reg::RAX)),
             Instruction::I32ShrS => self.emit_shift_i32(|e| e.sar_reg_cl(Reg::RAX)),
@@ -224,6 +237,9 @@ impl<'a, T: Config> AotCompiler<'a, T> {
             Instruction::I64DivU => self.emit_trampoline_binop(crate::wasm::aot::trampoline::aot_i64_div_u as usize),
             Instruction::I64RemS => self.emit_trampoline_binop(crate::wasm::aot::trampoline::aot_i64_rem_s as usize),
             Instruction::I64RemU => self.emit_trampoline_binop(crate::wasm::aot::trampoline::aot_i64_rem_u as usize),
+            Instruction::I64And => self.emit_binop_i64(|e| e.and_reg_reg(Reg::RAX, Reg::RBX)),
+            Instruction::I64Or => self.emit_binop_i64(|e| e.or_reg_reg(Reg::RAX, Reg::RBX)),
+            Instruction::I64Xor => self.emit_binop_i64(|e| e.xor_reg_reg(Reg::RAX, Reg::RBX)),
 
             Instruction::I32Eqz => {
                 self.emitter.pop_wasm_stack(Reg::RAX);
@@ -239,13 +255,49 @@ impl<'a, T: Config> AotCompiler<'a, T> {
                 self.emitter.emit_u8(0x48); self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0xB6); self.emitter.emit_u8(0xC0);
                 self.emitter.push_wasm_stack(Reg::RAX);
             }
-            Instruction::I32Clz => self.emit_trampoline_unop(crate::wasm::aot::trampoline::aot_i32_clz as usize),
-            Instruction::I32Ctz => self.emit_trampoline_unop(crate::wasm::aot::trampoline::aot_i32_ctz as usize),
-            Instruction::I32Popcnt => self.emit_trampoline_unop(crate::wasm::aot::trampoline::aot_i32_popcnt as usize),
+            Instruction::I32Clz => {
+                self.emitter.pop_wasm_stack(Reg::RAX);
+                self.emitter.bsr_reg_reg(Reg::RCX, Reg::RAX);
+                self.emitter.mov_reg_imm64(Reg::RDX, 31);
+                self.emitter.sub_reg_reg(Reg::RDX, Reg::RCX);
+                self.emitter.mov_reg_imm64(Reg::RAX, 32);
+                self.emitter.emit_u8(0x48); self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0x45); self.emitter.emit_u8(0xC2); // cmovnz rax, rdx
+                self.emitter.push_wasm_stack(Reg::RAX);
+            }
+            Instruction::I32Ctz => {
+                self.emitter.pop_wasm_stack(Reg::RAX);
+                self.emitter.bsf_reg_reg(Reg::RCX, Reg::RAX);
+                self.emitter.mov_reg_imm64(Reg::RAX, 32);
+                self.emitter.emit_u8(0x48); self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0x45); self.emitter.emit_u8(0xC1); // cmovnz rax, rcx
+                self.emitter.push_wasm_stack(Reg::RAX);
+            }
+            Instruction::I32Popcnt => {
+                self.emitter.pop_wasm_stack(Reg::RAX);
+                self.emitter.popcnt_reg_reg(Reg::RAX, Reg::RAX);
+                self.emitter.push_wasm_stack(Reg::RAX);
+            }
             
-            Instruction::I64Clz => self.emit_trampoline_unop(crate::wasm::aot::trampoline::aot_i64_clz as usize),
-            Instruction::I64Ctz => self.emit_trampoline_unop(crate::wasm::aot::trampoline::aot_i64_ctz as usize),
-            Instruction::I64Popcnt => self.emit_trampoline_unop(crate::wasm::aot::trampoline::aot_i64_popcnt as usize),
+            Instruction::I64Clz => {
+                self.emitter.pop_wasm_stack(Reg::RAX);
+                self.emitter.bsr_reg_reg(Reg::RCX, Reg::RAX);
+                self.emitter.mov_reg_imm64(Reg::RDX, 63);
+                self.emitter.sub_reg_reg(Reg::RDX, Reg::RCX);
+                self.emitter.mov_reg_imm64(Reg::RAX, 64);
+                self.emitter.emit_u8(0x48); self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0x45); self.emitter.emit_u8(0xC2); // cmovnz rax, rdx
+                self.emitter.push_wasm_stack(Reg::RAX);
+            }
+            Instruction::I64Ctz => {
+                self.emitter.pop_wasm_stack(Reg::RAX);
+                self.emitter.bsf_reg_reg(Reg::RCX, Reg::RAX);
+                self.emitter.mov_reg_imm64(Reg::RAX, 64);
+                self.emitter.emit_u8(0x48); self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0x45); self.emitter.emit_u8(0xC1); // cmovnz rax, rcx
+                self.emitter.push_wasm_stack(Reg::RAX);
+            }
+            Instruction::I64Popcnt => {
+                self.emitter.pop_wasm_stack(Reg::RAX);
+                self.emitter.popcnt_reg_reg(Reg::RAX, Reg::RAX);
+                self.emitter.push_wasm_stack(Reg::RAX);
+            }
 
             Instruction::I32Eq => self.emit_relop_i32(0x94),
             Instruction::I32Ne => self.emit_relop_i32(0x95),
@@ -293,37 +345,117 @@ impl<'a, T: Config> AotCompiler<'a, T> {
             Instruction::F64Mul => self.emit_binop_f64(|e| e.mulsd_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1)),
             Instruction::F64Div => self.emit_binop_f64(|e| e.divsd_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1)),
 
-            Instruction::F32Abs => self.emit_trampoline_unop_f32(crate::wasm::aot::trampoline::aot_f32_abs as usize),
-            Instruction::F32Neg => self.emit_trampoline_unop_f32(crate::wasm::aot::trampoline::aot_f32_neg as usize),
+            Instruction::F32Abs => {
+                self.emitter.pop_v128(XmmReg::XMM0);
+                self.emitter.mov_reg_imm64(Reg::RAX, 0x7FFFFFFF);
+                self.emitter.movd_xmm_reg(XmmReg::XMM1, Reg::RAX);
+                self.emitter.andps_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1);
+                self.emitter.push_v128(XmmReg::XMM0);
+            }
+            Instruction::F32Neg => {
+                self.emitter.pop_v128(XmmReg::XMM0);
+                self.emitter.mov_reg_imm64(Reg::RAX, 0x80000000);
+                self.emitter.movd_xmm_reg(XmmReg::XMM1, Reg::RAX);
+                self.emitter.xorps_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1);
+                self.emitter.push_v128(XmmReg::XMM0);
+            }
             Instruction::F32Sqrt => {
                 self.emitter.pop_v128(XmmReg::XMM0);
                 self.emitter.sqrtss_xmm_xmm(XmmReg::XMM0, XmmReg::XMM0);
                 self.emitter.push_v128(XmmReg::XMM0);
             }
-            Instruction::F32Ceil => self.emit_trampoline_unop_f32(crate::wasm::aot::trampoline::aot_f32_ceil as usize),
-            Instruction::F32Floor => self.emit_trampoline_unop_f32(crate::wasm::aot::trampoline::aot_f32_floor as usize),
-            Instruction::F32Trunc => self.emit_trampoline_unop_f32(crate::wasm::aot::trampoline::aot_f32_trunc as usize),
-            Instruction::F32Nearest => self.emit_trampoline_unop_f32(crate::wasm::aot::trampoline::aot_f32_nearest as usize),
+            Instruction::F32Ceil => {
+                self.emitter.pop_v128(XmmReg::XMM0);
+                self.emitter.roundss_xmm_xmm_imm8(XmmReg::XMM0, XmmReg::XMM0, 2);
+                self.emitter.push_v128(XmmReg::XMM0);
+            }
+            Instruction::F32Floor => {
+                self.emitter.pop_v128(XmmReg::XMM0);
+                self.emitter.roundss_xmm_xmm_imm8(XmmReg::XMM0, XmmReg::XMM0, 1);
+                self.emitter.push_v128(XmmReg::XMM0);
+            }
+            Instruction::F32Trunc => {
+                self.emitter.pop_v128(XmmReg::XMM0);
+                self.emitter.roundss_xmm_xmm_imm8(XmmReg::XMM0, XmmReg::XMM0, 3);
+                self.emitter.push_v128(XmmReg::XMM0);
+            }
+            Instruction::F32Nearest => {
+                self.emitter.pop_v128(XmmReg::XMM0);
+                self.emitter.roundss_xmm_xmm_imm8(XmmReg::XMM0, XmmReg::XMM0, 0);
+                self.emitter.push_v128(XmmReg::XMM0);
+            }
 
-            Instruction::F64Abs => self.emit_trampoline_unop_f64(crate::wasm::aot::trampoline::aot_f64_abs as usize),
-            Instruction::F64Neg => self.emit_trampoline_unop_f64(crate::wasm::aot::trampoline::aot_f64_neg as usize),
+            Instruction::F64Abs => {
+                self.emitter.pop_v128(XmmReg::XMM0);
+                self.emitter.mov_reg_imm64(Reg::RAX, 0x7FFFFFFFFFFFFFFF);
+                self.emitter.movd_xmm_reg(XmmReg::XMM1, Reg::RAX);
+                self.emitter.andpd_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1);
+                self.emitter.push_v128(XmmReg::XMM0);
+            }
+            Instruction::F64Neg => {
+                self.emitter.pop_v128(XmmReg::XMM0);
+                self.emitter.mov_reg_imm64(Reg::RAX, 0x8000000000000000);
+                self.emitter.movd_xmm_reg(XmmReg::XMM1, Reg::RAX);
+                self.emitter.xorpd_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1);
+                self.emitter.push_v128(XmmReg::XMM0);
+            }
             Instruction::F64Sqrt => {
                 self.emitter.pop_v128(XmmReg::XMM0);
                 self.emitter.sqrtsd_xmm_xmm(XmmReg::XMM0, XmmReg::XMM0);
                 self.emitter.push_v128(XmmReg::XMM0);
             }
-            Instruction::F64Ceil => self.emit_trampoline_unop_f64(crate::wasm::aot::trampoline::aot_f64_ceil as usize),
-            Instruction::F64Floor => self.emit_trampoline_unop_f64(crate::wasm::aot::trampoline::aot_f64_floor as usize),
-            Instruction::F64Trunc => self.emit_trampoline_unop_f64(crate::wasm::aot::trampoline::aot_f64_trunc as usize),
-            Instruction::F64Nearest => self.emit_trampoline_unop_f64(crate::wasm::aot::trampoline::aot_f64_nearest as usize),
+            Instruction::F64Ceil => {
+                self.emitter.pop_v128(XmmReg::XMM0);
+                self.emitter.roundsd_xmm_xmm_imm8(XmmReg::XMM0, XmmReg::XMM0, 2);
+                self.emitter.push_v128(XmmReg::XMM0);
+            }
+            Instruction::F64Floor => {
+                self.emitter.pop_v128(XmmReg::XMM0);
+                self.emitter.roundsd_xmm_xmm_imm8(XmmReg::XMM0, XmmReg::XMM0, 1);
+                self.emitter.push_v128(XmmReg::XMM0);
+            }
+            Instruction::F64Trunc => {
+                self.emitter.pop_v128(XmmReg::XMM0);
+                self.emitter.roundsd_xmm_xmm_imm8(XmmReg::XMM0, XmmReg::XMM0, 3);
+                self.emitter.push_v128(XmmReg::XMM0);
+            }
+            Instruction::F64Nearest => {
+                self.emitter.pop_v128(XmmReg::XMM0);
+                self.emitter.roundsd_xmm_xmm_imm8(XmmReg::XMM0, XmmReg::XMM0, 0);
+                self.emitter.push_v128(XmmReg::XMM0);
+            }
 
             Instruction::F32Min => self.emit_trampoline_binop_f32(crate::wasm::aot::trampoline::aot_f32_min as usize),
             Instruction::F32Max => self.emit_trampoline_binop_f32(crate::wasm::aot::trampoline::aot_f32_max as usize),
-            Instruction::F32Copysign => self.emit_trampoline_binop_f32(crate::wasm::aot::trampoline::aot_f32_copysign as usize),
+            Instruction::F32Copysign => {
+                self.emitter.pop_v128(XmmReg::XMM1); // b
+                self.emitter.pop_v128(XmmReg::XMM0); // a
+                self.emitter.mov_reg_imm64(Reg::RAX, 0x80000000);
+                self.emitter.movd_xmm_reg(XmmReg::XMM2, Reg::RAX);
+                self.emitter.mov_reg_imm64(Reg::RAX, 0x7FFFFFFF);
+                self.emitter.movd_xmm_reg(XmmReg::XMM3, Reg::RAX);
+                self.emitter.andps_xmm_xmm(XmmReg::XMM1, XmmReg::XMM2); // b_sign
+                self.emitter.andps_xmm_xmm(XmmReg::XMM0, XmmReg::XMM3); // a_val
+                self.emitter.orps_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1);
+                self.emitter.push_v128(XmmReg::XMM0);
+                self.stack_depth -= 1;
+            }
 
             Instruction::F64Min => self.emit_trampoline_binop_f64(crate::wasm::aot::trampoline::aot_f64_min as usize),
             Instruction::F64Max => self.emit_trampoline_binop_f64(crate::wasm::aot::trampoline::aot_f64_max as usize),
-            Instruction::F64Copysign => self.emit_trampoline_binop_f64(crate::wasm::aot::trampoline::aot_f64_copysign as usize),
+            Instruction::F64Copysign => {
+                self.emitter.pop_v128(XmmReg::XMM1); // b
+                self.emitter.pop_v128(XmmReg::XMM0); // a
+                self.emitter.mov_reg_imm64(Reg::RAX, 0x8000000000000000);
+                self.emitter.movd_xmm_reg(XmmReg::XMM2, Reg::RAX);
+                self.emitter.mov_reg_imm64(Reg::RAX, 0x7FFFFFFFFFFFFFFF);
+                self.emitter.movd_xmm_reg(XmmReg::XMM3, Reg::RAX);
+                self.emitter.andpd_xmm_xmm(XmmReg::XMM1, XmmReg::XMM2); // b_sign
+                self.emitter.andpd_xmm_xmm(XmmReg::XMM0, XmmReg::XMM3); // a_val
+                self.emitter.orpd_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1);
+                self.emitter.push_v128(XmmReg::XMM0);
+                self.stack_depth -= 1;
+            }
 
             Instruction::I32WrapI64 => {
                 self.emitter.pop_wasm_stack(Reg::RAX);
@@ -392,10 +524,38 @@ impl<'a, T: Config> AotCompiler<'a, T> {
                 self.emitter.cvtsi2ss_xmm_reg(XmmReg::XMM0, Reg::RAX);
                 self.emitter.push_v128(XmmReg::XMM0);
             }
+            Instruction::F32ConvertI32U => {
+                self.emitter.pop_wasm_stack(Reg::RAX);
+                self.emitter.mov_reg32_reg32(Reg::RAX, Reg::RAX); // Zero-extend 32-bit to 64-bit
+                self.emitter.cvtsi2ss_xmm_reg(XmmReg::XMM0, Reg::RAX);
+                self.emitter.push_v128(XmmReg::XMM0);
+            }
+            Instruction::F32ConvertI64S => {
+                self.emitter.pop_wasm_stack(Reg::RAX);
+                self.emitter.cvtsi2ss_xmm_reg(XmmReg::XMM0, Reg::RAX);
+                self.emitter.push_v128(XmmReg::XMM0);
+            }
+            Instruction::F32ConvertI64U => {
+                self.emit_trampoline_unop(crate::wasm::aot::trampoline::aot_f32_convert_i64_u as usize);
+            }
             Instruction::F64ConvertI32S => {
                 self.emitter.pop_wasm_stack(Reg::RAX);
                 self.emitter.cvtsi2sd_xmm_reg(XmmReg::XMM0, Reg::RAX);
                 self.emitter.push_v128(XmmReg::XMM0);
+            }
+            Instruction::F64ConvertI32U => {
+                self.emitter.pop_wasm_stack(Reg::RAX);
+                self.emitter.mov_reg32_reg32(Reg::RAX, Reg::RAX); // Zero-extend
+                self.emitter.cvtsi2sd_xmm_reg(XmmReg::XMM0, Reg::RAX);
+                self.emitter.push_v128(XmmReg::XMM0);
+            }
+            Instruction::F64ConvertI64S => {
+                self.emitter.pop_wasm_stack(Reg::RAX);
+                self.emitter.cvtsi2sd_xmm_reg(XmmReg::XMM0, Reg::RAX);
+                self.emitter.push_v128(XmmReg::XMM0);
+            }
+            Instruction::F64ConvertI64U => {
+                self.emit_trampoline_unop(crate::wasm::aot::trampoline::aot_f64_convert_i64_u as usize);
             }
             Instruction::F32DemoteF64 => {
                 self.emitter.pop_v128(XmmReg::XMM0);
@@ -409,13 +569,35 @@ impl<'a, T: Config> AotCompiler<'a, T> {
             }
             Instruction::I32TruncF32S => {
                 self.emitter.pop_v128(XmmReg::XMM0);
+                self.emitter.cvttss2si_reg32_xmm(Reg::RAX, XmmReg::XMM0);
+                self.emitter.push_wasm_stack(Reg::RAX);
+            }
+            Instruction::I32TruncF32U => {
+                self.emit_trampoline_unop_f32_to_i32(crate::wasm::aot::trampoline::aot_i32_trunc_f32_u as usize);
+            }
+            Instruction::I32TruncF64S => {
+                self.emitter.pop_v128(XmmReg::XMM0);
+                self.emitter.cvttsd2si_reg32_xmm(Reg::RAX, XmmReg::XMM0);
+                self.emitter.push_wasm_stack(Reg::RAX);
+            }
+            Instruction::I32TruncF64U => {
+                self.emit_trampoline_unop_f64_to_i32(crate::wasm::aot::trampoline::aot_i32_trunc_f64_u as usize);
+            }
+            Instruction::I64TruncF32S => {
+                self.emitter.pop_v128(XmmReg::XMM0);
                 self.emitter.cvttss2si_reg_xmm(Reg::RAX, XmmReg::XMM0);
                 self.emitter.push_wasm_stack(Reg::RAX);
+            }
+            Instruction::I64TruncF32U => {
+                self.emit_trampoline_unop_f32_to_i64(crate::wasm::aot::trampoline::aot_i64_trunc_f32_u as usize);
             }
             Instruction::I64TruncF64S => {
                 self.emitter.pop_v128(XmmReg::XMM0);
                 self.emitter.cvttsd2si_reg_xmm(Reg::RAX, XmmReg::XMM0);
                 self.emitter.push_wasm_stack(Reg::RAX);
+            }
+            Instruction::I64TruncF64U => {
+                self.emit_trampoline_unop_f64_to_i64(crate::wasm::aot::trampoline::aot_i64_trunc_f64_u as usize);
             }
 
             Instruction::I32Load(memarg) => self.emit_load_i32(memarg),
@@ -616,7 +798,7 @@ impl<'a, T: Config> AotCompiler<'a, T> {
             }
             
             Instruction::FdExtension(sub) => self.compile_simd(sub, reader),
-            Instruction::FcExtension(sub) => self.compile_fc(sub),
+            Instruction::FcExtension(sub) => self.compile_fc(sub, reader),
             Instruction::Atomic(sub) => self.compile_atomic(sub),
 
             _ => {
@@ -701,6 +883,42 @@ impl<'a, T: Config> AotCompiler<'a, T> {
         self.emitter.push_v128(XmmReg::XMM0);
     }
 
+    fn emit_trampoline_unop_f32_to_i32(&mut self, func_ptr: usize) {
+        self.emitter.pop_v128(XmmReg::XMM0);
+        self.emitter.push_reg(Reg::RDI);
+        self.emitter.mov_reg_imm64(Reg::RAX, func_ptr as u64);
+        self.emitter.call_reg(Reg::RAX);
+        self.emitter.pop_reg(Reg::RDI);
+        self.emitter.push_wasm_stack(Reg::RAX);
+    }
+
+    fn emit_trampoline_unop_f64_to_i32(&mut self, func_ptr: usize) {
+        self.emitter.pop_v128(XmmReg::XMM0);
+        self.emitter.push_reg(Reg::RDI);
+        self.emitter.mov_reg_imm64(Reg::RAX, func_ptr as u64);
+        self.emitter.call_reg(Reg::RAX);
+        self.emitter.pop_reg(Reg::RDI);
+        self.emitter.push_wasm_stack(Reg::RAX);
+    }
+
+    fn emit_trampoline_unop_f32_to_i64(&mut self, func_ptr: usize) {
+        self.emitter.pop_v128(XmmReg::XMM0);
+        self.emitter.push_reg(Reg::RDI);
+        self.emitter.mov_reg_imm64(Reg::RAX, func_ptr as u64);
+        self.emitter.call_reg(Reg::RAX);
+        self.emitter.pop_reg(Reg::RDI);
+        self.emitter.push_wasm_stack(Reg::RAX);
+    }
+
+    fn emit_trampoline_unop_f64_to_i64(&mut self, func_ptr: usize) {
+        self.emitter.pop_v128(XmmReg::XMM0);
+        self.emitter.push_reg(Reg::RDI);
+        self.emitter.mov_reg_imm64(Reg::RAX, func_ptr as u64);
+        self.emitter.call_reg(Reg::RAX);
+        self.emitter.pop_reg(Reg::RDI);
+        self.emitter.push_wasm_stack(Reg::RAX);
+    }
+
     fn emit_trampoline_binop(&mut self, func_ptr: usize) {
         self.emitter.pop_wasm_stack(Reg::RSI);
         self.emitter.pop_wasm_stack(Reg::RAX);
@@ -770,6 +988,8 @@ impl<'a, T: Config> AotCompiler<'a, T> {
     }
 
     fn emit_fp_setcc(&mut self, set_opcode: u8, check_parity: bool) {
+        self.emitter.xor_reg_reg(Reg::RAX, Reg::RAX);
+        self.emitter.xor_reg_reg(Reg::RDX, Reg::RDX);
         if check_parity {
             self.emitter.emit_u8(0x0F); self.emitter.emit_u8(set_opcode); self.emitter.emit_u8(0xC0);
             self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0x9B); self.emitter.emit_u8(0xC2);
@@ -1038,10 +1258,131 @@ impl<'a, T: Config> AotCompiler<'a, T> {
         self.emitter.push_wasm_stack(Reg::RAX);
     }
 
-    fn compile_fc(&mut self, sub: u32) {
+    fn compile_fc(&mut self, sub: u32, reader: &mut WasmReader) {
         match sub {
-            0x00 => self.emit_trampoline_unop_f32(crate::wasm::aot::trampoline::aot_i32_trunc_sat_f32_s as usize),
-            0x01 => self.emit_trampoline_unop_f32(crate::wasm::aot::trampoline::aot_i32_trunc_sat_f32_u as usize),
+            0x00 => self.emit_trampoline_unop_f32_to_i32(crate::wasm::aot::trampoline::aot_i32_trunc_sat_f32_s as usize),
+            0x01 => self.emit_trampoline_unop_f32_to_i32(crate::wasm::aot::trampoline::aot_i32_trunc_sat_f32_u as usize),
+            0x02 => self.emit_trampoline_unop_f64_to_i32(crate::wasm::aot::trampoline::aot_i32_trunc_sat_f64_s as usize),
+            0x03 => self.emit_trampoline_unop_f64_to_i32(crate::wasm::aot::trampoline::aot_i32_trunc_sat_f64_u as usize),
+            0x04 => self.emit_trampoline_unop_f32_to_i64(crate::wasm::aot::trampoline::aot_i64_trunc_sat_f32_s as usize),
+            0x05 => self.emit_trampoline_unop_f32_to_i64(crate::wasm::aot::trampoline::aot_i64_trunc_sat_f32_u as usize),
+            0x06 => self.emit_trampoline_unop_f64_to_i64(crate::wasm::aot::trampoline::aot_i64_trunc_sat_f64_s as usize),
+            0x07 => self.emit_trampoline_unop_f64_to_i64(crate::wasm::aot::trampoline::aot_i64_trunc_sat_f64_u as usize),
+            
+            0x08 => { // memory.init
+                let data_idx = reader.read_var_u32().unwrap();
+                reader.read_u8().unwrap(); // zero
+                self.emitter.pop_wasm_stack(Reg::RCX); // n
+                self.emitter.pop_wasm_stack(Reg::RDX); // s
+                self.emitter.pop_wasm_stack(Reg::RSI); // d
+                self.emitter.push_reg(Reg::RDI);
+                self.emitter.mov_reg_imm64(Reg::R8, data_idx as u64);
+                self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_memory_init as usize as u64);
+                self.emitter.call_reg(Reg::RAX);
+                self.emitter.pop_reg(Reg::RDI);
+                self.stack_depth -= 3;
+            }
+            0x09 => { // data.drop
+                let data_idx = reader.read_var_u32().unwrap();
+                self.emitter.push_reg(Reg::RDI);
+                self.emitter.mov_reg_imm64(Reg::RSI, data_idx as u64);
+                self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_data_drop as usize as u64);
+                self.emitter.call_reg(Reg::RAX);
+                self.emitter.pop_reg(Reg::RDI);
+            }
+            0x0A => { // memory.copy
+                reader.read_u8().unwrap(); reader.read_u8().unwrap(); // zero zero
+                self.emitter.pop_wasm_stack(Reg::RCX); // n
+                self.emitter.pop_wasm_stack(Reg::RDX); // s
+                self.emitter.pop_wasm_stack(Reg::RSI); // d
+                self.emitter.push_reg(Reg::RDI);
+                self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_memory_copy as usize as u64);
+                self.emitter.call_reg(Reg::RAX);
+                self.emitter.pop_reg(Reg::RDI);
+                self.stack_depth -= 3;
+            }
+            0x0B => { // memory.fill
+                reader.read_u8().unwrap(); // zero
+                self.emitter.pop_wasm_stack(Reg::RCX); // n
+                self.emitter.pop_wasm_stack(Reg::RDX); // val
+                self.emitter.pop_wasm_stack(Reg::RSI); // d
+                self.emitter.push_reg(Reg::RDI);
+                self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_memory_fill as usize as u64);
+                self.emitter.call_reg(Reg::RAX);
+                self.emitter.pop_reg(Reg::RDI);
+                self.stack_depth -= 3;
+            }
+            0x0C => { // table.init
+                let elem_idx = reader.read_var_u32().unwrap();
+                let table_idx = reader.read_var_u32().unwrap();
+                self.emitter.pop_wasm_stack(Reg::RCX); // n
+                self.emitter.pop_wasm_stack(Reg::RDX); // s
+                self.emitter.pop_wasm_stack(Reg::RSI); // d
+                self.emitter.push_reg(Reg::RDI);
+                self.emitter.mov_reg_imm64(Reg::R8, table_idx as u64);
+                self.emitter.mov_reg_imm64(Reg::R9, elem_idx as u64);
+                self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_table_init as usize as u64);
+                self.emitter.call_reg(Reg::RAX);
+                self.emitter.pop_reg(Reg::RDI);
+                self.stack_depth -= 3;
+            }
+            0x0D => { // elem.drop
+                let elem_idx = reader.read_var_u32().unwrap();
+                self.emitter.push_reg(Reg::RDI);
+                self.emitter.mov_reg_imm64(Reg::RSI, elem_idx as u64);
+                self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_elem_drop as usize as u64);
+                self.emitter.call_reg(Reg::RAX);
+                self.emitter.pop_reg(Reg::RDI);
+            }
+            0x0E => { // table.copy
+                let x = reader.read_var_u32().unwrap();
+                let y = reader.read_var_u32().unwrap();
+                self.emitter.pop_wasm_stack(Reg::RCX); // n
+                self.emitter.pop_wasm_stack(Reg::RDX); // s
+                self.emitter.pop_wasm_stack(Reg::RSI); // d
+                self.emitter.push_reg(Reg::RDI);
+                self.emitter.mov_reg_imm64(Reg::R8, y as u64);
+                self.emitter.mov_reg_imm64(Reg::R9, x as u64);
+                self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_table_copy as usize as u64);
+                self.emitter.call_reg(Reg::RAX);
+                self.emitter.pop_reg(Reg::RDI);
+                self.stack_depth -= 3;
+            }
+            0x0F => { // table.grow
+                let idx = reader.read_var_u32().unwrap();
+                self.emitter.pop_wasm_stack(Reg::RCX); // n
+                self.emitter.pop_wasm_stack(Reg::RDX); // val
+                self.emitter.push_reg(Reg::RDI);
+                self.emitter.mov_reg_imm64(Reg::RSI, idx as u64);
+                self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_table_grow as usize as u64);
+                self.emitter.call_reg(Reg::RAX);
+                self.emitter.pop_reg(Reg::RDI);
+                self.emitter.push_wasm_stack(Reg::RAX);
+                self.stack_depth -= 1;
+            }
+            0x10 => { // table.size
+                let idx = reader.read_var_u32().unwrap();
+                self.emitter.push_reg(Reg::RDI);
+                self.emitter.mov_reg_imm64(Reg::RSI, idx as u64);
+                self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_table_size as usize as u64);
+                self.emitter.call_reg(Reg::RAX);
+                self.emitter.pop_reg(Reg::RDI);
+                self.emitter.push_wasm_stack(Reg::RAX);
+                self.stack_depth += 1;
+            }
+            0x11 => { // table.fill
+                let idx = reader.read_var_u32().unwrap();
+                self.emitter.pop_wasm_stack(Reg::RCX); // n
+                self.emitter.pop_wasm_stack(Reg::RDX); // val
+                self.emitter.pop_wasm_stack(Reg::RSI); // d
+                self.emitter.push_reg(Reg::RDI);
+                self.emitter.mov_reg_imm64(Reg::R8, idx as u64);
+                self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_table_fill as usize as u64);
+                self.emitter.call_reg(Reg::RAX);
+                self.emitter.pop_reg(Reg::RDI);
+                self.stack_depth -= 3;
+            }
+            
             _ => {
                 self.emitter.jmp_label(self.trap_label);
             }

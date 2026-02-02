@@ -136,6 +136,169 @@ pub extern "C" fn aot_i32_trunc_sat_f32_u(a: f32) -> u32 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn aot_f32_convert_i64_u(a: u64) -> f32 { a as f32 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_f64_convert_i64_u(a: u64) -> f64 { a as f64 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_i32_trunc_f32_u(a: f32) -> u32 { a as u32 }
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_i32_trunc_f64_u(a: f64) -> u32 { a as u32 }
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_i64_trunc_f32_u(a: f32) -> u64 { a as u64 }
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_i64_trunc_f64_u(a: f64) -> u64 { a as u64 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_i32_trunc_sat_f32_s(a: f32) -> i32 {
+    if a.is_nan() { 0 }
+    else if a >= 2147483648.0 { i32::MAX }
+    else if a < -2147483648.0 { i32::MIN }
+    else { a as i32 }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_i32_trunc_sat_f32_u(a: f32) -> u32 {
+    if a.is_nan() { 0 }
+    else if a >= 4294967296.0 { u32::MAX }
+    else if a <= -1.0 { 0 }
+    else { a as u32 }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_i32_trunc_sat_f64_s(a: f64) -> i32 {
+    if a.is_nan() { 0 }
+    else if a >= 2147483648.0 { i32::MAX }
+    else if a < -2147483648.0 { i32::MIN }
+    else { a as i32 }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_i32_trunc_sat_f64_u(a: f64) -> u32 {
+    if a.is_nan() { 0 }
+    else if a >= 4294967296.0 { u32::MAX }
+    else if a <= -1.0 { 0 }
+    else { a as u32 }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_i64_trunc_sat_f32_s(a: f32) -> i64 {
+    if a.is_nan() { 0 }
+    else if a >= 9223372036854775808.0 { i64::MAX }
+    else if a < -9223372036854775808.0 { i64::MIN }
+    else { a as i64 }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_i64_trunc_sat_f32_u(a: f32) -> u64 {
+    if a.is_nan() { 0 }
+    else if a >= 18446744073709551616.0 { u64::MAX }
+    else if a <= -1.0 { 0 }
+    else { a as u64 }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_i64_trunc_sat_f64_s(a: f64) -> i64 {
+    if a.is_nan() { 0 }
+    else if a >= 9223372036854775808.0 { i64::MAX }
+    else if a < -9223372036854775808.0 { i64::MIN }
+    else { a as i64 }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_i64_trunc_sat_f64_u(a: f64) -> u64 {
+    if a.is_nan() { 0 }
+    else if a >= 18446744073709551616.0 { u64::MAX }
+    else if a <= -1.0 { 0 }
+    else { a as u64 }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_memory_init(ctx: &AotContext, d: i32, s: i32, n: u32, data_idx: u32) {
+    let store = unsafe { &mut *(ctx.store as *mut Store<()>) };
+    let module_addr = 0; // Simplified
+    crate::wasm::interpreter::loop_executor::memory_init(&store.modules, &mut store.memories, &store.data, module_addr, data_idx as usize, 0, n, s, d).unwrap();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_data_drop(ctx: &AotContext, data_idx: u32) {
+    let store = unsafe { &mut *(ctx.store as *mut Store<()>) };
+    let module_addr = 0;
+    crate::wasm::interpreter::loop_executor::data_drop(&store.modules, &mut store.data, module_addr, data_idx as usize).unwrap();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_memory_copy(ctx: &AotContext, d: i32, s: i32, n: u32) {
+    let store = unsafe { &mut *(ctx.store as *mut Store<()>) };
+    let module_addr = 0;
+    let mem_addr = store.modules.get(module_addr).mem_addrs[0];
+    let mem = store.memories.get(mem_addr);
+    mem.mem.copy(d as usize, &mem.mem, s as usize, n as usize).unwrap();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_memory_fill(ctx: &AotContext, d: i32, val: u32, n: u32) {
+    let store = unsafe { &mut *(ctx.store as *mut Store<()>) };
+    let module_addr = 0;
+    let mem_addr = store.modules.get(module_addr).mem_addrs[0];
+    let mem = store.memories.get(mem_addr);
+    mem.mem.fill(d as usize, val as u8, n as usize).unwrap();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_table_init(ctx: &AotContext, d: i32, s: i32, n: u32, table_idx: u32, elem_idx: u32) {
+    let store = unsafe { &mut *(ctx.store as *mut Store<()>) };
+    let module_addr = 0;
+    crate::wasm::interpreter::loop_executor::table_init(&store.modules, &mut store.tables, &store.elements, module_addr, elem_idx as usize, table_idx as usize, n, s, d).unwrap();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_elem_drop(ctx: &AotContext, elem_idx: u32) {
+    let store = unsafe { &mut *(ctx.store as *mut Store<()>) };
+    let module_addr = 0;
+    crate::wasm::interpreter::loop_executor::elem_drop(&store.modules, &mut store.elements, module_addr, elem_idx as usize).unwrap();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_table_copy(ctx: &AotContext, d: i32, s: i32, n: u32, table_dst: u32, table_src: u32) {
+    let store = unsafe { &mut *(ctx.store as *mut Store<()>) };
+    let module_addr = 0;
+    let tx_addr = store.modules.get(module_addr).table_addrs[table_src as usize];
+    let ty_addr = store.modules.get(module_addr).table_addrs[table_dst as usize];
+    let (tx, ty) = store.tables.get_two_mut(tx_addr, ty_addr).unwrap();
+    for i in 0..n as usize { ty.elem[d as usize + i] = tx.elem[s as usize + i]; }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_table_grow(ctx: &AotContext, val: usize, n: u32, table_idx: u32) -> i32 {
+    let store = unsafe { &mut *(ctx.store as *mut Store<()>) };
+    let module_addr = 0;
+    let t_addr = store.modules.get(module_addr).table_addrs[table_idx as usize];
+    let t = store.tables.get_mut(t_addr);
+    let sz = t.elem.len() as i32;
+    t.elem.extend(core::iter::repeat(Ref::Func(val)).take(n as usize));
+    sz
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_table_size(ctx: &AotContext, table_idx: u32) -> u32 {
+    let store = unsafe { &*(ctx.store as *const Store<()>) };
+    let module_addr = 0;
+    let t_addr = store.modules.get(module_addr).table_addrs[table_idx as usize];
+    store.tables.get(t_addr).elem.len() as u32
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_table_fill(ctx: &AotContext, d: i32, val: usize, n: u32, table_idx: u32) {
+    let store = unsafe { &mut *(ctx.store as *mut Store<()>) };
+    let module_addr = 0;
+    let t_addr = store.modules.get(module_addr).table_addrs[table_idx as usize];
+    let t = store.tables.get_mut(t_addr);
+    for i in 0..n as usize { t.elem[d as usize + i] = Ref::Func(val); }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn aot_memory_size(ctx: &AotContext) -> u32 {
     let store = unsafe { &*(ctx.store as *const Store<()>) };
     let module_addr = 0; // Simplified
