@@ -43,18 +43,7 @@ impl FloatMath for f64 {
 
     fn sqrt(self) -> Self {
         if self < 0.0 { return f64::NAN; }
-
-        #[cfg(target_arch = "x86_64")]
-        unsafe {
-            let mut res: f64;
-            core::arch::asm!("sqrtsd {}, {}", out(xmm_reg) res, in(xmm_reg) self);
-            return res;
-        }
-
-        #[cfg(not(target_arch = "x86_64"))]
-        {
-            return f64::sqrt(self);
-        }
+        self.sqrt()
     }
 
     fn powf(self, exp: Self) -> Self {
@@ -150,19 +139,7 @@ impl FloatMath for f32 {
     }
 
     fn sqrt(self) -> Self {
-        if self < 0.0 { return f32::NAN; }
-
-        #[cfg(target_arch = "x86_64")]
-        unsafe {
-            let mut res: f32;
-            core::arch::asm!("sqrtss {}, {}", out(xmm_reg) res, in(xmm_reg) self);
-            return res;
-        }
-
-        #[cfg(not(target_arch = "x86_64"))]
-        {
-            return f32::sqrt(self);
-        }
+        unsafe { core::intrinsics::sqrtf32(self) }
     }
 
     fn powf(self, exp: Self) -> Self {

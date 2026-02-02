@@ -1,5 +1,6 @@
 #![no_std]
 #![feature(lang_items)]
+#![feature(core_intrinsics)]
 
 extern crate alloc as rust_alloc;
 

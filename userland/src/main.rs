@@ -7,6 +7,7 @@ use std::fs::File;
 use std::os::Items;
 use std::io::Read;
 use std::{debugln, println};
+use std::math::FloatMath;
 
 pub fn main() {
     println!("Starting Userland Shell...");
@@ -47,7 +48,10 @@ pub fn main() {
 
     println!("Desktop Environment Initialized.");
 
+    println!("Starting WASM Apps...");
+
     run_wasm("@0xE0/apps/aot_test.wasm", true);
+
 
     std::thread::spawn(|| {
         run_wasm("@0xE0/apps/taskbar.wasm", false);
