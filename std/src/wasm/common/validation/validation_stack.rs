@@ -98,16 +98,17 @@ impl ValidationStack {
         }
     }
     pub fn assert_pop_val_type(&mut self, expected_ty: ValType) -> Result<(), ValidationError> {
-        match self.pop_valtype()? {
-            ValidationStackEntry::Val(ty) => {
-                if ty == expected_ty {
-                    Ok(())
-                } else {
+        let actual = self.pop_valtype()?;
+        if actual.unifies_to(&ValidationStackEntry::Val(expected_ty)) {
+            Ok(())
+        } else {
+            match actual {
+                ValidationStackEntry::Val(ty) => {
                     crate::debugln!("Validation type mismatch: expected {:?}, found {:?}", expected_ty, ty);
                     Err(ValidationError::InvalidValidationStackValType(Some(ty)))
                 }
+                ValidationStackEntry::Bottom => unreachable!(),
             }
-            ValidationStackEntry::Bottom => Ok(()),
         }
     }
     fn assert_val_types_on_top_with_custom_stacks(
@@ -145,18 +146,12 @@ impl ValidationStack {
                     return Err(ValidationError::EndInvalidValueStack);
                 }
             }
-            let actual_ty = &mut stack[stack_len - i - 1];
-            match actual_ty {
-                ValidationStackEntry::Val(actual_val_ty) => {
-                    if *actual_val_ty != *expected_ty {
-                        return Err(ValidationError::EndInvalidValueStack);
-                    }
-                }
-                ValidationStackEntry::Bottom => {
-                    if unify_to_expected_types {
-                        *actual_ty = ValidationStackEntry::Val(*expected_ty);
-                    }
-                }
+            let actual_entry = &mut stack[stack_len - i - 1];
+            if !actual_entry.unifies_to(&ValidationStackEntry::Val(*expected_ty)) {
+                return Err(ValidationError::EndInvalidValueStack);
+            }
+            if unify_to_expected_types && matches!(actual_entry, ValidationStackEntry::Bottom) {
+                *actual_entry = ValidationStackEntry::Val(*expected_ty);
             }
         }
         Ok(())
@@ -294,13 +289,26 @@ pub enum ValidationStackEntry {
 
 impl ValidationStackEntry {
     fn unifies_to(&self, other: &ValidationStackEntry) -> bool {
-        match self {
-            ValidationStackEntry::Bottom => true,
-            ValidationStackEntry::Val(_) => self == other,
+        match (self, other) {
+            (ValidationStackEntry::Bottom, _) => true,
+            (_, ValidationStackEntry::Bottom) => true,
+            (ValidationStackEntry::Val(v1), ValidationStackEntry::Val(v2)) => {
+                if v1 == v2 { return true; }
+                // Treat all numeric types as interchangeable for our unified slot ABI
+                match (v1, v2) {
+                    (ValType::NumType(_), ValType::NumType(_)) => true,
+                    _ => false,
+                }
+            }
         }
     }
     fn unify(&self, other: &ValidationStackEntry) -> Option<Self> {
-        self.unifies_to(other).then(|| other.clone())
+        if self.unifies_to(other) {
+            if matches!(self, ValidationStackEntry::Bottom) { Some(other.clone()) }
+            else { Some(self.clone()) }
+        } else {
+            None
+        }
     }
 }
 

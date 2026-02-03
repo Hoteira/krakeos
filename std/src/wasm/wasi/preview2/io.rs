@@ -137,12 +137,6 @@ pub fn stream_write<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Re
         _ => return Ok(vec![]),
     };
 
-    crate::debugln!(
-        "WASI P2: stream_write(handle: {}, ptr: {:#x}, len: {})",
-        handle,
-        ptr,
-        len
-    );
     let source = {
         let wasi = store.wasi_ctx.as_ref().ok_or(HaltExecutionError(1))?;
         match wasi.resource_table.get(&handle) {
@@ -153,7 +147,6 @@ pub fn stream_write<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Re
     if let Some(source) = source {
         let mut buf = vec![0u8; len as usize];
         if read_mem(store, ptr, &mut buf).is_err() {
-            crate::debugln!("  Error: Failed to read guest memory at {:#x}", ptr);
             // Write Error (Tag 1)
             let _ = write_u32(store, ret_ptr, 1);
             return Ok(vec![]);
@@ -201,7 +194,6 @@ pub fn stream_write<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Re
         write_u32(store, ret_ptr, 0).map_err(|_| HaltExecutionError(1))?;
         Ok(vec![])
     } else {
-        crate::debugln!("  Error: Invalid output stream handle {}", handle);
         // Write Error (Tag 1)
         let _ = write_u32(store, ret_ptr, 1);
         Ok(vec![])

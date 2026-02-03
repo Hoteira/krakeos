@@ -7,6 +7,7 @@ use std::math::FloatMath;
 
 mod simd_tests;
 mod atomic_tests;
+mod abi_tests;
 
 pub fn main() {
     println!("==================== Starting Comprehensive AOT Compiler Test Suite...");
@@ -21,9 +22,10 @@ pub fn main() {
     failed += test_memory_bounds();
     failed += test_conversions();
     failed += test_simd_basic();
+    failed += abi_tests::test_abi();
     
     unsafe {
-        // failed += simd_tests::test_simd();
+        failed += simd_tests::test_simd();
         failed += atomic_tests::test_atomics();
     }
 

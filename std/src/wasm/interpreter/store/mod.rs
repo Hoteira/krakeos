@@ -448,6 +448,8 @@ impl<'a, T: Config> Store<'a, T> {
                                     memory_size,
                                     stack_base: stack_ptr,
                                     locals_base: locals_ptr,
+                                    module_addr,
+                                    stack_limit: (&stack_size as *const _ as usize).saturating_sub(1024 * 1024),
                                 };
 
                                 // Initialize parameters in locals
@@ -644,6 +646,7 @@ impl<'a, T: Config> Store<'a, T> {
             tables: Vec::new(),
             memories: Vec::new(),
             globals: Vec::new(),
+            functions_types: Vec::new(),
             exports: Vec::new(),
             func_blocks_stps: Vec::new(),
             sidetable: Vec::new(),

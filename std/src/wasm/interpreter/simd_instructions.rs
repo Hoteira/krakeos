@@ -31,7 +31,6 @@ pub fn execute_simd_instruction<T: Config>(
             let mem_inst = store.memories.get(mem_addr);
             let idx = calculate_mem_address(&memarg, relative_address)?;
             let data = mem_inst.mem.load_bytes::<16>(idx).map_err(|e| {
-                crate::debugln!("WASM Trap: MemoryAccessOutOfBounds (load v128) at PC {:#x}", wasm.pc);
                 e
             })?;
             stack.push_value::<T>(Value::V128(data))?;
@@ -956,7 +955,6 @@ pub fn execute_simd_instruction<T: Config>(
         I32X4_RELAXED_TRUNC_F64X2_S_ZERO => { let v1 = stack.pop_value().try_into().unwrap_validated(); stack.push_value::<T>(Value::V128(i32x4_trunc_sat_f64x2_s_zero(v1)))?; },
         I32X4_RELAXED_TRUNC_F64X2_U_ZERO => { let v1 = stack.pop_value().try_into().unwrap_validated(); stack.push_value::<T>(Value::V128(i32x4_trunc_sat_f64x2_u_zero(v1)))?; },
         _ => {
-            crate::debugln!("WASM Trap: Unimplemented FD_EXTENSION (SIMD) opcode {:#x} at PC {:#x}", instr, wasm.pc);
             return Err(RuntimeError::Trap(TrapError::ReachedUnreachable));
         }
     }

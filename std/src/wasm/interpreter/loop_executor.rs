@@ -127,9 +127,6 @@ pub fn run<T: Config>(
     wasm.pc = pc;
     use crate::wasm::common::reader::types::opcode::*;
     loop {
-        store
-            .user_data
-            .instruction_hook(store.modules.get(current_module).wasm_bytecode, wasm.pc);
         let prev_pc = wasm.pc;
         macro_rules! decrement_fuel {
             ($cost:expr) => {
@@ -148,11 +145,6 @@ pub fn run<T: Config>(
         let first_instr_byte = match wasm.read_u8() {
             Ok(b) => b,
             Err(e) => {
-                crate::debugln!(
-                    "WASM Interpreter error (fetch) at PC {:#x}: {:?}",
-                    wasm.pc,
-                    e
-                );
                 return Err(TrapError::ReachedUnreachable.into());
             }
         };
@@ -345,16 +337,10 @@ pub fn run<T: Config>(
                     .elem
                     .get(i as usize)
                     .ok_or_else(|| {
-                        crate::debugln!(
-                            "WASM Trap: TableAccessOutOfBounds (i={}) at PC {:#x}",
-                            i,
-                            wasm.pc
-                        );
                         TrapError::TableAccessOutOfBounds
                     })
                     .and_then(|r| {
                         if matches!(r, Ref::Null(_)) {
-                            crate::debugln!("WASM Trap: UninitializedElement at PC {:#x}", wasm.pc);
                             Err(TrapError::UninitializedElement)
                         } else {
                             Ok(r)
@@ -522,7 +508,7 @@ pub fn run<T: Config>(
                 };
                 stack.push_value::<T>(res.into())?;
             }
-            I64_ADD | I64_SUB | I64_MUL | I64_DIV_S | I64_DIV_U | I64_REM_S | I64_REM_U | I64_AND | I64_OR | I64_XOR | I64_SHL | I64_SHR_S | I64_SHR_U | I64_ROTL | I64_ROTR => {
+            I64_ADD | I64_SUB | I64_MUL | I64_DIV_S | I64_DIV_U | I64_REM_S | I64_REM_U | I64_AND | I64_OR | I64_XOR => {
                 decrement_fuel!(T::get_flat_cost(first_instr_byte));
                 let v2: i64 = stack.pop_value().try_into().unwrap_validated();
                 let v1: i64 = stack.pop_value().try_into().unwrap_validated();
@@ -533,6 +519,15 @@ pub fn run<T: Config>(
                     I64_REM_S => if v2 == 0 { return Err(TrapError::DivideBy0.into()); } else { v1.checked_rem(v2).unwrap_or(0) },
                     I64_REM_U => if v2 == 0 { return Err(TrapError::DivideBy0.into()); } else { ((v1 as u64) % (v2 as u64)) as i64 },
                     I64_AND => v1 & v2, I64_OR => v1 | v2, I64_XOR => v1 ^ v2,
+                    _ => unreachable!()
+                };
+                stack.push_value::<T>(res.into())?;
+            }
+            I64_SHL | I64_SHR_S | I64_SHR_U | I64_ROTL | I64_ROTR => {
+                decrement_fuel!(T::get_flat_cost(first_instr_byte));
+                let v2: i32 = stack.pop_value().try_into().unwrap_validated();
+                let v1: i64 = stack.pop_value().try_into().unwrap_validated();
+                let res = match first_instr_byte {
                     I64_SHL => v1.wrapping_shl(v2 as u32), I64_SHR_S => v1.wrapping_shr(v2 as u32), I64_SHR_U => ((v1 as u64).wrapping_shr(v2 as u32)) as i64,
                     I64_ROTL => v1.rotate_left(v2 as u32), I64_ROTR => v1.rotate_right(v2 as u32),
                     _ => unreachable!()
@@ -856,7 +851,7 @@ pub fn run<T: Config>(
                         let t = store.tables.get_mut(t_addr);
                         for i in 0..n as usize { t.elem[d as usize + i] = val; }
                     }
-                    _ => { crate::debugln!("Unimplemented FC extension: {:#x}", instr); return Err(TrapError::ReachedUnreachable.into()); }
+                    _ => { return Err(TrapError::ReachedUnreachable.into()); }
                 }
             }
             FD_EXTENSIONS => {
@@ -920,8 +915,18 @@ pub fn run<T: Config>(
                     }
                     _ => {
                         // RMW operations
-                        let is_i64 = (sub >= 0x1f && sub <= 0x2d && sub % 2 == 1) || (sub >= 0x32 && sub <= 0x35 && sub % 2 == 1) || (sub >= 0x4a && sub <= 0x4d && sub % 2 == 1) || sub == 0x49;
-                        let is_cmpxchg = sub >= 0x48 && sub <= 0x4d;
+                        let is_i64 = match sub {
+                            0x1f | 0x22 | 0x23 | 0x24 | // Add
+                            0x26 | 0x29 | 0x2a | 0x2b | // Sub
+                            0x2d | 0x30 | 0x31 | 0x32 | // And
+                            0x34 | 0x37 | 0x38 | 0x39 | // Or
+                            0x3b | 0x3e | 0x3f | 0x40 | // Xor
+                            0x42 | 0x45 | 0x46 | 0x47 | // Xchg
+                            0x49 | 0x4c | 0x4d | 0x4e    // Cmpxchg
+                            => true,
+                            _ => false,
+                        };
+                        let is_cmpxchg = sub >= 0x48 && sub <= 0x4e;
                         
                         let val: Value = stack.pop_value();
                         let expect: Option<Value> = if is_cmpxchg { Some(stack.pop_value()) } else { None };
@@ -939,32 +944,45 @@ pub fn run<T: Config>(
                         }
 
                         let res = match sub {
-                            0x1e => rmw!(u32, u32::try_from(val).unwrap_validated(), |a: u32, b: u32| a.wrapping_add(b)),
-                            0x1f => rmw!(u64, u64::try_from(val).unwrap_validated(), |a: u64, b: u64| a.wrapping_add(b)),
-                            0x2e => rmw!(u32, u32::try_from(val).unwrap_validated(), |a: u32, b: u32| a ^ b),
-                            0x2f => rmw!(u64, u64::try_from(val).unwrap_validated(), |a: u64, b: u64| a ^ b),
-                            0x48 => { // i32.atomic.rmw.cmpxchg
+                            0x1e | 0x20 | 0x21 => rmw!(u32, u32::try_from(val).unwrap_validated(), |a: u32, b: u32| a.wrapping_add(b)),
+                            0x1f | 0x22 | 0x23 | 0x24 => rmw!(u64, u64::try_from(val).unwrap_validated(), |a: u64, b: u64| a.wrapping_add(b)),
+                            
+                            0x25 | 0x27 | 0x28 => rmw!(u32, u32::try_from(val).unwrap_validated(), |a: u32, b: u32| a.wrapping_sub(b)),
+                            0x26 | 0x29 | 0x2a | 0x2b => rmw!(u64, u64::try_from(val).unwrap_validated(), |a: u64, b: u64| a.wrapping_sub(b)),
+                            
+                            0x2c | 0x2e | 0x2f => rmw!(u32, u32::try_from(val).unwrap_validated(), |a: u32, b: u32| a & b),
+                            0x2d | 0x30 | 0x31 | 0x32 => rmw!(u64, u64::try_from(val).unwrap_validated(), |a: u64, b: u64| a & b),
+                            
+                            0x33 | 0x35 | 0x36 => rmw!(u32, u32::try_from(val).unwrap_validated(), |a: u32, b: u32| a | b),
+                            0x34 | 0x37 | 0x38 | 0x39 => rmw!(u64, u64::try_from(val).unwrap_validated(), |a: u64, b: u64| a | b),
+                            
+                            0x3a | 0x3c | 0x3d => rmw!(u32, u32::try_from(val).unwrap_validated(), |a: u32, b: u32| a ^ b),
+                            0x3b | 0x3e | 0x3f | 0x40 => rmw!(u64, u64::try_from(val).unwrap_validated(), |a: u64, b: u64| a ^ b),
+                            
+                            0x41 | 0x43 | 0x44 => rmw!(u32, u32::try_from(val).unwrap_validated(), |a: u32, b: u32| b),
+                            0x42 | 0x45 | 0x46 | 0x47 => rmw!(u64, u64::try_from(val).unwrap_validated(), |a: u64, b: u64| b),
+
+                            0x48 | 0x4a | 0x4b => { // i32.atomic.rmw.cmpxchg
                                 let v_new = u32::try_from(val).unwrap_validated();
                                 let v_exp = u32::try_from(expect.unwrap()).unwrap_validated();
                                 let old: u32 = mem.load(idx)?;
                                 if old == v_exp { mem.store(idx, v_new)?; }
                                 Value::I32(old)
                             }
-                            0x49 => { // i64.atomic.rmw.cmpxchg
+                            0x49 | 0x4c | 0x4d | 0x4e => { // i64.atomic.rmw.cmpxchg
                                 let v_new = u64::try_from(val).unwrap_validated();
                                 let v_exp = u64::try_from(expect.unwrap()).unwrap_validated();
                                 let old: u64 = mem.load(idx)?;
                                 if old == v_exp { mem.store(idx, v_new)?; }
                                 Value::I64(old)
                             }
-                            _ => { crate::debugln!("Unimplemented Atomic: {:#x}", sub); return Err(TrapError::ReachedUnreachable.into()); }
+                            _ => { return Err(TrapError::ReachedUnreachable.into()); }
                         };
                         stack.push_value::<T>(res)?;
                     }
                 }
             }
             _ => { 
-                crate::debugln!("Unimplemented Opcode: {:#x} at PC {:#x}", first_instr_byte, wasm.pc-1);
                 return Err(TrapError::ReachedUnreachable.into());
             }
         }

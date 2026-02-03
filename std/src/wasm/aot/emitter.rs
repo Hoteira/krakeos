@@ -556,6 +556,25 @@ impl X64Emitter {
         self.emit_u8(0x0F); self.emit_u8(0x5A); self.modrm(3, dst as u8, src as u8);
     }
 
+    pub fn ldmxcsr_mem(&mut self, base: Reg, offset: i32) {
+        self.emit_u8(0x0F); self.emit_u8(0xAE);
+        self.emit_modrm_mem_with_reg(2, base, offset); 
+    }
+
+    pub fn emit_modrm_mem_with_reg(&mut self, reg: u8, base: Reg, offset: i32) {
+        if offset == 0 && (base as u8 & 7) != 5 && (base as u8 & 7) != 4 {
+            self.modrm(0, reg, base as u8);
+        } else if offset >= -128 && offset <= 127 {
+            self.modrm(1, reg, base as u8);
+            if (base as u8 & 7) == 4 { self.emit_u8(0x24); }
+            self.emit_u8(offset as u8);
+        } else {
+            self.modrm(2, reg, base as u8);
+            if (base as u8 & 7) == 4 { self.emit_u8(0x24); }
+            self.emit_u32(offset as u32);
+        }
+    }
+
     pub fn movsxd_reg_reg(&mut self, dst: Reg, src: Reg) {
         self.rex(true, dst as u8, 0, src as u8);
         self.emit_u8(0x63); self.modrm(3, dst as u8, src as u8);

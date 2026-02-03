@@ -24,6 +24,7 @@ pub struct AotCompiler<'a, T: Config> {
 pub struct ControlBlock {
     pub kind: ControlBlockKind,
     pub stack_depth_before: usize,
+    pub result_count: usize,
     pub end_label: usize,
     pub else_label: Option<usize>,
     pub start_label: Option<usize>,
@@ -95,21 +96,47 @@ impl<'a, T: Config> AotCompiler<'a, T> {
         self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16); // memory_base
         self.emitter.mov_reg_mem64(Reg::R15, Reg::RDI, 40); // locals_base
 
+        // Set MXCSR for WASM compliance (Flush-to-Zero and Denormals-are-Zero)
+        // Default MXCSR: 0x1F80. We want to set bits 15 (FZ) and 6 (DAZ)
+        // 0x1F80 | (1<<15) | (1<<6) = 0x1F80 | 0x8000 | 0x40 = 0x9FC0
+        self.emitter.mov_reg_imm64(Reg::RAX, 0x9FC0);
+        self.emitter.sub_reg_imm32(Reg::RSP, 16); // Maintain 16-byte alignment
+        self.emitter.mov_mem64_reg(Reg::RSP, 0, Reg::RAX);
+        self.emitter.ldmxcsr_mem(Reg::RSP, 0);
+        self.emitter.add_reg_imm32(Reg::RSP, 16);
+
+        // Stack overflow check
+        self.emitter.mov_reg_mem64(Reg::RAX, Reg::RDI, 56); // stack_limit
+        self.emitter.cmp_reg_reg(Reg::RSP, Reg::RAX);
+        self.emitter.jcc_label(0x86, self.trap_label); // Trap if RSP <= stack_limit (JBE)
+
+        let (span, _stp) = self.validation_info.func_blocks_stps[local_func_idx];
+        let mut reader = WasmReader::new(self.validation_info.wasm);
+        reader.pc = span.from;
+        let locals = crate::wasm::common::validation::code::read_declared_locals(&mut reader).unwrap();
+        
+        // Zero-initialize non-parameter locals
+        let param_count = func_type.params.valtypes.len();
+        if !locals.is_empty() {
+            self.emitter.xor_reg_reg(Reg::RAX, Reg::RAX);
+            for i in 0..locals.len() {
+                let idx = param_count + i;
+                self.emitter.mov_mem64_reg(Reg::R15, (idx * 16) as i32, Reg::RAX);
+                self.emitter.mov_mem64_reg(Reg::R15, (idx * 16 + 8) as i32, Reg::RAX);
+            }
+        }
+
         self.emit_fuel_check(10);
 
         let end_label = self.emitter.new_label();
         self.control_stack.push(ControlBlock {
             kind: ControlBlockKind::Func,
             stack_depth_before: 0,
+            result_count: self.result_count,
             end_label,
             else_label: None,
             start_label: None,
         });
-
-        let (span, _stp) = self.validation_info.func_blocks_stps[local_func_idx];
-        let mut reader = WasmReader::new(self.validation_info.wasm);
-        reader.pc = span.from;
-        let _ = crate::wasm::common::validation::code::read_declared_locals(&mut reader).unwrap();
 
         while reader.pc < span.from + span.len {
             let instr = Instruction::read(&mut reader).unwrap();
@@ -118,8 +145,12 @@ impl<'a, T: Config> AotCompiler<'a, T> {
 
         self.emitter.bind_label(end_label);
 
-        if self.result_count == 1 {
-            self.emitter.pop_wasm_stack(Reg::RAX);
+        // Multi-value return ABI: Move results to RAX area
+        if self.result_count > 0 {
+            // Results are at top of stack (RSP)
+            // We need to preserve them across register restoration.
+            // Small number of results can use registers, but let's be generic.
+            self.emitter.mov_reg_reg(Reg::R11, Reg::RSP);
         }
 
         self.emitter.mov_reg_mem64(Reg::RBX, Reg::RBP, -8);
@@ -130,14 +161,22 @@ impl<'a, T: Config> AotCompiler<'a, T> {
 
         self.emitter.mov_reg_reg(Reg::RSP, Reg::RBP);
         self.emitter.pop_reg(Reg::RBP);
-        self.emitter.pop_reg(Reg::RCX);
+        self.emitter.pop_reg(Reg::RCX); // Return address
         
-        if self.result_count == 1 {
-            self.emitter.sub_reg_imm32(Reg::RSP, 16);
-            self.emitter.mov_mem64_reg(Reg::RSP, 0, Reg::RAX);
+        if self.result_count > 0 {
+            self.emitter.sub_reg_imm32(Reg::RSP, (self.result_count * 16) as u32);
+            self.emitter.mov_reg_reg(Reg::RAX, Reg::RSP);
+            for i in 0..self.result_count {
+                // Copy 128-bit slots
+                self.emitter.mov_reg_mem64(Reg::R10, Reg::R11, (i * 16) as i32);
+                self.emitter.mov_mem64_reg(Reg::RAX, (i * 16) as i32, Reg::R10);
+                self.emitter.mov_reg_mem64(Reg::R10, Reg::R11, (i * 16 + 8) as i32);
+                self.emitter.mov_mem64_reg(Reg::RAX, (i * 16 + 8) as i32, Reg::R10);
+            }
+        } else {
+            self.emitter.mov_reg_reg(Reg::RAX, Reg::RSP);
         }
         
-        self.emitter.mov_reg_reg(Reg::RAX, Reg::RSP);
         self.emitter.push_reg(Reg::RCX);
         self.emitter.ret();
     }
@@ -154,14 +193,31 @@ impl<'a, T: Config> AotCompiler<'a, T> {
         match instr {
             Instruction::Nop => {}
             Instruction::Unreachable => self.emitter.jmp_label(self.trap_label),
-            Instruction::Drop => { self.emitter.pop_wasm_stack(Reg::RAX); self.stack_depth -= 1; }
+            Instruction::Drop => { self.emitter.add_reg_imm32(Reg::RSP, 16); self.stack_depth -= 1; }
             Instruction::Select => {
-                self.emitter.pop_wasm_stack(Reg::RCX);
-                self.emitter.pop_wasm_stack(Reg::RBX);
-                self.emitter.pop_wasm_stack(Reg::RAX);
+                self.emitter.pop_wasm_stack(Reg::RCX); // condition
                 self.emitter.test_reg_reg(Reg::RCX, Reg::RCX);
-                self.emitter.emit_u8(0x48); self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0x44); self.emitter.emit_u8(0xC3);
+                let else_label = self.emitter.new_label();
+                self.emitter.jcc_label(0x84, else_label);
+                // Condition is true: val1 is at RSP, val2 is at RSP+16.
+                // We want val1 to stay, so we just remove val2.
+                self.emitter.mov_reg_mem64(Reg::RAX, Reg::RSP, 0);
+                self.emitter.mov_reg_mem64(Reg::RDX, Reg::RSP, 8);
+                self.emitter.add_reg_imm32(Reg::RSP, 32);
                 self.emitter.push_wasm_stack(Reg::RAX);
+                self.emitter.mov_mem64_reg(Reg::RSP, 8, Reg::RDX);
+                let end_label = self.emitter.new_label();
+                self.emitter.jmp_label(end_label);
+                
+                self.emitter.bind_label(else_label);
+                // Condition is false: val2 is at RSP+16.
+                self.emitter.mov_reg_mem64(Reg::RAX, Reg::RSP, 16);
+                self.emitter.mov_reg_mem64(Reg::RDX, Reg::RSP, 24);
+                self.emitter.add_reg_imm32(Reg::RSP, 32);
+                self.emitter.push_wasm_stack(Reg::RAX);
+                self.emitter.mov_mem64_reg(Reg::RSP, 8, Reg::RDX);
+                
+                self.emitter.bind_label(end_label);
                 self.stack_depth -= 2;
             }
 
@@ -450,8 +506,6 @@ impl<'a, T: Config> AotCompiler<'a, T> {
                 self.emitter.push_v128(XmmReg::XMM0);
             }
 
-            Instruction::F32Min => self.emit_trampoline_binop_f32(crate::wasm::aot::trampoline::aot_f32_min as usize),
-            Instruction::F32Max => self.emit_trampoline_binop_f32(crate::wasm::aot::trampoline::aot_f32_max as usize),
             Instruction::F32Copysign => {
                 self.emitter.pop_v128(XmmReg::XMM1);
                 self.emitter.pop_v128(XmmReg::XMM0);
@@ -732,6 +786,11 @@ impl<'a, T: Config> AotCompiler<'a, T> {
             }
 
             Instruction::Call(idx) => {
+                let type_idx = self.validation_info.functions_types[idx];
+                let func_type = &self.validation_info.types[type_idx];
+                let param_count = func_type.params.valtypes.len();
+                let result_count = func_type.returns.valtypes.len();
+
                 if idx < self.validation_info.imports_length.imported_functions {
                     self.emitter.push_reg(Reg::RDI);
                     self.emitter.mov_reg_reg(Reg::RDX, Reg::RSP);
@@ -751,8 +810,13 @@ impl<'a, T: Config> AotCompiler<'a, T> {
                         pos, label_id: label, kind: crate::wasm::aot::emitter::RelocKind::Call32
                     });
                 }
+                self.stack_depth = (self.stack_depth as isize + result_count as isize - param_count as isize) as usize;
             }
             Instruction::CallIndirect(type_idx, table_idx) => {
+                let func_type = &self.validation_info.types[type_idx as usize];
+                let param_count = func_type.params.valtypes.len();
+                let result_count = func_type.returns.valtypes.len();
+
                 self.emitter.pop_wasm_stack(Reg::RAX);
                 self.emitter.push_reg(Reg::RDI);
                 self.emitter.mov_reg_imm64(Reg::RSI, table_idx as u64);
@@ -764,81 +828,108 @@ impl<'a, T: Config> AotCompiler<'a, T> {
                 self.emitter.test_reg_reg(Reg::RAX, Reg::RAX);
                 self.emitter.jcc_label(0x84, self.trap_label);
                 self.emitter.call_reg(Reg::RAX);
-                self.stack_depth -= 1;
+                self.stack_depth = (self.stack_depth as isize - 1 + result_count as isize - param_count as isize) as usize;
             }
 
-            Instruction::Block(_) => {
+            Instruction::Block(bt) => {
                 let end_label = self.emitter.new_label();
+                let result_count = match bt {
+                    BlockType::Empty => 0,
+                    BlockType::Returns(_) => 1,
+                    BlockType::Type(idx) => self.validation_info.types[idx as usize].returns.valtypes.len(),
+                };
                 self.control_stack.push(ControlBlock {
                     kind: ControlBlockKind::Block,
                     stack_depth_before: self.stack_depth,
+                    result_count,
                     end_label,
                     else_label: None,
                     start_label: None,
                 });
             }
-            Instruction::Loop(_) => {
+            Instruction::Loop(bt) => {
                 let start_label = self.emitter.new_label();
                 let end_label = self.emitter.new_label();
+                let result_count = match bt {
+                    BlockType::Empty => 0,
+                    BlockType::Returns(_) => 1,
+                    BlockType::Type(idx) => self.validation_info.types[idx as usize].returns.valtypes.len(),
+                };
                 self.emitter.bind_label(start_label);
                 self.emit_fuel_check(5);
                 self.control_stack.push(ControlBlock {
                     kind: ControlBlockKind::Loop,
                     stack_depth_before: self.stack_depth,
+                    result_count,
                     end_label,
                     else_label: None,
                     start_label: Some(start_label),
                 });
             }
             Instruction::Br(label_idx) => {
-                let cb = &self.control_stack[self.control_stack.len() - 1 - label_idx as usize];
-                let target_depth = cb.stack_depth_before;
-                let drop_count = self.stack_depth.saturating_sub(target_depth);
-                if drop_count > 0 {
-                    self.emitter.add_reg_imm32(Reg::RSP, (drop_count * 16) as u32);
-                }
-                self.emitter.jmp_label(cb.start_label.unwrap_or(cb.end_label));
+                let target_idx = self.control_stack.len() - 1 - label_idx as usize;
+                let target_label = {
+                    let cb = &self.control_stack[target_idx];
+                    cb.start_label.unwrap_or(cb.end_label)
+                };
+                self.emit_unwind(target_idx);
+                self.emitter.jmp_label(target_label);
             }
             Instruction::BrIf(label_idx) => {
                 self.emitter.pop_wasm_stack(Reg::RAX);
                 self.emitter.test_reg_reg(Reg::RAX, Reg::RAX);
                 self.stack_depth -= 1;
-                let cb = &self.control_stack[self.control_stack.len() - 1 - label_idx as usize];
-                let target_depth = cb.stack_depth_before;
-                let drop_count = self.stack_depth.saturating_sub(target_depth);
                 let skip_label = self.emitter.new_label();
                 self.emitter.jcc_label(0x84, skip_label);
-                if drop_count > 0 {
-                    self.emitter.add_reg_imm32(Reg::RSP, (drop_count * 16) as u32);
-                }
-                self.emitter.jmp_label(cb.start_label.unwrap_or(cb.end_label));
+                let target_idx = self.control_stack.len() - 1 - label_idx as usize;
+                let target_label = {
+                    let cb = &self.control_stack[target_idx];
+                    cb.start_label.unwrap_or(cb.end_label)
+                };
+                self.emit_unwind(target_idx);
+                self.emitter.jmp_label(target_label);
                 self.emitter.bind_label(skip_label);
             }
             Instruction::BrTable(targets, default) => {
                 self.emitter.pop_wasm_stack(Reg::RAX);
-                self.emitter.cmp_reg_imm32(Reg::RAX, targets.len() as u32);
-                let default_cb = &self.control_stack[self.control_stack.len() - 1 - default as usize];
-                let default_target = default_cb.start_label.unwrap_or(default_cb.end_label);
-                self.emitter.jcc_label(0x83, default_target);
+                self.stack_depth -= 1;
                 for (i, target) in targets.iter().enumerate() {
                     self.emitter.cmp_reg_imm32(Reg::RAX, i as u32);
-                    let cb = &self.control_stack[self.control_stack.len() - 1 - *target as usize];
-                    let t = cb.start_label.unwrap_or(cb.end_label);
-                    self.emitter.jcc_label(0x84, t);
+                    let skip_next = self.emitter.new_label();
+                    self.emitter.jcc_label(0x85, skip_next);
+                    let target_idx = self.control_stack.len() - 1 - *target as usize;
+                    let target_label = {
+                        let cb = &self.control_stack[target_idx];
+                        cb.start_label.unwrap_or(cb.end_label)
+                    };
+                    self.emit_unwind(target_idx);
+                    self.emitter.jmp_label(target_label);
+                    self.emitter.bind_label(skip_next);
                 }
-                self.emitter.jmp_label(default_target);
-                self.stack_depth -= 1;
+                let default_idx = self.control_stack.len() - 1 - default as usize;
+                let default_label = {
+                    let cb = &self.control_stack[default_idx];
+                    cb.start_label.unwrap_or(cb.end_label)
+                };
+                self.emit_unwind(default_idx);
+                self.emitter.jmp_label(default_label);
             }
-            Instruction::If(_) => {
+            Instruction::If(bt) => {
                 self.emitter.pop_wasm_stack(Reg::RAX);
                 self.emitter.test_reg_reg(Reg::RAX, Reg::RAX);
                 let else_label = self.emitter.new_label();
                 let end_label = self.emitter.new_label();
+                let result_count = match bt {
+                    BlockType::Empty => 0,
+                    BlockType::Returns(_) => 1,
+                    BlockType::Type(idx) => self.validation_info.types[idx as usize].returns.valtypes.len(),
+                };
                 self.emitter.jcc_label(0x84, else_label);
                 self.stack_depth -= 1;
                 self.control_stack.push(ControlBlock {
                     kind: ControlBlockKind::If,
                     stack_depth_before: self.stack_depth,
+                    result_count,
                     end_label,
                     else_label: Some(else_label),
                     start_label: None,
@@ -860,16 +951,33 @@ impl<'a, T: Config> AotCompiler<'a, T> {
                 self.emitter.bind_label(cb.end_label);
             }
             Instruction::Return => {
-                let drop_count = self.stack_depth.saturating_sub(self.result_count);
-                if drop_count > 0 {
-                    self.emitter.add_reg_imm32(Reg::RSP, (drop_count * 16) as u32);
-                }
+                self.emit_unwind(0);
                 self.emitter.jmp_label(self.control_stack[0].end_label);
             }
             Instruction::FdExtension(sub) => self.compile_simd(sub, reader),
             Instruction::FcExtension(sub) => self.compile_fc(sub, reader),
             Instruction::Atomic(sub) => self.compile_atomic(sub, reader),
             _ => panic!("Unimplemented instruction in AOT: {:?}", instr),
+        }
+    }
+
+    fn emit_unwind(&mut self, target_idx: usize) {
+        let cb = &self.control_stack[target_idx];
+        let result_count = if cb.kind == ControlBlockKind::Loop { 0 } else { cb.result_count };
+        let drop_count = self.stack_depth.saturating_sub(cb.stack_depth_before + result_count);
+        
+        if result_count > 0 && drop_count > 0 {
+            // Move results down to cover dropped items
+            for i in 0..result_count {
+                self.emitter.mov_reg_mem64(Reg::RAX, Reg::RSP, (i * 16) as i32);
+                self.emitter.mov_reg_mem64(Reg::RDX, Reg::RSP, (i * 16 + 8) as i32);
+                self.emitter.mov_mem64_reg(Reg::RSP, ((i + drop_count) * 16) as i32, Reg::RAX);
+                self.emitter.mov_mem64_reg(Reg::RSP, ((i + drop_count) * 16 + 8) as i32, Reg::RDX);
+            }
+        }
+        
+        if drop_count > 0 {
+            self.emitter.add_reg_imm32(Reg::RSP, (drop_count * 16) as u32);
         }
     }
 
@@ -1194,6 +1302,14 @@ impl<'a, T: Config> AotCompiler<'a, T> {
             V128_LOAD64_SPLAT => self.emit_simd_load_splat(reader, 8),
             V128_LOAD32_ZERO => self.emit_simd_load_zero(reader, 4),
             V128_LOAD64_ZERO => self.emit_simd_load_zero(reader, 8),
+            V128_LOAD8_LANE => self.emit_simd_lane_op(reader, 1, true),
+            V128_LOAD16_LANE => self.emit_simd_lane_op(reader, 2, true),
+            V128_LOAD32_LANE => self.emit_simd_lane_op(reader, 4, true),
+            V128_LOAD64_LANE => self.emit_simd_lane_op(reader, 8, true),
+            V128_STORE8_LANE => self.emit_simd_lane_op(reader, 1, false),
+            V128_STORE16_LANE => self.emit_simd_lane_op(reader, 2, false),
+            V128_STORE32_LANE => self.emit_simd_lane_op(reader, 4, false),
+            V128_STORE64_LANE => self.emit_simd_lane_op(reader, 8, false),
             V128_STORE => {
                 let memarg = MemArg::read(reader).unwrap();
                 self.emitter.pop_v128(XmmReg::XMM0);
@@ -1227,6 +1343,7 @@ impl<'a, T: Config> AotCompiler<'a, T> {
                 self.emitter.mov_mem64_reg(Reg::RSP, 0, Reg::RAX);
                 self.emitter.mov_mem64_reg(Reg::RSP, 8, Reg::RDX);
                 self.emit_simd_trampoline_ternary(crate::wasm::aot::trampoline::aot_v128_i8x16_shuffle as usize);
+                self.stack_depth += 1;
             }
             I8X16_EXTRACT_LANE_S => self.emit_simd_extract_lane(reader, 1, true),
             I8X16_EXTRACT_LANE_U => self.emit_simd_extract_lane(reader, 1, false),
@@ -1285,56 +1402,64 @@ impl<'a, T: Config> AotCompiler<'a, T> {
             }
             V128_ANDNOT => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_v128_andnot as usize),
             V128_BITSELECT => self.emit_simd_trampoline_ternary(crate::wasm::aot::trampoline::aot_v128_bitselect as usize),
-            I8X16_EQ => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i8x16_eq as usize),
-            I8X16_NE => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i8x16_ne as usize),
-            I8X16_LT_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i8x16_lt_s as usize),
-            I8X16_LT_U => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i8x16_lt_u as usize),
-            I8X16_GT_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i8x16_gt_s as usize),
-            I8X16_GT_U => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i8x16_gt_u as usize),
-            I8X16_LE_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i8x16_le_s as usize),
-            I8X16_LE_U => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i8x16_le_u as usize),
-            I8X16_GE_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i8x16_ge_s as usize),
-            I8X16_GE_U => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i8x16_ge_u as usize),
-            I16X8_EQ => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i16x8_eq as usize),
-            I16X8_NE => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i16x8_ne as usize),
-            I16X8_LT_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i16x8_lt_s as usize),
-            I16X8_LT_U => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i16x8_lt_u as usize),
-            I16X8_GT_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i16x8_gt_s as usize),
-            I16X8_GT_U => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i16x8_gt_u as usize),
-            I16X8_LE_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i16x8_le_s as usize),
-            I16X8_LE_U => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i16x8_le_u as usize),
-            I16X8_GE_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i16x8_ge_s as usize),
-            I16X8_GE_U => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i16x8_ge_u as usize),
-            I32X4_EQ => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i32x4_eq as usize),
-            I32X4_NE => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i32x4_ne as usize),
-            I32X4_LT_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i32x4_lt_s as usize),
-            I32X4_LT_U => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i32x4_lt_u as usize),
-            I32X4_GT_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i32x4_gt_s as usize),
-            I32X4_GT_U => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i32x4_gt_u as usize),
-            I32X4_LE_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i32x4_le_s as usize),
-            I32X4_LE_U => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i32x4_le_u as usize),
-            I32X4_GE_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i32x4_ge_s as usize),
-            I32X4_GE_U => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i32x4_ge_u as usize),
-            I64X2_EQ => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i64x2_eq as usize),
-            I64X2_NE => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i64x2_ne as usize),
-            I64X2_LT_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i64x2_lt_s as usize),
-            I64X2_GT_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i64x2_gt_s as usize),
-            I64X2_LE_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i64x2_le_s as usize),
-            I64X2_GE_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i64x2_ge_s as usize),
-            F32X4_EQ => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_f32x4_eq as usize),
-            F32X4_NE => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_f32x4_ne as usize),
-            F32X4_LT => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_f32x4_lt as usize),
-            F32X4_GT => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_f32x4_gt as usize),
-            F32X4_LE => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_f32x4_le as usize),
-            F32X4_GE => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_f32x4_ge as usize),
-            F64X2_EQ => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_f64x2_eq as usize),
-            F64X2_NE => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_f64x2_ne as usize),
-            F64X2_LT => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_f64x2_lt as usize),
-            F64X2_GT => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_f64x2_gt as usize),
-            F64X2_LE => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_f64x2_le as usize),
-            F64X2_GE => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_f64x2_ge as usize),
             V128_ANY_TRUE => self.emit_simd_trampoline_reduction(crate::wasm::aot::trampoline::aot_v128_any_true as usize),
+            I8X16_ALL_TRUE => self.emit_simd_trampoline_reduction(crate::wasm::aot::trampoline::aot_v128_all_true_i8x16 as usize),
             I8X16_BITMASK => self.emit_simd_trampoline_reduction(crate::wasm::aot::trampoline::aot_v128_bitmask_i8x16 as usize),
+            I16X8_ALL_TRUE => self.emit_simd_trampoline_reduction(crate::wasm::aot::trampoline::aot_v128_all_true_i16x8 as usize),
+            I16X8_BITMASK => self.emit_simd_trampoline_reduction(crate::wasm::aot::trampoline::aot_v128_bitmask_i16x8 as usize),
+            I32X4_ALL_TRUE => self.emit_simd_trampoline_reduction(crate::wasm::aot::trampoline::aot_v128_all_true_i32x4 as usize),
+            I32X4_BITMASK => self.emit_simd_trampoline_reduction(crate::wasm::aot::trampoline::aot_v128_bitmask_i32x4 as usize),
+            I64X2_ALL_TRUE => self.emit_simd_trampoline_reduction(crate::wasm::aot::trampoline::aot_v128_all_true_i64x2 as usize),
+            I64X2_BITMASK => self.emit_simd_trampoline_reduction(crate::wasm::aot::trampoline::aot_v128_bitmask_i64x2 as usize),
+            
+            I8X16_NARROW_I16X8_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i8x16_narrow_i16x8_s as usize),
+            I8X16_NARROW_I16X8_U => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i8x16_narrow_i16x8_u as usize),
+            I16X8_NARROW_I32X4_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i16x8_narrow_i32x4_s as usize),
+            I16X8_NARROW_I32X4_U => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i16x8_narrow_i32x4_u as usize),
+            
+            I16X8_EXTEND_LOW_I8X16_S => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_i16x8_extend_low_i8x16_s as usize),
+            I16X8_EXTEND_HIGH_I8X16_S => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_i16x8_extend_high_i8x16_s as usize),
+            I16X8_EXTEND_LOW_I8X16_U => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_i16x8_extend_low_i8x16_u as usize),
+            I16X8_EXTEND_HIGH_I8X16_U => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_i16x8_extend_high_i8x16_u as usize),
+            I32X4_EXTEND_LOW_I16X8_S => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_i32x4_extend_low_i16x8_s as usize),
+            I32X4_EXTEND_HIGH_I16X8_S => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_i32x4_extend_high_i16x8_s as usize),
+            I32X4_EXTEND_LOW_I16X8_U => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_i32x4_extend_low_i16x8_u as usize),
+            I32X4_EXTEND_HIGH_I16X8_U => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_i32x4_extend_high_i16x8_u as usize),
+            I64X2_EXTEND_LOW_I32X4_S => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_i64x2_extend_low_i32x4_s as usize),
+            I64X2_EXTEND_HIGH_I32X4_S => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_i64x2_extend_high_i32x4_s as usize),
+            I64X2_EXTEND_LOW_I32X4_U => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_i64x2_extend_low_i32x4_u as usize),
+            I64X2_EXTEND_HIGH_I32X4_U => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_i64x2_extend_high_i32x4_u as usize),
+            
+            I16X8_EXTMUL_LOW_I8X16_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i16x8_extmul_low_i8x16_s as usize),
+            I16X8_EXTMUL_HIGH_I8X16_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i16x8_extmul_high_i8x16_s as usize),
+            I16X8_EXTMUL_LOW_I8X16_U => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i16x8_extmul_low_i8x16_u as usize),
+            I16X8_EXTMUL_HIGH_I8X16_U => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i16x8_extmul_high_i8x16_u as usize),
+            I32X4_EXTMUL_LOW_I16X8_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i32x4_extmul_low_i16x8_s as usize),
+            I32X4_EXTMUL_HIGH_I16X8_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i32x4_extmul_high_i16x8_s as usize),
+            I32X4_EXTMUL_LOW_I16X8_U => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i32x4_extmul_low_i16x8_u as usize),
+            I32X4_EXTMUL_HIGH_I16X8_U => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i32x4_extmul_high_i16x8_u as usize),
+            I64X2_EXTMUL_LOW_I32X4_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i64x2_extmul_low_i32x4_s as usize),
+            I64X2_EXTMUL_HIGH_I32X4_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i64x2_extmul_high_i32x4_s as usize),
+            I64X2_EXTMUL_LOW_I32X4_U => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i64x2_extmul_low_i32x4_u as usize),
+            I64X2_EXTMUL_HIGH_I32X4_U => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i64x2_extmul_high_i32x4_u as usize),
+            
+            I16X8_EXTADD_PAIRWISE_I8X16_S => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_i16x8_extadd_pairwise_i8x16_s as usize),
+            I16X8_EXTADD_PAIRWISE_I8X16_U => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_i16x8_extadd_pairwise_i8x16_u as usize),
+            I32X4_EXTADD_PAIRWISE_I16X8_S => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_i32x4_extadd_pairwise_i16x8_s as usize),
+            I32X4_EXTADD_PAIRWISE_I16X8_U => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_i32x4_extadd_pairwise_i16x8_u as usize),
+            
+            I32X4_DOT_I16X8_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i32x4_dot_i16x8_s as usize),
+            I16X8_Q15MULRSAT_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i16x8_q15mulrsat_s as usize),
+            
+            I32X4_TRUNC_SAT_F32X4_S => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_i32x4_trunc_sat_f32x4_s as usize),
+            I32X4_TRUNC_SAT_F32X4_U => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_i32x4_trunc_sat_f32x4_u as usize),
+            F32X4_CONVERT_I32X4_S => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_f32x4_convert_i32x4_s as usize),
+            F32X4_CONVERT_I32X4_U => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_f32x4_convert_i32x4_u as usize),
+            I32X4_TRUNC_SAT_F64X2_S_ZERO => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_i32x4_trunc_sat_f64x2_s_zero as usize),
+            I32X4_TRUNC_SAT_F64X2_U_ZERO => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_i32x4_trunc_sat_f64x2_u_zero as usize),
+            F64X2_CONVERT_LOW_I32X4_S => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_f64x2_convert_low_i32x4_s as usize),
+            F64X2_CONVERT_LOW_I32X4_U => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_f64x2_convert_low_i32x4_u as usize),
+
             I8X16_ABS => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_i8x16_abs as usize),
             I8X16_NEG => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_i8x16_neg as usize),
             I8X16_POPCNT => self.emit_simd_trampoline_unop(crate::wasm::aot::trampoline::aot_i8x16_popcnt as usize),
@@ -1760,20 +1885,29 @@ impl<'a, T: Config> AotCompiler<'a, T> {
     }
 
     fn emit_atomic_rmw(&mut self, sub: u32, memarg: MemArg) {
-        let is_cmpxchg = sub >= 0x48 && sub <= 0x4d;
+        let is_cmpxchg = sub >= 0x48 && sub <= 0x4e;
         let is_xchg = sub >= 0x41 && sub <= 0x47;
-        let mut is_64 = false;
-        let mut size = 4;
-        match sub {
-            0x1e | 0x20 | 0x22 | 0x24 | 0x26 | 0x41 | 0x48 => { size = 4; is_64 = false; },
-            0x1f | 0x21 | 0x23 | 0x25 | 0x27 | 0x42 | 0x49 => { size = 8; is_64 = true; },
-            0x28 | 0x2d | 0x32 | 0x37 | 0x3c | 0x43 | 0x4a => { size = 1; },
-            0x29 | 0x2e | 0x33 | 0x38 | 0x3d | 0x44 | 0x4b => { size = 2; },
-            0x2a | 0x2f | 0x34 | 0x39 | 0x3e | 0x45 | 0x4c => { size = 1; },
-            0x2b | 0x30 | 0x35 | 0x3a | 0x3f | 0x46 | 0x4d => { size = 2; },
-            0x2c | 0x31 | 0x36 | 0x3b | 0x40 | 0x47 => { size = 4; is_64 = false; },
-            _ => {}
-        }
+        
+        let is_64 = match sub {
+            0x1f | 0x22 | 0x23 | 0x24 | // Add
+            0x26 | 0x29 | 0x2a | 0x2b | // Sub
+            0x2d | 0x30 | 0x31 | 0x32 | // And
+            0x34 | 0x37 | 0x38 | 0x39 | // Or
+            0x3b | 0x3e | 0x3f | 0x40 | // Xor
+            0x42 | 0x45 | 0x46 | 0x47 | // Xchg
+            0x49 | 0x4c | 0x4d | 0x4e    // Cmpxchg
+            => true,
+            _ => false,
+        };
+
+        let size = match sub {
+            0x1e | 0x1f | 0x25 | 0x26 | 0x2c | 0x2d | 0x33 | 0x34 | 0x3a | 0x3b | 0x41 | 0x42 | 0x48 | 0x49 => if is_64 { 8 } else { 4 },
+            0x20 | 0x22 | 0x27 | 0x29 | 0x2e | 0x30 | 0x35 | 0x37 | 0x3c | 0x3e | 0x43 | 0x45 | 0x4a | 0x4c => 1,
+            0x21 | 0x23 | 0x28 | 0x2a | 0x2f | 0x31 | 0x36 | 0x38 | 0x3d | 0x3f | 0x44 | 0x46 | 0x4b | 0x4d => 2,
+            0x24 | 0x2b | 0x32 | 0x39 | 0x40 | 0x47 | 0x4e => 4,
+            _ => 4,
+        };
+
         if is_cmpxchg {
             self.emitter.pop_wasm_stack(Reg::RBX);
             self.emitter.pop_wasm_stack(Reg::RAX);
@@ -1869,6 +2003,39 @@ impl<'a, T: Config> AotCompiler<'a, T> {
                 }
             }
             self.stack_depth -= 1;
+        }
+    }
+
+    fn emit_simd_lane_op(&mut self, reader: &mut WasmReader, size: u32, is_load: bool) {
+        let memarg = MemArg::read(reader).unwrap();
+        let lane_idx = reader.read_u8().unwrap();
+        if is_load {
+            self.emitter.pop_wasm_stack(Reg::RAX); // addr
+            self.emit_bounds_check(Reg::RAX, size, memarg.offset);
+            self.emitter.push_reg(Reg::RDI);
+            self.emitter.mov_reg_reg(Reg::RSI, Reg::RAX); // addr
+            self.emitter.mov_reg_imm64(Reg::RDX, memarg.offset as u64);
+            self.emitter.mov_reg_imm64(Reg::RCX, lane_idx as u64);
+            self.emitter.mov_reg_imm64(Reg::R8, size as u64);
+            self.emitter.mov_reg_reg(Reg::R9, Reg::RSP); // pointer to v128 on stack
+            self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_v128_load_lane as usize as u64);
+            self.emitter.call_reg(Reg::RAX);
+            self.emitter.pop_reg(Reg::RDI);
+            self.stack_depth -= 1;
+        } else {
+            self.emitter.pop_wasm_stack(Reg::RAX); // addr
+            self.emit_bounds_check(Reg::RAX, size, memarg.offset);
+            self.emitter.push_reg(Reg::RDI);
+            self.emitter.mov_reg_reg(Reg::RSI, Reg::RAX); // addr
+            self.emitter.mov_reg_imm64(Reg::RDX, memarg.offset as u64);
+            self.emitter.mov_reg_imm64(Reg::RCX, lane_idx as u64);
+            self.emitter.mov_reg_imm64(Reg::R8, size as u64);
+            self.emitter.mov_reg_reg(Reg::R9, Reg::RSP); // pointer to v128 on stack
+            self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_v128_store_lane as usize as u64);
+            self.emitter.call_reg(Reg::RAX);
+            self.emitter.pop_reg(Reg::RDI);
+            self.emitter.add_reg_imm32(Reg::RSP, 16); // remove v128
+            self.stack_depth -= 2;
         }
     }
 }

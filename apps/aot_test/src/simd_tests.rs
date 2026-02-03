@@ -44,6 +44,21 @@ pub unsafe fn test_simd() -> i32 {
     let m = i32x4_min(a, b); // min(42, 10) = 10
     if i32x4_extract_lane::<0>(m) != 10 { println!("Error: i32x4_min_s"); errors += 1; }
 
+    // 7. Bitmask
+    let v_mask = i8x16(0xFFu8 as i8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x80u8 as i8);
+    let mask = i8x16_bitmask(v_mask); // should be (1 << 0) | (1 << 15) = 0x8001
+    if mask != 0x8001 { println!("Error: i8x16_bitmask: expected 0x8001, got {:#x}", mask); errors += 1; }
+
+    // 8. AnyTrue
+    if !v128_any_true(a) { println!("Error: v128_any_true (true)"); errors += 1; }
+    if v128_any_true(i32x4_splat(0)) { println!("Error: v128_any_true (false)"); errors += 1; }
+
+    // 9. Narrowing
+    let v_wide = i16x8(1, 2, 3, 4, 5, 6, 7, 8);
+    let v_narrow = i8x16_narrow_i16x8(v_wide, v_wide);
+    if i8x16_extract_lane::<0>(v_narrow) != 1 { println!("Error: i8x16_narrow lane 0"); errors += 1; }
+    if i8x16_extract_lane::<8>(v_narrow) != 1 { println!("Error: i8x16_narrow lane 8"); errors += 1; }
+
     if errors == 0 { println!("==================== SIMD Intrinsics: OK"); }
     errors
 }
