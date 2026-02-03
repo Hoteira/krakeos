@@ -1,5 +1,4 @@
 use crate::rust_alloc::vec::Vec;
-use crate::wasm::common::config::Config;
 use crate::wasm::common::validation::ValidationInfo;
 use crate::wasm::aot::emitter::{X64Emitter, Reg, XmmReg};
 use crate::wasm::common::reader::{WasmReader, WasmReadable};
@@ -10,7 +9,7 @@ use crate::wasm::common::reader::types::memarg::MemArg;
 use crate::wasm::common::reader::types::opcode::*;
 use crate::wasm::common::indices::{LocalIdx, GlobalIdx, FuncIdx, LabelIdx};
 
-pub struct AotCompiler<'a, T: Config> {
+pub struct AotCompiler<'a> {
     pub validation_info: &'a ValidationInfo<'a>,
     pub emitter: X64Emitter,
     pub control_stack: Vec<ControlBlock>,
@@ -18,7 +17,6 @@ pub struct AotCompiler<'a, T: Config> {
     pub func_labels: Vec<usize>,
     pub trap_label: usize,
     pub result_count: usize,
-    _phantom: core::marker::PhantomData<T>,
 }
 
 pub struct ControlBlock {
@@ -38,7 +36,7 @@ pub enum ControlBlockKind {
     Func,
 }
 
-impl<'a, T: Config> AotCompiler<'a, T> {
+impl<'a> AotCompiler<'a> {
     pub fn new(validation_info: &'a ValidationInfo<'a>) -> Self {
         let mut emitter = X64Emitter::new();
         let mut func_labels = Vec::new();
@@ -55,7 +53,6 @@ impl<'a, T: Config> AotCompiler<'a, T> {
             func_labels,
             trap_label,
             result_count: 0,
-            _phantom: core::marker::PhantomData,
         }
     }
 
@@ -63,6 +60,8 @@ impl<'a, T: Config> AotCompiler<'a, T> {
         let mut func_offsets = Vec::new();
         
         self.emitter.bind_label(self.trap_label);
+        self.emitter.mov_reg_imm64(Reg::RAX, -16i64 as u64);
+        self.emitter.and_reg_reg(Reg::RSP, Reg::RAX); // Align to 16 bytes
         self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_trap as usize as u64);
         self.emitter.call_reg(Reg::RAX);
 
@@ -81,9 +80,11 @@ impl<'a, T: Config> AotCompiler<'a, T> {
         self.control_stack.clear();
         self.stack_depth = 0;
 
-        let type_idx = self.validation_info.functions[local_func_idx];
+        let total_imported_funcs = self.validation_info.imports_length.imported_functions;
+        let type_idx = self.validation_info.functions_types[local_func_idx + total_imported_funcs];
         let func_type = &self.validation_info.types[type_idx];
         self.result_count = func_type.returns.valtypes.len();
+        let param_count = func_type.params.valtypes.len();
 
         self.emitter.push_reg(Reg::RBP);
         self.emitter.mov_reg_reg(Reg::RBP, Reg::RSP);
@@ -92,31 +93,35 @@ impl<'a, T: Config> AotCompiler<'a, T> {
         self.emitter.push_reg(Reg::R13);
         self.emitter.push_reg(Reg::R14);
         self.emitter.push_reg(Reg::R15);
+        self.emitter.push_reg(Reg::RDI); // Callee-save RDI (Context)
+        // 7 registers (56 bytes) + 8 byte return address = 64 bytes (Aligned to 16)
 
         self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16); // memory_base
-        self.emitter.mov_reg_mem64(Reg::R15, Reg::RDI, 40); // locals_base
-
-        // Set MXCSR for WASM compliance (Flush-to-Zero and Denormals-are-Zero)
-        // Default MXCSR: 0x1F80. We want to set bits 15 (FZ) and 6 (DAZ)
-        // 0x1F80 | (1<<15) | (1<<6) = 0x1F80 | 0x8000 | 0x40 = 0x9FC0
-        self.emitter.mov_reg_imm64(Reg::RAX, 0x9FC0);
-        self.emitter.sub_reg_imm32(Reg::RSP, 16); // Maintain 16-byte alignment
-        self.emitter.mov_mem64_reg(Reg::RSP, 0, Reg::RAX);
-        self.emitter.ldmxcsr_mem(Reg::RSP, 0);
-        self.emitter.add_reg_imm32(Reg::RSP, 16);
-
-        // Stack overflow check
-        self.emitter.mov_reg_mem64(Reg::RAX, Reg::RDI, 56); // stack_limit
-        self.emitter.cmp_reg_reg(Reg::RSP, Reg::RAX);
-        self.emitter.jcc_label(0x86, self.trap_label); // Trap if RSP <= stack_limit (JBE)
 
         let (span, _stp) = self.validation_info.func_blocks_stps[local_func_idx];
         let mut reader = WasmReader::new(self.validation_info.wasm);
         reader.pc = span.from;
         let locals = crate::wasm::common::validation::code::read_declared_locals(&mut reader).unwrap();
-        
-        // Zero-initialize non-parameter locals
-        let param_count = func_type.params.valtypes.len();
+        let total_locals = param_count + locals.len();
+
+        // Locals area on stack
+        self.emitter.sub_reg_imm32(Reg::RSP, (total_locals * 16) as u32);
+        self.emitter.mov_reg_reg(Reg::R15, Reg::RSP); // locals_base
+
+        // Relocate parameters from caller stack ([RBP + 16]) to current locals
+        // Caller stack: [Params...] [Ret Addr] [Old RBP] <- RBP
+        // Wait, caller now does NOT push RDI around local calls.
+        // So: [Params...] [Ret Addr] [Old RBP] <- RBP
+        // Param 0 is at RBP + 16 + (param_count - 1) * 16
+        for i in 0..param_count {
+            let src_offset = 16 + (param_count - 1 - i) * 16;
+            self.emitter.mov_reg_mem64(Reg::RAX, Reg::RBP, src_offset as i32);
+            self.emitter.mov_reg_mem64(Reg::RDX, Reg::RBP, (src_offset + 8) as i32);
+            self.emitter.mov_mem64_reg(Reg::R15, (i * 16) as i32, Reg::RAX);
+            self.emitter.mov_mem64_reg(Reg::R15, (i * 16 + 8) as i32, Reg::RDX);
+        }
+
+        // Zero-init locals
         if !locals.is_empty() {
             self.emitter.xor_reg_reg(Reg::RAX, Reg::RAX);
             for i in 0..locals.len() {
@@ -125,6 +130,16 @@ impl<'a, T: Config> AotCompiler<'a, T> {
                 self.emitter.mov_mem64_reg(Reg::R15, (idx * 16 + 8) as i32, Reg::RAX);
             }
         }
+
+        self.emitter.mov_reg_imm64(Reg::RAX, 0x9FC0);
+        self.emitter.sub_reg_imm32(Reg::RSP, 16); 
+        self.emitter.mov_mem64_reg(Reg::RSP, 0, Reg::RAX);
+        self.emitter.ldmxcsr_mem(Reg::RSP, 0);
+        self.emitter.add_reg_imm32(Reg::RSP, 16);
+
+        self.emitter.mov_reg_mem64(Reg::RAX, Reg::RDI, 56); 
+        self.emitter.cmp_reg_reg(Reg::RSP, Reg::RAX);
+        self.emitter.jcc_label(0x86, self.trap_label);
 
         self.emit_fuel_check(10);
 
@@ -145,39 +160,34 @@ impl<'a, T: Config> AotCompiler<'a, T> {
 
         self.emitter.bind_label(end_label);
 
-        // Multi-value return ABI: Move results to RAX area
-        if self.result_count > 0 {
-            // Results are at top of stack (RSP)
-            // We need to preserve them across register restoration.
-            // Small number of results can use registers, but let's be generic.
-            self.emitter.mov_reg_reg(Reg::R11, Reg::RSP);
-        }
+        self.emitter.mov_reg_reg(Reg::R11, Reg::RSP); // Current stack top (results)
+        self.emitter.mov_reg_mem64(Reg::RCX, Reg::RBP, 8); // Saved return address
 
-        self.emitter.mov_reg_mem64(Reg::RBX, Reg::RBP, -8);
-        self.emitter.mov_reg_mem64(Reg::R12, Reg::RBP, -16);
-        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -24);
-        self.emitter.mov_reg_mem64(Reg::R14, Reg::RBP, -32);
-        self.emitter.mov_reg_mem64(Reg::R15, Reg::RBP, -40);
-
+        // Restore registers
         self.emitter.mov_reg_reg(Reg::RSP, Reg::RBP);
+        self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48);
+        self.emitter.mov_reg_mem64(Reg::R15, Reg::RBP, -40);
+        self.emitter.mov_reg_mem64(Reg::R14, Reg::RBP, -32);
+        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -24);
+        self.emitter.mov_reg_mem64(Reg::R12, Reg::RBP, -16);
+        self.emitter.mov_reg_mem64(Reg::RBX, Reg::RBP, -8);
         self.emitter.pop_reg(Reg::RBP);
-        self.emitter.pop_reg(Reg::RCX); // Return address
+
+        // SP now points to old return addr slot. Cleanup params and make space for results.
+        self.emitter.add_reg_imm32(Reg::RSP, (8 + param_count * 16) as u32);
+        self.emitter.sub_reg_imm32(Reg::RSP, (self.result_count * 16) as u32);
+        self.emitter.mov_reg_reg(Reg::RAX, Reg::RSP); // RAX = definitive new stack top for caller
         
         if self.result_count > 0 {
-            self.emitter.sub_reg_imm32(Reg::RSP, (self.result_count * 16) as u32);
-            self.emitter.mov_reg_reg(Reg::RAX, Reg::RSP);
             for i in 0..self.result_count {
-                // Copy 128-bit slots
                 self.emitter.mov_reg_mem64(Reg::R10, Reg::R11, (i * 16) as i32);
                 self.emitter.mov_mem64_reg(Reg::RAX, (i * 16) as i32, Reg::R10);
                 self.emitter.mov_reg_mem64(Reg::R10, Reg::R11, (i * 16 + 8) as i32);
                 self.emitter.mov_mem64_reg(Reg::RAX, (i * 16 + 8) as i32, Reg::R10);
             }
-        } else {
-            self.emitter.mov_reg_reg(Reg::RAX, Reg::RSP);
         }
         
-        self.emitter.push_reg(Reg::RCX);
+        self.emitter.push_reg(Reg::RCX); // Restore return address
         self.emitter.ret();
     }
 
@@ -245,30 +255,32 @@ impl<'a, T: Config> AotCompiler<'a, T> {
             Instruction::GlobalGet(idx) => {
                 self.emitter.sub_reg_imm32(Reg::RSP, 16);
                 self.emitter.push_reg(Reg::RDI);
+                self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
                 self.emitter.mov_reg_reg(Reg::RDX, Reg::RSP);
-                self.emitter.add_reg_imm32(Reg::RDX, 8);
+                self.emitter.add_reg_imm32(Reg::RDX, 16); // sp points to the slot we just made
                 self.emitter.mov_reg_imm64(Reg::RSI, idx as u64);
-                self.emitter.mov_reg_reg(Reg::RDI, Reg::RDI);
                 self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_global_get as usize as u64);
                 self.emitter.call_reg(Reg::RAX);
+                self.emitter.add_reg_imm32(Reg::RSP, 8);
                 self.emitter.pop_reg(Reg::RDI);
                 self.stack_depth += 1;
             }
             Instruction::GlobalSet(idx) => {
                 self.emitter.push_reg(Reg::RDI);
+                self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
                 self.emitter.mov_reg_reg(Reg::RDX, Reg::RSP);
-                self.emitter.add_reg_imm32(Reg::RDX, 8);
+                self.emitter.add_reg_imm32(Reg::RDX, 16); // sp points to value to set
                 self.emitter.mov_reg_imm64(Reg::RSI, idx as u64);
-                self.emitter.mov_reg_reg(Reg::RDI, Reg::RDI);
                 self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_global_set as usize as u64);
                 self.emitter.call_reg(Reg::RAX);
+                self.emitter.add_reg_imm32(Reg::RSP, 8);
                 self.emitter.pop_reg(Reg::RDI);
                 self.emitter.add_reg_imm32(Reg::RSP, 16);
                 self.stack_depth -= 1;
             }
 
             Instruction::I32Const(val) => {
-                self.emitter.mov_reg_imm64(Reg::RAX, val as u64);
+                self.emitter.mov_reg_imm64(Reg::RAX, (val as u32) as u64);
                 self.emitter.push_wasm_stack(Reg::RAX);
                 self.stack_depth += 1;
             }
@@ -278,7 +290,7 @@ impl<'a, T: Config> AotCompiler<'a, T> {
                 self.stack_depth += 1;
             }
             Instruction::F32Const(val) => {
-                self.emitter.mov_reg_imm64(Reg::RAX, val.to_bits() as u64);
+                self.emitter.mov_reg_imm64(Reg::RAX, (val.to_bits() as u32) as u64);
                 self.emitter.push_wasm_stack(Reg::RAX);
                 self.stack_depth += 1;
             }
@@ -324,7 +336,7 @@ impl<'a, T: Config> AotCompiler<'a, T> {
 
             Instruction::I32Eqz => {
                 self.emitter.pop_wasm_stack(Reg::RAX);
-                self.emitter.test_reg_reg(Reg::RAX, Reg::RAX);
+                self.emitter.test_reg32_reg32(Reg::RAX, Reg::RAX);
                 self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0x94); self.emitter.emit_u8(0xC0);
                 self.emitter.emit_u8(0x48); self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0xB6); self.emitter.emit_u8(0xC0);
                 self.emitter.push_wasm_stack(Reg::RAX);
@@ -340,7 +352,7 @@ impl<'a, T: Config> AotCompiler<'a, T> {
                 self.emitter.pop_wasm_stack(Reg::RAX);
                 self.emitter.bsr_reg32_reg32(Reg::RCX, Reg::RAX);
                 self.emitter.mov_reg_imm64(Reg::RDX, 31);
-                self.emitter.sub_reg_reg(Reg::RDX, Reg::RCX);
+                self.emitter.sub_reg32_reg32(Reg::RDX, Reg::RCX);
                 self.emitter.mov_reg_imm64(Reg::RAX, 32);
                 self.emitter.emit_u8(0x48); self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0x45); self.emitter.emit_u8(0xC2);
                 self.emitter.push_wasm_stack(Reg::RAX);
@@ -540,7 +552,7 @@ impl<'a, T: Config> AotCompiler<'a, T> {
 
             Instruction::I32WrapI64 => {
                 self.emitter.pop_wasm_stack(Reg::RAX);
-                self.emitter.mov_reg_reg(Reg::RAX, Reg::RAX);
+                self.emitter.mov_reg32_reg32(Reg::RAX, Reg::RAX);
                 self.emitter.push_wasm_stack(Reg::RAX);
             }
             Instruction::I64ExtendI32S => {
@@ -596,7 +608,7 @@ impl<'a, T: Config> AotCompiler<'a, T> {
             }
             Instruction::F64ReinterpretI64 => {
                 self.emitter.pop_wasm_stack(Reg::RAX);
-                self.emitter.movd_xmm_reg(XmmReg::XMM0, Reg::RAX);
+                self.emitter.movq_xmm_reg(XmmReg::XMM0, Reg::RAX);
                 self.emitter.push_v128(XmmReg::XMM0);
             }
 
@@ -759,8 +771,10 @@ impl<'a, T: Config> AotCompiler<'a, T> {
             Instruction::MemoryGrow => {
                 self.emitter.pop_wasm_stack(Reg::RSI);
                 self.emitter.push_reg(Reg::RDI);
+                self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
                 self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_memory_grow as usize as u64);
                 self.emitter.call_reg(Reg::RAX);
+                self.emitter.add_reg_imm32(Reg::RSP, 8);
                 self.emitter.pop_reg(Reg::RDI);
                 self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16);
                 self.emitter.push_wasm_stack(Reg::RAX);
@@ -769,10 +783,12 @@ impl<'a, T: Config> AotCompiler<'a, T> {
             Instruction::TableGet(idx) => {
                 self.emitter.pop_wasm_stack(Reg::RAX);
                 self.emitter.push_reg(Reg::RDI);
+                self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
                 self.emitter.mov_reg_imm64(Reg::RSI, idx as u64);
                 self.emitter.mov_reg_reg(Reg::RDX, Reg::RAX);
                 self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_table_get as usize as u64);
                 self.emitter.call_reg(Reg::RAX);
+                self.emitter.add_reg_imm32(Reg::RSP, 8);
                 self.emitter.pop_reg(Reg::RDI);
                 self.emitter.push_wasm_stack(Reg::RAX);
             }
@@ -780,9 +796,11 @@ impl<'a, T: Config> AotCompiler<'a, T> {
                 self.emitter.pop_wasm_stack(Reg::RCX);
                 self.emitter.pop_wasm_stack(Reg::RDX);
                 self.emitter.push_reg(Reg::RDI);
+                self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
                 self.emitter.mov_reg_imm64(Reg::RSI, idx as u64);
                 self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_table_set as usize as u64);
                 self.emitter.call_reg(Reg::RAX);
+                self.emitter.add_reg_imm32(Reg::RSP, 8);
                 self.emitter.pop_reg(Reg::RDI);
                 self.stack_depth -= 1;
             }
@@ -794,13 +812,22 @@ impl<'a, T: Config> AotCompiler<'a, T> {
                 let result_count = func_type.returns.valtypes.len();
 
                 if idx < self.validation_info.imports_length.imported_functions {
+                    let reserve_space = if result_count > param_count {
+                        (result_count - param_count) * 16
+                    } else { 0 };
+                    
+                    if reserve_space > 0 {
+                        self.emitter.sub_reg_imm32(Reg::RSP, reserve_space as u32);
+                    }
+
                     self.emitter.push_reg(Reg::RDI);
+                    self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
                     self.emitter.mov_reg_reg(Reg::RDX, Reg::RSP);
-                    self.emitter.add_reg_imm32(Reg::RDX, 8);
+                    self.emitter.add_reg_imm32(Reg::RDX, (16 + reserve_space) as u32); // sp
                     self.emitter.mov_reg_imm64(Reg::RSI, idx as u64);
-                    self.emitter.mov_reg_reg(Reg::RDI, Reg::RDI);
                     self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_call_host as usize as u64);
                     self.emitter.call_reg(Reg::RAX);
+                    self.emitter.add_reg_imm32(Reg::RSP, 8);
                     self.emitter.pop_reg(Reg::RDI);
                     self.emitter.mov_reg_reg(Reg::RSP, Reg::RAX);
                 } else {
@@ -811,6 +838,7 @@ impl<'a, T: Config> AotCompiler<'a, T> {
                     self.emitter.relocs.push(crate::wasm::aot::emitter::Reloc {
                         pos, label_id: label, kind: crate::wasm::aot::emitter::RelocKind::Call32
                     });
+                    self.emitter.mov_reg_reg(Reg::RSP, Reg::RAX);
                 }
                 self.stack_depth = (self.stack_depth as isize + result_count as isize - param_count as isize) as usize;
             }
@@ -821,15 +849,20 @@ impl<'a, T: Config> AotCompiler<'a, T> {
 
                 self.emitter.pop_wasm_stack(Reg::RAX);
                 self.emitter.push_reg(Reg::RDI);
+                self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
                 self.emitter.mov_reg_imm64(Reg::RSI, table_idx as u64);
                 self.emitter.mov_reg_imm64(Reg::RDX, type_idx as u64);
                 self.emitter.mov_reg_reg(Reg::RCX, Reg::RAX);
                 self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_call_indirect as usize as u64);
                 self.emitter.call_reg(Reg::RAX);
+                self.emitter.add_reg_imm32(Reg::RSP, 8);
                 self.emitter.pop_reg(Reg::RDI);
+                
                 self.emitter.test_reg_reg(Reg::RAX, Reg::RAX);
                 self.emitter.jcc_label(0x84, self.trap_label);
+                
                 self.emitter.call_reg(Reg::RAX);
+                self.emitter.mov_reg_reg(Reg::RSP, Reg::RAX);
                 self.stack_depth = (self.stack_depth as isize - 1 + result_count as isize - param_count as isize) as usize;
             }
 
@@ -918,7 +951,7 @@ impl<'a, T: Config> AotCompiler<'a, T> {
             }
             Instruction::If(bt) => {
                 self.emitter.pop_wasm_stack(Reg::RAX);
-                self.emitter.test_reg_reg(Reg::RAX, Reg::RAX);
+                self.emitter.test_reg32_reg32(Reg::RAX, Reg::RAX);
                 let else_label = self.emitter.new_label();
                 let end_label = self.emitter.new_label();
                 let result_count = match bt {
@@ -951,6 +984,7 @@ impl<'a, T: Config> AotCompiler<'a, T> {
                     self.emitter.bind_label(else_label);
                 }
                 self.emitter.bind_label(cb.end_label);
+                self.stack_depth = cb.stack_depth_before + cb.result_count;
             }
             Instruction::Return => {
                 self.emit_unwind(0);
@@ -969,8 +1003,8 @@ impl<'a, T: Config> AotCompiler<'a, T> {
         let drop_count = self.stack_depth.saturating_sub(cb.stack_depth_before + result_count);
         
         if result_count > 0 && drop_count > 0 {
-            // Move results down to cover dropped items
-            for i in 0..result_count {
+            // Move results down to cover dropped items. Copy in reverse to handle overlaps correctly.
+            for i in (0..result_count).rev() {
                 self.emitter.mov_reg_mem64(Reg::RAX, Reg::RSP, (i * 16) as i32);
                 self.emitter.mov_reg_mem64(Reg::RDX, Reg::RSP, (i * 16 + 8) as i32);
                 self.emitter.mov_mem64_reg(Reg::RSP, ((i + drop_count) * 16) as i32, Reg::RAX);
@@ -1034,9 +1068,11 @@ impl<'a, T: Config> AotCompiler<'a, T> {
     fn emit_trampoline_unop(&mut self, func_ptr: usize) {
         self.emitter.pop_wasm_stack(Reg::RAX);
         self.emitter.push_reg(Reg::RDI);
+        self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
         self.emitter.mov_reg_reg(Reg::RDI, Reg::RAX);
         self.emitter.mov_reg_imm64(Reg::RAX, func_ptr as u64);
         self.emitter.call_reg(Reg::RAX);
+        self.emitter.add_reg_imm32(Reg::RSP, 8);
         self.emitter.pop_reg(Reg::RDI);
         self.emitter.push_wasm_stack(Reg::RAX);
     }
@@ -1044,8 +1080,10 @@ impl<'a, T: Config> AotCompiler<'a, T> {
     fn emit_trampoline_unop_f32(&mut self, func_ptr: usize) {
         self.emitter.pop_v128(XmmReg::XMM0);
         self.emitter.push_reg(Reg::RDI);
+        self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
         self.emitter.mov_reg_imm64(Reg::RAX, func_ptr as u64);
         self.emitter.call_reg(Reg::RAX);
+        self.emitter.add_reg_imm32(Reg::RSP, 8);
         self.emitter.pop_reg(Reg::RDI);
         self.emitter.push_v128(XmmReg::XMM0);
     }
@@ -1053,8 +1091,10 @@ impl<'a, T: Config> AotCompiler<'a, T> {
     fn emit_trampoline_unop_f64(&mut self, func_ptr: usize) {
         self.emitter.pop_v128(XmmReg::XMM0);
         self.emitter.push_reg(Reg::RDI);
+        self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
         self.emitter.mov_reg_imm64(Reg::RAX, func_ptr as u64);
         self.emitter.call_reg(Reg::RAX);
+        self.emitter.add_reg_imm32(Reg::RSP, 8);
         self.emitter.pop_reg(Reg::RDI);
         self.emitter.push_v128(XmmReg::XMM0);
     }
@@ -1062,8 +1102,10 @@ impl<'a, T: Config> AotCompiler<'a, T> {
     fn emit_trampoline_unop_f32_to_i32(&mut self, func_ptr: usize) {
         self.emitter.pop_v128(XmmReg::XMM0);
         self.emitter.push_reg(Reg::RDI);
+        self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
         self.emitter.mov_reg_imm64(Reg::RAX, func_ptr as u64);
         self.emitter.call_reg(Reg::RAX);
+        self.emitter.add_reg_imm32(Reg::RSP, 8);
         self.emitter.pop_reg(Reg::RDI);
         self.emitter.push_wasm_stack(Reg::RAX);
     }
@@ -1071,8 +1113,10 @@ impl<'a, T: Config> AotCompiler<'a, T> {
     fn emit_trampoline_unop_f64_to_i32(&mut self, func_ptr: usize) {
         self.emitter.pop_v128(XmmReg::XMM0);
         self.emitter.push_reg(Reg::RDI);
+        self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
         self.emitter.mov_reg_imm64(Reg::RAX, func_ptr as u64);
         self.emitter.call_reg(Reg::RAX);
+        self.emitter.add_reg_imm32(Reg::RSP, 8);
         self.emitter.pop_reg(Reg::RDI);
         self.emitter.push_wasm_stack(Reg::RAX);
     }
@@ -1080,8 +1124,10 @@ impl<'a, T: Config> AotCompiler<'a, T> {
     fn emit_trampoline_unop_f32_to_i64(&mut self, func_ptr: usize) {
         self.emitter.pop_v128(XmmReg::XMM0);
         self.emitter.push_reg(Reg::RDI);
+        self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
         self.emitter.mov_reg_imm64(Reg::RAX, func_ptr as u64);
         self.emitter.call_reg(Reg::RAX);
+        self.emitter.add_reg_imm32(Reg::RSP, 8);
         self.emitter.pop_reg(Reg::RDI);
         self.emitter.push_wasm_stack(Reg::RAX);
     }
@@ -1089,8 +1135,10 @@ impl<'a, T: Config> AotCompiler<'a, T> {
     fn emit_trampoline_unop_f64_to_i64(&mut self, func_ptr: usize) {
         self.emitter.pop_v128(XmmReg::XMM0);
         self.emitter.push_reg(Reg::RDI);
+        self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
         self.emitter.mov_reg_imm64(Reg::RAX, func_ptr as u64);
         self.emitter.call_reg(Reg::RAX);
+        self.emitter.add_reg_imm32(Reg::RSP, 8);
         self.emitter.pop_reg(Reg::RDI);
         self.emitter.push_wasm_stack(Reg::RAX);
     }
@@ -1099,9 +1147,11 @@ impl<'a, T: Config> AotCompiler<'a, T> {
         self.emitter.pop_wasm_stack(Reg::RSI);
         self.emitter.pop_wasm_stack(Reg::RAX);
         self.emitter.push_reg(Reg::RDI);
+        self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
         self.emitter.mov_reg_reg(Reg::RDI, Reg::RAX);
         self.emitter.mov_reg_imm64(Reg::RAX, func_ptr as u64);
         self.emitter.call_reg(Reg::RAX);
+        self.emitter.add_reg_imm32(Reg::RSP, 8);
         self.emitter.pop_reg(Reg::RDI);
         self.emitter.push_wasm_stack(Reg::RAX);
         self.stack_depth -= 1;
@@ -1111,8 +1161,10 @@ impl<'a, T: Config> AotCompiler<'a, T> {
         self.emitter.pop_v128(XmmReg::XMM1);
         self.emitter.pop_v128(XmmReg::XMM0);
         self.emitter.push_reg(Reg::RDI);
+        self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
         self.emitter.mov_reg_imm64(Reg::RAX, func_ptr as u64);
         self.emitter.call_reg(Reg::RAX);
+        self.emitter.add_reg_imm32(Reg::RSP, 8);
         self.emitter.pop_reg(Reg::RDI);
         self.emitter.push_v128(XmmReg::XMM0);
         self.stack_depth -= 1;
@@ -1122,8 +1174,10 @@ impl<'a, T: Config> AotCompiler<'a, T> {
         self.emitter.pop_v128(XmmReg::XMM1);
         self.emitter.pop_v128(XmmReg::XMM0);
         self.emitter.push_reg(Reg::RDI);
+        self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
         self.emitter.mov_reg_imm64(Reg::RAX, func_ptr as u64);
         self.emitter.call_reg(Reg::RAX);
+        self.emitter.add_reg_imm32(Reg::RSP, 8);
         self.emitter.pop_reg(Reg::RDI);
         self.emitter.push_v128(XmmReg::XMM0);
         self.stack_depth -= 1;
@@ -1888,33 +1942,21 @@ impl<'a, T: Config> AotCompiler<'a, T> {
 
     fn emit_atomic_rmw(&mut self, sub: u32, memarg: MemArg) {
         let is_cmpxchg = sub >= 0x48 && sub <= 0x4e;
-        let is_xchg = sub >= 0x41 && sub <= 0x47;
         
-        let is_64 = match sub {
-            0x1f | 0x22 | 0x23 | 0x24 | // Add
-            0x26 | 0x29 | 0x2a | 0x2b | // Sub
-            0x2d | 0x30 | 0x31 | 0x32 | // And
-            0x34 | 0x37 | 0x38 | 0x39 | // Or
-            0x3b | 0x3e | 0x3f | 0x40 | // Xor
-            0x42 | 0x45 | 0x46 | 0x47 | // Xchg
-            0x49 | 0x4c | 0x4d | 0x4e    // Cmpxchg
-            => true,
-            _ => false,
-        };
-
         let size = match sub {
-            0x1e | 0x1f | 0x25 | 0x26 | 0x2c | 0x2d | 0x33 | 0x34 | 0x3a | 0x3b | 0x41 | 0x42 | 0x48 | 0x49 => if is_64 { 8 } else { 4 },
+            0x1e | 0x1f | 0x25 | 0x26 | 0x2c | 0x2d | 0x33 | 0x34 | 0x3a | 0x3b | 0x41 | 0x42 | 0x48 | 0x49 => if sub == 0x1f || sub == 0x26 || sub == 0x2d || sub == 0x34 || sub == 0x3b || sub == 0x42 || sub == 0x49 { 8 } else { 4 },
             0x20 | 0x22 | 0x27 | 0x29 | 0x2e | 0x30 | 0x35 | 0x37 | 0x3c | 0x3e | 0x43 | 0x45 | 0x4a | 0x4c => 1,
             0x21 | 0x23 | 0x28 | 0x2a | 0x2f | 0x31 | 0x36 | 0x38 | 0x3d | 0x3f | 0x44 | 0x46 | 0x4b | 0x4d => 2,
             0x24 | 0x2b | 0x32 | 0x39 | 0x40 | 0x47 | 0x4e => 4,
             _ => 4,
         };
+        let is_64 = size == 8;
 
         if is_cmpxchg {
-            self.emitter.pop_wasm_stack(Reg::RBX);
-            self.emitter.pop_wasm_stack(Reg::RAX);
-            self.emitter.mov_reg_mem64(Reg::RCX, Reg::RSP, 0);
-            self.emitter.add_reg_imm32(Reg::RSP, 16);
+            self.emitter.pop_wasm_stack(Reg::RBX); // Replacement
+            self.emitter.pop_wasm_stack(Reg::RAX); // Expected
+            self.emitter.mov_reg_mem64(Reg::RCX, Reg::RSP, 0); // Address
+            self.emitter.add_reg_imm32(Reg::RSP, 16); // Pop addr
             self.emit_bounds_check(Reg::RCX, size, memarg.offset);
             self.emitter.add_reg_reg(Reg::RCX, Reg::R14);
             match size {
@@ -1928,31 +1970,12 @@ impl<'a, T: Config> AotCompiler<'a, T> {
             self.stack_depth -= 2;
         } else {
             self.emitter.pop_wasm_stack(Reg::RBX);
-            self.emitter.pop_wasm_stack(Reg::RAX);
+            self.emitter.mov_reg_mem64(Reg::RAX, Reg::RSP, 0);
             self.emit_bounds_check(Reg::RAX, size, memarg.offset);
             self.emitter.add_reg_reg(Reg::RAX, Reg::R14);
-            let op_group = if is_xchg { 0 } else { 
-                match sub {
-                    0x1e..=0x1f | 0x28..=0x2c => 1,
-                    0x20..=0x21 | 0x2d..=0x31 => 2,
-                    0x22..=0x23 | 0x32..=0x36 => 3,
-                    0x24..=0x25 | 0x37..=0x3b => 4,
-                    0x26..=0x27 | 0x3c..=0x40 => 5,
-                    _ => 0
-                }
-            };
-            match op_group {
-                0 => {
-                    match size {
-                        1 => { self.emitter.emit_u8(0x86); self.emitter.emit_modrm_mem(Reg::RBX, Reg::RAX, memarg.offset as i32); },
-                        2 => { self.emitter.emit_u8(0x66); self.emitter.emit_u8(0x87); self.emitter.emit_modrm_mem(Reg::RBX, Reg::RAX, memarg.offset as i32); },
-                        4 => { self.emitter.emit_u8(0x87); self.emitter.emit_modrm_mem(Reg::RBX, Reg::RAX, memarg.offset as i32); },
-                        8 => { self.emitter.rex(true, Reg::RBX as u8, 0, Reg::RAX as u8); self.emitter.emit_u8(0x87); self.emitter.emit_modrm_mem(Reg::RBX, Reg::RAX, memarg.offset as i32); },
-                        _ => {}
-                    }
-                    self.emitter.push_wasm_stack(Reg::RBX);
-                },
-                1 => {
+            
+            match sub {
+                0x1e..=0x24 => { // Add
                     match size {
                         1 => self.emitter.xadd_mem_reg8(Reg::RAX, memarg.offset as i32, Reg::RBX),
                         2 => self.emitter.xadd_mem_reg16(Reg::RAX, memarg.offset as i32, Reg::RBX),
@@ -1960,12 +1983,16 @@ impl<'a, T: Config> AotCompiler<'a, T> {
                         8 => self.emitter.xadd_mem_reg(Reg::RAX, memarg.offset as i32, Reg::RBX, true),
                         _ => {}
                     }
-                    self.emitter.push_wasm_stack(Reg::RBX);
+                    self.emitter.mov_mem64_reg(Reg::RSP, 0, Reg::RBX);
                 },
-                2 => {
-                    if size == 8 { self.emitter.rex(true, 0, 0, Reg::RBX as u8); }
-                    else if size == 2 { self.emitter.emit_u8(0x66); }
-                    self.emitter.emit_u8(0xF7); self.emitter.modrm(3, 3, Reg::RBX as u8);
+                0x25..=0x2b => { // Sub
+                    match size {
+                        1 => { self.emitter.emit_u8(0xF6); self.emitter.modrm(3, 3, Reg::RBX as u8); },
+                        2 => { self.emitter.emit_u8(0x66); self.emitter.emit_u8(0xF7); self.emitter.modrm(3, 3, Reg::RBX as u8); },
+                        4 => { self.emitter.emit_u8(0xF7); self.emitter.modrm(3, 3, Reg::RBX as u8); },
+                        8 => { self.emitter.rex(true, 0, 0, Reg::RBX as u8); self.emitter.emit_u8(0xF7); self.emitter.modrm(3, 3, Reg::RBX as u8); },
+                        _ => {}
+                    }
                     match size {
                         1 => self.emitter.xadd_mem_reg8(Reg::RAX, memarg.offset as i32, Reg::RBX),
                         2 => self.emitter.xadd_mem_reg16(Reg::RAX, memarg.offset as i32, Reg::RBX),
@@ -1973,26 +2000,29 @@ impl<'a, T: Config> AotCompiler<'a, T> {
                         8 => self.emitter.xadd_mem_reg(Reg::RAX, memarg.offset as i32, Reg::RBX, true),
                         _ => {}
                     }
-                    self.emitter.push_wasm_stack(Reg::RBX);
+                    self.emitter.mov_mem64_reg(Reg::RSP, 0, Reg::RBX);
                 },
-                _ => {
+                0x2c..=0x40 => { // And, Or, Xor
                     let loop_label = self.emitter.new_label();
                     self.emitter.mov_reg_reg(Reg::RSI, Reg::RAX);
                     match size {
                         1 => self.emitter.movzx_reg_mem8(Reg::RAX, Reg::RSI, memarg.offset as i32),
                         2 => self.emitter.movzx_reg_mem16(Reg::RAX, Reg::RSI, memarg.offset as i32),
                         4 => { self.emitter.emit_u8(0x8B); self.emitter.emit_modrm_mem(Reg::RAX, Reg::RSI, memarg.offset as i32); },
-                        8 => { self.emitter.rex(true, Reg::RAX as u8, 0, Reg::RSI as u8); self.emitter.emit_u8(0x8B); self.emitter.emit_modrm_mem(Reg::RAX, Reg::RSI, memarg.offset as i32); },
+                        8 => { self.emitter.mov_reg_mem64(Reg::RAX, Reg::RSI, memarg.offset as i32); },
                         _ => {}
                     }
                     self.emitter.bind_label(loop_label);
                     self.emitter.mov_reg_reg(Reg::RCX, Reg::RAX);
-                    match op_group {
-                        3 => if is_64 { self.emitter.and_reg_reg(Reg::RCX, Reg::RBX); } else { self.emitter.and_reg32_reg32(Reg::RCX, Reg::RBX); },
-                        4 => if is_64 { self.emitter.or_reg_reg(Reg::RCX, Reg::RBX); } else { self.emitter.or_reg32_reg32(Reg::RCX, Reg::RBX); },
-                        5 => if is_64 { self.emitter.xor_reg_reg(Reg::RCX, Reg::RBX); } else { self.emitter.xor_reg32_reg32(Reg::RCX, Reg::RBX); },
-                        _ => {}
+                    
+                    if sub >= 0x2c && sub <= 0x32 {
+                        if is_64 { self.emitter.and_reg_reg(Reg::RCX, Reg::RBX); } else { self.emitter.and_reg32_reg32(Reg::RCX, Reg::RBX); }
+                    } else if sub >= 0x33 && sub <= 0x39 {
+                        if is_64 { self.emitter.or_reg_reg(Reg::RCX, Reg::RBX); } else { self.emitter.or_reg32_reg32(Reg::RCX, Reg::RBX); }
+                    } else {
+                        if is_64 { self.emitter.xor_reg_reg(Reg::RCX, Reg::RBX); } else { self.emitter.xor_reg32_reg32(Reg::RCX, Reg::RBX); }
                     }
+                    
                     match size {
                         1 => self.emitter.cmpxchg_mem_reg8(Reg::RSI, memarg.offset as i32, Reg::RCX),
                         2 => self.emitter.cmpxchg_mem_reg16(Reg::RSI, memarg.offset as i32, Reg::RCX),
@@ -2001,8 +2031,19 @@ impl<'a, T: Config> AotCompiler<'a, T> {
                         _ => {}
                     }
                     self.emitter.jcc_label(0x85, loop_label);
-                    self.emitter.push_wasm_stack(Reg::RAX);
-                }
+                    self.emitter.mov_mem64_reg(Reg::RSP, 0, Reg::RAX);
+                },
+                0x41..=0x47 => { // Xchg
+                     match size {
+                        1 => { self.emitter.emit_u8(0x86); self.emitter.emit_modrm_mem(Reg::RBX, Reg::RAX, memarg.offset as i32); },
+                        2 => { self.emitter.emit_u8(0x66); self.emitter.emit_u8(0x87); self.emitter.emit_modrm_mem(Reg::RBX, Reg::RAX, memarg.offset as i32); },
+                        4 => { self.emitter.emit_u8(0x87); self.emitter.emit_modrm_mem(Reg::RBX, Reg::RAX, memarg.offset as i32); },
+                        8 => { self.emitter.rex(true, Reg::RBX as u8, 0, Reg::RAX as u8); self.emitter.emit_u8(0x87); self.emitter.emit_modrm_mem(Reg::RBX, Reg::RAX, memarg.offset as i32); },
+                        _ => {}
+                    }
+                    self.emitter.mov_mem64_reg(Reg::RSP, 0, Reg::RBX);
+                },
+                _ => {}
             }
             self.stack_depth -= 1;
         }

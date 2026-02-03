@@ -223,7 +223,7 @@ fn instantiate_component_internal<'a, T: Config>(
                         {
                             // --- AOT Compilation ---
                             if store.aot_enabled {
-                                let mut compiler = crate::wasm::aot::AotCompiler::<T>::new(&validation_info);
+                                let mut compiler = crate::wasm::aot::AotCompiler::new(&validation_info);
                                 let aot_module = compiler.compile_module();
                                 for (i, offset) in aot_module.func_offsets.iter().enumerate() {
                                     let func_idx = validation_info.imports_length.imported_functions + i;
@@ -376,7 +376,7 @@ fn instantiate_component_internal<'a, T: Config>(
                         ) {
                             // --- AOT Compilation ---
                             if store.aot_enabled {
-                                let mut compiler = crate::wasm::aot::AotCompiler::<T>::new(&validation_info);
+                                let mut compiler = crate::wasm::aot::AotCompiler::new(&validation_info);
                                 let aot_module = compiler.compile_module();
                                 for (i, offset) in aot_module.func_offsets.iter().enumerate() {
                                     let func_idx = validation_info.imports_length.imported_functions + i;

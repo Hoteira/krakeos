@@ -284,7 +284,7 @@ impl<'a, T: Config> Store<'a, T> {
 
         // --- AOT Compilation ---
         if self.aot_enabled {
-            let mut compiler = crate::wasm::aot::AotCompiler::<T>::new(validation_info);
+            let mut compiler = crate::wasm::aot::AotCompiler::new(validation_info);
             let aot_module = compiler.compile_module();
             for (i, offset) in aot_module.func_offsets.iter().enumerate() {
                 let func_idx = validation_info.imports_length.imported_functions + i;
@@ -427,55 +427,81 @@ impl<'a, T: Config> Store<'a, T> {
                         let module_addr = wasm_func_inst.module_addr;
 
                         if let Some(aot_ptr) = aot_ptr {
-                            if let Some(mut fuel) = maybe_fuel {
-                                let mem_addr = self.modules.get(module_addr).mem_addrs.get(0).copied();
-                                let (memory_base, memory_size) = if let Some(mem_addr) = mem_addr {
-                                    let mem = &self.memories.get(mem_addr).mem;
-                                    (mem.get_base_ptr(), mem.len())
-                                } else {
-                                    (core::ptr::null_mut(), 0)
-                                };
+                            let mut fuel = maybe_fuel.unwrap_or(1_000_000_000);
+                            let mem_addr = self.modules.get(module_addr).mem_addrs.get(0).copied();
+                            let (memory_base, memory_size) = if let Some(mem_addr) = mem_addr {
+                                let mem = &self.memories.get(mem_addr).mem;
+                                (mem.get_base_ptr(), mem.len())
+                            } else {
+                                (core::ptr::null_mut(), 0)
+                            };
 
-                                let stack_size = 1024 * 1024; // 1MB stack
-                                let stack_ptr = unsafe { crate::memory::malloc(stack_size) } as *mut u128;
-                                let locals_size = 1024 * 16;
-                                let locals_ptr = unsafe { crate::memory::malloc(locals_size) } as *mut u128;
+                            let stack_size = 1024 * 1024; // 1MB stack
+                            let stack_ptr = unsafe { crate::memory::malloc(stack_size) } as *mut u128;
+                            let locals_size = 1024 * 16;
+                            let locals_ptr = unsafe { crate::memory::malloc(locals_size) } as *mut u128;
 
-                                let mut ctx = crate::wasm::aot::runtime::AotContext {
-                                    store: self as *mut _ as *mut usize,
-                                    fuel: &mut fuel as *mut u32,
-                                    memory_base,
-                                    memory_size,
-                                    stack_base: stack_ptr,
-                                    locals_base: locals_ptr,
-                                    module_addr,
-                                    stack_limit: (&stack_size as *const _ as usize).saturating_sub(1024 * 1024),
-                                };
+                            let mut ctx = crate::wasm::aot::runtime::AotContext {
+                                store: self as *mut _ as *mut usize,
+                                fuel: &mut fuel as *mut u32,
+                                memory_base,
+                                memory_size,
+                                stack_base: stack_ptr,
+                                locals_base: locals_ptr,
+                                module_addr,
+                                stack_limit: stack_ptr as usize,
+                            };
 
-                                // Initialize parameters in locals
-                                for (i, param) in params.iter().enumerate() {
-                                    unsafe { *ctx.locals_base.add(i) = param.to_u128(); }
-                                }
-
-                                type AotFuncWithRet = extern "C" fn(ctx: &mut crate::wasm::aot::runtime::AotContext) -> *mut u128;
-                                let f_ret: AotFuncWithRet = unsafe { core::mem::transmute(aot_ptr) };
-                                let final_sp = f_ret(&mut ctx);
-                                
-                                let mut results = Vec::new();
-                                let num_returns = func_type.returns.valtypes.len();
-                                for i in 0..num_returns {
-                                    let val_ptr = unsafe { final_sp.add(i) };
-                                    let val_type = func_type.returns.valtypes[num_returns - 1 - i];
-                                    let val = Value::from_u128(unsafe { *val_ptr }, val_type);
-                                    results.push(val);
-                                }
-                                results.reverse();
-
-                                return Ok(RunState::Finished {
-                                    values: results,
-                                    maybe_remaining_fuel: Some(fuel),
-                                });
+                            // Prepare AOT stack with parameters
+                            let mut sp = unsafe { stack_ptr.add(stack_size / 16) };
+                            for param in params.iter().rev() {
+                                sp = unsafe { sp.sub(1) };
+                                unsafe { *sp = param.to_u128(); }
                             }
+
+                            crate::debugln!("WASI: [AOT] Entering generated machine code at {:#x}...", aot_ptr);
+                            
+                            let final_sp: *mut u128;
+                            
+                            #[cfg(target_arch = "x86_64")]
+                            unsafe {
+                                core::arch::asm!(
+                                    "push rbp",
+                                    "mov rbp, rsp",
+                                    "mov rsp, {0}",       // Switch to AOT stack
+                                    "call {1}",           // Call AOT code
+                                    "mov rsp, rbp",       // Restore host RSP
+                                    "pop rbp",
+                                    in(reg) sp,
+                                    in(reg) aot_ptr,
+                                    inout("rdi") &mut ctx => _,
+                                    lateout("rax") final_sp,
+                                    clobber_abi("C"),
+                                );
+                            }
+
+                            #[cfg(not(target_arch = "x86_64"))]
+                            {
+                                let _ = sp;
+                                let _ = aot_ptr;
+                                let _ = &mut ctx;
+                                panic!("AOT execution only supported on x86_64");
+                            }
+                            
+                            let mut results = Vec::new();
+                            let num_returns = func_type.returns.valtypes.len();
+                            for i in 0..num_returns {
+                                let val_ptr = unsafe { final_sp.add(i) };
+                                let val_type = func_type.returns.valtypes[num_returns - 1 - i];
+                                let val = Value::from_u128(unsafe { *val_ptr }, val_type);
+                                results.push(val);
+                            }
+                            results.reverse();
+
+                            return Ok(RunState::Finished {
+                                values: results,
+                                maybe_remaining_fuel: if maybe_fuel.is_some() { Some(fuel) } else { None },
+                            });
                         }
 
                         // Fallback to interpreter

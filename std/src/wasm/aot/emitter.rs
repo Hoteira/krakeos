@@ -299,6 +299,12 @@ impl X64Emitter {
         self.modrm(3, src as u8, dst as u8);
     }
 
+    pub fn test_reg32_reg32(&mut self, dst: Reg, src: Reg) {
+        self.rex(false, src as u8, 0, dst as u8);
+        self.emit_u8(0x85);
+        self.modrm(3, src as u8, dst as u8);
+    }
+
     pub fn test_reg_imm32(&mut self, reg: Reg, imm: u32) {
         self.rex(true, 0, 0, reg as u8);
         self.emit_u8(0xF7);
