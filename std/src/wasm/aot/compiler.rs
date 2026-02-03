@@ -506,6 +506,8 @@ impl<'a, T: Config> AotCompiler<'a, T> {
                 self.emitter.push_v128(XmmReg::XMM0);
             }
 
+            Instruction::F32Min => self.emit_trampoline_binop_f32(crate::wasm::aot::trampoline::aot_f32_min as usize),
+            Instruction::F32Max => self.emit_trampoline_binop_f32(crate::wasm::aot::trampoline::aot_f32_max as usize),
             Instruction::F32Copysign => {
                 self.emitter.pop_v128(XmmReg::XMM1);
                 self.emitter.pop_v128(XmmReg::XMM0);
