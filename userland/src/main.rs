@@ -50,11 +50,11 @@ pub fn main() {
 
     println!("Starting WASM Apps...");
 
-    run_wasm("@0xE0/apps/aot_test.wasm", false);
+    run_wasm("@0xE0/apps/aot_test.wasm", true);
 
 
     std::thread::spawn(|| {
-        run_wasm("@0xE0/apps/taskbar.wasm", false);
+        run_wasm("@0xE0/apps/taskbar.wasm", true);
     });
 
     std::os::spawn("@0xE0/sys/bin/term.elf");
