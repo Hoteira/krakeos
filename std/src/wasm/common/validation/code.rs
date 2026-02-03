@@ -150,6 +150,7 @@ fn read_instructions(
         let Ok(first_instr_byte) = wasm.read_u8() else {
             return Err(ValidationError::ExprMissingEnd);
         };
+        crate::debugln!("{:#x} ", first_instr_byte);
         match first_instr_byte {
             NOP => {}
             BLOCK => {
@@ -872,52 +873,76 @@ fn read_instructions(
             }
             ATOMIC_PREFIX => {
                 let second = wasm.read_var_u32()?;
-                let _arg = MemArg::read(wasm)?;
+                // crate::debugln!("Validating Atomic opcode {:#x} at PC {:#x}", second, wasm.pc);
                 match second {
-                    0x00..=0x03 => { // notify/wait
+                    0x03 => { // atomic.fence
+                        wasm.read_u8()?; // Reserved byte
+                    }
+                    0x00..=0x02 => { // notify/wait
+                        let _arg = MemArg::read(wasm)?;
                         if second == 0x00 { // notify
                             stack.assert_pop_val_type(ValType::NumType(NumType::I32))?;
                             stack.assert_pop_val_type(ValType::NumType(NumType::I32))?;
                             stack.push_valtype(ValType::NumType(NumType::I32));
                         } else { // wait
+                            // Order: timeout (I64), expected (I32/I64), address (I32)
+                            stack.assert_pop_val_type(ValType::NumType(NumType::I64))?;
                             if second == 0x01 { stack.assert_pop_val_type(ValType::NumType(NumType::I32))?; }
                             else { stack.assert_pop_val_type(ValType::NumType(NumType::I64))?; }
-                            stack.assert_pop_val_type(ValType::NumType(NumType::I64))?;
                             stack.assert_pop_val_type(ValType::NumType(NumType::I32))?;
                             stack.push_valtype(ValType::NumType(NumType::I32));
                         }
                     }
-                    0x10..=0x15 => { // load
+                    0x10..=0x16 => { // load
+                        let _arg = MemArg::read(wasm)?;
                         stack.assert_pop_val_type(ValType::NumType(NumType::I32))?;
-                        if second <= 0x11 { stack.push_valtype(ValType::NumType(NumType::I32)); }
-                        else { stack.push_valtype(ValType::NumType(NumType::I64)); }
+                        let returns_i64 = match second {
+                            0x11 | 0x14 | 0x15 | 0x16 => true,
+                            _ => false,
+                        };
+                        if returns_i64 { stack.push_valtype(ValType::NumType(NumType::I64)); }
+                        else { stack.push_valtype(ValType::NumType(NumType::I32)); }
                     }
-                    0x16..=0x1B => { // store
-                        if second <= 0x17 { stack.assert_pop_val_type(ValType::NumType(NumType::I32))?; }
-                        else { stack.assert_pop_val_type(ValType::NumType(NumType::I64))?; }
+                    0x17..=0x1D => { // store
+                        let _arg = MemArg::read(wasm)?;
+                        let pops_i64 = match second {
+                            0x18 | 0x1b | 0x1c | 0x1d => true,
+                            _ => false,
+                        };
+                        if pops_i64 { stack.assert_pop_val_type(ValType::NumType(NumType::I64))?; }
+                        else { stack.assert_pop_val_type(ValType::NumType(NumType::I32))?; }
                         stack.assert_pop_val_type(ValType::NumType(NumType::I32))?;
                     }
                     _ => { // RMW / cmpxchg
+                        let _arg = MemArg::read(wasm)?;
+                        let is_64 = match second {
+                            0x1f | 0x21 | 0x23 | 0x25 | 0x27 | 0x2a..=0x2c | 0x2f..=0x31 | 0x34..=0x36 | 0x39..=0x3b | 0x3e..=0x40 | 0x42 | 0x45..=0x47 | 0x49 | 0x4c..=0x4e => true,
+                            _ => false,
+                        };
+                        
                         if second >= 0x48 { // cmpxchg
-                            if second <= 0x49 {
-                                stack.assert_pop_val_type(ValType::NumType(NumType::I32))?;
-                                stack.assert_pop_val_type(ValType::NumType(NumType::I32))?;
-                                stack.push_valtype(ValType::NumType(NumType::I32));
-                            } else {
-                                stack.assert_pop_val_type(ValType::NumType(NumType::I64))?;
-                                stack.assert_pop_val_type(ValType::NumType(NumType::I64))?;
+                            if is_64 {
+                                stack.assert_pop_val_type(ValType::NumType(NumType::I64))?; // replacement
+                                stack.assert_pop_val_type(ValType::NumType(NumType::I64))?; // expected
+                                stack.assert_pop_val_type(ValType::NumType(NumType::I32))?; // address
                                 stack.push_valtype(ValType::NumType(NumType::I64));
+                            } else {
+                                stack.assert_pop_val_type(ValType::NumType(NumType::I32))?; // replacement
+                                stack.assert_pop_val_type(ValType::NumType(NumType::I32))?; // expected
+                                stack.assert_pop_val_type(ValType::NumType(NumType::I32))?; // address
+                                stack.push_valtype(ValType::NumType(NumType::I32));
                             }
                         } else { // RMW
-                            if second <= 0x31 {
-                                stack.assert_pop_val_type(ValType::NumType(NumType::I32))?;
-                                stack.push_valtype(ValType::NumType(NumType::I32));
-                            } else {
-                                stack.assert_pop_val_type(ValType::NumType(NumType::I64))?;
+                            if is_64 {
+                                stack.assert_pop_val_type(ValType::NumType(NumType::I64))?; // value
+                                stack.assert_pop_val_type(ValType::NumType(NumType::I32))?; // address
                                 stack.push_valtype(ValType::NumType(NumType::I64));
+                            } else {
+                                stack.assert_pop_val_type(ValType::NumType(NumType::I32))?; // value
+                                stack.assert_pop_val_type(ValType::NumType(NumType::I32))?; // address
+                                stack.push_valtype(ValType::NumType(NumType::I32));
                             }
                         }
-                        stack.assert_pop_val_type(ValType::NumType(NumType::I32))?;
                     }
                 }
             }
