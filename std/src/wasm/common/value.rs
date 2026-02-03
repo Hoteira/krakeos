@@ -447,6 +447,9 @@ impl TryFrom<Value> for u32 {
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
             Value::I32(x) => Ok(x),
+            Value::I64(x) => Ok(x as u32),
+            Value::F32(x) => Ok(x.to_bits()),
+            Value::F64(x) => Ok(x.to_bits() as u32),
             _ => Err(ValueTypeMismatchError { expected: "u32", actual: value }),
         }
     }
@@ -463,6 +466,9 @@ impl TryFrom<Value> for i32 {
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
             Value::I32(x) => Ok(x as i32),
+            Value::I64(x) => Ok(x as i32),
+            Value::F32(x) => Ok(x.to_bits() as i32),
+            Value::F64(x) => Ok(x.to_bits() as i32),
             _ => Err(ValueTypeMismatchError { expected: "i32", actual: value }),
         }
     }
@@ -478,7 +484,10 @@ impl TryFrom<Value> for u64 {
     type Error = ValueTypeMismatchError;
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
+            Value::I32(x) => Ok(x as u64),
             Value::I64(x) => Ok(x),
+            Value::F32(x) => Ok(x.to_bits() as u64),
+            Value::F64(x) => Ok(x.to_bits()),
             _ => Err(ValueTypeMismatchError { expected: "u64", actual: value }),
         }
     }
@@ -494,7 +503,10 @@ impl TryFrom<Value> for i64 {
     type Error = ValueTypeMismatchError;
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
+            Value::I32(x) => Ok(x as i64),
             Value::I64(x) => Ok(x as i64),
+            Value::F32(x) => Ok(x.to_bits() as i64),
+            Value::F64(x) => Ok(x.to_bits() as i64),
             _ => Err(ValueTypeMismatchError { expected: "i64", actual: value }),
         }
     }
@@ -510,7 +522,10 @@ impl TryFrom<Value> for F32 {
     type Error = ValueTypeMismatchError;
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
+            Value::I32(x) => Ok(F32::from_bits(x)),
+            Value::I64(x) => Ok(F32::from_bits(x as u32)),
             Value::F32(x) => Ok(x),
+            Value::F64(x) => Ok(F32::from_bits(x.to_bits() as u32)),
             _ => Err(ValueTypeMismatchError { expected: "F32", actual: value }),
         }
     }
@@ -526,6 +541,9 @@ impl TryFrom<Value> for F64 {
     type Error = ValueTypeMismatchError;
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
+            Value::I32(x) => Ok(F64::from_bits(x as u64)),
+            Value::I64(x) => Ok(F64::from_bits(x)),
+            Value::F32(x) => Ok(F64::from_bits(x.to_bits() as u64)),
             Value::F64(x) => Ok(x),
             _ => Err(ValueTypeMismatchError { expected: "F64", actual: value }),
         }

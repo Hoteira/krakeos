@@ -296,7 +296,7 @@ impl WasmReadable for Instruction {
             I32_LT_S => Ok(Instruction::I32LtS),
             I32_LT_U => Ok(Instruction::I32LtU),
             I32_GT_S => Ok(Instruction::I32GtS),
-            I32_GT_U => Ok(Instruction::I32LtU), // Typo in original? Fixed to GT_U
+            I32_GT_U => Ok(Instruction::I32GtU),
             I32_LE_S => Ok(Instruction::I32LeS),
             I32_LE_U => Ok(Instruction::I32LeU),
             I32_GE_S => Ok(Instruction::I32GeS),

@@ -10,6 +10,8 @@ pub struct AotContext {
     pub memory_size: usize,
     pub stack_base: *mut u128,
     pub locals_base: *mut u128,
+    pub module_addr: usize,
+    pub stack_limit: usize,
 }
 
 pub struct AotModule {

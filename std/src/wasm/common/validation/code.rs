@@ -17,7 +17,6 @@ use crate::wasm::common::sidetable::{Sidetable, SidetableEntry};
 use crate::wasm::common::validation::validation_stack::{LabelInfo, ValidationStack};
 use core::iter;
 
-#[allow(clippy::too_many_arguments)]
 pub fn validate_code_section(
     wasm: &mut WasmReader,
     _section_header: SectionHeader,
@@ -150,7 +149,7 @@ fn read_instructions(
         let Ok(first_instr_byte) = wasm.read_u8() else {
             return Err(ValidationError::ExprMissingEnd);
         };
-        crate::debugln!("{:#x} ", first_instr_byte);
+        //crate::debugln!("{:#x} ", first_instr_byte);
         match first_instr_byte {
             NOP => {}
             BLOCK => {
@@ -553,8 +552,13 @@ fn read_instructions(
                 stack.assert_pop_val_type(ValType::NumType(NumType::I64))?;
                 stack.push_valtype(ValType::NumType(NumType::I64));
             }
-            I64_ADD | I64_SUB | I64_MUL | I64_DIV_S | I64_DIV_U | I64_REM_S | I64_REM_U | I64_AND | I64_OR | I64_XOR | I64_SHL | I64_SHR_S | I64_SHR_U | I64_ROTL | I64_ROTR => {
+            I64_ADD | I64_SUB | I64_MUL | I64_DIV_S | I64_DIV_U | I64_REM_S | I64_REM_U | I64_AND | I64_OR | I64_XOR => {
                 stack.assert_pop_val_type(ValType::NumType(NumType::I64))?;
+                stack.assert_pop_val_type(ValType::NumType(NumType::I64))?;
+                stack.push_valtype(ValType::NumType(NumType::I64));
+            }
+            I64_SHL | I64_SHR_S | I64_SHR_U | I64_ROTL | I64_ROTR => {
+                stack.assert_pop_val_type(ValType::NumType(NumType::I32))?;
                 stack.assert_pop_val_type(ValType::NumType(NumType::I64))?;
                 stack.push_valtype(ValType::NumType(NumType::I64));
             }
@@ -916,7 +920,14 @@ fn read_instructions(
                     _ => { // RMW / cmpxchg
                         let _arg = MemArg::read(wasm)?;
                         let is_64 = match second {
-                            0x1f | 0x21 | 0x23 | 0x25 | 0x27 | 0x2a..=0x2c | 0x2f..=0x31 | 0x34..=0x36 | 0x39..=0x3b | 0x3e..=0x40 | 0x42 | 0x45..=0x47 | 0x49 | 0x4c..=0x4e => true,
+                            0x1f | 0x22 | 0x23 | 0x24 | // Add
+                            0x26 | 0x29 | 0x2a | 0x2b | // Sub
+                            0x2d | 0x30 | 0x31 | 0x32 | // And
+                            0x34 | 0x37 | 0x38 | 0x39 | // Or
+                            0x3b | 0x3e | 0x3f | 0x40 | // Xor
+                            0x42 | 0x45 | 0x46 | 0x47 | // Xchg
+                            0x49 | 0x4c | 0x4d | 0x4e    // Cmpxchg
+                            => true,
                             _ => false,
                         };
                         
