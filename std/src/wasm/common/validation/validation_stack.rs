@@ -99,9 +99,14 @@ impl ValidationStack {
     }
     pub fn assert_pop_val_type(&mut self, expected_ty: ValType) -> Result<(), ValidationError> {
         match self.pop_valtype()? {
-            ValidationStackEntry::Val(ty) => (ty == expected_ty)
-                .then_some(())
-                .ok_or(ValidationError::InvalidValidationStackValType(Some(ty))),
+            ValidationStackEntry::Val(ty) => {
+                if ty == expected_ty {
+                    Ok(())
+                } else {
+                    crate::debugln!("Validation type mismatch: expected {:?}, found {:?}", expected_ty, ty);
+                    Err(ValidationError::InvalidValidationStackValType(Some(ty)))
+                }
+            }
             ValidationStackEntry::Bottom => Ok(()),
         }
     }
@@ -135,6 +140,8 @@ impl ValidationStack {
                     }
                     return Ok(());
                 } else {
+                    crate::debugln!("EndInvalidValueStack: stack_len={}, height={}, i={}", stack_len, last_ctrl_stack_entry.height, i);
+                    crate::debugln!("Stack top: {:?}", &stack[last_ctrl_stack_entry.height..]);
                     return Err(ValidationError::EndInvalidValueStack);
                 }
             }

@@ -468,3 +468,210 @@ pub extern "C" fn aot_v128_bitmask_i8x16(a: *const [u8; 16]) -> i32 {
 pub extern "C" fn aot_v128_i8x16_shuffle(a: *mut [u8; 16], b: *const [u8; 16], c: *const [u8; 16]) {
     unsafe { *a = simd_utils::i8x16_shuffle(*a, *b, *c); }
 }
+
+macro_rules! impl_simd_binop {
+    ($name:ident, $func:ident) => {
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $name(a: *mut [u8; 16], b: *const [u8; 16]) {
+            unsafe { *a = simd_utils::$func(*a, *b); }
+        }
+    };
+}
+
+macro_rules! impl_simd_unop {
+    ($name:ident, $func:ident) => {
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $name(a: *mut [u8; 16]) {
+            unsafe { *a = simd_utils::$func(*a); }
+        }
+    };
+}
+
+impl_simd_binop!(aot_i8x16_add, i8x16_add);
+impl_simd_binop!(aot_i8x16_sub, i8x16_sub);
+impl_simd_binop!(aot_i16x8_add, i16x8_add);
+impl_simd_binop!(aot_i16x8_sub, i16x8_sub);
+impl_simd_binop!(aot_i16x8_mul, i16x8_mul);
+impl_simd_binop!(aot_i32x4_add, i32x4_add);
+impl_simd_binop!(aot_i32x4_sub, i32x4_sub);
+impl_simd_binop!(aot_i32x4_mul, i32x4_mul);
+impl_simd_binop!(aot_i64x2_add, i64x2_add);
+impl_simd_binop!(aot_i64x2_sub, i64x2_sub);
+impl_simd_binop!(aot_i64x2_mul, i64x2_mul);
+
+impl_simd_binop!(aot_f32x4_add, f32x4_add);
+impl_simd_binop!(aot_f32x4_sub, f32x4_sub);
+impl_simd_binop!(aot_f32x4_mul, f32x4_mul);
+impl_simd_binop!(aot_f32x4_div, f32x4_div);
+impl_simd_binop!(aot_f32x4_min, f32x4_min);
+impl_simd_binop!(aot_f32x4_max, f32x4_max);
+impl_simd_binop!(aot_f32x4_pmin, f32x4_pmin);
+impl_simd_binop!(aot_f32x4_pmax, f32x4_pmax);
+
+impl_simd_binop!(aot_f64x2_add, f64x2_add);
+impl_simd_binop!(aot_f64x2_sub, f64x2_sub);
+impl_simd_binop!(aot_f64x2_mul, f64x2_mul);
+impl_simd_binop!(aot_f64x2_div, f64x2_div);
+impl_simd_binop!(aot_f64x2_min, f64x2_min);
+impl_simd_binop!(aot_f64x2_max, f64x2_max);
+impl_simd_binop!(aot_f64x2_pmin, f64x2_pmin);
+impl_simd_binop!(aot_f64x2_pmax, f64x2_pmax);
+
+impl_simd_binop!(aot_i8x16_eq, i8x16_eq);
+impl_simd_binop!(aot_i8x16_ne, i8x16_ne);
+impl_simd_binop!(aot_i8x16_lt_s, i8x16_lt_s);
+impl_simd_binop!(aot_i8x16_lt_u, i8x16_lt_u);
+impl_simd_binop!(aot_i8x16_gt_s, i8x16_gt_s);
+impl_simd_binop!(aot_i8x16_gt_u, i8x16_gt_u);
+impl_simd_binop!(aot_i8x16_le_s, i8x16_le_s);
+impl_simd_binop!(aot_i8x16_le_u, i8x16_le_u);
+impl_simd_binop!(aot_i8x16_ge_s, i8x16_ge_s);
+impl_simd_binop!(aot_i8x16_ge_u, i8x16_ge_u);
+
+impl_simd_binop!(aot_i16x8_eq, i16x8_eq);
+impl_simd_binop!(aot_i16x8_ne, i16x8_ne);
+impl_simd_binop!(aot_i16x8_lt_s, i16x8_lt_s);
+impl_simd_binop!(aot_i16x8_lt_u, i16x8_lt_u);
+impl_simd_binop!(aot_i16x8_gt_s, i16x8_gt_s);
+impl_simd_binop!(aot_i16x8_gt_u, i16x8_gt_u);
+impl_simd_binop!(aot_i16x8_le_s, i16x8_le_s);
+impl_simd_binop!(aot_i16x8_le_u, i16x8_le_u);
+impl_simd_binop!(aot_i16x8_ge_s, i16x8_ge_s);
+impl_simd_binop!(aot_i16x8_ge_u, i16x8_ge_u);
+
+impl_simd_binop!(aot_i32x4_eq, i32x4_eq);
+impl_simd_binop!(aot_i32x4_ne, i32x4_ne);
+impl_simd_binop!(aot_i32x4_lt_s, i32x4_lt_s);
+impl_simd_binop!(aot_i32x4_lt_u, i32x4_lt_u);
+impl_simd_binop!(aot_i32x4_gt_s, i32x4_gt_s);
+impl_simd_binop!(aot_i32x4_gt_u, i32x4_gt_u);
+impl_simd_binop!(aot_i32x4_le_s, i32x4_le_s);
+impl_simd_binop!(aot_i32x4_le_u, i32x4_le_u);
+impl_simd_binop!(aot_i32x4_ge_s, i32x4_ge_s);
+impl_simd_binop!(aot_i32x4_ge_u, i32x4_ge_u);
+
+impl_simd_binop!(aot_i64x2_eq, i64x2_eq);
+impl_simd_binop!(aot_i64x2_ne, i64x2_ne);
+impl_simd_binop!(aot_i64x2_lt_s, i64x2_lt_s);
+impl_simd_binop!(aot_i64x2_gt_s, i64x2_gt_s);
+impl_simd_binop!(aot_i64x2_le_s, i64x2_le_s);
+impl_simd_binop!(aot_i64x2_ge_s, i64x2_ge_s);
+
+impl_simd_binop!(aot_f32x4_eq, f32x4_eq);
+impl_simd_binop!(aot_f32x4_ne, f32x4_ne);
+impl_simd_binop!(aot_f32x4_lt, f32x4_lt);
+impl_simd_binop!(aot_f32x4_gt, f32x4_gt);
+impl_simd_binop!(aot_f32x4_le, f32x4_le);
+impl_simd_binop!(aot_f32x4_ge, f32x4_ge);
+
+impl_simd_binop!(aot_f64x2_eq, f64x2_eq);
+impl_simd_binop!(aot_f64x2_ne, f64x2_ne);
+impl_simd_binop!(aot_f64x2_lt, f64x2_lt);
+impl_simd_binop!(aot_f64x2_gt, f64x2_gt);
+impl_simd_binop!(aot_f64x2_le, f64x2_le);
+impl_simd_binop!(aot_f64x2_ge, f64x2_ge);
+
+impl_simd_unop!(aot_i8x16_neg, i8x16_neg);
+impl_simd_unop!(aot_i8x16_abs, i8x16_abs);
+impl_simd_unop!(aot_i16x8_neg, i16x8_neg);
+impl_simd_unop!(aot_i16x8_abs, i16x8_abs);
+impl_simd_unop!(aot_i32x4_neg, i32x4_neg);
+impl_simd_unop!(aot_i32x4_abs, i32x4_abs);
+impl_simd_unop!(aot_i64x2_neg, i64x2_neg);
+impl_simd_unop!(aot_i64x2_abs, i64x2_abs);
+
+impl_simd_unop!(aot_f32x4_neg, f32x4_neg);
+impl_simd_unop!(aot_f32x4_abs, f32x4_abs);
+impl_simd_unop!(aot_f32x4_sqrt, f32x4_sqrt);
+impl_simd_unop!(aot_f32x4_ceil, f32x4_ceil);
+impl_simd_unop!(aot_f32x4_floor, f32x4_floor);
+impl_simd_unop!(aot_f32x4_trunc, f32x4_trunc);
+impl_simd_unop!(aot_f32x4_nearest, f32x4_nearest);
+
+impl_simd_unop!(aot_f64x2_neg, f64x2_neg);
+impl_simd_unop!(aot_f64x2_abs, f64x2_abs);
+impl_simd_unop!(aot_f64x2_sqrt, f64x2_sqrt);
+impl_simd_unop!(aot_f64x2_ceil, f64x2_ceil);
+impl_simd_unop!(aot_f64x2_floor, f64x2_floor);
+impl_simd_unop!(aot_f64x2_trunc, f64x2_trunc);
+impl_simd_unop!(aot_f64x2_nearest, f64x2_nearest);
+
+impl_simd_binop!(aot_v128_andnot, v128_andnot);
+
+impl_simd_binop!(aot_i8x16_min_s, i8x16_min_s);
+impl_simd_binop!(aot_i8x16_min_u, i8x16_min_u);
+impl_simd_binop!(aot_i8x16_max_s, i8x16_max_s);
+impl_simd_binop!(aot_i8x16_max_u, i8x16_max_u);
+impl_simd_binop!(aot_i16x8_min_s, i16x8_min_s);
+impl_simd_binop!(aot_i16x8_min_u, i16x8_min_u);
+impl_simd_binop!(aot_i16x8_max_s, i16x8_max_s);
+impl_simd_binop!(aot_i16x8_max_u, i16x8_max_u);
+impl_simd_binop!(aot_i32x4_min_s, i32x4_min_s);
+impl_simd_binop!(aot_i32x4_min_u, i32x4_min_u);
+impl_simd_binop!(aot_i32x4_max_s, i32x4_max_s);
+impl_simd_binop!(aot_i32x4_max_u, i32x4_max_u);
+
+impl_simd_binop!(aot_i8x16_avgr_u, i8x16_avgr_u);
+impl_simd_binop!(aot_i16x8_avgr_u, i16x8_avgr_u);
+
+impl_simd_binop!(aot_i8x16_add_sat_s, i8x16_add_sat_s);
+impl_simd_binop!(aot_i8x16_add_sat_u, i8x16_add_sat_u);
+impl_simd_binop!(aot_i8x16_sub_sat_s, i8x16_sub_sat_s);
+impl_simd_binop!(aot_i8x16_sub_sat_u, i8x16_sub_sat_u);
+impl_simd_binop!(aot_i16x8_add_sat_s, i16x8_add_sat_s);
+impl_simd_binop!(aot_i16x8_add_sat_u, i16x8_add_sat_u);
+impl_simd_binop!(aot_i16x8_sub_sat_s, i16x8_sub_sat_s);
+impl_simd_binop!(aot_i16x8_sub_sat_u, i16x8_sub_sat_u);
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_i8x16_popcnt(a: *mut [u8; 16]) {
+    unsafe { *a = simd_utils::i8x16_popcnt(*a); }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_v128_load8x8_s(dst: *mut [u8; 16], src: u64) {
+    let lanes = simd_utils::to_lanes_8::<1, 8, i8>(src.to_le_bytes());
+    let mut res = [0i16; 8];
+    for i in 0..8 { res[i] = lanes[i] as i16; }
+    unsafe { *dst = simd_utils::from_lanes::<2, 8, i16>(res); }
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_v128_load8x8_u(dst: *mut [u8; 16], src: u64) {
+    let lanes = simd_utils::to_lanes_8::<1, 8, u8>(src.to_le_bytes());
+    let mut res = [0i16; 8];
+    for i in 0..8 { res[i] = lanes[i] as i16; }
+    unsafe { *dst = simd_utils::from_lanes::<2, 8, i16>(res); }
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_v128_load16x4_s(dst: *mut [u8; 16], src: u64) {
+    let lanes = simd_utils::to_lanes_8::<2, 4, i16>(src.to_le_bytes());
+    let mut res = [0i32; 4];
+    for i in 0..4 { res[i] = lanes[i] as i32; }
+    unsafe { *dst = simd_utils::from_lanes::<4, 4, i32>(res); }
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_v128_load16x4_u(dst: *mut [u8; 16], src: u64) {
+    let lanes = simd_utils::to_lanes_8::<2, 4, u16>(src.to_le_bytes());
+    let mut res = [0i32; 4];
+    for i in 0..4 { res[i] = lanes[i] as i32; }
+    unsafe { *dst = simd_utils::from_lanes::<4, 4, i32>(res); }
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_v128_load32x2_s(dst: *mut [u8; 16], src: u64) {
+    let lanes = simd_utils::to_lanes_8::<4, 2, i32>(src.to_le_bytes());
+    let mut res = [0i64; 2];
+    for i in 0..2 { res[i] = lanes[i] as i64; }
+    unsafe { *dst = simd_utils::from_lanes::<8, 2, i64>(res); }
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_v128_load32x2_u(dst: *mut [u8; 16], src: u64) {
+    let lanes = simd_utils::to_lanes_8::<4, 2, u32>(src.to_le_bytes());
+    let mut res = [0i64; 2];
+    for i in 0..2 { res[i] = lanes[i] as i64; }
+    unsafe { *dst = simd_utils::from_lanes::<8, 2, i64>(res); }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_v128_not(a: *mut [u8; 16]) {
+    unsafe { *a = simd_utils::v128_not(*a); }
+}

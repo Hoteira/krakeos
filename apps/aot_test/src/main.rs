@@ -1,8 +1,12 @@
 #![no_std]
+#![feature(wasm_target_feature)]
 
 use std::println;
 use core::num::Wrapping;
 use std::math::FloatMath;
+
+mod simd_tests;
+mod atomic_tests;
 
 pub fn main() {
     println!("==================== Starting Comprehensive AOT Compiler Test Suite...");
@@ -17,6 +21,11 @@ pub fn main() {
     failed += test_memory_bounds();
     failed += test_conversions();
     failed += test_simd_basic();
+    
+    unsafe {
+        // failed += simd_tests::test_simd();
+        failed += atomic_tests::test_atomics();
+    }
 
     println!("====================");
     if failed == 0 {
