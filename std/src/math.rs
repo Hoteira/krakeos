@@ -14,6 +14,8 @@ pub trait FloatMath {
     fn atan2(self, other: Self) -> Self;
     fn to_radians(self) -> Self;
     fn to_degrees(self) -> Self;
+    fn min(self, other: Self) -> Self;
+    fn max(self, other: Self) -> Self;
 }
 
 const PI: f64 = 3.14159265358979323846;
@@ -113,6 +115,38 @@ impl FloatMath for f64 {
     fn to_degrees(self) -> Self {
         self * (180.0 / PI)
     }
+
+    fn min(self, other: Self) -> Self {
+        if self.is_nan() {
+            self
+        } else if other.is_nan() {
+            other
+        } else if self == 0.0 && other == 0.0 {
+            if self.to_bits() >> 63 == 1 || other.to_bits() >> 63 == 1 {
+                -0.0
+            } else {
+                0.0
+            }
+        } else {
+            if self < other { self } else { other }
+        }
+    }
+
+    fn max(self, other: Self) -> Self {
+        if self.is_nan() {
+            self
+        } else if other.is_nan() {
+            other
+        } else if self == 0.0 && other == 0.0 {
+            if self.to_bits() >> 63 == 0 || other.to_bits() >> 63 == 0 {
+                0.0
+            } else {
+                -0.0
+            }
+        } else {
+            if self > other { self } else { other }
+        }
+    }
 }
 
 impl FloatMath for f32 {
@@ -176,6 +210,38 @@ impl FloatMath for f32 {
 
     fn to_degrees(self) -> Self {
         self * (180.0 / PI as f32)
+    }
+
+    fn min(self, other: Self) -> Self {
+        if self.is_nan() {
+            self
+        } else if other.is_nan() {
+            other
+        } else if self == 0.0 && other == 0.0 {
+            if self.to_bits() >> 31 == 1 || other.to_bits() >> 31 == 1 {
+                -0.0
+            } else {
+                0.0
+            }
+        } else {
+            if self < other { self } else { other }
+        }
+    }
+
+    fn max(self, other: Self) -> Self {
+        if self.is_nan() {
+            self
+        } else if other.is_nan() {
+            other
+        } else if self == 0.0 && other == 0.0 {
+            if self.to_bits() >> 31 == 0 || other.to_bits() >> 31 == 0 {
+                0.0
+            } else {
+                -0.0
+            }
+        } else {
+            if self > other { self } else { other }
+        }
     }
 }
 

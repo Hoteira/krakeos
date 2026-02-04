@@ -107,30 +107,34 @@ impl F32 {
         Self(self.0.sqrt())
     }
     pub fn min(&self, rhs: Self) -> Self {
-        Self(if self.0.is_nan() || rhs.0.is_nan() {
-            f32::NAN
+        if self.0.is_nan() {
+            *self
+        } else if rhs.0.is_nan() {
+            rhs
         } else if self.0 == 0.0 && rhs.0 == 0.0 {
-            if self.to_bits() >> 31 == 1 {
-                self.0
+            if self.to_bits() >> 31 == 1 || rhs.to_bits() >> 31 == 1 {
+                Self(-0.0)
             } else {
-                rhs.0
+                Self(0.0)
             }
         } else {
-            self.0.min(rhs.0)
-        })
+            Self(self.0.min(rhs.0))
+        }
     }
     pub fn max(&self, rhs: Self) -> Self {
-        Self(if self.0.is_nan() || rhs.0.is_nan() {
-            f32::NAN
+        if self.0.is_nan() {
+            *self
+        } else if rhs.0.is_nan() {
+            rhs
         } else if self.0 == 0.0 && rhs.0 == 0.0 {
-            if self.to_bits() >> 31 == 1 {
-                rhs.0
+            if self.to_bits() >> 31 == 0 || rhs.to_bits() >> 31 == 0 {
+                Self(0.0)
             } else {
-                self.0
+                Self(-0.0)
             }
         } else {
-            self.0.max(rhs.0)
-        })
+            Self(self.0.max(rhs.0))
+        }
     }
     pub fn copysign(&self, rhs: Self) -> Self {
         Self(self.0.copysign(rhs.0))
@@ -272,30 +276,34 @@ impl F64 {
         Self(self.0.sqrt())
     }
     pub fn min(&self, rhs: Self) -> Self {
-        Self(if self.0.is_nan() || rhs.0.is_nan() {
-            f64::NAN
+        if self.0.is_nan() {
+            *self
+        } else if rhs.0.is_nan() {
+            rhs
         } else if self.0 == 0.0 && rhs.0 == 0.0 {
-            if self.to_bits() >> 63 == 1 {
-                self.0
+            if self.to_bits() >> 63 == 1 || rhs.to_bits() >> 63 == 1 {
+                Self(-0.0)
             } else {
-                rhs.0
+                Self(0.0)
             }
         } else {
-            self.0.min(rhs.0)
-        })
+            Self(self.0.min(rhs.0))
+        }
     }
     pub fn max(&self, rhs: Self) -> Self {
-        Self(if self.0.is_nan() || rhs.0.is_nan() {
-            f64::NAN
+        if self.0.is_nan() {
+            *self
+        } else if rhs.0.is_nan() {
+            rhs
         } else if self.0 == 0.0 && rhs.0 == 0.0 {
-            if self.to_bits() >> 63 == 1 {
-                rhs.0
+            if self.to_bits() >> 63 == 0 || rhs.to_bits() >> 63 == 0 {
+                Self(0.0)
             } else {
-                self.0
+                Self(-0.0)
             }
         } else {
-            self.0.max(rhs.0)
-        })
+            Self(self.0.max(rhs.0))
+        }
     }
     pub fn copysign(&self, rhs: Self) -> Self {
         Self(self.0.copysign(rhs.0))

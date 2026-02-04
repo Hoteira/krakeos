@@ -1,5 +1,6 @@
 #![no_std]
 #![feature(wasm_target_feature)]
+#![feature(asm_experimental_arch)]
 
 use std::println;
 use core::num::Wrapping;
@@ -8,12 +9,16 @@ use std::math::FloatMath;
 mod simd_tests;
 mod atomic_tests;
 mod abi_tests;
+mod int_tests;
+mod float_tests;
 
 pub fn main() {
     println!("==================== Starting Comprehensive AOT Compiler Test Suite...");
 
     let mut failed = 0;
 
+    failed += int_tests::test_int_edge_cases();
+    failed += float_tests::test_float_precision_rounding();
     failed += test_i32_arithmetic();
     failed += test_i64_arithmetic();
     failed += test_f32_math();
