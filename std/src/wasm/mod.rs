@@ -5,6 +5,9 @@ pub mod interpreter;
 pub mod aot;
 pub mod wasi;
 pub mod component;
+pub mod runner;
+
+pub use runner::{run, run_with_args};
 
 pub use common::validation::{ValidationInfo, validate};
 pub use common::error::ValidationError;

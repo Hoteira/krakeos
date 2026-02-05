@@ -426,7 +426,8 @@ impl<'a, T: Config> Store<'a, T> {
                         let func_type = wasm_func_inst.function_type.clone();
                         let module_addr = wasm_func_inst.module_addr;
 
-                        if let Some(aot_ptr) = aot_ptr {
+                        if self.aot_enabled && aot_ptr.is_some() {
+                            let aot_ptr = aot_ptr.unwrap();
                             let mut fuel = maybe_fuel.unwrap_or(1_000_000_000);
                             let mem_addr = self.modules.get(module_addr).mem_addrs.get(0).copied();
                             let (memory_base, memory_size) = if let Some(mem_addr) = mem_addr {
@@ -459,7 +460,7 @@ impl<'a, T: Config> Store<'a, T> {
                                 unsafe { *sp = param.to_u128(); }
                             }
 
-                            crate::debugln!("WASI: [AOT] Entering generated machine code at {:#x}...", aot_ptr);
+                            // crate::debugln!("WASI: [AOT] Entering generated machine code at {:#x}...", aot_ptr);
                             
                             let final_sp: *mut u128;
                             

@@ -24,19 +24,31 @@ pub trait Read {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
 
     fn read_to_end(&mut self, buf: &mut rust_alloc::vec::Vec<u8>) -> Result<usize> {
-        let mut temp = [0u8; 1024];
-        let mut total = 0;
+        let mut total_read = 0;
         loop {
-            match self.read(&mut temp) {
+            if buf.len() == buf.capacity() {
+                buf.reserve(32); // Reserve at least some bytes
+            }
+            
+            let len = buf.len();
+            let capacity = buf.capacity();
+            let unused_space = unsafe {
+                core::slice::from_raw_parts_mut(
+                    buf.as_mut_ptr().add(len),
+                    capacity - len,
+                )
+            };
+            
+            match self.read(unused_space) {
                 Ok(0) => break,
                 Ok(n) => {
-                    buf.extend_from_slice(&temp[..n]);
-                    total += n;
+                    unsafe { buf.set_len(len + n); }
+                    total_read += n;
                 }
                 Err(e) => return Err(e),
             }
         }
-        Ok(total)
+        Ok(total_read)
     }
 
     fn read_to_string(&mut self, buf: &mut rust_alloc::string::String) -> Result<usize> {

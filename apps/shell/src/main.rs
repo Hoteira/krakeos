@@ -235,7 +235,8 @@ pub fn main() {
                                         final_args.push(parsed.cmd.clone());
                                         final_args.extend(wasm_args);
 
-                                        builtins::run_wasm(prog_path, final_args, root_path, use_aot);
+                                        let root = root_path.unwrap_or_else(|| String::from("@0xE0"));
+                                        std::wasm::run_with_args(&prog_path, final_args, &root, &[(0, stdin_fd as u8), (1, stdout_fd as u8), (2, 2)], use_aot);
                                         // WASM runs in-process now, so no PID to track
                                         last_exit_code = 0;
                                     } else {

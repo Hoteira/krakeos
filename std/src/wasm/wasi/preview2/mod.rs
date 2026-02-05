@@ -261,8 +261,18 @@ fn krakeos_syscall_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -
             if a3 == 0 { return Ok(vec![Value::I64(0)]); }
             let mut buf = vec![0u8; a3 as usize];
             read_mem(store, a2 as u32, &mut buf).map_err(|_| HaltExecutionError(1))?;
-            let res = unsafe { crate::sys::syscall(num, a1, buf.as_ptr() as u64, a3) };
-            return Ok(vec![Value::I64(res)]);
+            
+            let mut written = 0;
+            let chunk_size = 1024;
+            while written < buf.len() {
+                let end = core::cmp::min(written + chunk_size, buf.len());
+                let slice = &buf[written..end];
+                let res = unsafe { crate::sys::syscall(num, a1, slice.as_ptr() as u64, slice.len() as u64) };
+                if res == u64::MAX { return Ok(vec![Value::I64(u64::MAX)]); }
+                if res == 0 { break; }
+                written += res as usize;
+            }
+            return Ok(vec![Value::I64(written as u64)]);
         }
         2 | 83 | 84 | 85 | 87 => { // OPEN, MKDIR, RMDIR, CREATE, UNLINK (a1 is string ptr, a2 is len)
             let len = a2 as usize;
@@ -301,6 +311,7 @@ fn krakeos_syscall_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -
             // Let's assume KrakeOS syscalls take (ptr, len).
 
             let res = unsafe { crate::sys::syscall(num, s_terminated.as_ptr() as u64, a2, a3) };
+            if num == 85 { crate::debugln!("SYS_CREATE host wrapper returned: {}", res); }
             return Ok(vec![Value::I64(res)]);
         }
         120 => { // SHM_GET - Do not return host pointers to WASM!

@@ -70,16 +70,16 @@ pub fn validate_code_section(
 
 pub fn read_declared_locals(wasm: &mut WasmReader) -> Result<Vec<ValType>, ValidationError> {
     let locals = wasm.read_vec(|wasm| {
-        let n = wasm.read_var_u32()? as usize;
+        let n = wasm.read_var_u32()?;
         let valtype = ValType::read(wasm)?;
-        Ok((n, valtype))
+        Ok((n as usize, valtype))
     })?;
     let mut total_no_of_locals: u64 = 0;
     for local in &locals {
         let temp = local.0 as u64;
         total_no_of_locals = total_no_of_locals.checked_add(temp).ok_or(ValidationError::TooManyLocals(total_no_of_locals))?;
     }
-    if total_no_of_locals > u32::MAX.into() {
+    if total_no_of_locals > u32::MAX as u64 {
         return Err(ValidationError::TooManyLocals(total_no_of_locals));
     }
     let locals = locals
