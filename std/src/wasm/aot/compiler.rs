@@ -178,6 +178,7 @@ impl<'a> AotCompiler<'a> {
         self.emitter.pop_reg(Reg::RBP);
 
         // SP now points to old return addr slot. Cleanup params and make space for results.
+        // We use 16 as the base offset because parameters start at RBP+16.
         self.emitter.add_reg_imm32(Reg::RSP, (8 + param_count * 16) as u32);
         self.emitter.sub_reg_imm32(Reg::RSP, (self.result_count * 16) as u32);
         self.emitter.mov_reg_reg(Reg::RAX, Reg::RSP); // RAX = definitive new stack top for caller
@@ -611,6 +612,21 @@ impl<'a> AotCompiler<'a> {
                 self.emitter.pop_wasm_stack(Reg::RAX);
                 self.emitter.movq_xmm_reg(XmmReg::XMM0, Reg::RAX);
                 self.emitter.push_v128(XmmReg::XMM0);
+            }
+
+            Instruction::RefNull(_ty) => {
+                self.emitter.xor_reg_reg(Reg::RAX, Reg::RAX);
+                self.emitter.push_wasm_stack(Reg::RAX);
+                self.stack_depth += 1;
+            }
+            Instruction::RefIsNull => {
+                self.emitter.mov_reg_mem64(Reg::RAX, Reg::RSP, 0);
+                self.emitter.mov_reg_mem64(Reg::RDX, Reg::RSP, 8);
+                self.emitter.or_reg_reg(Reg::RAX, Reg::RDX);
+                self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0x94); self.emitter.emit_u8(0xC0); // SETZ AL
+                self.emitter.emit_u8(0x48); self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0xB6); self.emitter.emit_u8(0xC0); // MOVZX RAX, AL
+                self.emitter.add_reg_imm32(Reg::RSP, 16);
+                self.emitter.push_wasm_stack(Reg::RAX);
             }
 
             Instruction::F32ConvertI32S => {
@@ -1659,7 +1675,7 @@ impl<'a> AotCompiler<'a> {
         self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
         
         self.emitter.mov_reg_reg(Reg::RDI, Reg::RSP);
-        self.emitter.add_reg_imm32(Reg::RDI, 16); // RDI -> a
+        self.emitter.add_reg_imm32(Reg::RDI, 16); // RDI -> operand on stack
         
         self.emitter.mov_reg_imm64(Reg::RAX, func_ptr as u64);
         self.emitter.call_reg(Reg::RAX);
@@ -1673,10 +1689,10 @@ impl<'a> AotCompiler<'a> {
         self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
         
         self.emitter.mov_reg_reg(Reg::RSI, Reg::RSP);
-        self.emitter.add_reg_imm32(Reg::RSI, 16); // RSI -> b
+        self.emitter.add_reg_imm32(Reg::RSI, 16); // RSI -> Operand 2 (Top)
         
         self.emitter.mov_reg_reg(Reg::RDI, Reg::RSP);
-        self.emitter.add_reg_imm32(Reg::RDI, 32); // RDI -> a
+        self.emitter.add_reg_imm32(Reg::RDI, 32); // RDI -> Operand 1 (Below)
         
         self.emitter.mov_reg_imm64(Reg::RAX, func_ptr as u64);
         self.emitter.call_reg(Reg::RAX);
@@ -1684,7 +1700,7 @@ impl<'a> AotCompiler<'a> {
         self.emitter.add_reg_imm32(Reg::RSP, 8);
         self.emitter.pop_reg(Reg::RDI);
         
-        self.emitter.add_reg_imm32(Reg::RSP, 16); // Pop b
+        self.emitter.add_reg_imm32(Reg::RSP, 16); // Pop Operand 2
         self.stack_depth -= 1;
     }
 
@@ -1693,13 +1709,13 @@ impl<'a> AotCompiler<'a> {
         self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
         
         self.emitter.mov_reg_reg(Reg::RDX, Reg::RSP);
-        self.emitter.add_reg_imm32(Reg::RDX, 16); // RDX -> c
+        self.emitter.add_reg_imm32(Reg::RDX, 16); // RDX -> Operand 3 (Top)
         
         self.emitter.mov_reg_reg(Reg::RSI, Reg::RSP);
-        self.emitter.add_reg_imm32(Reg::RSI, 32); // RSI -> b
+        self.emitter.add_reg_imm32(Reg::RSI, 32); // RSI -> Operand 2
         
         self.emitter.mov_reg_reg(Reg::RDI, Reg::RSP);
-        self.emitter.add_reg_imm32(Reg::RDI, 48); // RDI -> a
+        self.emitter.add_reg_imm32(Reg::RDI, 48); // RDI -> Operand 1 (Below)
         
         self.emitter.mov_reg_imm64(Reg::RAX, func_ptr as u64);
         self.emitter.call_reg(Reg::RAX);
@@ -1707,7 +1723,7 @@ impl<'a> AotCompiler<'a> {
         self.emitter.add_reg_imm32(Reg::RSP, 8);
         self.emitter.pop_reg(Reg::RDI);
         
-        self.emitter.add_reg_imm32(Reg::RSP, 32); // Pop b and c
+        self.emitter.add_reg_imm32(Reg::RSP, 32); // Pop Operand 2 and 3
         self.stack_depth -= 2;
     }
 
@@ -1716,15 +1732,16 @@ impl<'a> AotCompiler<'a> {
         self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
         
         self.emitter.mov_reg_reg(Reg::RDI, Reg::RSP);
-        self.emitter.add_reg_imm32(Reg::RDI, 16); // RDI -> a
+        self.emitter.add_reg_imm32(Reg::RDI, 16); // RDI -> Operand on stack
         
         self.emitter.mov_reg_imm64(Reg::RAX, func_ptr as u64);
         self.emitter.call_reg(Reg::RAX);
         
+        // RAX now contains the i32 result
         self.emitter.add_reg_imm32(Reg::RSP, 8);
         self.emitter.pop_reg(Reg::RDI);
         
-        self.emitter.add_reg_imm32(Reg::RSP, 16); // Pop a
+        self.emitter.add_reg_imm32(Reg::RSP, 16); // Pop Operand
         self.emitter.push_wasm_stack(Reg::RAX); // Push result
     }
 
@@ -1903,18 +1920,20 @@ impl<'a> AotCompiler<'a> {
         self.emitter.add_reg_reg(Reg::RCX, Reg::RAX);
         self.emitter.add_reg_imm32(Reg::RCX, memarg.offset);
         
+        self.emitter.sub_reg_imm32(Reg::RSP, 16); // Space for result
         self.emitter.push_reg(Reg::RDI); // Save Context
         self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
-        self.emitter.sub_reg_imm32(Reg::RSP, 16); // Alloc result
         
-        self.emitter.mov_reg_reg(Reg::RDI, Reg::RSP); // arg 1: dst
-        self.emitter.mov_reg_mem64(Reg::RSI, Reg::RCX, 0); // arg 2: src (u64)
+        self.emitter.mov_reg_reg(Reg::RDI, Reg::RSP);
+        self.emitter.add_reg_imm32(Reg::RDI, 16); // dst -> result slot
+        self.emitter.mov_reg_mem64(Reg::RSI, Reg::RCX, 0); // src -> from memory
         
         self.emitter.mov_reg_imm64(Reg::RAX, trampoline as u64);
         self.emitter.call_reg(Reg::RAX);
         
-        self.emitter.add_reg_imm32(Reg::RSP, 8); // Pop Align
-        self.emitter.pop_reg(Reg::RDI); // Restore Context
+        self.emitter.add_reg_imm32(Reg::RSP, 8);
+        self.emitter.pop_reg(Reg::RDI);
+        // Result is now at top of stack (last 16 bytes we allocated)
         self.stack_depth += 1;
     }
 
@@ -2188,10 +2207,7 @@ impl<'a> AotCompiler<'a> {
             self.emitter.mov_reg_reg(Reg::R9, Reg::RSP);
             self.emitter.add_reg_imm32(Reg::R9, 16);
             
-            self.emitter.mov_reg_reg(Reg::RDI, Reg::RSP); // arg 0: context (dummy pointer, trampoline takes ctx as arg 0)
-            // Wait. Trampoline signature: fn(ctx: &AotContext, ...)
-            // We SAVED context at [RSP+8].
-            // We need to pass it in RDI.
+            // We need to pass Context in RDI.
             self.emitter.mov_reg_mem64(Reg::RDI, Reg::RSP, 8);
             
             self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_v128_load_lane as usize as u64);
@@ -2199,7 +2215,7 @@ impl<'a> AotCompiler<'a> {
             
             self.emitter.add_reg_imm32(Reg::RSP, 8); // Pop Align
             self.emitter.pop_reg(Reg::RDI); // Restore Context
-            self.stack_depth -= 1;
+            self.stack_depth -= 1; // Popped addr, v128 was already on stack and modified
         } else {
             self.emitter.pop_wasm_stack(Reg::RAX); // addr
             self.emit_bounds_check(Reg::RAX, size, memarg.offset);
@@ -2213,13 +2229,10 @@ impl<'a> AotCompiler<'a> {
             self.emitter.mov_reg_imm64(Reg::R8, size as u64); // arg 4: size
             
             // Pointer to v128 on stack (source)
-            // Stack: [Align] [SavedRDI] [v128]
-            // RSP points to Align.
-            // v128 is at RSP + 16.
             self.emitter.mov_reg_reg(Reg::R9, Reg::RSP); // arg 5: val ptr
             self.emitter.add_reg_imm32(Reg::R9, 16);
             
-            self.emitter.mov_reg_mem64(Reg::RDI, Reg::RSP, 8); // arg 0: ctx (Restored from stack)
+            self.emitter.mov_reg_mem64(Reg::RDI, Reg::RSP, 8); // arg 0: ctx
             
             self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_v128_store_lane as usize as u64);
             self.emitter.call_reg(Reg::RAX);

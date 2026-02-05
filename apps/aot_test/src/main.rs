@@ -12,6 +12,8 @@ mod abi_tests;
 mod int_tests;
 mod float_tests;
 mod control_flow_tests;
+mod memory_bulk_tests;
+mod table_global_tests;
 
 pub fn main() {
     println!("==================== Starting Comprehensive AOT Compiler Test Suite...");
@@ -25,6 +27,8 @@ pub fn main() {
     failed += test_f32_math();
     failed += test_f64_math();
     failed += control_flow_tests::test_complex_control_flow();
+    failed += memory_bulk_tests::test_memory_bulk();
+    failed += table_global_tests::test_tables_globals();
     failed += test_memory_bounds();
     failed += test_conversions();
     failed += test_simd_basic();

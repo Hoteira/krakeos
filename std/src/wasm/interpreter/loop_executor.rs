@@ -257,6 +257,27 @@ pub fn run<T: Config>(
                     &mut stp,
                     &store.modules.get(current_module).sidetable,
                 )?;
+                
+                // Immediately perform function exit logic
+                let (maybe_return_func_addr, maybe_return_address, maybe_return_stp) =
+                    stack.pop_call_frame();
+                if stack.call_frame_count() == 0 {
+                    break;
+                }
+                current_func_addr = maybe_return_func_addr;
+                let FuncInst::WasmFunc(current_wasm_func_inst) =
+                    store.functions.get(current_func_addr)
+                else {
+                    unreachable!(
+                        "function addresses on the stack always correspond to native wasm functions"
+                    )
+                };
+                current_module = current_wasm_func_inst.module_addr;
+                wasm.full_wasm_binary = store.modules.get(current_module).wasm_bytecode;
+                wasm.pc = maybe_return_address;
+                stp = maybe_return_stp;
+                current_function_end_marker = current_wasm_func_inst.code_expr.from()
+                    + current_wasm_func_inst.code_expr.len();
             }
             CALL => {
                 decrement_fuel!(T::get_flat_cost(CALL));
@@ -824,13 +845,25 @@ pub fn run<T: Config>(
                         let d: u32 = stack.pop_value().try_into().unwrap_validated();
                         let tx_addr = store.modules.get(current_module).table_addrs[x];
                         let ty_addr = store.modules.get(current_module).table_addrs[y];
-                        let (tx, ty) = store.tables.get_two_mut(tx_addr, ty_addr).unwrap_validated();
-                        for i in 0..n as usize { ty.elem[d as usize + i] = tx.elem[s as usize + i]; }
+                        
+                        if tx_addr == ty_addr {
+                            let t = store.tables.get_mut(tx_addr);
+                            let d = d as usize;
+                            let s = s as usize;
+                            if d <= s {
+                                for i in 0..n as usize { t.elem[d + i] = t.elem[s + i]; }
+                            } else {
+                                for i in (0..n as usize).rev() { t.elem[d + i] = t.elem[s + i]; }
+                            }
+                        } else {
+                            let (tx, ty) = store.tables.get_two_mut(tx_addr, ty_addr).unwrap_validated();
+                            for i in 0..n as usize { ty.elem[d as usize + i] = tx.elem[s as usize + i]; }
+                        }
                     }
                     0x0F => { // table.grow
                         let x = wasm.read_var_u32().unwrap_validated() as usize;
-                        let val: Ref = stack.pop_value().try_into().unwrap_validated();
                         let n: u32 = stack.pop_value().try_into().unwrap_validated();
+                        let val: Ref = stack.pop_value().try_into().unwrap_validated();
                         let t_addr = store.modules.get(current_module).table_addrs[x];
                         let t = store.tables.get_mut(t_addr);
                         let sz = t.elem.len() as i32;

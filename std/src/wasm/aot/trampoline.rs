@@ -285,8 +285,20 @@ pub extern "C" fn aot_table_copy(ctx: &AotContext, d: i32, s: i32, n: u32, table
     let module_addr = ctx.module_addr;
     let tx_addr = store.modules.get(module_addr).table_addrs[table_src as usize];
     let ty_addr = store.modules.get(module_addr).table_addrs[table_dst as usize];
-    let (tx, ty) = store.tables.get_two_mut(tx_addr, ty_addr).unwrap();
-    for i in 0..n as usize { ty.elem[d as usize + i] = tx.elem[s as usize + i]; }
+    
+    if tx_addr == ty_addr {
+        let t = store.tables.get_mut(tx_addr);
+        let d = d as usize;
+        let s = s as usize;
+        if d <= s {
+            for i in 0..n as usize { t.elem[d + i] = t.elem[s + i]; }
+        } else {
+            for i in (0..n as usize).rev() { t.elem[d + i] = t.elem[s + i]; }
+        }
+    } else {
+        let (tx, ty) = store.tables.get_two_mut(tx_addr, ty_addr).unwrap();
+        for i in 0..n as usize { ty.elem[d as usize + i] = tx.elem[s as usize + i]; }
+    }
 }
 
 #[unsafe(no_mangle)]

@@ -365,6 +365,8 @@ impl X64Emitter {
     pub fn push_wasm_stack(&mut self, reg: Reg) {
         self.sub_reg_imm32(Reg::RSP, 16);
         self.mov_mem64_reg(Reg::RSP, 0, reg);
+        self.xor_reg_reg(Reg::R11, Reg::R11);
+        self.mov_mem64_reg(Reg::RSP, 8, Reg::R11);
     }
 
     pub fn pop_wasm_stack(&mut self, reg: Reg) {

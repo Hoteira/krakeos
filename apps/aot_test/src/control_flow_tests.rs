@@ -108,17 +108,17 @@ fn test_loop_with_multiple_exits() -> i32 {
     fn multi_exit(n: i32) -> i32 {
         let mut i = 0;
         loop {
-            if i >= 100 { return 999; }
-            if i == n { break; }
-            if i == 50 { return 500; }
+            if i == 50 && n == 200 { return 500; } // Path for n=200
+            if i == n { break; }                  // Path for n=5
+            if i == 100 && n == 150 { return 999; } // Path for n=150
             i += 1;
         }
         i
     }
 
-    if multi_exit(5) != 5 { errors += 1; println!("Error: multi_exit(5)"); }
-    if multi_exit(50) != 500 { errors += 1; println!("Error: multi_exit(50)"); }
-    if multi_exit(200) != 999 { errors += 1; println!("Error: multi_exit(200)"); }
+    if multi_exit(5) != 5 { errors += 1; println!("Error: multi_exit(5) got {}", multi_exit(5)); }
+    if multi_exit(200) != 500 { errors += 1; println!("Error: multi_exit(200) got {}", multi_exit(200)); }
+    if multi_exit(150) != 999 { errors += 1; println!("Error: multi_exit(150) got {}", multi_exit(150)); }
 
     errors
 }

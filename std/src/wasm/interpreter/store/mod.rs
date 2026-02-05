@@ -436,9 +436,9 @@ impl<'a, T: Config> Store<'a, T> {
                                 (core::ptr::null_mut(), 0)
                             };
 
-                            let stack_size = 1024 * 1024; // 1MB stack
+                            let stack_size = 1024 * 1024 * 4; // 4MB stack
                             let stack_ptr = unsafe { crate::memory::malloc(stack_size) } as *mut u128;
-                            let locals_size = 1024 * 16;
+                            let locals_size = 1024 * 64; // 64KB locals
                             let locals_ptr = unsafe { crate::memory::malloc(locals_size) } as *mut u128;
 
                             let mut ctx = crate::wasm::aot::runtime::AotContext {
