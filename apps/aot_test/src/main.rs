@@ -11,6 +11,7 @@ mod atomic_tests;
 mod abi_tests;
 mod int_tests;
 mod float_tests;
+mod control_flow_tests;
 
 pub fn main() {
     println!("==================== Starting Comprehensive AOT Compiler Test Suite...");
@@ -23,7 +24,7 @@ pub fn main() {
     failed += test_i64_arithmetic();
     failed += test_f32_math();
     failed += test_f64_math();
-    failed += test_control_flow();
+    failed += control_flow_tests::test_complex_control_flow();
     failed += test_memory_bounds();
     failed += test_conversions();
     failed += test_simd_basic();
@@ -147,39 +148,6 @@ fn test_f64_math() -> i32 {
     }
 
     if errors == 0 { println!("==================== f64 Math: OK"); }
-    errors
-}
-
-#[inline(never)]
-fn test_control_flow() -> i32 {
-    println!("==================== Testing Control Flow (Recursion & Loops)...");
-    let mut errors = 0;
-
-    fn fib(n: i32) -> i32 {
-        if n <= 1 { n }
-        else { fib(n - 1) + fib(n - 2) }
-    }
-
-    let f10 = fib(10);
-    if f10 != 55 {
-        println!("==================== ERROR: Recursion (Fibonacci) failed: fib(10)={}", f10);
-        errors += 1;
-    }
-
-    let mut sum = 0;
-    for i in 0..100 {
-        if i % 2 == 0 { continue; }
-        if i > 50 { break; }
-        sum += i;
-    }
-    // Sum of odd numbers 1, 3, ..., 49
-    // Count = 25, Avg = (1+49)/2 = 25. Sum = 25 * 25 = 625.
-    if sum != 625 {
-        println!("==================== ERROR: Loop with continue/break failed: sum={}", sum);
-        errors += 1;
-    }
-
-    if errors == 0 { println!("==================== Control Flow: OK"); }
     errors
 }
 

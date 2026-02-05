@@ -210,7 +210,7 @@ impl<'a> AotCompiler<'a> {
             Instruction::Drop => { self.emitter.add_reg_imm32(Reg::RSP, 16); self.stack_depth -= 1; }
             Instruction::Select => {
                 self.emitter.pop_wasm_stack(Reg::RCX); // condition
-                self.emitter.test_reg_reg(Reg::RCX, Reg::RCX);
+                self.emitter.test_reg32_reg32(Reg::RCX, Reg::RCX);
                 let else_label = self.emitter.new_label();
                 self.emitter.jcc_label(0x84, else_label);
                 
@@ -519,8 +519,8 @@ impl<'a> AotCompiler<'a> {
                 self.emitter.push_v128(XmmReg::XMM0);
             }
 
-            Instruction::F32Min => self.emit_min_max_f32(true),
-            Instruction::F32Max => self.emit_min_max_f32(false),
+            Instruction::F32Min => self.emit_trampoline_binop_f32(crate::wasm::aot::trampoline::aot_f32_min as usize),
+            Instruction::F32Max => self.emit_trampoline_binop_f32(crate::wasm::aot::trampoline::aot_f32_max as usize),
             Instruction::F32Copysign => {
                 self.emitter.pop_v128(XmmReg::XMM1);
                 self.emitter.pop_v128(XmmReg::XMM0);
@@ -915,7 +915,7 @@ impl<'a> AotCompiler<'a> {
             }
             Instruction::BrIf(label_idx) => {
                 self.emitter.pop_wasm_stack(Reg::RAX);
-                self.emitter.test_reg_reg(Reg::RAX, Reg::RAX);
+                self.emitter.test_reg32_reg32(Reg::RAX, Reg::RAX);
                 self.stack_depth -= 1;
                 let skip_label = self.emitter.new_label();
                 self.emitter.jcc_label(0x84, skip_label);
@@ -932,7 +932,7 @@ impl<'a> AotCompiler<'a> {
                 self.emitter.pop_wasm_stack(Reg::RAX);
                 self.stack_depth -= 1;
                 for (i, target) in targets.iter().enumerate() {
-                    self.emitter.cmp_reg_imm32(Reg::RAX, i as u32);
+                    self.emitter.cmp_reg32_imm32(Reg::RAX, i as u32);
                     let skip_next = self.emitter.new_label();
                     self.emitter.jcc_label(0x85, skip_next);
                     let target_idx = self.control_stack.len() - 1 - *target as usize;
@@ -1226,56 +1226,16 @@ impl<'a> AotCompiler<'a> {
         if check_parity {
             // Ordered comparison: result is true if (cond) AND (NOT unordered)
             self.emitter.emit_u8(0x0F); self.emitter.emit_u8(set_opcode); self.emitter.emit_u8(0xC0);
-            self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0x9A); self.emitter.emit_u8(0xC2); // SETNP DL
+            self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0x9B); self.emitter.emit_u8(0xC2); // SETNP DL
             self.emitter.and_reg_reg(Reg::RAX, Reg::RDX);
         } else {
             // Unordered comparison (Ne): result is true if (cond) OR (unordered)
             self.emitter.emit_u8(0x0F); self.emitter.emit_u8(set_opcode); self.emitter.emit_u8(0xC0);
-            self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0x9B); self.emitter.emit_u8(0xC2); // SETP DL
+            self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0x9A); self.emitter.emit_u8(0xC2); // SETP DL
             self.emitter.or_reg_reg(Reg::RAX, Reg::RDX);
         }
         self.emitter.emit_u8(0x48); self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0xB6); self.emitter.emit_u8(0xC0);
         self.emitter.push_wasm_stack(Reg::RAX);
-        self.stack_depth -= 1;
-    }
-
-    fn emit_min_max_f32(&mut self, is_min: bool) {
-        self.emitter.pop_v128(XmmReg::XMM1); // b
-        self.emitter.pop_v128(XmmReg::XMM0); // a
-        
-        let nan_label = self.emitter.new_label();
-        let equal_label = self.emitter.new_label();
-        let end_label = self.emitter.new_label();
-        
-        self.emitter.ucomiss_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1);
-        self.emitter.jcc_label(0x8A, nan_label); // Jump if parity set (NaN)
-        self.emitter.jcc_label(0x84, equal_label); // Jump if equal
-        
-        if is_min {
-            self.emitter.jcc_label(0x82, end_label); // a < b, already in XMM0
-            self.emitter.movups_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1); // b is smaller
-        } else {
-            self.emitter.jcc_label(0x87, end_label); // a > b, already in XMM0
-            self.emitter.movups_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1); // b is larger
-        }
-        self.emitter.jmp_label(end_label);
-        
-        self.emitter.bind_label(nan_label);
-        self.emitter.addss_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1); // result is NaN
-        self.emitter.jmp_label(end_label);
-        
-        self.emitter.bind_label(equal_label);
-        self.emitter.movd_reg_xmm(Reg::RAX, XmmReg::XMM0);
-        self.emitter.movd_reg_xmm(Reg::RDX, XmmReg::XMM1);
-        if is_min {
-            self.emitter.or_reg32_reg32(Reg::RAX, Reg::RDX); // Min(0, -0) -> -0
-        } else {
-            self.emitter.and_reg32_reg32(Reg::RAX, Reg::RDX); // Max(0, -0) -> 0
-        }
-        self.emitter.movd_xmm_reg(XmmReg::XMM0, Reg::RAX);
-        
-        self.emitter.bind_label(end_label);
-        self.emitter.push_v128(XmmReg::XMM0);
         self.stack_depth -= 1;
     }
 
