@@ -4,97 +4,6 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use std::fs::File;
 use std::io::{Read, Write};
-use std::wasm::{validate, Linker, Store};
-
-pub fn run_wasm(path: String, args: Vec<String>, root_path: Option<String>, use_aot: bool) {
-    let msg = if use_aot {
-        format!("WASM: Starting WASI App (AOT): {}...\n", path)
-    } else {
-        format!("WASM: Starting WASI App: {}...\n", path)
-    };
-    std::os::file_write(1, msg.as_bytes());
-
-    if let Ok(mut file) = File::open(&path) {
-        let size = file.size();
-        let mut buffer = Vec::with_capacity(size);
-        if file.read_to_end(&mut buffer).is_ok() {
-            unsafe {
-                std::wasm::wasi::ICRNL = true;
-            }
-            match validate(&buffer) {
-                Ok(validation_info) => {
-                    let mut store = Store::new(());
-                    store.aot_enabled = use_aot;
-                    let mut linker = Linker::new();
-
-                    let root = root_path.unwrap_or_else(|| String::from("@0xE0"));
-                    store.wasi_ctx = Some(std::wasm::wasi::WasiCtx::new(
-                        args,
-                        root,
-                        &[(0, 0), (1, 1), (2, 2)],
-                    ));
-
-                    std::wasm::wasi::create_wasi_imports(&mut linker, &mut store);
-                    std::wasm::wasi::create_wasi_p2_imports(&mut linker, &mut store);
-
-                    let res = if let Some(component) = &validation_info.component {
-                        std::wasm::interpreter::component_executor::instantiate_component(
-                            &mut store, &linker, component, &buffer,
-                        )
-                        .map(|_| ())
-                    } else {
-                        linker
-                            .module_instantiate_unchecked(&mut store, &validation_info, None)
-                            .and_then(|instance| {
-                                let entry_point = store
-                                    .instance_export_unchecked(instance.module_addr, "run")
-                                    .ok()
-                                    .and_then(|e| e.as_func())
-                                    .or_else(|| {
-                                        store
-                                            .instance_export_unchecked(instance.module_addr, "_start")
-                                            .ok()
-                                            .and_then(|e| e.as_func())
-                                    });
-
-                                if let Some(func_addr) = entry_point {
-                                    store.invoke_unchecked(func_addr, Vec::new(), None).map(|_| ())
-                                } else {
-                                    Ok(())
-                                }
-                            })
-                    };
-
-                    if let Err(e) = res {
-                        match e {
-                            std::wasm::RuntimeError::HostFunctionHaltedExecution(0) => {
-                                // Normal exit
-                            }
-                            std::wasm::RuntimeError::HostFunctionHaltedExecution(code) => {
-                                let msg = format!("WASM: Process exited with code {}\n", code);
-                                std::os::file_write(1, msg.as_bytes());
-                            }
-                            _ => {
-                                let msg = format!("WASM: Execution error: {:?}\n", e);
-                                std::os::file_write(1, msg.as_bytes());
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    let msg = format!("WASM: Validation error: {:?}\n", e);
-                    std::os::file_write(1, msg.as_bytes());
-                }
-            }
-            unsafe {
-                std::wasm::wasi::ICRNL = false;
-            }
-        }
-    } else {
-        let msg = format!("WASM: WASM file not found at {}\n", path);
-        std::os::file_write(1, msg.as_bytes());
-    }
-}
 
 pub fn execute_builtin(
     cmd: &str,
@@ -164,7 +73,8 @@ pub fn execute_builtin(
                 }
             }
 
-            run_wasm(prog_path, actual_args, root_path, use_aot);
+            let root = root_path.unwrap_or_else(|| String::from("@0xE0"));
+            std::wasm::run_with_args(&prog_path, actual_args, &root, &[(0, 0), (1, 1), (2, 2)], use_aot);
         } else {
             std::os::file_write(
                 out_fd,

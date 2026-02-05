@@ -15,77 +15,6 @@ use std::io::Write;
 use crate::buffer::TerminalBuffer;
 use crate::types::{Cell, TermAction};
 
-fn run_wasm(path: &str, fds: [(u8, u8); 3]) {
-    use alloc::vec;
-    use alloc::vec::Vec;
-    use alloc::string::ToString;
-    use alloc::string::String;
-    use std::wasm::{validate, Linker, Store};
-    use std::io::Read;
-
-    if let Ok(mut file) = File::open(path) {
-        let size = file.size();
-        let mut buffer = Vec::with_capacity(size);
-        if file.read_to_end(&mut buffer).is_ok() {
-            std::debugln!("[term] WASM: Starting {}...", path);
-            unsafe { std::wasm::wasi::ICRNL = true; }
-            match validate(&buffer) {
-                Ok(validation_info) => {
-                    let mut store = Store::new(());
-                    let mut linker = Linker::new();
-
-                    std::wasm::wasi::create_wasi_imports(&mut linker, &mut store);
-                    std::wasm::wasi::create_wasi_p2_imports(&mut linker, &mut store);
-
-                    store.wasi_ctx = Some(std::wasm::wasi::WasiCtx::new(vec![path.to_string()], String::from("@0xE0"), &fds));
-
-                    if let Some(component) = &validation_info.component {
-                        let _ = std::wasm::interpreter::component_executor::instantiate_component(
-                            &mut store, &linker, component, &buffer,
-                        );
-                    } else {
-                        match linker.module_instantiate_unchecked(&mut store, &validation_info, None) {
-                            Ok(instance) => {
-                                let entry_point = store
-                                    .instance_export_unchecked(instance.module_addr, "run")
-                                    .ok()
-                                    .and_then(|e| e.as_func())
-                                    .or_else(|| {
-                                        store
-                                            .instance_export_unchecked(instance.module_addr, "_start")
-                                            .ok()
-                                            .and_then(|e| e.as_func())
-                                    });
-
-                                if let Some(func_addr) = entry_point {
-                                    match store.invoke_unchecked(func_addr, Vec::new(), None) {
-                                        Ok(_) => {},
-                                        Err(e) => {
-                                            std::debugln!("[term] WASM: Invoke error: {:?}", e);
-                                        }
-                                    }
-                                } else {
-                                    std::debugln!("[term] WASM: No entry point (run or _start) found.");
-                                }
-                            }
-                            Err(e) => {
-                                std::debugln!("[term] WASM: Instantiation error: {:?}", e);
-                            }
-                        }
-                    }
-                    std::debugln!("[term] WASM: Finished {}.", path);
-                }
-                Err(e) => {
-                    std::debugln!("[term] WASM validation error: {:?}", e);
-                }
-            }
-            unsafe { std::wasm::wasi::ICRNL = false; }
-        }
-    } else {
-        std::debugln!("[term] Could not open {}", path);
-    }
-}
-
 static mut TERM_READ_FD: usize = 0;
 static mut TERM_WRITE_FD: usize = 0;
 
@@ -172,14 +101,16 @@ fn main() {
     std::os::pipe(&mut fds_in);
     unsafe { TERM_WRITE_FD = fds_in[1] as usize; }
 
-    let fds_map = [
+    let fds_map: [(u8, u8); 3] = [
         (0, fds_in[0] as u8),
         (1, fds_out[1] as u8),
         (2, fds_out[1] as u8),
     ];
 
     std::thread::spawn(move || {
-        run_wasm("@0xE0/sys/bin/shell.wasm", fds_map);
+        unsafe { std::wasm::wasi::ICRNL = true; }
+        std::wasm::run("@0xE0/sys/bin/shell.wasm", "@0xE0", &fds_map, false);
+        unsafe { std::wasm::wasi::ICRNL = false; }
     });
 
 

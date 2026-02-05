@@ -848,8 +848,10 @@ impl<'a> AotCompiler<'a> {
                     self.emitter.call_reg(Reg::RAX);
                     self.emitter.add_reg_imm32(Reg::RSP, 8);
                     self.emitter.pop_reg(Reg::RDI);
+                    self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16);
                     self.emitter.mov_reg_reg(Reg::RSP, Reg::RAX);
                 } else {
+                    self.emitter.mov_reg_reg(Reg::RBX, Reg::RDI);
                     let label = self.func_labels[idx];
                     self.emitter.emit_u8(0xE8);
                     let pos = self.emitter.code.len();
@@ -857,6 +859,8 @@ impl<'a> AotCompiler<'a> {
                     self.emitter.relocs.push(crate::wasm::aot::emitter::Reloc {
                         pos, label_id: label, kind: crate::wasm::aot::emitter::RelocKind::Call32
                     });
+                    self.emitter.mov_reg_reg(Reg::RDI, Reg::RBX);
+                    self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16);
                     self.emitter.mov_reg_reg(Reg::RSP, Reg::RAX);
                 }
                 self.stack_depth = (self.stack_depth as isize + result_count as isize - param_count as isize) as usize;
@@ -880,7 +884,10 @@ impl<'a> AotCompiler<'a> {
                 self.emitter.test_reg_reg(Reg::RAX, Reg::RAX);
                 self.emitter.jcc_label(0x84, self.trap_label);
                 
+                self.emitter.mov_reg_reg(Reg::RBX, Reg::RDI);
                 self.emitter.call_reg(Reg::RAX);
+                self.emitter.mov_reg_reg(Reg::RDI, Reg::RBX);
+                self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16);
                 self.emitter.mov_reg_reg(Reg::RSP, Reg::RAX);
                 self.stack_depth = (self.stack_depth as isize - 1 + result_count as isize - param_count as isize) as usize;
             }
