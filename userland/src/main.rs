@@ -3,9 +3,9 @@
 /*
    1. Integer Arithmetic Edge Cases (Done)
    2. Floating Point Precision & Rounding (Done)
-   3. Complex Control Flow
-   4. Memory & Bulk Operations
-   5. Tables & Globals
+   3. Complex Control Flow (Done)
+   4. Memory & Bulk Operations (Done)
+   5. Tables & Globals (Done)
    6. Multi-Value & ABI Stress
 
 */

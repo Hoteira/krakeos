@@ -185,6 +185,8 @@ pub enum Instruction {
     I64ReinterpretF64,
     F32ReinterpretI32,
     F64ReinterpretI64,
+    RefNull(crate::wasm::common::reader::types::RefType),
+    RefIsNull,
     TableGet(TableIdx),
     TableSet(TableIdx),
     TableSize(TableIdx),
@@ -275,6 +277,8 @@ impl WasmReadable for Instruction {
             I64_STORE8 => Ok(Instruction::I64Store8(MemArg::read(wasm)?)),
             I64_STORE16 => Ok(Instruction::I64Store16(MemArg::read(wasm)?)),
             I64_STORE32 => Ok(Instruction::I64Store32(MemArg::read(wasm)?)),
+            REF_NULL => Ok(Instruction::RefNull(crate::wasm::common::reader::types::RefType::read(wasm)?)),
+            REF_IS_NULL => Ok(Instruction::RefIsNull),
             MEMORY_SIZE => {
                 wasm.read_u8()?;
                 Ok(Instruction::MemorySize)
