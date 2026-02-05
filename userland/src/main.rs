@@ -60,7 +60,7 @@ pub fn main() {
 
     println!("Starting WASM Apps...");
 
-    run_wasm("@0xE0/apps/aot_test.wasm", true);
+    run_wasm("@0xE0/apps/aot_test.wasm", false);
 
 
     /*std::thread::spawn(|| {
