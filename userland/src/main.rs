@@ -1,5 +1,15 @@
 #![no_std]
 
+/*
+   1. Integer Arithmetic Edge Cases (Done)
+   2. Floating Point Precision & Rounding (Done)
+   3. Complex Control Flow
+   4. Memory & Bulk Operations
+   5. Tables & Globals
+   6. Multi-Value & ABI Stress
+
+*/
+
 extern crate alloc;
 use alloc::string::{String, ToString};
 use inkui::{Color, Size, Widget, Window};
