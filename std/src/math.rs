@@ -114,35 +114,19 @@ impl FloatMath for f64 {
     }
 
     fn min(self, other: Self) -> Self {
-        if self.is_nan() {
-            self
-        } else if other.is_nan() {
-            other
-        } else if self == 0.0 && other == 0.0 {
-            if self.to_bits() >> 63 == 1 || other.to_bits() >> 63 == 1 {
-                -0.0
-            } else {
-                0.0
-            }
-        } else {
-            if self < other { self } else { other }
-        }
+        if self.is_nan() { return self; }
+        if other.is_nan() { return other; }
+        if self < other { return self; }
+        if other < self { return other; }
+        Self::from_bits(self.to_bits() | other.to_bits())
     }
 
     fn max(self, other: Self) -> Self {
-        if self.is_nan() {
-            self
-        } else if other.is_nan() {
-            other
-        } else if self == 0.0 && other == 0.0 {
-            if self.to_bits() >> 63 == 0 || other.to_bits() >> 63 == 0 {
-                0.0
-            } else {
-                -0.0
-            }
-        } else {
-            if self > other { self } else { other }
-        }
+        if self.is_nan() { return self; }
+        if other.is_nan() { return other; }
+        if self > other { return self; }
+        if other > self { return other; }
+        Self::from_bits(self.to_bits() & other.to_bits())
     }
 }
 
@@ -208,35 +192,19 @@ impl FloatMath for f32 {
     }
 
     fn min(self, other: Self) -> Self {
-        if self.is_nan() {
-            self
-        } else if other.is_nan() {
-            other
-        } else if self == 0.0 && other == 0.0 {
-            if self.to_bits() >> 31 == 1 || other.to_bits() >> 31 == 1 {
-                -0.0
-            } else {
-                0.0
-            }
-        } else {
-            if self < other { self } else { other }
-        }
+        if self.is_nan() { return self; }
+        if other.is_nan() { return other; }
+        if self < other { return self; }
+        if other < self { return other; }
+        Self::from_bits(self.to_bits() | other.to_bits())
     }
 
     fn max(self, other: Self) -> Self {
-        if self.is_nan() {
-            self
-        } else if other.is_nan() {
-            other
-        } else if self == 0.0 && other == 0.0 {
-            if self.to_bits() >> 31 == 0 || other.to_bits() >> 31 == 0 {
-                0.0
-            } else {
-                -0.0
-            }
-        } else {
-            if self > other { self } else { other }
-        }
+        if self.is_nan() { return self; }
+        if other.is_nan() { return other; }
+        if self > other { return self; }
+        if other > self { return other; }
+        Self::from_bits(self.to_bits() & other.to_bits())
     }
 }
 

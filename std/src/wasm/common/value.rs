@@ -53,52 +53,33 @@ impl Div for F32 {
 
 impl F32 {
     pub fn abs(&self) -> Self {
-        Self(self.0.abs())
+        Self::from_bits(self.to_bits() & 0x7FFFFFFF)
     }
     pub fn neg(&self) -> Self {
-        Self(-self.0)
+        Self::from_bits(self.to_bits() ^ 0x80000000)
     }
     pub fn ceil(&self) -> Self {
-        if self.0.is_nan() {
-            return Self(f32::NAN);
-        }
+        if self.is_nan() { return *self; }
         Self(self.0.ceil())
     }
     pub fn floor(&self) -> Self {
-        if self.0.is_nan() {
-            return Self(f32::NAN);
-        }
+        if self.is_nan() { return *self; }
         Self(self.0.floor())
     }
     pub fn trunc(&self) -> Self {
-        if self.0.is_nan() {
-            return Self(f32::NAN);
-        }
+        if self.is_nan() { return *self; }
         Self(self.0.trunc())
     }
     pub fn nearest(&self) -> Self {
-        if self.0.is_nan() {
-            return Self(f32::NAN);
-        }
-        let val = self.0;
-        if val.abs() >= (1u32 << 23) as f32 {
-            return Self(val);
-        }
-        let floor = val.floor();
-        let ceil = val.ceil();
-        let diff_floor = (val - floor).abs();
-        let diff_ceil = (ceil - val).abs();
-        if diff_floor < diff_ceil {
-            Self(floor)
-        } else if diff_ceil < diff_floor {
-            Self(ceil)
-        } else {
-            if floor % 2.0 == 0.0 {
-                Self(floor)
-            } else {
-                Self(ceil)
+        if self.is_nan() { return *self; }
+        let f = self.0;
+        let round = f.round();
+        if (f - round).abs() == 0.5 {
+            if round % 2.0 != 0.0 {
+                return Self(round - f.signum());
             }
         }
+        Self(round)
     }
     pub fn round(&self) -> Self {
         Self(self.0.round())
@@ -107,37 +88,23 @@ impl F32 {
         Self(self.0.sqrt())
     }
     pub fn min(&self, rhs: Self) -> Self {
-        if self.0.is_nan() {
-            *self
-        } else if rhs.0.is_nan() {
-            rhs
-        } else if self.0 == 0.0 && rhs.0 == 0.0 {
-            if self.to_bits() >> 31 == 1 || rhs.to_bits() >> 31 == 1 {
-                Self(-0.0)
-            } else {
-                Self(0.0)
-            }
-        } else {
-            Self(self.0.min(rhs.0))
-        }
+        if self.is_nan() { return *self; }
+        if rhs.is_nan() { return rhs; }
+        let (a, b) = (self.0, rhs.0);
+        if a < b { return *self; }
+        if b < a { return rhs; }
+        Self::from_bits(self.to_bits() | rhs.to_bits())
     }
     pub fn max(&self, rhs: Self) -> Self {
-        if self.0.is_nan() {
-            *self
-        } else if rhs.0.is_nan() {
-            rhs
-        } else if self.0 == 0.0 && rhs.0 == 0.0 {
-            if self.to_bits() >> 31 == 0 || rhs.to_bits() >> 31 == 0 {
-                Self(0.0)
-            } else {
-                Self(-0.0)
-            }
-        } else {
-            Self(self.0.max(rhs.0))
-        }
+        if self.is_nan() { return *self; }
+        if rhs.is_nan() { return rhs; }
+        let (a, b) = (self.0, rhs.0);
+        if a > b { return *self; }
+        if b > a { return rhs; }
+        Self::from_bits(self.to_bits() & rhs.to_bits())
     }
     pub fn copysign(&self, rhs: Self) -> Self {
-        Self(self.0.copysign(rhs.0))
+        Self::from_bits((self.to_bits() & 0x7FFFFFFF) | (rhs.to_bits() & 0x80000000))
     }
     pub fn from_bits(other: u32) -> Self {
         Self(f32::from_bits(other))
@@ -222,52 +189,33 @@ impl Div for F64 {
 
 impl F64 {
     pub fn abs(&self) -> Self {
-        Self(self.0.abs())
+        Self::from_bits(self.to_bits() & 0x7FFFFFFFFFFFFFFF)
     }
     pub fn neg(&self) -> Self {
-        Self(-self.0)
+        Self::from_bits(self.to_bits() ^ 0x8000000000000000)
     }
     pub fn ceil(&self) -> Self {
-        if self.0.is_nan() {
-            return Self(f64::NAN);
-        }
+        if self.is_nan() { return *self; }
         Self(self.0.ceil())
     }
     pub fn floor(&self) -> Self {
-        if self.0.is_nan() {
-            return Self(f64::NAN);
-        }
+        if self.is_nan() { return *self; }
         Self(self.0.floor())
     }
     pub fn trunc(&self) -> Self {
-        if self.0.is_nan() {
-            return Self(f64::NAN);
-        }
+        if self.is_nan() { return *self; }
         Self(self.0.trunc())
     }
     pub fn nearest(&self) -> Self {
-        if self.0.is_nan() {
-            return Self(f64::NAN);
-        }
-        let val = self.0;
-        if val.abs() >= (1u64 << 52) as f64 {
-            return Self(val);
-        }
-        let floor = val.floor();
-        let ceil = val.ceil();
-        let diff_floor = (val - floor).abs();
-        let diff_ceil = (ceil - val).abs();
-        if diff_floor < diff_ceil {
-            Self(floor)
-        } else if diff_ceil < diff_floor {
-            Self(ceil)
-        } else {
-            if floor % 2.0 == 0.0 {
-                Self(floor)
-            } else {
-                Self(ceil)
+        if self.is_nan() { return *self; }
+        let f = self.0;
+        let round = f.round();
+        if (f - round).abs() == 0.5 {
+            if round % 2.0 != 0.0 {
+                return Self(round - f.signum());
             }
         }
+        Self(round)
     }
     pub fn round(&self) -> Self {
         Self(self.0.round())
@@ -276,37 +224,23 @@ impl F64 {
         Self(self.0.sqrt())
     }
     pub fn min(&self, rhs: Self) -> Self {
-        if self.0.is_nan() {
-            *self
-        } else if rhs.0.is_nan() {
-            rhs
-        } else if self.0 == 0.0 && rhs.0 == 0.0 {
-            if self.to_bits() >> 63 == 1 || rhs.to_bits() >> 63 == 1 {
-                Self(-0.0)
-            } else {
-                Self(0.0)
-            }
-        } else {
-            Self(self.0.min(rhs.0))
-        }
+        if self.is_nan() { return *self; }
+        if rhs.is_nan() { return rhs; }
+        let (a, b) = (self.0, rhs.0);
+        if a < b { return *self; }
+        if b < a { return rhs; }
+        Self::from_bits(self.to_bits() | rhs.to_bits())
     }
     pub fn max(&self, rhs: Self) -> Self {
-        if self.0.is_nan() {
-            *self
-        } else if rhs.0.is_nan() {
-            rhs
-        } else if self.0 == 0.0 && rhs.0 == 0.0 {
-            if self.to_bits() >> 63 == 0 || rhs.to_bits() >> 63 == 0 {
-                Self(0.0)
-            } else {
-                Self(-0.0)
-            }
-        } else {
-            Self(self.0.max(rhs.0))
-        }
+        if self.is_nan() { return *self; }
+        if rhs.is_nan() { return rhs; }
+        let (a, b) = (self.0, rhs.0);
+        if a > b { return *self; }
+        if b > a { return rhs; }
+        Self::from_bits(self.to_bits() & rhs.to_bits())
     }
     pub fn copysign(&self, rhs: Self) -> Self {
-        Self(self.0.copysign(rhs.0))
+        Self::from_bits((self.to_bits() & 0x7FFFFFFFFFFFFFFF) | (rhs.to_bits() & 0x8000000000000000))
     }
     pub fn from_bits(other: u64) -> Self {
         Self(f64::from_bits(other))

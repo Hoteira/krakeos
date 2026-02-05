@@ -5,6 +5,8 @@ use crate::wasm::aot::runtime::AotContext;
 use crate::wasm::interpreter::store::Store;
 use crate::wasm::interpreter::store::instances::FuncInst;
 use crate::rust_alloc::vec::Vec;
+use crate::rust_alloc::format;
+use crate::os::debug_print;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_trap() -> ! {
@@ -106,16 +108,49 @@ pub extern "C" fn aot_f64_trunc(a: f64) -> f64 { a.trunc() }
 pub extern "C" fn aot_f64_nearest(a: f64) -> f64 { F64(a).nearest().0 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_f32_min(a: f32, b: f32) -> f32 { F32(a).min(F32(b)).0 }
+pub extern "C" fn aot_f32_min(a: f32, b: f32) -> f32 {
+    unsafe { crate::os::debug_print("AOT_F32_MIN CALLED\n"); }
+    let bits_a = a.to_bits();
+    let bits_b = b.to_bits();
+    if (bits_a & 0x7FFFFFFF) > 0x7F800000 { return a; }
+    if (bits_b & 0x7FFFFFFF) > 0x7F800000 { return b; }
+    if a < b { return a; }
+    if b < a { return b; }
+    f32::from_bits(bits_a | bits_b)
+}
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_f32_max(a: f32, b: f32) -> f32 { F32(a).max(F32(b)).0 }
+pub extern "C" fn aot_f32_max(a: f32, b: f32) -> f32 {
+    let bits_a = a.to_bits();
+    let bits_b = b.to_bits();
+    if (bits_a & 0x7FFFFFFF) > 0x7F800000 { return a; }
+    if (bits_b & 0x7FFFFFFF) > 0x7F800000 { return b; }
+    if a > b { return a; }
+    if b > a { return b; }
+    f32::from_bits(bits_a & bits_b)
+}
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_f32_copysign(a: f32, b: f32) -> f32 { a.copysign(b) }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_f64_min(a: f64, b: f64) -> f64 { F64(a).min(F64(b)).0 }
+pub extern "C" fn aot_f64_min(a: f64, b: f64) -> f64 {
+    let bits_a = a.to_bits();
+    let bits_b = b.to_bits();
+    if (bits_a & 0x7FFFFFFFFFFFFFFF) > 0x7FF0000000000000 { return a; }
+    if (bits_b & 0x7FFFFFFFFFFFFFFF) > 0x7FF0000000000000 { return b; }
+    if a < b { return a; }
+    if b < a { return b; }
+    f64::from_bits(bits_a | bits_b)
+}
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_f64_max(a: f64, b: f64) -> f64 { F64(a).max(F64(b)).0 }
+pub extern "C" fn aot_f64_max(a: f64, b: f64) -> f64 {
+    let bits_a = a.to_bits();
+    let bits_b = b.to_bits();
+    if (bits_a & 0x7FFFFFFFFFFFFFFF) > 0x7FF0000000000000 { return a; }
+    if (bits_b & 0x7FFFFFFFFFFFFFFF) > 0x7FF0000000000000 { return b; }
+    if a > b { return a; }
+    if b > a { return b; }
+    f64::from_bits(bits_a & bits_b)
+}
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_f64_copysign(a: f64, b: f64) -> f64 { a.copysign(b) }
 
