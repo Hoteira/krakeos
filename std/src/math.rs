@@ -22,30 +22,27 @@ const PI: f64 = 3.14159265358979323846;
 
 impl FloatMath for f64 {
     fn abs(self) -> Self {
-        if self < 0.0 { -self } else { self }
+        unsafe { core::intrinsics::fabsf64(self) }
     }
 
     fn floor(self) -> Self {
-        let i = self as i64;
-        if self < i as f64 { (i - 1) as f64 } else { i as f64 }
+        unsafe { core::intrinsics::floorf64(self) }
     }
 
     fn ceil(self) -> Self {
-        let i = self as i64;
-        if self > i as f64 { (i + 1) as f64 } else { i as f64 }
+        unsafe { core::intrinsics::ceilf64(self) }
     }
 
     fn round(self) -> Self {
-        (self + 0.5).floor()
+        unsafe { core::intrinsics::roundf64(self) }
     }
 
     fn trunc(self) -> Self {
-        self as i64 as f64
+        unsafe { core::intrinsics::truncf64(self) }
     }
 
     fn sqrt(self) -> Self {
-        if self < 0.0 { return f64::NAN; }
-        self.sqrt()
+        unsafe { core::intrinsics::sqrtf64(self) }
     }
 
     fn powf(self, exp: Self) -> Self {
@@ -151,25 +148,23 @@ impl FloatMath for f64 {
 
 impl FloatMath for f32 {
     fn abs(self) -> Self {
-        if self < 0.0 { -self } else { self }
+        unsafe { core::intrinsics::fabsf32(self) }
     }
 
     fn floor(self) -> Self {
-        let i = self as i32;
-        if self < i as f32 { (i - 1) as f32 } else { i as f32 }
+        unsafe { core::intrinsics::floorf32(self) }
     }
 
     fn ceil(self) -> Self {
-        let i = self as i32;
-        if self > i as f32 { (i + 1) as f32 } else { i as f32 }
+        unsafe { core::intrinsics::ceilf32(self) }
     }
 
     fn round(self) -> Self {
-        (self + 0.5).floor()
+        unsafe { core::intrinsics::roundf32(self) }
     }
 
     fn trunc(self) -> Self {
-        self as i32 as f32
+        unsafe { core::intrinsics::truncf32(self) }
     }
 
     fn sqrt(self) -> Self {
