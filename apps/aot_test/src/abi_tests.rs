@@ -60,7 +60,7 @@ fn result_stress() -> (i32, i32, i32, i32, f64, f64) {
 fn test_abi_result_stress() -> i32 {
     let (r1, r2, r3, r4, r5, r6) = result_stress();
     if r1 != 100 || r2 != 200 || r3 != 300 || r4 != 400 || r5 != 1.23 || r6 != 4.56 {
-        println!("Error: result_stress failed");
+        println!("Error: result_stress failed {} {} {} {} {} {}", r1 != 100, r2 != 200, r3 != 300, r4 != 400, r5 != 1.23, r6 != 4.56);
         return 1;
     }
     0

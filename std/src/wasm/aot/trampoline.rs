@@ -78,6 +78,32 @@ pub extern "C" fn aot_i64_ctz(a: u64) -> u64 { a.trailing_zeros() as u64 }
 pub extern "C" fn aot_i64_popcnt(a: u64) -> u64 { a.count_ones() as u64 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn aot_f32_eq(a: f32, b: f32) -> i32 { if a == b { 1 } else { 0 } }
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_f32_ne(a: f32, b: f32) -> i32 { if a != b { 1 } else { 0 } }
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_f32_lt(a: f32, b: f32) -> i32 { if a < b { 1 } else { 0 } }
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_f32_gt(a: f32, b: f32) -> i32 { if a > b { 1 } else { 0 } }
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_f32_le(a: f32, b: f32) -> i32 { if a <= b { 1 } else { 0 } }
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_f32_ge(a: f32, b: f32) -> i32 { if a >= b { 1 } else { 0 } }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_f64_eq(a: f64, b: f64) -> i32 { if a == b { 1 } else { 0 } }
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_f64_ne(a: f64, b: f64) -> i32 { if a != b { 1 } else { 0 } }
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_f64_lt(a: f64, b: f64) -> i32 { if a < b { 1 } else { 0 } }
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_f64_gt(a: f64, b: f64) -> i32 { if a > b { 1 } else { 0 } }
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_f64_le(a: f64, b: f64) -> i32 { if a <= b { 1 } else { 0 } }
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_f64_ge(a: f64, b: f64) -> i32 { if a >= b { 1 } else { 0 } }
+
+#[unsafe(no_mangle)]
 pub extern "C" fn aot_f32_abs(a: f32) -> f32 { a.abs() }
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_f32_neg(a: f32) -> f32 { -a }

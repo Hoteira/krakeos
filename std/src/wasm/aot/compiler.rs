@@ -339,15 +339,15 @@ impl<'a> AotCompiler<'a> {
             Instruction::I32Eqz => {
                 self.emitter.pop_wasm_stack(Reg::RAX);
                 self.emitter.test_reg32_reg32(Reg::RAX, Reg::RAX);
-                self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0x94); self.emitter.emit_u8(0xC0);
-                self.emitter.emit_u8(0x48); self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0xB6); self.emitter.emit_u8(0xC0);
+                self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0x94); self.emitter.emit_u8(0xC0); // SETZ AL
+                self.emitter.movzx_reg_reg8(Reg::RAX, Reg::RAX);
                 self.emitter.push_wasm_stack(Reg::RAX);
             }
             Instruction::I64Eqz => {
                 self.emitter.pop_wasm_stack(Reg::RAX);
                 self.emitter.test_reg_reg(Reg::RAX, Reg::RAX);
-                self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0x94); self.emitter.emit_u8(0xC0);
-                self.emitter.emit_u8(0x48); self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0xB6); self.emitter.emit_u8(0xC0);
+                self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0x94); self.emitter.emit_u8(0xC0); // SETZ AL
+                self.emitter.movzx_reg_reg8(Reg::RAX, Reg::RAX);
                 self.emitter.push_wasm_stack(Reg::RAX);
             }
             Instruction::I32Clz => {
@@ -416,19 +416,19 @@ impl<'a> AotCompiler<'a> {
             Instruction::I64GeS => self.emit_relop_i64(0x9D),
             Instruction::I64GeU => self.emit_relop_i64(0x93),
 
-            Instruction::F32Eq => self.emit_relop_f32(0x94, true),
-            Instruction::F32Ne => self.emit_relop_f32(0x95, false),
-            Instruction::F32Lt => self.emit_relop_f32(0x92, true),
-            Instruction::F32Gt => self.emit_relop_f32(0x97, true),
-            Instruction::F32Le => self.emit_relop_f32(0x96, true),
-            Instruction::F32Ge => self.emit_relop_f32(0x93, true),
+            Instruction::F32Eq => self.emit_trampoline_relop_f32(crate::wasm::aot::trampoline::aot_f32_eq as usize),
+            Instruction::F32Ne => self.emit_trampoline_relop_f32(crate::wasm::aot::trampoline::aot_f32_ne as usize),
+            Instruction::F32Lt => self.emit_trampoline_relop_f32(crate::wasm::aot::trampoline::aot_f32_lt as usize),
+            Instruction::F32Gt => self.emit_trampoline_relop_f32(crate::wasm::aot::trampoline::aot_f32_gt as usize),
+            Instruction::F32Le => self.emit_trampoline_relop_f32(crate::wasm::aot::trampoline::aot_f32_le as usize),
+            Instruction::F32Ge => self.emit_trampoline_relop_f32(crate::wasm::aot::trampoline::aot_f32_ge as usize),
 
-            Instruction::F64Eq => self.emit_relop_f64(0x94, true),
-            Instruction::F64Ne => self.emit_relop_f64(0x95, false),
-            Instruction::F64Lt => self.emit_relop_f64(0x92, true),
-            Instruction::F64Gt => self.emit_relop_f64(0x97, true),
-            Instruction::F64Le => self.emit_relop_f64(0x96, true),
-            Instruction::F64Ge => self.emit_relop_f64(0x93, true),
+            Instruction::F64Eq => self.emit_trampoline_relop_f64(crate::wasm::aot::trampoline::aot_f64_eq as usize),
+            Instruction::F64Ne => self.emit_trampoline_relop_f64(crate::wasm::aot::trampoline::aot_f64_ne as usize),
+            Instruction::F64Lt => self.emit_trampoline_relop_f64(crate::wasm::aot::trampoline::aot_f64_lt as usize),
+            Instruction::F64Gt => self.emit_trampoline_relop_f64(crate::wasm::aot::trampoline::aot_f64_gt as usize),
+            Instruction::F64Le => self.emit_trampoline_relop_f64(crate::wasm::aot::trampoline::aot_f64_le as usize),
+            Instruction::F64Ge => self.emit_trampoline_relop_f64(crate::wasm::aot::trampoline::aot_f64_ge as usize),
 
             Instruction::F32Add => self.emit_binop_f32(|e| e.addss_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1)),
             Instruction::F32Sub => self.emit_binop_f32(|e| e.subss_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1)),
@@ -1206,8 +1206,8 @@ impl<'a> AotCompiler<'a> {
         self.emitter.pop_wasm_stack(Reg::RBX);
         self.emitter.pop_wasm_stack(Reg::RAX);
         self.emitter.cmp_reg32_reg32(Reg::RAX, Reg::RBX);
-        self.emitter.emit_u8(0x0F); self.emitter.emit_u8(set_opcode); self.emitter.emit_u8(0xC0);
-        self.emitter.emit_u8(0x48); self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0xB6); self.emitter.emit_u8(0xC0);
+        self.emitter.emit_u8(0x0F); self.emitter.emit_u8(set_opcode); self.emitter.emit_u8(0xC0); // SETcc AL
+        self.emitter.movzx_reg_reg8(Reg::RAX, Reg::RAX);
         self.emitter.push_wasm_stack(Reg::RAX);
         self.stack_depth -= 1;
     }
@@ -1216,41 +1216,34 @@ impl<'a> AotCompiler<'a> {
         self.emitter.pop_wasm_stack(Reg::RBX);
         self.emitter.pop_wasm_stack(Reg::RAX);
         self.emitter.cmp_reg_reg(Reg::RAX, Reg::RBX);
-        self.emitter.emit_u8(0x0F); self.emitter.emit_u8(set_opcode); self.emitter.emit_u8(0xC0);
-        self.emitter.emit_u8(0x48); self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0xB6); self.emitter.emit_u8(0xC0);
+        self.emitter.emit_u8(0x0F); self.emitter.emit_u8(set_opcode); self.emitter.emit_u8(0xC0); // SETcc AL
+        self.emitter.movzx_reg_reg8(Reg::RAX, Reg::RAX);
         self.emitter.push_wasm_stack(Reg::RAX);
         self.stack_depth -= 1;
     }
 
-    fn emit_relop_f32(&mut self, set_opcode: u8, check_parity: bool) {
+    fn emit_trampoline_relop_f32(&mut self, func_ptr: usize) {
         self.emitter.pop_v128(XmmReg::XMM1);
         self.emitter.pop_v128(XmmReg::XMM0);
-        self.emitter.ucomiss_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1);
-        self.emit_fp_setcc(set_opcode, check_parity);
+        self.emitter.push_reg(Reg::RDI);
+        self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
+        self.emitter.mov_reg_imm64(Reg::RAX, func_ptr as u64);
+        self.emitter.call_reg(Reg::RAX);
+        self.emitter.add_reg_imm32(Reg::RSP, 8);
+        self.emitter.pop_reg(Reg::RDI);
+        self.emitter.push_wasm_stack(Reg::RAX);
+        self.stack_depth -= 1;
     }
 
-    fn emit_relop_f64(&mut self, set_opcode: u8, check_parity: bool) {
+    fn emit_trampoline_relop_f64(&mut self, func_ptr: usize) {
         self.emitter.pop_v128(XmmReg::XMM1);
         self.emitter.pop_v128(XmmReg::XMM0);
-        self.emitter.ucomisd_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1);
-        self.emit_fp_setcc(set_opcode, check_parity);
-    }
-
-    fn emit_fp_setcc(&mut self, set_opcode: u8, check_parity: bool) {
-        self.emitter.xor_reg_reg(Reg::RAX, Reg::RAX);
-        self.emitter.xor_reg_reg(Reg::RDX, Reg::RDX);
-        if check_parity {
-            // Ordered comparison: result is true if (cond) AND (NOT unordered)
-            self.emitter.emit_u8(0x0F); self.emitter.emit_u8(set_opcode); self.emitter.emit_u8(0xC0);
-            self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0x9B); self.emitter.emit_u8(0xC2); // SETNP DL
-            self.emitter.and_reg_reg(Reg::RAX, Reg::RDX);
-        } else {
-            // Unordered comparison (Ne): result is true if (cond) OR (unordered)
-            self.emitter.emit_u8(0x0F); self.emitter.emit_u8(set_opcode); self.emitter.emit_u8(0xC0);
-            self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0x9A); self.emitter.emit_u8(0xC2); // SETP DL
-            self.emitter.or_reg_reg(Reg::RAX, Reg::RDX);
-        }
-        self.emitter.emit_u8(0x48); self.emitter.emit_u8(0x0F); self.emitter.emit_u8(0xB6); self.emitter.emit_u8(0xC0);
+        self.emitter.push_reg(Reg::RDI);
+        self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
+        self.emitter.mov_reg_imm64(Reg::RAX, func_ptr as u64);
+        self.emitter.call_reg(Reg::RAX);
+        self.emitter.add_reg_imm32(Reg::RSP, 8);
+        self.emitter.pop_reg(Reg::RDI);
         self.emitter.push_wasm_stack(Reg::RAX);
         self.stack_depth -= 1;
     }
