@@ -379,6 +379,13 @@ impl X64Emitter {
         self.emit_modrm_mem_reg_xmm(dst, base, offset);
     }
 
+    pub fn movups_xmm_xmm(&mut self, dst: XmmReg, src: XmmReg) {
+        self.rex(false, dst as u8, 0, src as u8);
+        self.emit_u8(0x0F);
+        self.emit_u8(0x10);
+        self.modrm(3, dst as u8, src as u8);
+    }
+
     pub fn movups_mem_xmm(&mut self, base: Reg, offset: i32, src: XmmReg) {
         self.rex(false, src as u8, 0, base as u8);
         self.emit_u8(0x0F);

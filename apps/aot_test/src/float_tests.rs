@@ -55,12 +55,28 @@ fn test_min_max_edge_cases() -> i32 {
 
 #[inline(never)]
 fn wasm_f32_min(a: f32, b: f32) -> f32 {
-    a.min(b)
+    let bits_a = a.to_bits();
+    let bits_b = b.to_bits();
+    let is_nan_a = (bits_a & 0x7F800000) == 0x7F800000 && (bits_a & 0x007FFFFF) != 0;
+    let is_nan_b = (bits_b & 0x7F800000) == 0x7F800000 && (bits_b & 0x007FFFFF) != 0;
+    if is_nan_a { return a; }
+    if is_nan_b { return b; }
+    if a < b { return a; }
+    if b < a { return b; }
+    f32::from_bits(bits_a | bits_b)
 }
 
 #[inline(never)]
 fn wasm_f32_max(a: f32, b: f32) -> f32 {
-    a.max(b)
+    let bits_a = a.to_bits();
+    let bits_b = b.to_bits();
+    let is_nan_a = (bits_a & 0x7F800000) == 0x7F800000 && (bits_a & 0x007FFFFF) != 0;
+    let is_nan_b = (bits_b & 0x7F800000) == 0x7F800000 && (bits_b & 0x007FFFFF) != 0;
+    if is_nan_a { return a; }
+    if is_nan_b { return b; }
+    if a > b { return a; }
+    if b > a { return b; }
+    f32::from_bits(bits_a & bits_b)
 }
 
 fn test_trunc_sat() -> i32 {
