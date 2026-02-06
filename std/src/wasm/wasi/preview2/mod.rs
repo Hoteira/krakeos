@@ -19,10 +19,37 @@ pub mod filesystem;
 pub mod io;
 pub mod random;
 pub mod sockets;
+pub mod terminal;
 
 pub fn create_wasi_p2_imports<T: Config>(linker: &mut Linker, store: &mut Store<'_, T>) {
     if store.wasi_ctx.is_none() {
         store.wasi_ctx = Some(crate::wasm::wasi::ctx::WasiCtx::default());
+    }
+
+    // wasi:cli/terminal-input@0.2.0
+    {
+        let module = "wasi:cli/terminal-input@0.2.0";
+        define(linker, store, module, "[resource-drop]terminal-input", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
+    }
+    // wasi:cli/terminal-output@0.2.0
+    {
+        let module = "wasi:cli/terminal-output@0.2.0";
+        define(linker, store, module, "[resource-drop]terminal-output", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
+    }
+    // wasi:cli/terminal-stdin@0.2.0
+    {
+        let module = "wasi:cli/terminal-stdin@0.2.0";
+        define(linker, store, module, "get-terminal-stdin", vec![], vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], terminal::get_terminal_stdin);
+    }
+    // wasi:cli/terminal-stdout@0.2.0
+    {
+        let module = "wasi:cli/terminal-stdout@0.2.0";
+        define(linker, store, module, "get-terminal-stdout", vec![], vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], terminal::get_terminal_stdout);
+    }
+    // wasi:cli/terminal-stderr@0.2.0
+    {
+        let module = "wasi:cli/terminal-stderr@0.2.0";
+        define(linker, store, module, "get-terminal-stderr", vec![], vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], terminal::get_terminal_stderr);
     }
 
     // wasi:cli/stdout@0.2.0
@@ -109,12 +136,18 @@ pub fn create_wasi_p2_imports<T: Config>(linker: &mut Linker, store: &mut Store<
     // wasi:cli/environment@0.2.0
     {
         let module = "wasi:cli/environment@0.2.0";
-        define(linker, store, module, "get-environment", vec![ValType::NumType(NumType::I32)], vec![], cli::get_environment);
+        define(linker, store, module, "get-environment", vec![], vec![ValType::NumType(NumType::I32)], cli::get_environment); // Returns Result<list<...>>
+        define(linker, store, module, "get-arguments", vec![], vec![ValType::NumType(NumType::I32)], cli::get_arguments);
     }
     // wasi:filesystem/preopens@0.2.0
     {
         let module = "wasi:filesystem/preopens@0.2.0";
         define(linker, store, module, "get-directories", vec![ValType::NumType(NumType::I32)], vec![], filesystem::get_directories);
+    }
+    // wasi:random/insecure-seed@0.2.0
+    {
+        let module = "wasi:random/insecure-seed@0.2.0";
+        define(linker, store, module, "insecure-seed", vec![], vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)], random::insecure_seed);
     }
     // krakeos:core/system@0.2.0
     {
@@ -135,7 +168,28 @@ pub fn create_wasi_p2_imports<T: Config>(linker: &mut Linker, store: &mut Store<
         define(linker, store, module, "[method]descriptor.read-via-stream", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], filesystem::filesystem_types_read_via_stream);
         define(linker, store, module, "[method]descriptor.write-via-stream", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], filesystem::filesystem_types_write_via_stream);
         define(linker, store, module, "[method]descriptor.append-via-stream", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], filesystem::filesystem_types_append_via_stream);
+        
+        define(linker, store, module, "[method]descriptor.type", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], filesystem::descriptor_type);
+        define(linker, store, module, "[method]descriptor.stat", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], filesystem::descriptor_stat);
+        define(linker, store, module, "[method]descriptor.open-at", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], filesystem::descriptor_open_at);
+        define(linker, store, module, "[method]descriptor.read-directory", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], filesystem::descriptor_read_directory);
+        define(linker, store, module, "[method]directory-entry-stream.read-directory-entry", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], filesystem::directory_entry_stream_read_directory_entry);
+        define(linker, store, module, "[method]descriptor.stat-at", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], filesystem::descriptor_stat_at);
+        define(linker, store, module, "[method]descriptor.set-times-at", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], filesystem::descriptor_set_times_at);
+        define(linker, store, module, "[method]descriptor.link-at", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], filesystem::descriptor_link_at);
+        define(linker, store, module, "[method]descriptor.unlink-file-at", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], filesystem::descriptor_unlink_file_at);
+        define(linker, store, module, "[method]descriptor.remove-directory-at", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], filesystem::descriptor_remove_directory_at);
+        define(linker, store, module, "[method]descriptor.rename-at", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], filesystem::descriptor_rename_at);
+        define(linker, store, module, "[method]descriptor.symlink-at", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], filesystem::descriptor_symlink_at);
+        define(linker, store, module, "[method]descriptor.readlink-at", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], filesystem::descriptor_readlink_at);
+        define(linker, store, module, "[method]descriptor.sync", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], filesystem::descriptor_sync);
+        define(linker, store, module, "[method]descriptor.set-size", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I32)], filesystem::descriptor_set_size);
+        define(linker, store, module, "[method]descriptor.set-times", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], filesystem::descriptor_set_times);
+        define(linker, store, module, "[method]descriptor.advise", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], filesystem::descriptor_advise);
+        define(linker, store, module, "[method]descriptor.create-directory-at", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], filesystem::descriptor_create_directory_at);
+
         define(linker, store, module, "[resource-drop]descriptor", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
+        define(linker, store, module, "[resource-drop]directory-entry-stream", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
 
         // Also add __wasm_call_dtors to env for compatibility
         let func_type = FuncType { params: ResultType { valtypes: vec![] }, returns: ResultType { valtypes: vec![] } };

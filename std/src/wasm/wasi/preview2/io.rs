@@ -47,52 +47,67 @@ pub fn stream_read<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Res
         let wasi = store.wasi_ctx.as_ref().ok_or(HaltExecutionError(1))?;
         match wasi.resource_table.get(&handle) {
             Some(WasiResource::InputStream(s)) => match s {
-                InputStreamSource::File(fd) => Some(*fd),
-                InputStreamSource::Stdin => Some(0),
+                InputStreamSource::File(fd) => Some((Some(*fd), None)),
+                InputStreamSource::Stdin => Some((Some(0), None)),
+                InputStreamSource::GuestFd(fd) => Some((None, Some(*fd))),
                 _ => None,
             },
             _ => None,
         }
     };
-    let buffer = if let Some(fd) = source {
+    let buffer = if let Some((host_fd, guest_fd)) = source {
         let read_len = core::cmp::min(len_req, 1024 * 64) as usize;
         let mut buf = vec![0u8; read_len];
-        if fd == 0 {
-            let host_fd = store.wasi_ctx.as_ref().unwrap().env.stdio_map()[0] as usize;
-            loop {
-                let bytes_read = crate::os::file_read(host_fd, &mut buf);
-                if bytes_read == usize::MAX - 1 { // EWOULDBLOCK
-                    crate::os::yield_task();
-                    continue;
+        
+        if let Some(fd) = guest_fd {
+            let mut slices = [buf.as_mut_slice()];
+            match store.wasi_ctx.as_mut().unwrap().env.fd_read(fd, &mut slices) {
+                Ok(n) => {
+                    buf.truncate(n);
+                    buf
                 }
-                if bytes_read > buf.len() {
-                    return Ok(vec![]);
-                }
-                if bytes_read > 0 {
-                    unsafe {
-                        if crate::wasm::wasi::ICRNL {
-                            for i in 0..bytes_read {
-                                if buf[i] == b'\r' {
-                                    buf[i] = b'\n';
+                Err(_) => vec![]
+            }
+        } else if let Some(fd) = host_fd {
+            if fd == 0 {
+                let host_fd = store.wasi_ctx.as_ref().unwrap().env.stdio_map()[0] as usize;
+                loop {
+                    let bytes_read = crate::os::file_read(host_fd, &mut buf);
+                    if bytes_read == usize::MAX - 1 { // EWOULDBLOCK
+                        crate::os::yield_task();
+                        continue;
+                    }
+                    if bytes_read > buf.len() {
+                        return Ok(vec![]);
+                    }
+                    if bytes_read > 0 {
+                        unsafe {
+                            if crate::wasm::wasi::ICRNL {
+                                for i in 0..bytes_read {
+                                    if buf[i] == b'\r' {
+                                        buf[i] = b'\n';
+                                    }
                                 }
                             }
                         }
+                        buf.truncate(bytes_read);
+                        break buf;
+                    }
+                    crate::os::yield_task();
+                }
+            } else {
+                loop {
+                    let bytes_read = crate::os::file_read(fd, &mut buf);
+                    if bytes_read == usize::MAX - 1 {
+                        crate::os::yield_task();
+                        continue;
                     }
                     buf.truncate(bytes_read);
                     break buf;
                 }
-                crate::os::yield_task();
             }
         } else {
-            loop {
-                let bytes_read = crate::os::file_read(fd, &mut buf);
-                if bytes_read == usize::MAX - 1 {
-                    crate::os::yield_task();
-                    continue;
-                }
-                buf.truncate(bytes_read);
-                break buf;
-            }
+            Vec::new()
         }
     } else {
         Vec::new()
@@ -187,6 +202,10 @@ pub fn stream_write<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Re
                     }
                     break;
                 }
+            }
+            OutputStreamSource::GuestFd(fd) => {
+                let slices = [&buf[..]];
+                let _ = store.wasi_ctx.as_mut().unwrap().env.fd_write(fd, &slices);
             }
             OutputStreamSource::Null => {}
         }

@@ -37,6 +37,10 @@ pub enum WasiResource {
     Pollable(PollableTarget),
     File(crate::fs::File),
     Directory(String),
+    Descriptor(i32),
+    DirStream { entries: Vec<(String, u8, u64)>, index: usize },
+    TerminalInput(i32),
+    TerminalOutput(i32),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -51,6 +55,7 @@ pub enum InputStreamSource {
     Null,
     Stdin,
     File(usize),
+    GuestFd(i32),
 }
 
 #[derive(Clone, Debug)]
@@ -59,4 +64,5 @@ pub enum OutputStreamSource {
     Stdout,
     Stderr,
     File(usize),
+    GuestFd(i32),
 }
