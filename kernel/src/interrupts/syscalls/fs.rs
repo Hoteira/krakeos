@@ -502,7 +502,7 @@ pub fn handle_write_file(context: &mut CPUState) {
     let buf_ptr = context.rsi as *const u8;
     let len = context.rdx as usize;
 
-    crate::debugln!("SYS_WRITE: fd={} len={}", local_fd, len);
+    //crate::debugln!("SYS_WRITE: fd={} len={}", local_fd, len);
 
     let global_fd_opt = {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();

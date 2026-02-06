@@ -1292,7 +1292,13 @@ impl<'a> AotCompiler<'a> {
         self.emitter.pop_wasm_stack(Reg::RAX);
         self.emit_bounds_check(Reg::RAX, size as u32, memarg.offset);
         self.emitter.mov_reg_mem64(Reg::RCX, Reg::RDI, 16);
-        self.emitter.emit_u8(if is_i64 { 0x48 } else { 0x40 });
+        
+        // REX.W (0x48) is only needed for 64-bit sign-extensions (MOVSX/MOVSXD).
+        // For unsigned loads (MOVZX/MOV), 32-bit instructions already zero-extend 
+        // to the full 64-bit register on x86_64. Crucially, for 4-byte loads,
+        // REX.W would change the instruction to a 64-bit load, which is wrong.
+        self.emitter.emit_u8(if is_i64 && signed { 0x48 } else { 0x40 });
+
         let opcode = match (size, signed) {
             (1, true) => 0x0FBE,
             (1, false) => 0x0FB6,
