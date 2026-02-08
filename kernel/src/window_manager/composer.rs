@@ -228,6 +228,10 @@ impl Composer {
         }
 
         w.id = self.check_id(w.buffer as u64);
+        w.prev_x = 0;
+        w.prev_y = 0;
+        w.prev_width = 0;
+        w.prev_height = 0;
 
 
         if wtype == Items::Window {

@@ -244,6 +244,84 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
                     }
                 }
                 handled_globally = true;
+            } else if key == 122 || key == 90 { // 'z' or 'Z'
+                // Toggle Maximize (Win + Z)
+                unsafe {
+                    let active_id = CLICKED_WINDOW_ID;
+                    if active_id != 0 {
+                        let composer = &mut *(&raw mut crate::window_manager::composer::COMPOSER);
+                        let ds = &*(&raw const crate::window_manager::display::DISPLAY_SERVER);
+                        
+                        let mut window_update = None;
+                        
+                        if let Some(w) = composer.find_window_id(active_id) {
+                            if w.w_type == crate::window_manager::window::Items::Window {
+                                let screen_w = ds.width as usize;
+                                let screen_h = ds.height as usize;
+                                let taskbar_h = (screen_h * 4) / 100;
+
+                                let (new_w, new_h);
+
+                                if w.prev_width == 0 {
+                                    // Maximize
+                                    w.prev_x = w.x;
+                                    w.prev_y = w.y;
+                                    w.prev_width = w.width;
+                                    w.prev_height = w.height;
+
+                                    w.x = 0;
+                                    w.y = taskbar_h as isize;
+                                    w.width = screen_w;
+                                    w.height = screen_h - taskbar_h;
+                                    
+                                    w.can_move = false;
+                                    w.can_resize = false;
+                                    
+                                    new_w = w.width;
+                                    new_h = w.height;
+                                    
+                                    crate::debugln!("Maximize: Window {} to {}x{}", w.id, new_w, new_h);
+                                } else {
+                                    // Restore
+                                    w.x = w.prev_x;
+                                    w.y = w.prev_y;
+                                    w.width = w.prev_width;
+                                    w.height = w.prev_height;
+                                    
+                                    w.prev_width = 0; // Reset
+                                    
+                                    w.can_move = true;
+                                    w.can_resize = true;
+                                    
+                                    new_w = w.width;
+                                    new_h = w.height;
+                                    
+                                    crate::debugln!("Restore: Window {} to {}x{}", w.id, new_w, new_h);
+                                }
+                                
+                                window_update = Some((*w, w.pid));
+                            }
+                        }
+                        
+                        if let Some((updated_w, pid)) = window_update {
+                            // Trigger resize event and update screen
+                            composer.resize_window(updated_w); 
+                            
+                            // Dispatch ResizeEvent so app reallocates buffers
+                            let event = Event::Resize(ResizeEvent {
+                                wid: updated_w.id as u32,
+                                width: updated_w.width as u32,
+                                height: updated_w.height as u32,
+                            });
+                            
+                            let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+                            if !GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&*tm, pid, event) {
+                                GLOBAL_EVENT_QUEUE.int_lock().add_event(event);
+                            }
+                        }
+                    }
+                }
+                handled_globally = true;
             } else if key == 99 || key == 67 { // 'c' or 'C'
                 // Start Resize Mode
                 let current_resize = RESIZING_WINDOW.load(Ordering::Relaxed);
@@ -297,9 +375,9 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
                                     ds.draw_mouse(target_x, target_y, false);
                                 }
                                 
-                                let fw = (w_width as u32 + 32).min(ds.width as u32 - w_x as u32);
-                                let fh = (w_height as u32 + 32).min(ds.height as u32 - w_y as u32);
-                                ds.present_rect(w_x as i32, w_y as i32, fw, fh);
+                                // Flush the whole window area + mouse margin
+                                // present_rect handles screen boundary clipping safely
+                                ds.present_rect(w_x as i32, w_y as i32, w_width as u32 + 32, w_height as u32 + 32);
                             }
                         }
                     }
