@@ -30,6 +30,11 @@ pub struct Window {
     pub min_height: usize,
     pub event_handler: usize,
     pub w_type: Items,
+    // Previous state for maximize toggle
+    pub prev_x: isize,
+    pub prev_y: isize,
+    pub prev_width: usize,
+    pub prev_height: usize,
 }
 
 impl Window {
@@ -66,4 +71,8 @@ pub static NULL_WINDOW: Window = Window {
     min_height: 0,
     event_handler: 0,
     w_type: Items::Null,
+    prev_x: 0,
+    prev_y: 0,
+    prev_width: 0,
+    prev_height: 0,
 };

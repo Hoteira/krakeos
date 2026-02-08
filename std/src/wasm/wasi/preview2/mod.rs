@@ -434,6 +434,10 @@ fn krakeos_syscall_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -
             let min_height = read_mem_u32(store, addr + 52)? as usize;
             let event_handler = read_mem_u32(store, addr + 56)? as usize;
             let w_type_val = read_mem_u32(store, addr + 60)?;
+            let prev_x = read_mem_u32(store, addr + 64)? as i32 as isize;
+            let prev_y = read_mem_u32(store, addr + 68)? as i32 as isize;
+            let prev_width = read_mem_u32(store, addr + 72)? as usize;
+            let prev_height = read_mem_u32(store, addr + 76)? as usize;
 
             // Reconstruct Host Window struct
             let host_win = crate::os::graphics::Window {
@@ -455,6 +459,10 @@ fn krakeos_syscall_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -
                 min_height,
                 event_handler,
                 w_type: unsafe { core::mem::transmute(w_type_val) },
+                prev_x,
+                prev_y,
+                prev_width,
+                prev_height,
             };
 
             let res = unsafe { crate::sys::syscall(num, &host_win as *const _ as u64, a2, a3) };

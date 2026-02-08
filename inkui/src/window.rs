@@ -157,6 +157,10 @@ impl Window {
             min_height: self.min_height,
             event_handler: 1,
             w_type: self.w_type,
+            prev_x: 0,
+            prev_y: 0,
+            prev_width: 0,
+            prev_height: 0,
         };
 
         if self.id == 0 {
@@ -220,6 +224,10 @@ impl Window {
             min_height: self.min_height,
             event_handler: 1,
             w_type: self.w_type,
+            prev_x: 0,
+            prev_y: 0,
+            prev_width: 0,
+            prev_height: 0,
         };
         graphics::update_window(&std_window);
     }
