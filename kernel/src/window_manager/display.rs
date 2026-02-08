@@ -1012,6 +1012,15 @@ impl DisplayServer {
         }
     }
 
+    pub fn write_pixel_db(&self, row: u32, col: u32, color: Color) {
+        if col < self.width as u32 && row < self.height as u32 {
+            unsafe {
+                let offset = (row as u64 * self.pitch + col as u64 * 4) as usize;
+                *((self.double_buffer as *mut u8).add(offset) as *mut u32) = color.to_u32();
+            }
+        }
+    }
+
     pub fn present_rect(&mut self, x: i32, y: i32, w: u32, h: u32) {
         let sx = x.max(0) as u32;
         let sy = y.max(0) as u32;

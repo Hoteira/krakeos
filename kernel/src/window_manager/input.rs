@@ -28,8 +28,8 @@ pub struct Mouse {
 pub static mut LAST_INPUT: u8 = 0;
 pub static mut DRAGS: u8 = 0;
 pub static mut DRAG: bool = false;
-pub static mut DRAGGING_WINDOW: AtomicU16 = AtomicU16::new(0);
-pub static mut RESIZING_WINDOW: AtomicU16 = AtomicU16::new(0);
+pub static DRAGGING_WINDOW: AtomicU16 = AtomicU16::new(0);
+pub static RESIZING_WINDOW: AtomicU16 = AtomicU16::new(0);
 pub static mut CLICK_STARTED_IN_TITLEBAR: bool = false;
 pub static mut CLICKED_WINDOW_ID: usize = 0;
 pub static mut W_WIDTH: usize = 0;
@@ -73,6 +73,37 @@ impl Mouse {
         self.left = (data[0] & 0b00000001) != 0;
         self.right = (data[0] & 0b00000010) != 0;
         self.center = (data[0] & 0b00000100) != 0;
+
+        // Check for resize termination via Left Click
+        let resizing_id = RESIZING_WINDOW.load(Ordering::Relaxed);
+        if resizing_id != 0 && self.left && !prev_left {
+            let final_w = unsafe { W_WIDTH };
+            let final_h = unsafe { W_HEIGHT };
+
+            unsafe {
+                let composer = &mut *(&raw mut COMPOSER);
+                if let Some(w) = composer.find_window_id(resizing_id as usize) {
+                    let event = Event::Resize(ResizeEvent {
+                        wid: resizing_id as u32,
+                        width: final_w as u32,
+                        height: final_h as u32,
+                    });
+
+                    let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+                    if !GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&*tm, w.pid, event) {
+                        GLOBAL_EVENT_QUEUE.int_lock().add_event(event);
+                    }
+                }
+            }
+
+            RESIZING_WINDOW.store(0, Ordering::Relaxed);
+            unsafe {
+                W_WIDTH = 0;
+                W_HEIGHT = 0;
+            }
+            crate::debugln!("Resize Mode: STOPPED (Mouse Click)");
+            return;
+        }
 
         unsafe {
             LAST_INPUT = data[0];
@@ -125,25 +156,8 @@ impl Mouse {
                 DRAGS = 0;
                 DRAG = false;
 
-                if (*(&raw mut RESIZING_WINDOW)).load(Ordering::Relaxed) != 0 {
-                    let w = (*(&raw mut COMPOSER))
-                        .find_window_id((*(&raw mut RESIZING_WINDOW)).load(Ordering::Relaxed) as usize)
-                        .unwrap();
-
-                    (*(&raw mut DRAGGING_WINDOW)).store(0, Ordering::Relaxed);
-                    (*(&raw mut RESIZING_WINDOW)).store(0, Ordering::Relaxed);
-
-                    if w.event_handler != 0 {
-                        GLOBAL_EVENT_QUEUE.int_lock().add_event(Event::Resize(ResizeEvent {
-                            wid: w.id as u32,
-                            width: W_WIDTH as u32,
-                            height: W_HEIGHT as u32,
-                        }));
-                    }
-                    W_WIDTH = 0;
-                    W_HEIGHT = 0;
-                } else if (*(&raw mut DRAGGING_WINDOW)).load(Ordering::Relaxed) != 0 {
-                    let wid = (*(&raw mut DRAGGING_WINDOW)).load(Ordering::Relaxed) as usize;
+                if DRAGGING_WINDOW.load(Ordering::Relaxed) != 0 {
+                    let wid = DRAGGING_WINDOW.load(Ordering::Relaxed) as usize;
                     let composer = &mut *(&raw mut COMPOSER);
                     let display_server = &mut *(&raw mut DISPLAY_SERVER);
 
@@ -164,8 +178,8 @@ impl Mouse {
 
                     display_server.draw_mouse(self.x, self.y, false);
 
-                    (*(&raw mut DRAGGING_WINDOW)).store(0, Ordering::Relaxed);
-                    (*(&raw mut RESIZING_WINDOW)).store(0, Ordering::Relaxed);
+                    DRAGGING_WINDOW.store(0, Ordering::Relaxed);
+                    RESIZING_WINDOW.store(0, Ordering::Relaxed);
                     W_WIDTH = 0;
                     W_HEIGHT = 0;
 
@@ -176,9 +190,9 @@ impl Mouse {
 
         unsafe {
             if DRAG && CLICK_STARTED_IN_TITLEBAR {
-                if (*(&raw mut DRAGGING_WINDOW)).load(Ordering::Relaxed) == 0 {
+                if DRAGGING_WINDOW.load(Ordering::Relaxed) == 0 {
                     let wid = CLICKED_WINDOW_ID;
-                    (*(&raw mut DRAGGING_WINDOW)).store(wid as u16, Ordering::Relaxed);
+                    DRAGGING_WINDOW.store(wid as u16, Ordering::Relaxed);
                     (*(&raw mut COMPOSER)).recompose_except(wid);
                 }
             }
@@ -186,61 +200,79 @@ impl Mouse {
 
         let _w = unsafe { (*(&raw mut COMPOSER)).find_window(self.x as usize, self.y as usize) };
 
-        if unsafe { (*(&raw mut RESIZING_WINDOW)).load(Ordering::Relaxed) != 0 } {
-            let x_vec = x_rel;
-            let y_vec = y_rel;
-            let dx = x_vec;
-            let dy = y_vec * -1;
-
-            let w = unsafe {
-                (*(&raw mut COMPOSER))
-                    .find_window_id((*(&raw mut RESIZING_WINDOW)).load(Ordering::Relaxed) as usize)
-                    .unwrap()
+        if RESIZING_WINDOW.load(Ordering::Relaxed) != 0 {
+            let (w_id, w_x, w_y, min_w, min_h) = unsafe {
+                let composer = &mut *(&raw mut COMPOSER);
+                let w = composer.find_window_id(RESIZING_WINDOW.load(Ordering::Relaxed) as usize).unwrap();
+                (w.id, w.x, w.y, w.min_width.max(50), w.min_height.max(50))
             };
 
-            let final_width = self.rem_sign(unsafe { W_WIDTH } as i16 + dx) as usize;
-            let final_height = self.rem_sign(unsafe { W_HEIGHT } as i16 + dy) as usize;
+            let old_w_val = unsafe { W_WIDTH };
+            let old_h_val = unsafe { W_HEIGHT };
+
+            let cur_w: usize;
+            let cur_h: usize;
 
             unsafe {
-                let wx = w.x.max(0) as usize;
-                let wy = w.y.max(0) as usize;
-                W_WIDTH = cap(final_width, ((*(&raw mut DISPLAY_SERVER)).width as usize).saturating_sub(wx));
-                W_HEIGHT = cap(final_height, ((*(&raw mut DISPLAY_SERVER)).height as usize).saturating_sub(wy));
+                // Calculate dimensions from window top-left to mouse tip
+                let new_w = (self.x as isize - w_x).max(min_w as isize);
+                let new_h = (self.y as isize - w_y).max(min_h as isize);
+                
+                // Limit to screen size relative to window position
+                let max_w = ((*(&raw mut DISPLAY_SERVER)).width as isize).saturating_sub(w_x);
+                let max_h = ((*(&raw mut DISPLAY_SERVER)).height as isize).saturating_sub(w_y);
+
+                W_WIDTH = new_w.min(max_w) as usize;
+                W_HEIGHT = new_h.min(max_h) as usize;
+                cur_w = W_WIDTH;
+                cur_h = W_HEIGHT;
             }
 
-            self.draw_square_outline(
-                w.y as u16,
-                w.x as u16,
-                unsafe { W_HEIGHT as u16 },
-                unsafe { W_WIDTH as u16 },
-                Color::rgb(245, 245, 247),
-            );
+            // Union of old and new area + mouse margin (32px)
+            let dirty_w = old_w_val.max(cur_w) + 32;
+            let dirty_h = old_h_val.max(cur_h) + 32;
 
             unsafe {
-                if VIRTIO_ACTIVE {
-                    virtio::flush(w.x as u32, w.y as u32, W_WIDTH as u32, W_HEIGHT as u32, (*(&raw mut DISPLAY_SERVER)).width as u32, (*(&raw mut DISPLAY_SERVER)).active_resource_id);
-                }
+                let composer = &mut *(&raw mut COMPOSER);
+                let ds = &mut *(&raw mut DISPLAY_SERVER);
 
-                (*(&raw mut DISPLAY_SERVER)).draw_mouse(self.x, self.y, false);
+                // 1. Recompose background AND static window into Double Buffer
+                composer.recompose_area(w_x as i32, w_y as i32, dirty_w as u32, dirty_h as u32);
 
+                // 2. Draw new white wireframe border into Double Buffer
+                (*(&raw mut MOUSE)).draw_resize_border(
+                    w_x as u16,
+                    w_y as u16,
+                    cur_w as u16,
+                    cur_h as u16,
+                    Color::rgb(255, 255, 255), // White border
+                    3 // Thickness
+                );
+
+                // 3. Flush Double Buffer to Front Buffer
+                ds.present_rect(w_x as i32, w_y as i32, dirty_w as u32, dirty_h as u32);
+
+                // 4. Draw Mouse directly to Front Buffer (on top of everything)
+                ds.draw_mouse(self.x, self.y, false);
+
+                // 5. Final flush for mouse cursor (VirtIO)
                 if VIRTIO_ACTIVE {
                     let mx = self.x as u32;
                     let my = self.y as u32;
-                    let sw = (*(&raw mut DISPLAY_SERVER)).width as u32;
-                    let sh = (*(&raw mut DISPLAY_SERVER)).height as u32;
+                    let sw = ds.width as u32;
+                    let sh = ds.height as u32;
                     let fw = (32 as u32).min(sw.saturating_sub(mx));
                     let fh = (32 as u32).min(sh.saturating_sub(my));
-
                     if fw > 0 && fh > 0 {
-                        virtio::flush(mx, my, fw, fh, sw, (*(&raw mut DISPLAY_SERVER)).active_resource_id);
+                        virtio::flush(mx, my, fw, fh, sw, ds.active_resource_id);
                     }
                 }
             }
             return;
-        } else if unsafe { (*(&raw mut DRAGGING_WINDOW)).load(Ordering::Relaxed) != 0 } {
+        } else if DRAGGING_WINDOW.load(Ordering::Relaxed) != 0 {
             let composer = unsafe { &mut *(&raw mut COMPOSER) };
             let display_server = unsafe { &mut *(&raw mut DISPLAY_SERVER) };
-            let wid = unsafe { (*(&raw mut DRAGGING_WINDOW)).load(Ordering::Relaxed) as usize };
+            let wid = DRAGGING_WINDOW.load(Ordering::Relaxed) as usize;
 
             let x_vec = x_rel;
             let y_vec = y_rel;
@@ -443,10 +475,6 @@ impl Mouse {
         };
     }
 
-    fn rem_sign(&self, n: i16) -> u16 {
-        if n < 0 { (n * -1) as u16 } else { n as u16 }
-    }
-
     fn is_bottom_right(
         &self,
         w_x: u16,
@@ -464,17 +492,37 @@ impl Mouse {
         (mouse_x >= x_min && mouse_x <= x_max) && (mouse_y >= y_min && mouse_y <= y_max)
     }
 
-    pub fn draw_square_outline(&self, x: u16, y: u16, width: u16, height: u16, color: Color) {
-        let max_x = x + width - 1;
-        let max_y = y + height - 1;
+    pub fn draw_resize_border(&self, x: u16, y: u16, width: u16, height: u16, color: Color, thickness: u16) {
+        let start_x = x as u32;
+        let start_y = y as u32;
+        let end_x = start_x + width as u32;
+        let end_y = start_y + height as u32;
+        let t = thickness as u32;
+
         unsafe {
-            for i in x..=max_x {
-                (*(&raw mut DISPLAY_SERVER)).write_pixel(i as u32, y as u32, color);
-                (*(&raw mut DISPLAY_SERVER)).write_pixel(i as u32, max_y as u32, color);
+            // Top
+            for row in start_y..start_y + t {
+                for col in start_x..end_x {
+                    (*(&raw mut DISPLAY_SERVER)).write_pixel_db(row, col, color);
+                }
             }
-            for i in y..=max_y {
-                (*(&raw mut DISPLAY_SERVER)).write_pixel(x as u32, i as u32, color);
-                (*(&raw mut DISPLAY_SERVER)).write_pixel(max_x as u32, i as u32, color);
+            // Bottom
+            for row in end_y.saturating_sub(t)..end_y {
+                for col in start_x..end_x {
+                    (*(&raw mut DISPLAY_SERVER)).write_pixel_db(row, col, color);
+                }
+            }
+            // Left
+            for row in start_y..end_y {
+                for col in start_x..start_x + t {
+                    (*(&raw mut DISPLAY_SERVER)).write_pixel_db(row, col, color);
+                }
+            }
+            // Right
+            for row in start_y..end_y {
+                for col in end_x.saturating_sub(t)..end_x {
+                    (*(&raw mut DISPLAY_SERVER)).write_pixel_db(row, col, color);
+                }
             }
         }
     }
@@ -484,7 +532,7 @@ impl Mouse {
         let sx = unsafe { (*(&raw mut DISPLAY_SERVER)).width } as u16;
 
         let limit = unsafe {
-            if (*(&raw mut DRAGGING_WINDOW)).load(Ordering::Relaxed) != 0 {
+            if DRAGGING_WINDOW.load(Ordering::Relaxed) != 0 {
                 sx + 50
             } else {
                 sx.saturating_sub(3)
@@ -505,7 +553,7 @@ impl Mouse {
         let sy = unsafe { (*(&raw mut DISPLAY_SERVER)).height } as u16;
 
         let limit = unsafe {
-            if (*(&raw mut DRAGGING_WINDOW)).load(Ordering::Relaxed) != 0 {
+            if DRAGGING_WINDOW.load(Ordering::Relaxed) != 0 {
                 sy + 50
             } else {
                 sy.saturating_sub(3)

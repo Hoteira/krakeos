@@ -1,6 +1,8 @@
 use crate::drivers::periferics::keyboard::KEYBOARD_BUFFER;
 use crate::drivers::port::{inb, outb};
-use crate::window_manager::input::MOUSE;
+use crate::window_manager::input::{MOUSE, RESIZING_WINDOW, W_WIDTH, W_HEIGHT, CLICKED_WINDOW_ID};
+use crate::window_manager::events::{Event, ResizeEvent, GLOBAL_EVENT_QUEUE};
+use core::sync::atomic::Ordering;
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
@@ -202,59 +204,120 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
     let scancode: u8 = inb(0x60);
 
     if let Some((key, pressed)) = crate::drivers::periferics::keyboard::handle_scancode(scancode) {
-        if crate::drivers::periferics::keyboard::is_super_active() {
-            if pressed {
-                crate::debugln!("Global Shortcut: Super + {}", key);
+        let is_super = crate::drivers::periferics::keyboard::is_super_active();
+        let mut handled_globally = false;
 
-                if key == 'p' as u32 {
-                    crate::memory::pmm::print_allocations();
+        // Check for keyboard shortcuts
+        if is_super && pressed {
+            if key == 'p' as u32 {
+                crate::memory::pmm::print_allocations();
+                handled_globally = true;
+            } else if key == 't' as u32 {
+                crate::debugln!("Spawning terminal...");
+                match crate::interrupts::syscalls::spawn_process("@0xE0/sys/bin/term.elf", None, None) {
+                    Ok(pid) => crate::debugln!("Terminal spawned with PID: {}", pid),
+                    Err(e) => crate::debugln!("Failed to spawn terminal: {}", e),
                 }
+                handled_globally = true;
+            } else if key == 'x' as u32 || key == 'X' as u32 {
+                unsafe {
+                    let active_window_id = CLICKED_WINDOW_ID;
+                    crate::debugln!("Global Shortcut: Win + X detected. Active window: {}", active_window_id);
+                    if active_window_id != 0 {
+                        let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+                        let composer = &*(&raw const crate::window_manager::composer::COMPOSER);
+                        let mut pid_to_kill = None;
 
-                if key == 't' as u32 {
-                    crate::debugln!("Spawning terminal...");
-                    match crate::interrupts::syscalls::spawn_process("@0xE0/sys/bin/term.elf", None, None) {
-                        Ok(pid) => crate::debugln!("Terminal spawned with PID: {}", pid),
-                        Err(e) => crate::debugln!("Failed to spawn terminal: {}", e),
+                        for w in &composer.windows {
+                            if w.id == active_window_id {
+                                pid_to_kill = Some(w.pid);
+                                break;
+                            }
+                        }
+
+                        if let Some(pid) = pid_to_kill {
+                            crate::debugln!("Global Shortcut: Killing Process {} associated with Window {}", pid, active_window_id);
+                            tm.kill_process(pid);
+                        } else {
+                            crate::debugln!("Global Shortcut: No PID found for Window {}", active_window_id);
+                        }
                     }
                 }
-
-                if key == 'x' as u32 || key == 'X' as u32 {
+                handled_globally = true;
+            } else if key == 99 || key == 67 { // 'c' or 'C'
+                // Start Resize Mode
+                let current_resize = RESIZING_WINDOW.load(Ordering::Relaxed);
+                
+                if current_resize == 0 {
                     unsafe {
-                        let active_window_id = crate::window_manager::input::CLICKED_WINDOW_ID;
-                        crate::debugln!("Global Shortcut: Win + X detected. Active window: {}", active_window_id);
-                        if active_window_id != 0 {
-                            let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
-                            let composer = &*(&raw const crate::window_manager::composer::COMPOSER);
-                            let mut pid_to_kill = None;
+                        let active_id = CLICKED_WINDOW_ID;
+                        if active_id != 0 {
+                            crate::debugln!("Resize Mode: STARTED for Window {}", active_id);
+                            let composer = &mut *(&raw mut crate::window_manager::composer::COMPOSER);
+                            let ds = &mut *(&raw mut crate::window_manager::display::DISPLAY_SERVER);
 
-                            for w in &composer.windows {
-                                if w.id == active_window_id {
-                                    pid_to_kill = Some(w.pid);
-                                    break;
+                            let window_data = if let Some(w) = composer.find_window_id(active_id) {
+                                if w.w_type == crate::window_manager::window::Items::Window {
+                                    Some((w.id, w.x, w.y, w.width, w.height))
+                                } else { None }
+                            } else { None };
+
+                            if let Some((w_id, w_x, w_y, w_width, w_height)) = window_data {
+                                // 1. Clear old mouse position
+                                ds.copy_to_fb(MOUSE.x as i32, MOUSE.y as i32, 32, 32);
+
+                                // 2. Set State
+                                RESIZING_WINDOW.store(active_id as u16, Ordering::Relaxed);
+                                W_WIDTH = w_width;
+                                W_HEIGHT = w_height;
+
+                                // 3. Warp Mouse to bottom-right corner
+                                let target_x = (w_x + w_width as isize).max(0) as u16;
+                                let target_y = (w_y + w_height as isize).max(0) as u16;
+                                MOUSE.x = target_x;
+                                MOUSE.y = target_y;
+
+                                // 4. Initial Draw of Resize Wireframe
+                                composer.recompose_area(w_x as i32, w_y as i32, w_width as u32, w_height as u32);
+                                (*(&raw mut MOUSE)).draw_resize_border(
+                                    w_x as u16, 
+                                    w_y as u16, 
+                                    w_width as u16, 
+                                    w_height as u16, 
+                                    crate::window_manager::display::Color::rgb(255, 255, 255),
+                                    2
+                                );
+                                
+                                // 5. Redraw mouse and flush combined area
+                                use crate::drivers::video::virtio;
+                                use crate::window_manager::display::{VIRTIO_ACTIVE, HARDWARE_CURSOR_ACTIVE};
+                                if VIRTIO_ACTIVE && HARDWARE_CURSOR_ACTIVE {
+                                    virtio::cursor::move_cursor(target_x as u32, target_y as u32);
+                                } else {
+                                    ds.draw_mouse(target_x, target_y, false);
                                 }
-                            }
-
-                            if let Some(pid) = pid_to_kill {
-                                crate::debugln!("Global Shortcut: Killing Process {} associated with Window {}", pid, active_window_id);
-                                tm.kill_process(pid);
-                            } else {
-                                crate::debugln!("Global Shortcut: No PID found for Window {}", active_window_id);
+                                
+                                let fw = (w_width as u32 + 32).min(ds.width as u32 - w_x as u32);
+                                let fh = (w_height as u32 + 32).min(ds.height as u32 - w_y as u32);
+                                ds.present_rect(w_x as i32, w_y as i32, fw, fh);
                             }
                         }
                     }
                 }
+                handled_globally = true;
             }
-        } else {
-            if pressed {
+        }
+
+        if !handled_globally {
+            if pressed && !is_super {
                 KEYBOARD_BUFFER.lock().push_back(key);
                 // Signal readiness for stdin (FD 0)
                 crate::interrupts::event_manager::signal_event(crate::interrupts::event_manager::AsyncEvent::Read(0));
-            } else {}
+            }
 
-
+            // Dispatch to Window Manager
             unsafe {
                 let active_window_id = crate::window_manager::input::CLICKED_WINDOW_ID;
-                let repeat = 1;
                 if active_window_id != 0 {
                     let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
                     let composer = &*(&raw const crate::window_manager::composer::COMPOSER);
@@ -272,17 +335,15 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
                         use crate::window_manager::events::{Event, KeyboardEvent, GLOBAL_EVENT_QUEUE};
 
                         let tm_ref = &*tm;
-                        for _ in 0..repeat {
-                            let event = Event::Keyboard(KeyboardEvent {
-                                wid: active_window_id as u32,
-                                key,
-                                pressed,
-                                repeat: 1,
-                            });
+                        let event = Event::Keyboard(KeyboardEvent {
+                            wid: active_window_id as u32,
+                            key,
+                            pressed,
+                            repeat: 1,
+                        });
 
-                            if !GLOBAL_EVENT_QUEUE.int_lock().push_to_process(tm_ref, w_pid, event) {
-                                GLOBAL_EVENT_QUEUE.int_lock().add_event(event);
-                            }
+                        if !GLOBAL_EVENT_QUEUE.int_lock().push_to_process(tm_ref, w_pid, event) {
+                            GLOBAL_EVENT_QUEUE.int_lock().add_event(event);
                         }
                     }
                 }

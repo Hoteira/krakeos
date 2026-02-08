@@ -243,6 +243,9 @@ impl WasiEnv for KrakeosWasiEnv {
                                         buf[i] = b'\n';
                                     }
                                 }
+                                // Echo the input back to stdout
+                                let host_stdout = self.stdio_map[1] as usize;
+                                crate::os::file_write(host_stdout, &buf[..n]);
                             }
                         }
                     }

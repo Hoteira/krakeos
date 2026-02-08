@@ -47,6 +47,44 @@ impl Composer {
         }
     }
 
+    pub fn copy_window_clipped(&mut self, id: usize, clip_w: u32, clip_h: u32) {
+        for i in 0..self.windows.len() {
+            if id == self.windows[i].id {
+                let border_color = if self.windows[i].w_type == Items::Window {
+                    unsafe {
+                        if self.windows[i].id == CLICKED_WINDOW_ID {
+                            Some(0xFFFFFFFF)
+                        } else {
+                            Some(0xFF9070FF)
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                match self.windows[i].w_type {
+                    Items::Null => {}
+                    _ => unsafe {
+                        let ds = &mut *(&raw mut DISPLAY_SERVER);
+                        ds.copy_to_db_clipped(
+                            self.windows[i].width as u32,
+                            self.windows[i].height as u32,
+                            self.windows[i].get_active_buffer(),
+                            self.windows[i].x as i32,
+                            self.windows[i].y as i32,
+                            self.windows[i].x as i32,
+                            self.windows[i].y as i32,
+                            clip_w,
+                            clip_h,
+                            border_color,
+                            self.windows[i].treat_as_transparent,
+                        )
+                    },
+                }
+            }
+        }
+    }
+
     pub fn copy_window_fb(&mut self, id: usize) {
         for i in 0..self.windows.len() {
             if id == self.windows[i].id {
@@ -251,6 +289,8 @@ impl Composer {
         for i in 0..self.windows.len() {
             if w.id == self.windows[i].id {
                 self.windows[i].buffer = w.buffer;
+                self.windows[i].back_buffer = w.back_buffer;
+                self.windows[i].flipped = w.flipped;
 
 
                 let old_x = self.windows[i].x;
@@ -298,6 +338,17 @@ impl Composer {
     }
 
     pub fn update_window_area_rect(&mut self, dirty_x: i32, dirty_y: i32, dirty_w: u32, dirty_h: u32) {
+        self.recompose_area(dirty_x, dirty_y, dirty_w, dirty_h);
+        unsafe {
+            (*(&raw mut DISPLAY_SERVER)).present_rect(dirty_x, dirty_y, dirty_w, dirty_h);
+        }
+    }
+
+    pub fn recompose_area(&mut self, dirty_x: i32, dirty_y: i32, dirty_w: u32, dirty_h: u32) {
+        self.recompose_area_except(dirty_x, dirty_y, dirty_w, dirty_h, 0);
+    }
+
+    pub fn recompose_area_except(&mut self, dirty_x: i32, dirty_y: i32, dirty_w: u32, dirty_h: u32, ignore_id: usize) {
         unsafe {
             let display_server = &mut *(&raw mut DISPLAY_SERVER);
 
@@ -305,7 +356,7 @@ impl Composer {
             let mut occluded = false;
             for i in 0..self.windows.len() {
                 let w = &self.windows[i];
-                if w.w_type == Items::Null { continue; }
+                if w.w_type == Items::Null || w.id == ignore_id { continue; }
 
                 if !w.treat_as_transparent &&
                     w.x as i32 <= dirty_x &&
@@ -339,6 +390,7 @@ impl Composer {
             }
 
             for i in (0..=start_index).rev() {
+                if self.windows[i].id == ignore_id { continue; }
                 match self.windows[i].w_type {
                     Items::Null => {}
                     _ => {
@@ -366,8 +418,6 @@ impl Composer {
                     }
                 }
             }
-
-            display_server.present_rect(dirty_x, dirty_y, dirty_w, dirty_h);
         }
     }
 

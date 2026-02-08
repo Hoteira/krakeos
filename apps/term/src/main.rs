@@ -107,11 +107,7 @@ fn main() {
         (2, fds_out[1] as u8),
     ];
 
-    std::thread::spawn(move || {
-        unsafe { std::wasm::wasi::ICRNL = true; }
-        std::wasm::run("@0xE0/sys/bin/shell.wasm", "@0xE0", &fds_map, false);
-        unsafe { std::wasm::wasi::ICRNL = false; }
-    });
+    std::os::spawn_with_fds("@0xE0/sys/bin/shell.elf", &[], &fds_map);
 
 
     // std::os::file_close(fds_in[0] as usize);

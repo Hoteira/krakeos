@@ -88,6 +88,9 @@ pub fn stream_read<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Res
                                         buf[i] = b'\n';
                                     }
                                 }
+                                // Echo input
+                                let host_stdout = store.wasi_ctx.as_ref().unwrap().env.stdio_map()[1] as usize;
+                                crate::os::file_write(host_stdout, &buf[..bytes_read]);
                             }
                         }
                         buf.truncate(bytes_read);
