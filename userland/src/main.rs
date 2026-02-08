@@ -1,15 +1,5 @@
 #![no_std]
 
-/*
-   1. Integer Arithmetic Edge Cases (Done)
-   2. Floating Point Precision & Rounding (Done)
-   3. Complex Control Flow (Done)
-   4. Memory & Bulk Operations (Done)
-   5. Tables & Globals (Done)
-   6. Multi-Value & ABI Stress
-
-*/
-
 extern crate alloc;
 use alloc::string::{String, ToString};
 use inkui::{Color, Size, Widget, Window};
@@ -65,10 +55,6 @@ pub fn main() {
 
     std::thread::spawn(|| {
         std::wasm::run("@0xE0/apps/taskbar.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
-    });
-
-    std::thread::spawn(|| {
-        std::wasm::run("@0xE0/apps/python/python.wasm", "/apps/python/", &[(0, 0), (1, 1), (2, 2)], true);
     });
 
     std::os::spawn("@0xE0/sys/bin/term.elf");

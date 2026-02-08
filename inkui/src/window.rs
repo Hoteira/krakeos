@@ -230,6 +230,7 @@ impl Window {
 
     pub fn resize(&mut self, width: usize, height: usize, can_move: bool) {
         if !self.can_resize { return; }
+        std::debugln!("[inkui] Resizing window '{}' to {}x{}", self.title, width, height);
         self.width = width;
         self.height = height;
         self.can_move = can_move;
