@@ -59,8 +59,13 @@ pub fn init_mouse() {
     let id = mouse_read();
 
     unsafe {
-        MOUSE_PACKET_SIZE = 4;
-        println!("Mouse: ID: {}. Forcing 4-byte packet mode (Scroll Enabled).", id);
+        if id == 3 || id == 4 {
+            MOUSE_PACKET_SIZE = 4;
+            println!("Mouse: ID: {}. 4-byte packet mode (Scroll Enabled).", id);
+        } else {
+            MOUSE_PACKET_SIZE = 3;
+            println!("Mouse: ID: {}. 3-byte packet mode.", id);
+        }
     }
 
     mouse_write(MOUSE_ENABLE_STREAMING);

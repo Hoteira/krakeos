@@ -48,6 +48,11 @@ impl Mouse {
         let old_x = self.x;
         let old_y = self.y;
 
+        // Check for overflow bits (6 and 7 of first byte)
+        if (data[0] & 0x40) != 0 || (data[0] & 0x80) != 0 {
+            return;
+        }
+
         let mut x_rel = data[1] as i16;
         let mut y_rel = data[2] as i16;
 
@@ -274,9 +279,6 @@ impl Mouse {
             let display_server = unsafe { &mut *(&raw mut DISPLAY_SERVER) };
             let wid = DRAGGING_WINDOW.load(Ordering::Relaxed) as usize;
 
-            let x_vec = x_rel;
-            let y_vec = y_rel;
-
             let window_opt = composer.find_window_id(wid);
             let w = match window_opt {
                 Some(w) => w,
@@ -287,26 +289,16 @@ impl Mouse {
             let old_win_y = w.y;
             let width = w.width;
             let height = w.height;
-            let id = w.id;
             let buffer = w.get_active_buffer();
 
-            let target_mx = old_x as i32 + x_vec as i32;
-            let target_my = old_y as i32 - y_vec as i32;
-
-            let screen_w = display_server.width as i32;
-            let screen_h = display_server.height as i32;
-
-            let mouse_limit_w = screen_w + 50;
-            let mouse_limit_h = screen_h + 50;
-
-            let clamped_mx = target_mx.max(0).min(mouse_limit_w - 1);
-            let clamped_my = target_my.max(0).min(mouse_limit_h - 1);
-
-            let mouse_dx = clamped_mx - old_x as i32;
-            let mouse_dy = clamped_my - old_y as i32;
+            let mouse_dx = self.x as i32 - old_x as i32;
+            let mouse_dy = self.y as i32 - old_y as i32;
 
             let target_win_x = old_win_x as i32 + mouse_dx;
             let target_win_y = old_win_y as i32 + mouse_dy;
+
+            let screen_w = display_server.width as i32;
+            let screen_h = display_server.height as i32;
 
             let margin = 3;
 
@@ -317,12 +309,6 @@ impl Mouse {
 
             let clamped_win_x = target_win_x.max(min_visible_x).min(max_visible_x);
             let clamped_win_y = target_win_y.max(min_visible_y).min(max_visible_y);
-
-            let allowed_dx = clamped_win_x - old_win_x as i32;
-            let allowed_dy = clamped_win_y - old_win_y as i32;
-
-            self.x = (old_x as i32 + allowed_dx).max(0).min(mouse_limit_w - 1) as u16;
-            self.y = (old_y as i32 + allowed_dy).max(0).min(mouse_limit_h - 1) as u16;
 
             let new_x = clamped_win_x as isize;
             let new_y = clamped_win_y as isize;
@@ -528,44 +514,42 @@ impl Mouse {
     }
 
     fn clamp_mx(&self, n: i16) -> u16 {
-        let mx_0 = self.x as i16;
-        let sx = unsafe { (*(&raw mut DISPLAY_SERVER)).width } as u16;
+        let sx = unsafe { (*(&raw mut DISPLAY_SERVER)).width } as i32;
+        if sx <= 0 { return 0; }
 
-        let limit = unsafe {
-            if DRAGGING_WINDOW.load(Ordering::Relaxed) != 0 {
-                sx + 50
-            } else {
-                sx.saturating_sub(3)
-            }
+        let limit = if DRAGGING_WINDOW.load(Ordering::Relaxed) != 0 {
+            sx + 50
+        } else {
+            sx - 3
         };
 
-        if n + mx_0 >= (limit as i16) {
-            limit.saturating_sub(1)
-        } else if n + mx_0 <= 0 {
+        let next_x = (self.x as i32) + (n as i32);
+        if next_x < 0 {
             0
+        } else if next_x >= limit {
+            limit.saturating_sub(1) as u16
         } else {
-            (n + mx_0) as u16
+            next_x as u16
         }
     }
 
     fn clamp_my(&self, n: i16) -> u16 {
-        let my_0 = self.y as i16;
-        let sy = unsafe { (*(&raw mut DISPLAY_SERVER)).height } as u16;
+        let sy = unsafe { (*(&raw mut DISPLAY_SERVER)).height } as i32;
+        if sy <= 0 { return 0; }
 
-        let limit = unsafe {
-            if DRAGGING_WINDOW.load(Ordering::Relaxed) != 0 {
-                sy + 50
-            } else {
-                sy.saturating_sub(3)
-            }
+        let limit = if DRAGGING_WINDOW.load(Ordering::Relaxed) != 0 {
+            sy + 50
+        } else {
+            sy - 3
         };
 
-        if n + my_0 >= (limit as i16) {
-            limit.saturating_sub(1)
-        } else if n + my_0 <= 0 {
-            return 0;
+        let next_y = (self.y as i32) + (n as i32);
+        if next_y < 0 {
+            0
+        } else if next_y >= limit {
+            limit.saturating_sub(1) as u16
         } else {
-            (n + my_0) as u16
+            next_y as u16
         }
     }
 }
