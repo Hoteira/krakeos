@@ -92,3 +92,8 @@ pub unsafe fn alloc_pages(size: usize) -> *mut u8 {
         core::ptr::null_mut()
     }
 }
+
+pub mod preview2_bindings {
+    pub unsafe fn krakeos_net_send(_ptr: *const u8, _len: u32) -> i32 { -1 }
+    pub unsafe fn krakeos_net_recv(_ptr: *mut u8, _len: u32) -> i32 { 0 }
+}

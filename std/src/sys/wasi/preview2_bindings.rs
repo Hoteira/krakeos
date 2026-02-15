@@ -54,3 +54,11 @@ unsafe extern "C" {
     #[link_name = "exit"]
     pub fn exit(status: i32) -> !;
 }
+
+#[link(wasm_import_module = "krakeos:net/raw@0.2.0")]
+unsafe extern "C" {
+    #[link_name = "send"]
+    pub fn krakeos_net_send(ptr: *const u8, len: u32) -> i32;
+    #[link_name = "recv"]
+    pub fn krakeos_net_recv(ptr: *mut u8, len: u32) -> i32;
+}

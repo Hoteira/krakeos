@@ -1,0 +1,26 @@
+pub mod arp;
+pub mod ipv4;
+pub mod icmp;
+pub mod udp;
+pub mod socket;
+
+// QEMU/VirtIO Defaults
+pub static mut LOCAL_IP: [u8; 4] = [10, 0, 2, 15];
+pub static mut LOCAL_MAC: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
+
+pub fn on_receive(packet: &[u8]) {
+    if packet.len() < 14 { return; }
+    
+    let eth_type = ((packet[12] as u16) << 8) | packet[13] as u16;
+    let src_mac = [packet[6], packet[7], packet[8], packet[9], packet[10], packet[11]];
+    
+    match eth_type {
+        0x0806 => {
+            arp::handle_arp(packet);
+        },
+        0x0800 => {
+            ipv4::handle_ipv4(&packet[14..], src_mac);
+        },
+        _ => {}
+    }
+}
