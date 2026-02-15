@@ -1,6 +1,8 @@
 pub mod graphics;
 pub use graphics::*;
 
+pub mod net;
+
 pub mod events;
 pub use events::*;
 

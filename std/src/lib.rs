@@ -12,6 +12,7 @@ pub mod future;
 pub mod io;
 pub mod math;
 pub mod memory;
+pub mod net;
 pub mod os;
 pub mod process;
 pub mod rt;
