@@ -4,62 +4,103 @@ use crate::wasm::interpreter::simd_utils;
 use crate::wasm::aot::runtime::AotContext;
 use crate::wasm::interpreter::store::Store;
 use crate::wasm::interpreter::store::instances::FuncInst;
+use crate::wasm::interpreter::resumable::RunState;
 use crate::rust_alloc::vec::Vec;
 use crate::rust_alloc::format;
 use crate::os::debug_print;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_trap() -> ! {
-    panic!("AOT Trap");
+    panic!("AOT Trap: Generic");
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_trap_oob() -> ! {
+    panic!("AOT Trap: Memory Out of Bounds");
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_trap_fuel() -> ! {
+    panic!("AOT Trap: Fuel Exhausted");
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_trap_div_zero() -> ! {
+    panic!("AOT Trap: Integer Divide by Zero");
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_trap_int_overflow() -> ! {
+    panic!("AOT Trap: Integer Overflow");
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_trap_indirect() -> ! {
+    panic!("AOT Trap: Indirect Call Signature Mismatch or Null");
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_trap_unreachable() -> ! {
+    panic!("AOT Trap: Unreachable Statement Reached");
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_trap_stack_overflow() -> ! {
+    panic!("AOT Trap: Stack Overflow");
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_trap_host() -> ! {
+    panic!("AOT Trap: Host Function Error");
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_i32_div_s(a: i32, b: i32) -> i32 {
-    if b == 0 { unsafe { aot_trap(); } }
-    if a == i32::MIN && b == -1 { unsafe { aot_trap(); } }
+    if b == 0 { unsafe { aot_trap_div_zero(); } }
+    if a == i32::MIN && b == -1 { unsafe { aot_trap_int_overflow(); } }
     a / b
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_i32_div_u(a: u32, b: u32) -> u32 {
-    if b == 0 { unsafe { aot_trap(); } }
+    if b == 0 { unsafe { aot_trap_div_zero(); } }
     a / b
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_i32_rem_s(a: i32, b: i32) -> i32 {
-    if b == 0 { unsafe { aot_trap(); } }
+    if b == 0 { unsafe { aot_trap_div_zero(); } }
     a.checked_rem(b).unwrap_or(0)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_i32_rem_u(a: u32, b: u32) -> u32 {
-    if b == 0 { unsafe { aot_trap(); } }
+    if b == 0 { unsafe { aot_trap_div_zero(); } }
     a % b
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_i64_div_s(a: i64, b: i64) -> i64 {
-    if b == 0 { unsafe { aot_trap(); } }
-    if a == i64::MIN && b == -1 { unsafe { aot_trap(); } }
+    if b == 0 { unsafe { aot_trap_div_zero(); } }
+    if a == i64::MIN && b == -1 { unsafe { aot_trap_int_overflow(); } }
     a / b
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_i64_div_u(a: u64, b: u64) -> u64 {
-    if b == 0 { unsafe { aot_trap(); } }
+    if b == 0 { unsafe { aot_trap_div_zero(); } }
     a / b
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_i64_rem_s(a: i64, b: i64) -> i64 {
-    if b == 0 { unsafe { aot_trap(); } }
+    if b == 0 { unsafe { aot_trap_div_zero(); } }
     a.checked_rem(b).unwrap_or(0)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_i64_rem_u(a: u64, b: u64) -> u64 {
-    if b == 0 { unsafe { aot_trap(); } }
+    if b == 0 { unsafe { aot_trap_div_zero(); } }
     a % b
 }
 
@@ -135,7 +176,6 @@ pub extern "C" fn aot_f64_nearest(a: f64) -> f64 { F64(a).nearest().0 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_f32_min(a: f32, b: f32) -> f32 {
-    unsafe { crate::os::debug_print("AOT_F32_MIN CALLED\n"); }
     let bits_a = a.to_bits();
     let bits_b = b.to_bits();
     if (bits_a & 0x7FFFFFFF) > 0x7F800000 { return a; }
@@ -302,7 +342,7 @@ pub extern "C" fn aot_table_init(ctx: &AotContext, d: i32, s: i32, n: u32, table
 pub extern "C" fn aot_elem_drop(ctx: &AotContext, elem_idx: u32) {
     let store = unsafe { &mut *(ctx.store as *mut Store<()>) };
     let module_addr = ctx.module_addr;
-    crate::wasm::interpreter::loop_executor::elem_drop(&store.modules, &mut store.elements, module_addr, elem_idx as usize).unwrap();
+    crate::wasm::interpreter::loop_executor::elem_drop(&store.modules, &mut store.elements, module_addr, elem_idx as usize).unwrap_or_else(|_| unsafe { aot_trap(); });
 }
 
 #[unsafe(no_mangle)]
@@ -433,23 +473,23 @@ pub extern "C" fn aot_call_indirect(ctx: &AotContext, table_idx: u32, type_idx: 
     let table_addr = store.modules.get(module_addr).table_addrs[table_idx as usize];
     let tab = store.tables.get(table_addr);
     
-    let r = tab.elem.get(i as usize).unwrap_or_else(|| unsafe { aot_trap() });
+    let r = tab.elem.get(i as usize).unwrap_or_else(|| unsafe { aot_trap_oob() });
     let func_addr = match r {
         Ref::Func(addr) => *addr,
-        _ => unsafe { aot_trap() },
+        _ => unsafe { aot_trap_indirect() },
     };
     
     let func_inst = store.functions.get(func_addr);
     let expected_ty = &store.modules.get(module_addr).types[type_idx as usize];
     if func_inst.ty() != *expected_ty {
-        unsafe { aot_trap(); }
+        unsafe { aot_trap_indirect(); }
     }
     
     match func_inst {
         FuncInst::WasmFunc(wasm_func) => {
             wasm_func.aot_ptr.map(|p| p as *const u8).unwrap_or(core::ptr::null())
         }
-        _ => unsafe { aot_trap() },
+        _ => unsafe { aot_trap_indirect() },
     }
 }
 
@@ -471,14 +511,36 @@ pub extern "C" fn aot_call_host(ctx: &AotContext, func_idx: u32, sp: *mut u128) 
         }
     }
     
-    let host_code = match func_inst {
-        FuncInst::HostFunc(h) => h.hostcode,
-        _ => unsafe { aot_trap() },
-    };
-    
     store.caller_module = Some(module_addr);
-    let results = host_code(store, params).unwrap_or_else(|_| unsafe { aot_trap() });
+    let results = match func_inst {
+        FuncInst::HostFunc(h) => {
+            let hostcode = h.hostcode;
+            hostcode(store, params.clone()).unwrap_or_else(|_| {
+                crate::os::debug_print(&format!("AOT Trap: Host Function #{} failed with args: {:?}\n", func_idx, params));
+                unsafe { aot_trap_host() }
+            })
+        }
+        FuncInst::WasmFunc(_) => {
+            let run_state = store.invoke_unchecked(func_addr, params, None).unwrap_or_else(|_| unsafe { aot_trap_host() });
+            match run_state {
+                RunState::Finished { values, .. } => values,
+                _ => unsafe { aot_trap_host() },
+            }
+        }
+    };
     store.caller_module = None;
+    
+    // SP starts at the end of parameters. 
+    // We need to move it up by the number of results.
+    // However, the caller already reserved space if results > params.
+    // In compiler.rs Call(idx):
+    // let reserve_space = if result_count > param_count { (result_count - param_count) * 16 } else { 0 };
+    // if reserve_space > 0 { self.emitter.sub_reg_imm32(Reg::RSP, reserve_space as u32); }
+    // sp = RSP + 16 (for push RDI) + reserve_space.
+    
+    // Let's assume sp is passed correctly.
+    // Results should be placed at [new_sp], [new_sp + 16], ...
+    // where new_sp = sp + (params.len() - results.len()) * 16.
     
     let mut current_sp = unsafe { sp.add(ty.params.valtypes.len()) };
     for res in results {

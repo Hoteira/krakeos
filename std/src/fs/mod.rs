@@ -1,10 +1,10 @@
 use crate::io::{Error, Read, Result, Seek, SeekFrom, Write};
 use rust_alloc::string::String;
 use rust_alloc::vec::Vec;
+use crate::wasi::{filesystem, io as wasi_io};
 
 pub mod async_file;
 pub use async_file::AsyncFile;
-use crate::sys::syscall;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -27,25 +27,30 @@ pub struct File {
 
 impl File {
     pub fn open(path: &str) -> Result<Self> {
-        let res = unsafe {
-            syscall(2, path.as_ptr() as u64, path.len() as u64, 0)
-        };
+        let mut result = [0u8; 8];
+        unsafe {
+            filesystem::open_at(3, 0, path.as_ptr(), path.len(), 0, 0, result.as_mut_ptr());
+        }
 
-        if res == u64::MAX {
+        if result[0] != 0 {
             Err(Error::from_raw_os_error(2)) // ENOENT
         } else {
-            Ok(File { fd: res as usize })
+            let fd = unsafe { core::ptr::read_unaligned(result.as_ptr().add(4) as *const i32) };
+            Ok(File { fd: fd as usize })
         }
     }
 
     pub fn create(path: &str) -> Result<Self> {
-        let res = unsafe {
-            syscall(85, path.as_ptr() as u64, path.len() as u64, 0)
-        };
-        if res == u64::MAX {
+        // For simplicity, reuse open with create flags logic if implemented, or just a direct syscall wrapper in filesystem binding
+        let mut result = [0u8; 8];
+        unsafe {
+            filesystem::open_at(3, 0, path.as_ptr(), path.len(), 1, 0, result.as_mut_ptr()); // 1 = create?
+        }
+        if result[0] != 0 {
             Err(Error::from_raw_os_error(1))
         } else {
-            Ok(File { fd: res as usize })
+            let fd = unsafe { core::ptr::read_unaligned(result.as_ptr().add(4) as *const i32) };
+            Ok(File { fd: fd as usize })
         }
     }
 
@@ -54,13 +59,14 @@ impl File {
     }
 
     pub fn stat(&self) -> Result<Stat> {
-        let mut s = unsafe { core::mem::zeroed::<Stat>() };
-        let res = unsafe {
-            syscall(5, self.fd as u64, 0, &mut s as *mut Stat as u64)
-        };
-        if res == u64::MAX {
+        let mut result = [0u8; 128]; // Big enough for result tag + Stat struct
+        unsafe {
+            filesystem::stat(self.fd as i32, result.as_mut_ptr());
+        }
+        if result[0] != 0 {
             Err(Error::from_raw_os_error(5))
         } else {
+            let s = unsafe { core::ptr::read_unaligned(result.as_ptr().add(8) as *const Stat) };
             Ok(s)
         }
     }
@@ -74,7 +80,7 @@ impl File {
     }
 
     pub fn set_len(&self, size: u64) -> Result<()> {
-        let res = crate::os::file_truncate(self.fd, size);
+        let res = unsafe { crate::sys::syscall(77, self.fd as u64, size, 0) as i32 };
         if res == 0 {
             Ok(())
         } else {
@@ -89,60 +95,51 @@ impl File {
 
 impl Read for File {
     fn read(&mut self, buffer: &mut [u8]) -> Result<usize> {
-        loop {
-            let res = unsafe {
-                syscall(0, self.fd as u64, buffer.as_mut_ptr() as u64, buffer.len() as u64)
-            };
+        #[repr(C)]
+        struct ReadResult { tag: u32, ptr: *mut u8, len: usize }
+        let mut result = [0u8; 24]; // Large enough for ReadResult on any arch
+        
+        unsafe {
+            wasi_io::input_stream_read(self.fd as i32, buffer.len() as u64, result.as_mut_ptr());
+        }
 
-            if res == u64::MAX {
-                return Err(Error::from_raw_os_error(5)); // EIO
-            } else if res == u64::MAX - 1 {
-                let mut pfd = crate::os::PollFd {
-                    fd: self.fd as i32,
-                    events: crate::os::POLLIN,
-                    revents: 0,
-                };
-                crate::os::poll(core::slice::from_mut(&mut pfd), -1);
-                continue;
-            } else {
-                return Ok(res as usize);
+        let r = unsafe { &*(result.as_ptr() as *const ReadResult) };
+
+        if r.tag == 0 {
+            let copy_len = core::cmp::min(buffer.len(), r.len);
+            if copy_len > 0 {
+                unsafe {
+                    core::ptr::copy_nonoverlapping(r.ptr, buffer.as_mut_ptr(), copy_len);
+                }
             }
+            if !r.ptr.is_null() {
+                crate::memory::free(r.ptr as usize, buffer.len());
+            }
+            Ok(copy_len)
+        } else {
+            Err(Error::from_raw_os_error(5))
         }
     }
 }
 
 impl Write for File {
     fn write(&mut self, buffer: &[u8]) -> Result<usize> {
-        let mut total_written = 0;
-        while total_written < buffer.len() {
-            let res = unsafe {
-                syscall(1, self.fd as u64, buffer[total_written..].as_ptr() as u64, (buffer.len() - total_written) as u64)
-            };
-
-            if res == u64::MAX {
-                return Err(Error::from_raw_os_error(5)); // EIO
-            } else if res == u64::MAX - 1 {
-                let mut pfd = crate::os::PollFd {
-                    fd: self.fd as i32,
-                    events: crate::os::POLLOUT,
-                    revents: 0,
-                };
-                crate::os::poll(core::slice::from_mut(&mut pfd), -1);
-                continue;
-            } else if res == 0 {
-                if total_written > 0 { return Ok(total_written); }
-                return Err(Error::from_raw_os_error(5));
-            } else {
-                total_written += res as usize;
-            }
+        let mut result = [0u8; 8];
+        unsafe {
+            wasi_io::output_stream_blocking_write_and_flush(self.fd as i32, buffer.as_ptr(), buffer.len(), result.as_mut_ptr());
         }
-        Ok(total_written)
+        if result[0] == 0 {
+            Ok(buffer.len())
+        } else {
+            Err(Error::from_raw_os_error(5))
+        }
     }
 
     fn flush(&mut self) -> Result<()> {
         Ok(())
     }
 }
+
 impl Seek for File {
     fn seek(&mut self, pos: SeekFrom) -> Result<u64> {
         let (offset, whence) = match pos {
@@ -152,7 +149,7 @@ impl Seek for File {
         };
 
         let res = unsafe {
-            crate::os::syscall(8, self.fd as u64, offset as u64, whence as u64)
+            crate::sys::syscall(8, self.fd as u64, offset as u64, whence as u64)
         };
 
         if res == u64::MAX {
@@ -165,41 +162,33 @@ impl Seek for File {
 
 impl Drop for File {
     fn drop(&mut self) {
-        crate::os::file_close(self.fd);
+        unsafe { crate::sys::syscall(3, self.fd as u64, 0, 0); }
     }
 }
 
 pub fn create_dir(path: &str) -> Result<()> {
-    let res = unsafe {
-        syscall(83, path.as_ptr() as u64, path.len() as u64, 0)
-    };
+    let res = unsafe { filesystem::create_dir(path) };
     if res == 0 { Ok(()) } else { Err(Error::from_raw_os_error(1)) }
 }
 
 pub fn remove_file(path: &str) -> Result<()> {
-    let res = unsafe {
-        syscall(87, path.as_ptr() as u64, path.len() as u64, 0)
-    };
+    let res = unsafe { filesystem::remove_file(path) };
     if res == 0 { Ok(()) } else { Err(Error::from_raw_os_error(1)) }
 }
 
 pub fn remove_dir(path: &str) -> Result<()> {
-    let res = unsafe {
-        syscall(84, path.as_ptr() as u64, path.len() as u64, 0)
-    };
+    let res = unsafe { filesystem::remove_dir(path) };
     if res == 0 { Ok(()) } else { Err(Error::from_raw_os_error(1)) }
 }
 
 pub fn rename(from: &str, to: &str) -> Result<()> {
-    let res = unsafe {
-        crate::os::syscall4(82, from.as_ptr() as u64, from.len() as u64, to.as_ptr() as u64, to.len() as u64)
-    };
+    let res = unsafe { filesystem::rename(from, to) };
     if res == 0 { Ok(()) } else { Err(Error::from_raw_os_error(1)) }
 }
 
 pub fn mount(disk_id: u8, fs_type: &str) -> Result<()> {
     let res = unsafe {
-        syscall(165, disk_id as u64, fs_type.as_ptr() as u64, fs_type.len() as u64)
+        crate::sys::syscall(165, disk_id as u64, fs_type.as_ptr() as u64, fs_type.len() as u64)
     };
 
     if res == 0 {
@@ -238,21 +227,14 @@ pub struct DirEntry {
 }
 
 pub fn read_dir(path: &str) -> Result<Vec<DirEntry>> {
-    let mut actual_path = String::from(path);
-    if actual_path.starts_with('/') {
-        actual_path = String::from("@0xE0") + &actual_path;
-    } else if !actual_path.starts_with('@') {
-        actual_path = String::from("@0xE0/") + &actual_path;
-    }
-
-    let mut file = File::open(&actual_path)?;
+    let mut file = File::open(path)?;
 
     let mut entries = Vec::new();
     let mut buffer = [0u8; 1024];
 
     loop {
         let res = unsafe {
-            syscall(78, file.fd as u64, buffer.as_mut_ptr() as u64, buffer.len() as u64)
+            crate::sys::syscall(78, file.fd as u64, buffer.as_mut_ptr() as u64, buffer.len() as u64)
         };
 
         if res == u64::MAX {

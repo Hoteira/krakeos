@@ -52,6 +52,8 @@ pub fn stream_read<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Res
                 InputStreamSource::GuestFd(fd) => Some((None, Some(*fd))),
                 _ => None,
             },
+            Some(WasiResource::Descriptor(fd)) => Some((None, Some(*fd))),
+            Some(WasiResource::File(f)) => Some((None, Some(f.as_raw_fd() as i32))),
             _ => None,
         }
     };
@@ -130,10 +132,10 @@ pub fn stream_read<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Res
     }
     // Result<list<u8>, stream-error>
     // Tag 0 (OK)
-    write_u32(store, ret_ptr, 0).map_err(|_| HaltExecutionError(1))?;
+    let _ = write_u32(store, ret_ptr, 0);
     // Payload (ptr, len)
-    write_u32(store, ret_ptr + 4, ptr).map_err(|_| HaltExecutionError(1))?;
-    write_u32(store, ret_ptr + 8, buffer.len() as u32).map_err(|_| HaltExecutionError(1))?;
+    let _ = write_u32(store, ret_ptr + 4, ptr);
+    let _ = write_u32(store, ret_ptr + 8, buffer.len() as u32);
     Ok(vec![])
 }
 
@@ -159,6 +161,8 @@ pub fn stream_write<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Re
         let wasi = store.wasi_ctx.as_ref().ok_or(HaltExecutionError(1))?;
         match wasi.resource_table.get(&handle) {
             Some(WasiResource::OutputStream(source)) => Some(source.clone()),
+            Some(WasiResource::Descriptor(fd)) => Some(OutputStreamSource::GuestFd(*fd)),
+            Some(WasiResource::File(f)) => Some(OutputStreamSource::GuestFd(f.as_raw_fd() as i32)),
             _ => None,
         }
     };
@@ -169,6 +173,7 @@ pub fn stream_write<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Re
             let _ = write_u32(store, ret_ptr, 1);
             return Ok(vec![]);
         }
+        // crate::debugln!("stream_write: handle={}, len={}, data='{}'", handle, len, String::from_utf8_lossy(&buf));
         let wasi = store.wasi_ctx.as_ref().ok_or(HaltExecutionError(1))?;
         let stdio_map = wasi.env.stdio_map();
         match source {
@@ -213,7 +218,7 @@ pub fn stream_write<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Re
             OutputStreamSource::Null => {}
         }
         // Write Success (Tag 0)
-        write_u32(store, ret_ptr, 0).map_err(|_| HaltExecutionError(1))?;
+        let _ = write_u32(store, ret_ptr, 0);
         Ok(vec![])
     } else {
         // Write Error (Tag 1)
@@ -320,12 +325,10 @@ pub fn poll_poll<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Resul
         for idx in ready_indices {
             buf.extend_from_slice(&idx.to_le_bytes());
         }
-        if write_bytes(store, out_ptr, &buf).is_err() {
-            return Ok(vec![]);
-        }
+        let _ = write_bytes(store, out_ptr, &buf);
     }
-    write_u32(store, ret_ptr, out_ptr).map_err(|_| HaltExecutionError(1))?;
-    write_u32(store, ret_ptr + 4, count).map_err(|_| HaltExecutionError(1))?;
+    let _ = write_u32(store, ret_ptr, out_ptr);
+    let _ = write_u32(store, ret_ptr + 4, count);
     Ok(vec![])
 }
 
@@ -376,10 +379,10 @@ pub fn error_to_debug_string<T: Config>(store: &mut Store<'_, T>, args: Vec<Valu
     let msg = "WASI Error (Debug info unavailable)";
     let bytes = msg.as_bytes();
     let ptr = super::call_cabi_realloc(store, bytes.len() as u32, 1)?;
-    write_bytes(store, ptr, bytes).map_err(|_| HaltExecutionError(1))?;
+    let _ = write_bytes(store, ptr, bytes);
 
-    write_u32(store, ret_ptr, ptr).map_err(|_| HaltExecutionError(1))?;
-    write_u32(store, ret_ptr + 4, bytes.len() as u32).map_err(|_| HaltExecutionError(1))?;
+    let _ = write_u32(store, ret_ptr, ptr);
+    let _ = write_u32(store, ret_ptr + 4, bytes.len() as u32);
 
     Ok(vec![])
 }

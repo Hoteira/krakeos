@@ -8,25 +8,35 @@ unsafe extern "C" {
     pub fn input_stream_read(handle: i32, len: u64, result_ptr: *mut u8);
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn output_stream_blocking_write_and_flush(handle: i32, ptr: *const u8, len: usize, result_ptr: *mut u8) {
     let res = crate::sys::syscall(1, handle as u64, ptr as u64, len as u64);
     if res != u64::MAX {
-        *result_ptr = 0; // Ok
+        core::ptr::write_unaligned(result_ptr as *mut u32, 0); // Ok tag
     } else {
-        *result_ptr = 1; // Err
+        core::ptr::write_unaligned(result_ptr as *mut u32, 1); // Err tag
+        core::ptr::write_unaligned(result_ptr.add(4) as *mut u32, 5); // EIO
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn input_stream_read(handle: i32, len: u64, result_ptr: *mut u8) {
-    let buf_ptr = result_ptr.add(8);
-    let res = crate::sys::syscall(0, handle as u64, buf_ptr as u64, len);
+    let buf = crate::memory::malloc(len as usize) as *mut u8;
+    if buf.is_null() {
+        core::ptr::write_unaligned(result_ptr as *mut u32, 1); // Err tag
+        core::ptr::write_unaligned(result_ptr.add(4) as *mut u32, 12); // ENOMEM
+        return;
+    }
+
+    let res = crate::sys::syscall(0, handle as u64, buf as u64, len);
     if res != u64::MAX {
-        *result_ptr = 0; // Ok
-        core::ptr::write_unaligned(result_ptr.add(4) as *mut u32, res as u32);
+        core::ptr::write_unaligned(result_ptr as *mut u32, 0); // Ok tag
+        core::ptr::write_unaligned(result_ptr.add(8) as *mut u64, buf as u64);
+        core::ptr::write_unaligned(result_ptr.add(16) as *mut u64, res);
     } else {
-        *result_ptr = 1; // Err
+        crate::memory::free(buf as usize, len as usize);
+        core::ptr::write_unaligned(result_ptr as *mut u32, 1); // Err tag
+        core::ptr::write_unaligned(result_ptr.add(4) as *mut u32, 5); // EIO
     }
 }
 
@@ -37,7 +47,7 @@ unsafe extern "C" {
     pub fn error_drop(handle: i32);
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn error_drop(_handle: i32) {
     // No-op for now on native
 }

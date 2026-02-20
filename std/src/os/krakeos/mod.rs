@@ -33,12 +33,7 @@ pub fn debug_print(s: &str) {
 }
 
 pub fn sleep(ms: u64) {
-    if ms > 10 {
-        unsafe {
-            syscall(35, ms, 0, 0);
-        }
-        yield_task();
-    }
+    crate::time::sleep(core::time::Duration::from_millis(ms));
 }
 
 pub fn yield_task() {
@@ -46,53 +41,23 @@ pub fn yield_task() {
 }
 
 pub fn file_read(fd: usize, buffer: &mut [u8]) -> usize {
-    loop {
-        let n = unsafe {
-            syscall(0, fd as u64, buffer.as_mut_ptr() as u64, buffer.len() as u64) as usize
-        };
-        if n == usize::MAX - 1 { // EWOULDBLOCK
-            let mut pfd = PollFd {
-                fd: fd as i32,
-                events: POLLIN,
-                revents: 0,
-            };
-            poll(core::slice::from_mut(&mut pfd), -1);
-            continue;
-        }
-        return n;
-    }
+    let mut file = crate::fs::File::from_raw_fd(fd);
+    let res = match crate::io::Read::read(&mut file, buffer) {
+        Ok(n) => n,
+        Err(_) => 0,
+    };
+    core::mem::forget(file); // Don't close it
+    res
 }
 
 pub fn file_write(fd: usize, buffer: &[u8]) -> usize {
-    let mut total_written = 0;
-    while total_written < buffer.len() {
-        let n = unsafe {
-            syscall(1, fd as u64, buffer[total_written..].as_ptr() as u64, (buffer.len() - total_written) as u64) as usize
-        };
-        if n == usize::MAX { break; }
-        if n == usize::MAX - 1 { // EWOULDBLOCK
-            let mut pfd = PollFd {
-                fd: fd as i32,
-                events: POLLOUT,
-                revents: 0,
-            };
-            poll(core::slice::from_mut(&mut pfd), -1);
-            continue;
-        }
-        if n == 0 {
-            // Write returning 0 typically means blocked/full or closed. 
-            // We treat it as blocked here to avoid spinning, but usually closed pipe/socket returns EPIPE or similar.
-            let mut pfd = PollFd {
-                fd: fd as i32,
-                events: POLLOUT,
-                revents: 0,
-            };
-            poll(core::slice::from_mut(&mut pfd), -1);
-            continue;
-        }
-        total_written += n;
-    }
-    total_written
+    let mut file = crate::fs::File::from_raw_fd(fd);
+    let res = match crate::io::Write::write(&mut file, buffer) {
+        Ok(n) => n,
+        Err(_) => 0,
+    };
+    core::mem::forget(file);
+    res
 }
 
 pub fn file_close(fd: usize) -> i32 {

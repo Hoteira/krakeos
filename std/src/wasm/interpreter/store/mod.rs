@@ -464,7 +464,7 @@ impl<'a, T: Config> Store<'a, T> {
                             
                             let final_sp: *mut u128;
                             
-                            #[cfg(target_arch = "x86_64")]
+                            #[cfg(not(target_arch = "wasm32"))]
                             unsafe {
                                 core::arch::asm!(
                                     "push rbp",
@@ -481,12 +481,12 @@ impl<'a, T: Config> Store<'a, T> {
                                 );
                             }
 
-                            #[cfg(not(target_arch = "x86_64"))]
+                            #[cfg(target_arch = "wasm32")]
                             {
                                 let _ = sp;
                                 let _ = aot_ptr;
                                 let _ = &mut ctx;
-                                panic!("AOT execution only supported on x86_64");
+                                panic!("AOT execution only supported on native targets");
                             }
                             
                             let mut results = Vec::new();
