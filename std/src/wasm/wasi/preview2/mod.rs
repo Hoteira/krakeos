@@ -99,11 +99,39 @@ pub fn create_wasi_p2_imports<T: Config>(linker: &mut Linker, store: &mut Store<
         define(linker, store, module, "[resource-drop]udp-socket", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
         define(linker, store, module, "[resource-drop]incoming-datagram-stream", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
         define(linker, store, module, "[resource-drop]outgoing-datagram-stream", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
+        define(linker, store, module, "[method]udp-socket.create", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], sockets::create_udp_socket);
+        define(linker, store, module, "[method]udp-socket.start-bind", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], sockets::start_bind);
+        define(linker, store, module, "[method]outgoing-datagram-stream.send", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], sockets::send);
+        define(linker, store, module, "[method]incoming-datagram-stream.receive", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], sockets::receive);
     }
     // wasi:sockets/tcp@0.2.0
     {
         let module = "wasi:sockets/tcp@0.2.0";
         define(linker, store, module, "[resource-drop]tcp-socket", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
+        define(linker, store, module, "[method]tcp-socket.create", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], sockets::tcp_create_socket);
+        define(linker, store, module, "[method]tcp-socket.start-bind", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], sockets::tcp_start_bind);
+        define(linker, store, module, "[method]tcp-socket.finish-bind", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], sockets::tcp_finish_bind);
+        define(linker, store, module, "[method]tcp-socket.start-connect", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], sockets::tcp_start_connect);
+        define(linker, store, module, "[method]tcp-socket.finish-connect", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], sockets::tcp_finish_connect);
+        define(linker, store, module, "[method]tcp-socket.start-listen", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], sockets::tcp_start_listen);
+        define(linker, store, module, "[method]tcp-socket.finish-listen", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], sockets::tcp_finish_listen);
+        define(linker, store, module, "[method]tcp-socket.accept", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], sockets::tcp_accept);
+    }
+    // wasi:sockets/network@0.2.0
+    {
+        let module = "wasi:sockets/network@0.2.0";
+        define(linker, store, module, "[resource-drop]network", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
+    }
+    // wasi:sockets/instance-network@0.2.0
+    {
+        let module = "wasi:sockets/instance-network@0.2.0";
+        define(linker, store, module, "instance-network", vec![], vec![ValType::NumType(NumType::I32)], sockets::instance_network);
+    }
+    // wasi:sockets/ip-name-lookup@0.2.0
+    {
+        let module = "wasi:sockets/ip-name-lookup@0.2.0";
+        define(linker, store, module, "[resource-drop]resolve-address-stream", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
+        define(linker, store, module, "resolve-addresses", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], sockets::resolve_addresses);
     }
     // wasi_snapshot_preview1 (Adapter extras)
     {
@@ -605,7 +633,7 @@ fn krakeos_syscall6_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) 
     Ok(vec![Value::I64(res)])
 }
 
-fn krakeos_syscall7_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+fn krakeos_syscall7_host<T: Config>(_: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
     let get_arg = |i: usize| -> u64 {
         match args.get(i) {
             Some(Value::I64(v)) => *v,
@@ -615,65 +643,6 @@ fn krakeos_syscall7_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) 
     };
     
     let num = get_arg(0);
-
-    if num == 44 { // SENDTO
-        let fd = get_arg(1);
-        let buf_ptr = get_arg(2) as u32;
-        let len = get_arg(3) as u32;
-        let flags = get_arg(4);
-        let dest_addr_ptr = get_arg(5) as u32;
-        let dest_len = get_arg(6);
-
-        let mut buf = vec![0u8; len as usize];
-        read_mem(store, buf_ptr, &mut buf).map_err(|_| HaltExecutionError(1))?;
-        
-        let mut dest_addr = vec![0u8; dest_len as usize];
-        read_mem(store, dest_addr_ptr, &mut dest_addr).map_err(|_| HaltExecutionError(1))?;
-
-        let res = unsafe { crate::sys::syscall6(num, fd, buf.as_ptr() as u64, len as u64, flags, dest_addr.as_ptr() as u64, dest_len) };
-        return Ok(vec![Value::I64(res)]);
-    }
-
-    if num == 45 { // RECVFROM
-        let fd = get_arg(1);
-        let buf_ptr = get_arg(2) as u32;
-        let len = get_arg(3) as u32;
-        let flags = get_arg(4);
-        let src_addr_ptr = get_arg(5) as u32;
-        let addr_len_ptr = get_arg(6) as u32;
-
-        let mut buf = vec![0u8; len as usize];
-        let mut src_addr = vec![0u8; 16];
-        let mut addr_len: u32 = 16;
-
-        let res = unsafe { 
-            crate::sys::syscall6(num, fd, buf.as_mut_ptr() as u64, len as u64, flags, src_addr.as_mut_ptr() as u64, &mut addr_len as *mut u32 as u64) 
-        };
-
-        if res != u64::MAX && res > 0 {
-            write_bytes(store, buf_ptr, &buf[..res as usize]).map_err(|_| HaltExecutionError(1))?;
-            if src_addr_ptr != 0 {
-                write_bytes(store, src_addr_ptr, &src_addr).map_err(|_| HaltExecutionError(1))?;
-            }
-            if addr_len_ptr != 0 {
-                write_u32(store, addr_len_ptr, addr_len).map_err(|_| HaltExecutionError(1))?;
-            }
-        }
-        return Ok(vec![Value::I64(res)]);
-    }
-
-    if num == 49 { // BIND
-        let fd = get_arg(1);
-        let addr_ptr = get_arg(2) as u32;
-        let addr_len = get_arg(3);
-        
-        if addr_ptr != 0 {
-            let mut addr_buf = vec![0u8; addr_len as usize];
-            read_mem(store, addr_ptr, &mut addr_buf).map_err(|_| HaltExecutionError(1))?;
-            let res = unsafe { crate::sys::syscall6(num, fd, addr_buf.as_ptr() as u64, addr_len, 0, 0, 0) };
-            return Ok(vec![Value::I64(res)]);
-        }
-    }
 
     let res = unsafe { crate::sys::syscall6(num, get_arg(1), get_arg(2), get_arg(3), get_arg(4), get_arg(5), get_arg(6)) };
     Ok(vec![Value::I64(res)])

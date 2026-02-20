@@ -1,5 +1,6 @@
 use crate::sys::{syscall1, syscall6};
 use crate::rust_alloc::vec::Vec;
+use crate::wasi::sockets::udp;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SocketAddr {
@@ -12,9 +13,14 @@ pub struct Socket {
 
 impl Socket {
     pub fn new() -> Option<Self> {
-        // SYS_SOCKET = 41
-        let res = unsafe { syscall6(41, 2, 2, 0, 0, 0, 0) }; // AF_INET=2, SOCK_DGRAM=2
-        if res == u64::MAX { None } else { Some(Socket { handle: res as usize }) }
+        let mut result = [0u8; 8];
+        unsafe { udp::create_udp_socket(2, result.as_mut_ptr()) }; // AF_INET=2
+        if result[0] == 0 {
+            let handle = unsafe { core::ptr::read_unaligned(result.as_ptr().add(4) as *const i32) };
+            Some(Socket { handle: handle as usize })
+        } else {
+            None
+        }
     }
 
     pub fn bind(&self, addr: SocketAddr) -> Result<(), i32> {
@@ -29,9 +35,9 @@ impl Socket {
                 saddr[6] = ip[2];
                 saddr[7] = ip[3];
                 
-                // SYS_BIND = 49
-                let res = unsafe { syscall6(49, self.handle as u64, saddr.as_ptr() as u64, 16, 0, 0, 0) };
-                if res == 0 { Ok(()) } else { Err(res as i32) }
+                let mut result = [0u8; 4];
+                unsafe { udp::start_bind(self.handle as i32, 0, saddr.as_ptr(), result.as_mut_ptr()) };
+                if result[0] == 0 { Ok(()) } else { Err(-1) }
             }
         }
     }
@@ -48,29 +54,35 @@ impl Socket {
                 saddr[6] = ip[2];
                 saddr[7] = ip[3];
 
-                // SYS_SENDTO = 44
-                let res = unsafe { 
-                    syscall6(44, self.handle as u64, buf.as_ptr() as u64, buf.len() as u64, 0, saddr.as_ptr() as u64, 16) 
-                };
-                if res == u64::MAX { Err(-1) } else { Ok(res as usize) }
+                let mut result = [0u8; 16];
+                unsafe { udp::send(self.handle as i32, buf.as_ptr(), buf.len() as u32, saddr.as_ptr(), result.as_mut_ptr()) };
+                if result[0] == 0 {
+                    let bytes_sent = unsafe { core::ptr::read_unaligned(result.as_ptr().add(8) as *const u64) };
+                    Ok(bytes_sent as usize)
+                } else {
+                    Err(-1)
+                }
             }
         }
     }
 
     pub fn recv_from(&self, buf: &mut [u8]) -> Result<(usize, SocketAddr), i32> {
-        let mut saddr = [0u8; 16];
-        let mut addr_len = 16u32;
-        // SYS_RECVFROM = 45
-        let res = unsafe {
-            syscall6(45, self.handle as u64, buf.as_mut_ptr() as u64, buf.len() as u64, 0, saddr.as_mut_ptr() as u64, &mut addr_len as *mut u32 as u64)
-        };
+        let mut wasi_buf = crate::rust_alloc::vec![0u8; 32 + buf.len()];
+        unsafe { udp::receive(self.handle as i32, buf.len() as u64, wasi_buf.as_mut_ptr()) };
         
-        if res == u64::MAX { return Err(-1); }
-        
-        let port = ((saddr[2] as u16) << 8) | (saddr[3] as u16);
-        let ip = [saddr[4], saddr[5], saddr[6], saddr[7]];
-        
-        Ok((res as usize, SocketAddr::V4(ip, port)))
+        if wasi_buf[0] == 0 {
+            let received_len = unsafe { core::ptr::read_unaligned(wasi_buf.as_ptr().add(8) as *const u64) } as usize;
+            let mut saddr = [0u8; 16];
+            saddr.copy_from_slice(&wasi_buf[16..32]);
+            
+            buf[..received_len].copy_from_slice(&wasi_buf[32..32+received_len]);
+
+            let port = ((saddr[2] as u16) << 8) | (saddr[3] as u16);
+            let ip = [saddr[4], saddr[5], saddr[6], saddr[7]];
+            Ok((received_len, SocketAddr::V4(ip, port)))
+        } else {
+            Err(-1)
+        }
     }
 }
 
