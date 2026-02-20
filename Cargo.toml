@@ -15,6 +15,7 @@ members = [
     "std",
     "apps/saltty",
     "apps/shm_test",
+    "apps/net_test",
     "userland",
 ]
 

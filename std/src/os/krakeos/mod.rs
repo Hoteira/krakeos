@@ -51,7 +51,12 @@ pub fn file_read(fd: usize, buffer: &mut [u8]) -> usize {
             syscall(0, fd as u64, buffer.as_mut_ptr() as u64, buffer.len() as u64) as usize
         };
         if n == usize::MAX - 1 { // EWOULDBLOCK
-            yield_task();
+            let mut pfd = PollFd {
+                fd: fd as i32,
+                events: POLLIN,
+                revents: 0,
+            };
+            poll(core::slice::from_mut(&mut pfd), -1);
             continue;
         }
         return n;
@@ -65,8 +70,26 @@ pub fn file_write(fd: usize, buffer: &[u8]) -> usize {
             syscall(1, fd as u64, buffer[total_written..].as_ptr() as u64, (buffer.len() - total_written) as u64) as usize
         };
         if n == usize::MAX { break; }
-        if n == usize::MAX - 1 { yield_task(); continue; }
-        if n == 0 { yield_task(); continue; }
+        if n == usize::MAX - 1 { // EWOULDBLOCK
+            let mut pfd = PollFd {
+                fd: fd as i32,
+                events: POLLOUT,
+                revents: 0,
+            };
+            poll(core::slice::from_mut(&mut pfd), -1);
+            continue;
+        }
+        if n == 0 {
+            // Write returning 0 typically means blocked/full or closed. 
+            // We treat it as blocked here to avoid spinning, but usually closed pipe/socket returns EPIPE or similar.
+            let mut pfd = PollFd {
+                fd: fd as i32,
+                events: POLLOUT,
+                revents: 0,
+            };
+            poll(core::slice::from_mut(&mut pfd), -1);
+            continue;
+        }
         total_written += n;
     }
     total_written

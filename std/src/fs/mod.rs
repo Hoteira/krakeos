@@ -97,7 +97,12 @@ impl Read for File {
             if res == u64::MAX {
                 return Err(Error::from_raw_os_error(5)); // EIO
             } else if res == u64::MAX - 1 {
-                crate::os::yield_task();
+                let mut pfd = crate::os::PollFd {
+                    fd: self.fd as i32,
+                    events: crate::os::POLLIN,
+                    revents: 0,
+                };
+                crate::os::poll(core::slice::from_mut(&mut pfd), -1);
                 continue;
             } else {
                 return Ok(res as usize);
@@ -117,7 +122,12 @@ impl Write for File {
             if res == u64::MAX {
                 return Err(Error::from_raw_os_error(5)); // EIO
             } else if res == u64::MAX - 1 {
-                crate::os::yield_task();
+                let mut pfd = crate::os::PollFd {
+                    fd: self.fd as i32,
+                    events: crate::os::POLLOUT,
+                    revents: 0,
+                };
+                crate::os::poll(core::slice::from_mut(&mut pfd), -1);
                 continue;
             } else if res == 0 {
                 if total_written > 0 { return Ok(total_written); }
@@ -202,8 +212,14 @@ pub fn mount(disk_id: u8, fs_type: &str) -> Result<()> {
 pub fn read(path: &str) -> Result<Vec<u8>> {
     let mut file = File::open(path)?;
     let size = file.size();
-    let mut bytes = Vec::with_capacity(size);
-    file.read_to_end(&mut bytes)?;
+    let mut bytes = rust_alloc::vec![0u8; size];
+    let mut total_read = 0;
+    while total_read < size {
+        let n = file.read(&mut bytes[total_read..])?;
+        if n == 0 { break; }
+        total_read += n;
+    }
+    bytes.truncate(total_read);
     Ok(bytes)
 }
 

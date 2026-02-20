@@ -4,7 +4,7 @@ use core::ptr::{self, write_bytes, NonNull};
 pub const BIN_COUNT: usize = 32;
 pub const MIN_BLOCK_SIZE: usize = 32;
 const MAX_HEAP_REGIONS: usize = 64;
-const MAGIC_USED: u32 = 0xDEAD_BEEF;
+const MAGIC_SEQUENCE: u32 = 0x1574_4751;
 const FLAG_FREE: usize = 1;
 
 #[repr(C, align(8))]
@@ -107,6 +107,7 @@ impl Heap {
         false
     }
 
+    #[inline]
     fn is_in_same_region(&self, a: *const u8, b: *const u8) -> bool {
         let addr_a = a as usize;
         let addr_b = b as usize;
@@ -238,7 +239,7 @@ impl Heap {
         if total_available >= needed + MIN_BLOCK_SIZE {
             let used = block as *mut Used;
             (*used).set_used(needed);
-            (*used).magic = MAGIC_USED;
+            (*used).magic = MAGIC_SEQUENCE;
 
             let payload_ptr = (used as *mut u8).add(16);
             write_bytes(payload_ptr, 0, needed - 16 - 8);
@@ -251,7 +252,7 @@ impl Heap {
         } else {
             let used = block as *mut Used;
             (*used).set_used(total_available);
-            (*used).magic = MAGIC_USED;
+            (*used).magic = MAGIC_SEQUENCE;
 
             let payload_ptr = (used as *mut u8).add(16);
             write_bytes(payload_ptr, 0, total_available - 16 - 8);
@@ -264,7 +265,7 @@ impl Heap {
         if ptr.is_null() { return; }
         let used = (ptr as *mut u8).offset(-16) as *mut Used;
         if !self.is_in_region(used as *const u8) { return; }
-        if (*used).magic != MAGIC_USED { return; }
+        if (*used).magic != MAGIC_SEQUENCE { return; }
 
         (*used).magic = 0;
         self.coalesce_and_push(used as *mut Free);
@@ -305,9 +306,9 @@ impl Heap {
     }
 }
 
-/// Segregated Bin Mapping:
-/// Bins 0-11: Linear (8 bytes) -> 32, 40, ..., 120
-/// Bins 12-31: Logarithmic -> 128, 256, ..., 2^26
+// Bin Mapping:
+// 0-11: Linear (8 bytes) -> 32, 40, ..., 120
+// 12-31: Log -> 128, 256, ..., 2^26
 pub fn get_bin_index(size: usize) -> usize {
     if size < 128 {
         ((size.saturating_sub(MIN_BLOCK_SIZE)) / 8).min(11)

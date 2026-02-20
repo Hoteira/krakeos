@@ -54,8 +54,6 @@ pub fn parse_component(wasm: &mut WasmReader) -> Result<ParsedComponent, Compone
         // Handle sections that need absolute spans or skipping logic on the main reader
         match ty {
             ComponentSectionTy::Custom |
-            ComponentSectionTy::Type |
-            ComponentSectionTy::Canon |
             ComponentSectionTy::CoreType |
             ComponentSectionTy::Unknown(_) => {
                 wasm.skip(size as usize).map_err(|_| ComponentError::UnexpectedEof)?;
@@ -261,6 +259,14 @@ pub fn parse_component(wasm: &mut WasmReader) -> Result<ParsedComponent, Compone
                     ComponentError::MalformedVarU32
                 })?;
                 component.items.extend(aliases.into_iter().map(ComponentItem::Alias));
+            }
+            ComponentSectionTy::Type => {
+                let types = reader.read_vec(ComponentType::read).map_err(|_| ComponentError::MalformedVarU32)?;
+                component.items.extend(types.into_iter().map(ComponentItem::Type));
+            }
+            ComponentSectionTy::Canon => {
+                let canons = reader.read_vec(ComponentCanon::read).map_err(|_| ComponentError::MalformedVarU32)?;
+                component.items.extend(canons.into_iter().map(ComponentItem::Canon));
             }
             ComponentSectionTy::Start => {
                 // crate::debugln!("Parsing Start Section...");

@@ -46,12 +46,7 @@ pub unsafe fn syscall(num: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
                 #[repr(C)]
                 struct RetArea { tag: u32, ptr: u32, len: u32 }
                 let mut ret_area = RetArea { tag: 1, ptr: 0, len: 0 };
-                // unsafe { crate::os::debug_print("Guest: calling input_stream_read\n"); }
                 preview2_bindings::input_stream_read(handle, arg3, &mut ret_area as *mut _ as *mut u8);
-                // unsafe { 
-                //     let msg = crate::rust_alloc::format!("Guest: read done. tag={} ptr={} len={}\n", ret_area.tag, ret_area.ptr, ret_area.len);
-                //     crate::os::debug_print(&msg);
-                // }
                 if ret_area.tag == 0 {
                     let src_len = ret_area.len as usize;
                     let copy_len = if src_len < arg3 as usize { src_len } else { arg3 as usize };
@@ -97,13 +92,27 @@ pub unsafe fn syscall(num: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
     }
 }
 
+pub unsafe fn syscall1(num: u64, arg1: u64) -> u64 {
+    syscall(num, arg1, 0, 0)
+}
+
+pub unsafe fn syscall2(num: u64, arg1: u64, arg2: u64) -> u64 {
+    syscall(num, arg1, arg2, 0)
+}
+
+pub unsafe fn syscall3(num: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
+    syscall(num, arg1, arg2, arg3)
+}
+
 pub unsafe fn syscall4(num: u64, a1: u64, a2: u64, a3: u64, a4: u64) -> u64 {
     unsafe { preview2_bindings::krakeos_syscall5(num, a1, a2, a3, a4) }
 }
 pub unsafe fn syscall5(num: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> u64 {
     unsafe { preview2_bindings::krakeos_syscall6(num, a1, a2, a3, a4, a5) }
 }
-pub unsafe fn syscall6(_num: u64, _a1: u64, _a2: u64, _a3: u64, _a4: u64, _a5: u64, _a6: u64) -> u64 { 0 }
+pub unsafe fn syscall6(num: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64, a6: u64) -> u64 {
+    unsafe { preview2_bindings::krakeos_syscall7(num, a1, a2, a3, a4, a5, a6) }
+}
 
 pub fn yield_task() {
     unsafe { let _ = wasi_sched_yield(); }

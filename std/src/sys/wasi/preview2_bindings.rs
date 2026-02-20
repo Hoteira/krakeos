@@ -39,6 +39,8 @@ unsafe extern "C" {
     pub fn krakeos_syscall5(num: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64) -> u64;
     #[link_name = "syscall6"]
     pub fn krakeos_syscall6(num: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> u64;
+    #[link_name = "syscall7"]
+    pub fn krakeos_syscall7(num: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64, arg6: u64) -> u64;
 }
 
 #[link(wasm_import_module = "krakeos:graphics/screen@0.2.0")]

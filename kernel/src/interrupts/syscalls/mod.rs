@@ -10,6 +10,7 @@ pub mod memory;
 pub mod window;
 pub mod misc;
 pub mod event;
+pub mod network;
 
 pub const SYS_READ: u64 = 0;
 pub const SYS_WRITE: u64 = 1;
@@ -28,6 +29,12 @@ pub const SYS_PWRITE64: u64 = 18;
 pub const SYS_PIPE: u64 = 22;
 pub const SYS_NANOSLEEP: u64 = 35;
 pub const SYS_GETPID: u64 = 39;
+pub const SYS_SOCKET: u64 = 41;
+pub const SYS_CONNECT: u64 = 42;
+pub const SYS_SENDTO: u64 = 44;
+pub const SYS_RECVFROM: u64 = 45;
+pub const SYS_BIND: u64 = 49;
+pub const SYS_SOCKET_CLOSE: u64 = 50;
 pub const SYS_EXECVE: u64 = 59;
 pub const SYS_EXIT: u64 = 60;
 pub const SYS_WAIT4: u64 = 61;
@@ -154,6 +161,12 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
         SYS_PIPE => fs::handle_pipe(context),
         SYS_NANOSLEEP => process::handle_sleep(context),
         SYS_GETPID => process::handle_getpid(context),
+        SYS_SOCKET => network::handle_socket(context),
+        SYS_CONNECT => context.rax = 0, // Stub
+        SYS_SENDTO => network::handle_sendto(context),
+        SYS_RECVFROM => network::handle_recvfrom(context),
+        SYS_BIND => network::handle_bind(context),
+        SYS_SOCKET_CLOSE => network::handle_close_socket(context),
         SYS_EXECVE => process::handle_spawn(context),
         SYS_EXIT => process::handle_exit(context),
         SYS_WAIT4 => process::handle_wait_pid(context),
