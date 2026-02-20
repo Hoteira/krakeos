@@ -155,6 +155,7 @@ pub fn create_wasi_p2_imports<T: Config>(linker: &mut Linker, store: &mut Store<
         define(linker, store, module, "syscall", vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I64)], krakeos_syscall_host);
         define(linker, store, module, "syscall5", vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I64)], krakeos_syscall5_host);
         define(linker, store, module, "syscall6", vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I64)], krakeos_syscall6_host);
+        define(linker, store, module, "syscall7", vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I64)], krakeos_syscall7_host);
     }
     // krakeos:graphics/screen@0.2.0
     {
@@ -600,6 +601,80 @@ fn krakeos_syscall6_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) 
     }
 
     // 103: UPDATE_WINDOW_AREA(wid, x, y, w, h)
+    let res = unsafe { crate::sys::syscall6(num, get_arg(1), get_arg(2), get_arg(3), get_arg(4), get_arg(5), get_arg(6)) };
+    Ok(vec![Value::I64(res)])
+}
+
+fn krakeos_syscall7_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let get_arg = |i: usize| -> u64 {
+        match args.get(i) {
+            Some(Value::I64(v)) => *v,
+            Some(Value::I32(v)) => *v as u64,
+            _ => 0
+        }
+    };
+    
+    let num = get_arg(0);
+
+    if num == 44 { // SENDTO
+        let fd = get_arg(1);
+        let buf_ptr = get_arg(2) as u32;
+        let len = get_arg(3) as u32;
+        let flags = get_arg(4);
+        let dest_addr_ptr = get_arg(5) as u32;
+        let dest_len = get_arg(6);
+
+        let mut buf = vec![0u8; len as usize];
+        read_mem(store, buf_ptr, &mut buf).map_err(|_| HaltExecutionError(1))?;
+        
+        let mut dest_addr = vec![0u8; dest_len as usize];
+        read_mem(store, dest_addr_ptr, &mut dest_addr).map_err(|_| HaltExecutionError(1))?;
+
+        let res = unsafe { crate::sys::syscall6(num, fd, buf.as_ptr() as u64, len as u64, flags, dest_addr.as_ptr() as u64, dest_len) };
+        return Ok(vec![Value::I64(res)]);
+    }
+
+    if num == 45 { // RECVFROM
+        let fd = get_arg(1);
+        let buf_ptr = get_arg(2) as u32;
+        let len = get_arg(3) as u32;
+        let flags = get_arg(4);
+        let src_addr_ptr = get_arg(5) as u32;
+        let addr_len_ptr = get_arg(6) as u32;
+
+        let mut buf = vec![0u8; len as usize];
+        let mut src_addr = vec![0u8; 16];
+        let mut addr_len: u32 = 16;
+
+        let res = unsafe { 
+            crate::sys::syscall6(num, fd, buf.as_mut_ptr() as u64, len as u64, flags, src_addr.as_mut_ptr() as u64, &mut addr_len as *mut u32 as u64) 
+        };
+
+        if res != u64::MAX && res > 0 {
+            write_bytes(store, buf_ptr, &buf[..res as usize]).map_err(|_| HaltExecutionError(1))?;
+            if src_addr_ptr != 0 {
+                write_bytes(store, src_addr_ptr, &src_addr).map_err(|_| HaltExecutionError(1))?;
+            }
+            if addr_len_ptr != 0 {
+                write_u32(store, addr_len_ptr, addr_len).map_err(|_| HaltExecutionError(1))?;
+            }
+        }
+        return Ok(vec![Value::I64(res)]);
+    }
+
+    if num == 49 { // BIND
+        let fd = get_arg(1);
+        let addr_ptr = get_arg(2) as u32;
+        let addr_len = get_arg(3);
+        
+        if addr_ptr != 0 {
+            let mut addr_buf = vec![0u8; addr_len as usize];
+            read_mem(store, addr_ptr, &mut addr_buf).map_err(|_| HaltExecutionError(1))?;
+            let res = unsafe { crate::sys::syscall6(num, fd, addr_buf.as_ptr() as u64, addr_len, 0, 0, 0) };
+            return Ok(vec![Value::I64(res)]);
+        }
+    }
+
     let res = unsafe { crate::sys::syscall6(num, get_arg(1), get_arg(2), get_arg(3), get_arg(4), get_arg(5), get_arg(6)) };
     Ok(vec![Value::I64(res)])
 }

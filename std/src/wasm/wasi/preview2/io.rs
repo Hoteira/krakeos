@@ -368,5 +368,18 @@ pub fn poll_block<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Resu
 }
 
 pub fn error_to_debug_string<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-    panic!("WASI P2 stub: error_to_debug_string");
+    let ret_ptr = match args.get(1) {
+        Some(Value::I32(v)) => *v as u32,
+        _ => return Ok(vec![]),
+    };
+
+    let msg = "WASI Error (Debug info unavailable)";
+    let bytes = msg.as_bytes();
+    let ptr = super::call_cabi_realloc(store, bytes.len() as u32, 1)?;
+    write_bytes(store, ptr, bytes).map_err(|_| HaltExecutionError(1))?;
+
+    write_u32(store, ret_ptr, ptr).map_err(|_| HaltExecutionError(1))?;
+    write_u32(store, ret_ptr + 4, bytes.len() as u32).map_err(|_| HaltExecutionError(1))?;
+
+    Ok(vec![])
 }

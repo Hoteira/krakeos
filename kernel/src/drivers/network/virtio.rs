@@ -153,13 +153,13 @@ pub fn init() -> Result<(), String> {
             let addr = (bar_base as u64) + (offset as u64);
             
             if cfg_type == VIRTIO_CAP_COMMON {
-                let virt_addr = vmm::map_mmio(addr, 4096).map_err(|_| "VirtIO Net: Failed to map common config MMIO")?;
+                let virt_addr = vmm::map_mmio(addr, 4096);
                 common_cfg_ptr = virt_addr as *mut u8;
             } else if cfg_type == VIRTIO_CAP_NOTIFY {
-                notify_base = vmm::map_mmio(addr, 4096).map_err(|_| "VirtIO Net: Failed to map notify MMIO")?;
+                notify_base = vmm::map_mmio(addr, 4096);
                 notify_multiplier = device.read_capability_data(cap.offset as u8, 16);
             } else if cfg_type == 4 { // Device specific (MAC)
-                let virt_addr = vmm::map_mmio(addr, 4096).map_err(|_| "VirtIO Net: Failed to map device config MMIO")?;
+                let virt_addr = vmm::map_mmio(addr, 4096);
                 device_cfg_ptr = virt_addr as *mut u8;
             }
         }

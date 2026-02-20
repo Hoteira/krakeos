@@ -44,6 +44,9 @@ copy "target\wasm32-wasip2\release\taskbar.wasm" "tree\apps\taskbar.wasm"
 cargo build --package=aot_test --target=wasm32-wasip2 --release
 copy "target\wasm32-wasip2\release\aot_test.wasm" "tree\apps\aot_test.wasm"
 
+cargo build --package=net_test --target=wasm32-wasip2 --release
+copy "target\wasm32-wasip2\release\net_test.wasm" "tree\apps\net_test.wasm"
+
 cargo build --package=libc --target=bits64pie.json --release
 
 wsl dd if=build/kernel.bin of=build/disk.img seek=6144 bs=512 conv=notrunc

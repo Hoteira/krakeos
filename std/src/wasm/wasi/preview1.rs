@@ -843,8 +843,12 @@ fn fd_readdir<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<V
                 let nb = name.as_bytes();
                 let nl = nb.len();
                 let es = 24 + nl;
-                if (used + es) > b_len as usize {
-                    used = b_len as usize; // Buffer full-ish
+                
+                // Align to 8 bytes
+                let padding = (8 - (es % 8)) % 8;
+                let total_len = es + padding;
+
+                if (used + total_len) > b_len as usize {
                     break;
                 }
                 let eb = b_ptr + used as u32;
@@ -853,7 +857,12 @@ fn fd_readdir<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<V
                     write_u32(store, eb + 16, nl as u32).is_err() ||
                     write_bytes(store, eb + 20, &[ft, 0, 0, 0]).is_err() ||
                     write_bytes(store, eb + 24, nb).is_err() { return Ok(vec![Value::I32(28)]); }
-                used += es;
+                
+                if padding > 0 {
+                    if write_bytes(store, eb + es as u32, &vec![0u8; padding]).is_err() { return Ok(vec![Value::I32(28)]); }
+                }
+
+                used += total_len;
             }
             if u_ptr != 0 { let _ = write_u32(store, u_ptr, used as u32); }
             Ok(vec![Value::I32(0)])

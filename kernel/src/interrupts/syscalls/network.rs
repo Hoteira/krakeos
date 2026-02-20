@@ -65,35 +65,13 @@ pub fn handle_socket(context: &mut CPUState) {
         
         let socket_id = crate::net::socket::SOCKET_MANAGER.lock()
             .create_socket(pid, crate::net::socket::SocketType::Udp);
-            
-        // Map socket ID to File Descriptor
-        // HACK: We use the same FD table for files and sockets. 
-        // We need to mark it as a socket or store it differently?
-        // Current FD table stores i16. Positive values are global file handles.
-        // We can use negative values for sockets? Or a separate range?
-        // Let's use a High bit or separate table.
-        // For simplicity, let's use high range 100+ for sockets in the same table if it fits.
-        // Actually, FD table maps to `FileHandle`. We need `FileHandle::Socket`.
-        
-        // Let's register it in VFS as a specialized node or handle.
-        // Or just return the socket ID and let the userland wrapper handle the distinction?
-        // WASI expects FDs.
-        
-        // Let's treat Socket ID as the "FD" for now, but we need to store it in the process.
-        // The process struct has `fd_table: [i16; 16]`. 
-        // We can store socket IDs as negative numbers? 
-        // -1 = Empty. -2 = Socket 0?
-        // socket_id starts at 1. So -socket_id - 1?
         
         if let Some(thread) = tm.tasks[current].as_mut() {
             let proc = thread.process.as_ref().expect("Thread has no process");
-            let mut fd_table = proc.fd_table.lock();
+            let mut socket_table = proc.socket_table.lock();
             for i in 0..16 {
-                if fd_table[i] == -1 {
-                    // Encode socket ID as negative: - (id + 2)
-                    // id=1 -> -3. id=2 -> -4.
-                    let encoded = -((socket_id as i16) + 2);
-                    fd_table[i] = encoded;
+                if socket_table[i].is_none() {
+                    socket_table[i] = Some(socket_id);
                     context.rax = i as u64;
                     return;
                 }
@@ -113,6 +91,11 @@ pub fn handle_bind(context: &mut CPUState) {
         return;
     }
 
+    if fd >= 16 {
+        context.rax = u64::MAX;
+        return;
+    }
+
     let port = unsafe {
         // sockaddr_in: family(2), port(2), addr(4), zero(8)
         let p_n = *(addr_ptr.add(2) as *const u16);
@@ -123,10 +106,9 @@ pub fn handle_bind(context: &mut CPUState) {
     if let Some(current) = tm.current_task_idx() {
         if let Some(thread) = tm.tasks[current].as_ref() {
             let proc = thread.process.as_ref().unwrap();
-            let fd_val = proc.fd_table.lock()[fd];
+            let socket_id_opt = proc.socket_table.lock()[fd];
             
-            if fd_val < -2 {
-                let socket_id = (-fd_val - 2) as usize;
+            if let Some(socket_id) = socket_id_opt {
                 drop(tm);
                 
                 let res = crate::net::socket::SOCKET_MANAGER.lock().bind(socket_id, port);
@@ -146,7 +128,7 @@ pub fn handle_sendto(context: &mut CPUState) {
     let dest_addr_ptr = context.r8 as *const u8;
     let _dest_len = context.r9;
 
-    if buf_ptr.is_null() || dest_addr_ptr.is_null() {
+    if buf_ptr.is_null() || dest_addr_ptr.is_null() || fd >= 16 {
         context.rax = u64::MAX;
         return;
     }
@@ -161,10 +143,6 @@ pub fn handle_sendto(context: &mut CPUState) {
         (ip, port)
     };
 
-    // We need the source port to send correctly.
-    // If the socket is bound, use that. If not, ephemeral?
-    // For now, require bind or use random.
-    
     let mut socket_id = 0;
     let mut src_port = 0;
 
@@ -173,9 +151,8 @@ pub fn handle_sendto(context: &mut CPUState) {
         if let Some(current) = tm.current_task_idx() {
             if let Some(thread) = tm.tasks[current].as_ref() {
                 let proc = thread.process.as_ref().unwrap();
-                let fd_val = proc.fd_table.lock()[fd];
-                if fd_val < -2 {
-                    socket_id = (-fd_val - 2) as usize;
+                if let Some(sid) = proc.socket_table.lock()[fd] {
+                    socket_id = sid;
                 }
             }
         }
@@ -212,7 +189,7 @@ pub fn handle_recvfrom(context: &mut CPUState) {
     let src_addr_ptr = context.r8 as *mut u8;
     let addr_len_ptr = context.r9 as *mut u32;
 
-    if buf_ptr.is_null() {
+    if buf_ptr.is_null() || fd >= 16 {
         context.rax = u64::MAX;
         return;
     }
@@ -223,9 +200,8 @@ pub fn handle_recvfrom(context: &mut CPUState) {
         if let Some(current) = tm.current_task_idx() {
             if let Some(thread) = tm.tasks[current].as_ref() {
                 let proc = thread.process.as_ref().unwrap();
-                let fd_val = proc.fd_table.lock()[fd];
-                if fd_val < -2 {
-                    socket_id = (-fd_val - 2) as usize;
+                if let Some(sid) = proc.socket_table.lock()[fd] {
+                    socket_id = sid;
                 }
             }
         }
@@ -276,9 +252,23 @@ pub fn handle_recvfrom(context: &mut CPUState) {
             context.rax = 0;
         }
     } else {
-        // No data - non-blocking by default for now or return 0?
-        // Real implementation would sleep.
-        // Return -1 (EAGAIN) usually, but here 0 or MAX?
         context.rax = u64::MAX; // Error/Empty
     }
+}
+
+pub fn handle_close_socket(context: &mut CPUState) {
+    let handle = context.rdi as usize;
+    let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    if let Some(current) = tm.current_task_idx() {
+        if let Some(thread) = tm.tasks[current].as_mut() {
+            let proc = thread.process.as_ref().expect("Thread has no process");
+            let mut socket_table = proc.socket_table.lock();
+            if handle < 16 {
+                socket_table[handle] = None;
+                context.rax = 0;
+                return;
+            }
+        }
+    }
+    context.rax = u64::MAX;
 }

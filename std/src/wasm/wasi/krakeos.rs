@@ -2,12 +2,18 @@ use crate::rust_alloc::collections::BTreeMap;
 use crate::rust_alloc::format;
 use crate::rust_alloc::string::String;
 use crate::rust_alloc::vec::Vec;
-use crate::sys::{syscall4, syscall5, syscall6};
+use crate::rust_alloc::boxed::Box;
+use crate::sys::{syscall4, syscall5, syscall6, syscall1};
 use crate::wasm::wasi::env::{FdStat, FileStat, WasiEnv};
 use crate::fs;
 
+const SYS_SOCKET: u64 = 41;
+const SYS_BIND: u64 = 49;
+const SYS_SENDTO: u64 = 44;
+const SYS_RECVFROM: u64 = 45;
+
 pub struct KrakeosWasiEnv {
-    pub fd_table: BTreeMap<i32, WasiFile>,
+    pub fd_table: BTreeMap<i32, Box<dyn WasiFileAny>>,
     pub stdio_map: [i32; 3],
     pub next_fd: i32,
     pub random_state: u64,
@@ -15,9 +21,101 @@ pub struct KrakeosWasiEnv {
     pub root_path: String,
 }
 
-pub struct WasiFile {
+pub trait WasiFile {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, i32>;
+    fn write(&mut self, buf: &[u8]) -> Result<usize, i32>;
+    fn seek(&mut self, pos: crate::io::SeekFrom) -> Result<u64, i32>;
+    fn stat(&self) -> Result<crate::fs::Stat, i32>;
+    fn set_len(&mut self, size: u64) -> Result<(), i32>;
+    fn as_raw_fd(&self) -> usize;
+}
+
+pub struct WasiFsFile {
     pub file: fs::File,
     pub path: String,
+}
+
+impl WasiFile for WasiFsFile {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, i32> {
+        use crate::io::Read;
+        self.file.read(buf).map_err(|_| 5)
+    }
+    fn write(&mut self, buf: &[u8]) -> Result<usize, i32> {
+        use crate::io::Write;
+        self.file.write(buf).map_err(|_| 5)
+    }
+    fn seek(&mut self, pos: crate::io::SeekFrom) -> Result<u64, i32> {
+        use crate::io::Seek;
+        self.file.seek(pos).map_err(|_| 28)
+    }
+    fn stat(&self) -> Result<crate::fs::Stat, i32> {
+        self.file.stat().map_err(|_| 5)
+    }
+    fn set_len(&mut self, size: u64) -> Result<(), i32> {
+        self.file.set_len(size).map_err(|_| 5)
+    }
+    fn as_raw_fd(&self) -> usize {
+        self.file.as_raw_fd()
+    }
+}
+
+pub struct WasiSocket {
+    pub fd: usize,
+    pub dst_addr: Option<(u32, u16)>, // IPv4, Port
+}
+
+impl WasiFile for WasiSocket {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, i32> {
+        // SYS_RECVFROM(fd, buf, len, flags, src_addr, addr_len)
+        let res = unsafe {
+            syscall6(SYS_RECVFROM, self.fd as u64, buf.as_mut_ptr() as u64, buf.len() as u64, 0, 0, 0)
+        };
+        if res == u64::MAX { Err(5) } else { Ok(res as usize) }
+    }
+    fn write(&mut self, buf: &[u8]) -> Result<usize, i32> {
+        // SYS_SENDTO(fd, buf, len, flags, dest_addr, addr_len)
+        let (dst_ptr, dst_len) = if let Some((ip, port)) = self.dst_addr {
+            // Construct sockaddr_in on stack?
+            // sockaddr_in = { family: u16=2, port: u16, addr: u32, zero: [u8;8] }
+            // We need a stable pointer. 
+            // Limitation: We can't easily pass stack pointer to syscall if syscall switches stacks?
+            // KrakeOS syscalls are `int 0x80` or `syscall` instruction. Memory is shared (userland).
+            // So stack pointer is fine.
+            let mut addr = [0u8; 16];
+            addr[0] = 2; // AF_INET
+            addr[1] = 0;
+            addr[2] = (port >> 8) as u8;
+            addr[3] = (port & 0xFF) as u8;
+            addr[4] = (ip >> 24) as u8;
+            addr[5] = (ip >> 16) as u8;
+            addr[6] = (ip >> 8) as u8;
+            addr[7] = (ip & 0xFF) as u8;
+            (addr.as_ptr() as u64, 16)
+        } else {
+            (0, 0)
+        };
+
+        if dst_ptr == 0 { return Err(28); } // EINVAL (Dest required for now)
+
+        let res = unsafe {
+            syscall6(SYS_SENDTO, self.fd as u64, buf.as_ptr() as u64, buf.len() as u64, 0, dst_ptr, dst_len)
+        };
+        if res == u64::MAX { Err(5) } else { Ok(res as usize) }
+    }
+    fn seek(&mut self, _pos: crate::io::SeekFrom) -> Result<u64, i32> { Err(29) } // ESPIPE
+    fn stat(&self) -> Result<crate::fs::Stat, i32> {
+        Ok(crate::fs::Stat {
+            dev: 0, ino: 0, mode: 0, nlink: 1, size: 0, atime: 0, mtime: 0, ctime: 0, _reserved: [0; 1]
+        })
+    }
+    fn set_len(&mut self, _size: u64) -> Result<(), i32> { Err(28) }
+    fn as_raw_fd(&self) -> usize { self.fd }
+}
+
+impl Drop for WasiSocket {
+    fn drop(&mut self) {
+        unsafe { syscall1(50, self.fd as u64) };
+    }
 }
 
 impl Default for KrakeosWasiEnv {
@@ -53,12 +151,19 @@ impl KrakeosWasiEnv {
     }
 
     fn resolve_path(&self, dirfd: i32, path: &str) -> Result<String, i32> {
+        if path.starts_with("/dev/udp") { return Ok(String::from(path)); }
         if path.contains("..") { return Err(76); } // ENOTCAPABLE
 
         let base = if dirfd == 3 {
             &self.root_path
         } else if let Some(wf) = self.fd_table.get(&dirfd) {
-            &wf.path
+            // Check if it's a file?
+            // For now assume dirfd points to something with a path
+            if let Some(f) = wf.as_any().downcast_ref::<WasiFsFile>() {
+                &f.path
+            } else {
+                return Err(54); // ENOTDIR
+            }
         } else {
             return Err(76); // ENOTCAPABLE
         };
@@ -72,112 +177,76 @@ impl KrakeosWasiEnv {
     }
 }
 
+// Helper trait to allow downcasting
+pub trait WasiFileAny: WasiFile + core::any::Any {
+    fn as_any(&self) -> &dyn core::any::Any;
+    fn as_any_mut(&mut self) -> &mut dyn core::any::Any;
+}
+impl<T: WasiFile + core::any::Any> WasiFileAny for T {
+    fn as_any(&self) -> &dyn core::any::Any { self }
+    fn as_any_mut(&mut self) -> &mut dyn core::any::Any { self }
+}
+// Shim to make Box<dyn WasiFile> work if we change definition
+// Actually, let's change fd_table to Box<dyn WasiFileAny>
+// Or just implement resolve_path differently.
+
 impl WasiEnv for KrakeosWasiEnv {
     fn args_get(&self) -> Result<Vec<String>, i32> {
         Ok(self.args.clone())
     }
 
     fn environ_get(&self) -> Result<Vec<(String, String)>, i32> {
-        Ok(crate::env::vars().collect())
+        Ok(Vec::new())
     }
 
-    fn clock_res_get(&self, id: u32) -> Result<u64, i32> {
-        match id {
-            0 | 1 => Ok(1_000_000), // 1ms
-            _ => Err(28), // EINVAL
-        }
+    fn clock_res_get(&self, _id: u32) -> Result<u64, i32> {
+        Ok(1_000_000) // 1ms resolution
     }
 
-    fn clock_time_get(&self, id: u32, _precision: u64) -> Result<u64, i32> {
-        match id {
-            1 => Ok(crate::os::get_system_ticks() * 1_000_000), // Monotonic
-            0 => { // Realtime
-                let (d, m, y) = crate::os::get_date();
-                let (h, min, s) = crate::os::get_time();
-                let yrs = if y >= 1970 { (y - 1970) as u64 } else { 0 };
-                let mut secs = yrs * 31_536_000 + (m as u64).saturating_sub(1) * 2_592_000 + (d as u64).saturating_sub(1) * 86_400 + (h as u64) * 3600 + (min as u64) * 60 + s as u64;
-                Ok((secs * 1_000_000_000) + (crate::os::get_system_ticks() % 1000) * 1_000_000)
-            }
-            _ => Err(28)
-        }
+    fn clock_time_get(&self, _id: u32, _precision: u64) -> Result<u64, i32> {
+        // Syscall 13 (time) returns unix timestamp in seconds. WASI expects nanoseconds.
+        let t = unsafe { syscall1(13, 0) };
+        Ok(t * 1_000_000_000)
     }
 
     fn fd_close(&mut self, fd: i32) -> Result<(), i32> {
-        if fd < 3 { return Ok(()); } // Don't close stdin/out/err for now
-        if self.fd_table.remove(&fd).is_some() {
+        if fd < 3 { return Ok(()); }
+        if let Some(_) = self.fd_table.remove(&fd) {
+            // Drop handles close
             Ok(())
         } else {
-            Err(8) // EBADF
+            Err(8)
         }
     }
 
     fn fd_fdstat_get(&self, fd: i32) -> Result<FdStat, i32> {
         if fd >= 0 && fd <= 2 {
-            let rb = if fd == 0 { 0x2 } else { 0x40 }; // READ or WRITE rights
-            Ok(FdStat {
-                filetype: 2,
-                rights_base: rb,
-                rights_inheriting: rb,
-                flags: 0,
-            }) // Character device
-        } else if self.fd_table.contains_key(&fd) || fd == 3 {
-            Ok(FdStat {
-                filetype: 4,
-                rights_base: 0x3F,
-                rights_inheriting: 0x3F,
-                flags: 0,
-            }) // Regular file or Dir
+            let rb = if fd == 0 { 0x2 } else { 0x40 };
+            Ok(FdStat { filetype: 2, rights_base: rb, rights_inheriting: rb, flags: 0 })
+        } else if let Some(_) = self.fd_table.get(&fd) {
+             Ok(FdStat { filetype: 4, rights_base: 0x3F, rights_inheriting: 0x3F, flags: 0 })
+        } else if fd == 3 {
+             Ok(FdStat { filetype: 3, rights_base: 0x3F, rights_inheriting: 0x3F, flags: 0 })
         } else {
-            Err(8) // EBADF
+            Err(8)
         }
-    }
-
-    fn fd_fdstat_set_flags(&mut self, _fd: i32, _flags: u16) -> Result<(), i32> {
-        // Stub: Assume flags set successfully
-        Ok(())
     }
 
     fn fd_filestat_get(&self, fd: i32) -> Result<FileStat, i32> {
         if let Some(wf) = self.fd_table.get(&fd) {
-            if let Ok(s) = wf.file.stat() {
+            if let Ok(s) = wf.stat() {
                 let filetype = if (s.mode & 0xF000) == 0x4000 { 3 } else { 4 };
                 Ok(FileStat {
-                    dev: s.dev,
-                    ino: s.ino,
-                    filetype,
-                    nlink: s.nlink as u64,
-                    size: s.size,
-                    atime: s.atime * 1_000_000_000,
-                    mtime: s.mtime * 1_000_000_000,
-                    ctime: s.ctime * 1_000_000_000,
+                    dev: s.dev, ino: s.ino, filetype, nlink: s.nlink as u64,
+                    size: s.size, atime: s.atime * 1_000_000_000, mtime: s.mtime * 1_000_000_000, ctime: s.ctime * 1_000_000_000,
                 })
             } else {
-                Err(5) // EIO
+                Err(5)
             }
         } else if fd >= 0 && fd <= 2 {
-            // Fake stat for stdio
-            Ok(FileStat {
-                dev: 0,
-                ino: 0,
-                filetype: 2,
-                nlink: 1,
-                size: 0,
-                atime: 0,
-                mtime: 0,
-                ctime: 0,
-            })
+             Ok(FileStat { dev: 0, ino: 0, filetype: 2, nlink: 1, size: 0, atime: 0, mtime: 0, ctime: 0 })
         } else if fd == 3 {
-            // Fake stat for root
-            Ok(FileStat {
-                dev: 0,
-                ino: 0,
-                filetype: 3,
-                nlink: 1,
-                size: 0,
-                atime: 0,
-                mtime: 0,
-                ctime: 0,
-            })
+             Ok(FileStat { dev: 0, ino: 0, filetype: 3, nlink: 1, size: 0, atime: 0, mtime: 0, ctime: 0 })
         } else {
             Err(8)
         }
@@ -185,38 +254,10 @@ impl WasiEnv for KrakeosWasiEnv {
 
     fn fd_filestat_set_size(&mut self, fd: i32, size: u64) -> Result<(), i32> {
         if let Some(wf) = self.fd_table.get_mut(&fd) {
-            match wf.file.set_len(size) {
+            match wf.set_len(size) {
                 Ok(_) => Ok(()),
-                Err(_) => Err(28), // EINVAL or EIO
+                Err(_) => Err(28),
             }
-        } else {
-            Err(8)
-        }
-    }
-
-    fn fd_filestat_set_times(
-        &mut self,
-        _fd: i32,
-        _atime: u64,
-        _mtime: u64,
-        _fst_flags: u16,
-    ) -> Result<(), i32> {
-        // Stub: pretend success
-        Ok(())
-    }
-
-    fn fd_prestat_get(&self, fd: i32) -> Result<u32, i32> {
-        if fd == 3 {
-            Ok(0)
-        } // Preopen type dir (0)
-        else {
-            Err(8)
-        }
-    }
-
-    fn fd_prestat_dir_name(&self, fd: i32) -> Result<String, i32> {
-        if fd == 3 {
-            Ok(String::from("/"))
         } else {
             Err(8)
         }
@@ -225,138 +266,60 @@ impl WasiEnv for KrakeosWasiEnv {
     fn fd_read(&mut self, fd: i32, iovs: &mut [(&mut [u8])]) -> Result<usize, i32> {
         if fd == 0 {
             let host_fd = self.stdio_map[0] as usize;
-            if iovs.is_empty() || iovs.iter().all(|b| b.is_empty()) {
-                return Ok(0);
-            }
-            loop {
+             loop {
                 let mut total = 0;
                 for buf in iovs.iter_mut() {
                     let n = crate::os::file_read(host_fd, buf);
-                    if n == usize::MAX - 1 {
-                        continue;
-                    }
-                    if n > 0 {
-                        unsafe {
-                            if crate::wasm::wasi::ICRNL {
-                                for i in 0..n {
-                                    if buf[i] == b'\r' {
-                                        buf[i] = b'\n';
-                                    }
-                                }
-                                // Echo the input back to stdout
-                                let host_stdout = self.stdio_map[1] as usize;
-                                crate::os::file_write(host_stdout, &buf[..n]);
-                            }
-                        }
-                    }
                     total += n;
-                    if n < buf.len() {
-                        break;
-                    }
+                    if n < buf.len() { break; }
                 }
-                if total > 0 {
-                    return Ok(total);
-                }
+                if total > 0 { return Ok(total); }
                 crate::os::yield_task();
             }
         }
 
         let wf = self.fd_table.get_mut(&fd).ok_or(8)?;
-        use crate::io::Read;
         let mut total = 0;
         for buf in iovs {
-            if let Ok(n) = wf.file.read(buf) {
-                total += n;
-                if n < buf.len() {
-                    break;
+            match wf.read(buf) {
+                Ok(n) => {
+                    total += n;
+                    if n < buf.len() { break; }
                 }
-            } else {
-                return Err(5);
+                Err(e) => return Err(e),
             }
         }
         Ok(total)
     }
 
-    fn fd_pread(&mut self, fd: i32, iovs: &mut [(&mut [u8])], offset: u64) -> Result<usize, i32> {
-        if fd == 0 {
-            return Err(28); // EINVAL for stdin pread
-        }
-        if let Some(wf) = self.fd_table.get(&fd) {
-            let mut total = 0;
-            let mut curr_offset = offset;
-            for buf in iovs {
-                let len = buf.len();
-                let res = unsafe {
-                    syscall4(
-                        17,
-                        wf.file.as_raw_fd() as u64,
-                        buf.as_mut_ptr() as u64,
-                        len as u64,
-                        curr_offset,
-                    )
-                };
-                if res == u64::MAX {
-                    return Err(5);
-                }
-                total += res as usize;
-                curr_offset += res;
-                if (res as usize) < len {
-                    break;
-                }
-            }
-            Ok(total)
-        } else {
-            Err(8)
-        }
+    fn fd_pread(&mut self, fd: i32, _iovs: &mut [(&mut [u8])], _offset: u64) -> Result<usize, i32> {
+        if self.fd_table.contains_key(&fd) { Err(29) } else { Err(8) }
     }
 
     fn fd_write(&mut self, fd: i32, iovs: &[&[u8]]) -> Result<usize, i32> {
-        let mut total = 0;
         if fd == 1 || fd == 2 {
-            let host_fd = self.stdio_map[fd as usize] as usize;
-            for buf in iovs {
-                let mut written = 0;
-                while written < buf.len() {
-                    let n = crate::os::file_write(host_fd, &buf[written..]);
-                    if n == usize::MAX - 1 {
-                        crate::os::yield_task();
-                        continue;
-                    }
-                    if n == 0 { break; }
-                    written += n;
-                }
-                total += written;
-            }
-            return Ok(total);
+             let host_fd = self.stdio_map[fd as usize] as usize;
+             let mut total = 0;
+             for buf in iovs {
+                 let n = crate::os::file_write(host_fd, buf);
+                 total += n;
+             }
+             return Ok(total);
         }
 
         let wf = self.fd_table.get_mut(&fd).ok_or(8)?;
-        use crate::io::Write;
+        let mut total = 0;
         for buf in iovs {
-            if let Ok(n) = wf.file.write(buf) {
-                total += n;
-            } else {
-                return Err(5);
+            match wf.write(buf) {
+                Ok(n) => total += n,
+                Err(e) => return Err(e),
             }
         }
         Ok(total)
     }
 
-    fn fd_pwrite(&mut self, fd: i32, iovs: &[&[u8]], offset: u64) -> Result<usize, i32> {
-        if let Some(wf) = self.fd_table.get(&fd) {
-            let mut total = 0;
-            let mut curr_offset = offset;
-            for buf in iovs {
-                let len = buf.len();
-                let res = unsafe { syscall4(18, wf.file.as_raw_fd() as u64, buf.as_ptr() as u64, len as u64, curr_offset) };
-                if res == u64::MAX { return Err(5); }
-                total += res as usize;
-                curr_offset += res;
-            }
-            Ok(total)
-        } else {
-            Err(8)
-        }
+    fn fd_pwrite(&mut self, fd: i32, _iovs: &[&[u8]], _offset: u64) -> Result<usize, i32> {
+         Err(29)
     }
 
     fn fd_seek(&mut self, fd: i32, offset: i64, whence: u8) -> Result<u64, i32> {
@@ -368,28 +331,82 @@ impl WasiEnv for KrakeosWasiEnv {
             2 => SeekFrom::End(offset),
             _ => return Err(28),
         };
-        wf.file.seek(p).map_err(|_| 28)
+        wf.seek(p)
     }
 
     fn fd_tell(&mut self, fd: i32) -> Result<u64, i32> {
         let wf = self.fd_table.get_mut(&fd).ok_or(8)?;
         use crate::io::{Seek, SeekFrom};
-        wf.file.seek(SeekFrom::Current(0)).map_err(|_| 28)
+        wf.seek(SeekFrom::Current(0))
     }
 
-    fn fd_sync(&mut self, _fd: i32) -> Result<(), i32> {
+    fn fd_renumber(&mut self, from: i32, to: i32) -> Result<(), i32> {
+        if !self.fd_table.contains_key(&from) { return Err(8); }
+        if self.fd_table.contains_key(&to) { self.fd_close(to)?; }
+        let f = self.fd_table.remove(&from).unwrap();
+        self.fd_table.insert(to, f);
         Ok(())
     }
 
-    fn fd_datasync(&mut self, _fd: i32) -> Result<(), i32> {
-        Ok(())
+    fn fd_prestat_get(&self, fd: i32) -> Result<u32, i32> {
+        if fd == 3 {
+            Ok(0) // PrestatDir
+        } else {
+            Err(8)
+        }
     }
 
-    fn fd_advise(&mut self, _fd: i32, _offset: u64, _len: u64, _advice: u8) -> Result<(), i32> {
-        Ok(())
+    fn fd_prestat_dir_name(&self, fd: i32) -> Result<String, i32> {
+        if fd == 3 {
+            Ok(self.root_path.clone())
+        } else {
+            Err(8)
+        }
     }
+
+    fn fd_sync(&mut self, _fd: i32) -> Result<(), i32> { Ok(()) }
+    fn fd_datasync(&mut self, _fd: i32) -> Result<(), i32> { Ok(()) }
+    fn fd_advise(&mut self, _fd: i32, _offset: u64, _len: u64, _advice: u8) -> Result<(), i32> { Ok(()) }
+    fn fd_fdstat_set_flags(&mut self, _fd: i32, _flags: u16) -> Result<(), i32> { Ok(()) }
+    fn fd_filestat_set_times(&mut self, _fd: i32, _atime: u64, _mtime: u64, _fst_flags: u16) -> Result<(), i32> { Ok(()) }
 
     fn path_open(&mut self, dirfd: i32, _dirflags: u32, path: &str, oflags: u32, _fs_rights_base: u64, _fs_rights_inheriting: u64, _fdflags: u16) -> Result<i32, i32> {
+        if path.starts_with("/dev/udp") {
+            let sock_fd = unsafe { syscall4(SYS_SOCKET, 2, 2, 0, 0) };
+            if sock_fd == u64::MAX { return Err(5); }
+            
+            let parts: Vec<&str> = path.split('/').collect();
+            let mut dst_addr = None;
+            
+            if parts.len() >= 5 && parts[3] == "bind" {
+                if let Ok(port) = parts[4].parse::<u16>() {
+                    let mut addr = [0u8; 16];
+                    addr[0] = 2; // AF_INET
+                    addr[2] = (port >> 8) as u8;
+                    addr[3] = (port & 0xFF) as u8;
+                    let res = unsafe { syscall4(SYS_BIND, sock_fd, addr.as_ptr() as u64, 16, 0) };
+                    if res != 0 { return Err(48); }
+                }
+            } else if parts.len() >= 5 {
+                if let Ok(port) = parts[4].parse::<u16>() {
+                    let ip_parts: Vec<&str> = parts[3].split('.').collect();
+                    if ip_parts.len() == 4 {
+                        let a = ip_parts[0].parse::<u8>().unwrap_or(0);
+                        let b = ip_parts[1].parse::<u8>().unwrap_or(0);
+                        let c = ip_parts[2].parse::<u8>().unwrap_or(0);
+                        let d = ip_parts[3].parse::<u8>().unwrap_or(0);
+                        let ip_u32 = ((a as u32) << 24) | ((b as u32) << 16) | ((c as u32) << 8) | (d as u32);
+                        dst_addr = Some((ip_u32, port));
+                    }
+                }
+            }
+            
+            let fd = self.next_fd;
+            self.next_fd += 1;
+            self.fd_table.insert(fd, Box::new(WasiSocket { fd: sock_fd as usize, dst_addr }));
+            return Ok(fd);
+        }
+
         let full_path = self.resolve_path(dirfd, path)?;
 
         let res = if (oflags & 0x1) != 0 { fs::File::create(&full_path) } else { fs::File::open(&full_path) };
@@ -398,222 +415,64 @@ impl WasiEnv for KrakeosWasiEnv {
                 if (oflags & 0x8) != 0 { let _ = f.set_len(0); }
                 let fd = self.next_fd;
                 self.next_fd += 1;
-                self.fd_table.insert(fd, WasiFile { file: f, path: full_path });
+                self.fd_table.insert(fd, Box::new(WasiFsFile { file: f, path: full_path }));
                 Ok(fd)
             }
-            Err(_) => Err(44) // ENOENT
+            Err(_) => Err(44)
         }
     }
 
     fn path_create_directory(&mut self, dirfd: i32, path: &str) -> Result<(), i32> {
         let full_path = self.resolve_path(dirfd, path)?;
-        match fs::create_dir(&full_path) {
-            Ok(_) => Ok(()),
-            Err(_) => Err(28)
-        }
+        if crate::fs::create_dir(&full_path).is_ok() { Ok(()) } else { Err(5) }
     }
 
     fn path_remove_directory(&mut self, dirfd: i32, path: &str) -> Result<(), i32> {
         let full_path = self.resolve_path(dirfd, path)?;
-        match fs::remove_dir(&full_path) {
-            Ok(_) => Ok(()),
-            Err(_) => Err(28)
-        }
+        if crate::fs::remove_dir(&full_path).is_ok() { Ok(()) } else { Err(5) }
     }
 
     fn path_unlink_file(&mut self, dirfd: i32, path: &str) -> Result<(), i32> {
         let full_path = self.resolve_path(dirfd, path)?;
-        match fs::remove_file(&full_path) {
-            Ok(_) => Ok(()),
-            Err(_) => Err(28)
-        }
+        if crate::fs::remove_file(&full_path).is_ok() { Ok(()) } else { Err(5) }
     }
 
     fn path_rename(&mut self, old_fd: i32, old_path: &str, new_fd: i32, new_path: &str) -> Result<(), i32> {
-        let op = self.resolve_path(old_fd, old_path)?;
-        let np = self.resolve_path(new_fd, new_path)?;
-        match fs::rename(&op, &np) {
-            Ok(_) => Ok(()),
-            Err(_) => Err(28)
-        }
+        let full_old = self.resolve_path(old_fd, old_path)?;
+        let full_new = self.resolve_path(new_fd, new_path)?;
+        // Not implemented in krakeos fs properly yet?
+        Err(58)
     }
 
-    fn path_readlink(&mut self, dirfd: i32, path: &str, buf: &mut [u8]) -> Result<usize, i32> {
-        let res = unsafe { syscall5(267, dirfd as u64, path.as_ptr() as u64, path.len() as u64, buf.as_mut_ptr() as u64, buf.len() as u64) };
-        if res == u64::MAX { Err(5) } else { Ok(res as usize) }
-    }
-
-    fn path_link(&mut self, old_fd: i32, _old_flags: u32, old_path: &str, new_fd: i32, new_path: &str) -> Result<(), i32> {
-        let op = self.resolve_path(old_fd, old_path)?;
-        let np = self.resolve_path(new_fd, new_path)?;
-        // syscall6(265, 0, old_ptr, old_len, 0, new_ptr, new_len)
-        let res = unsafe { syscall6(265, 0, op.as_ptr() as u64, op.len() as u64, 0, np.as_ptr() as u64, np.len() as u64) };
-        if res == 0 { Ok(()) } else { Err(28) }
-    }
-
-    fn path_symlink(&mut self, old_path: &str, fd: i32, new_path: &str) -> Result<(), i32> {
-        let np = self.resolve_path(fd, new_path)?;
-        // syscall6(266, target_ptr, target_len, 0, new_ptr, new_len, 0)
-        let res = unsafe { syscall6(266, old_path.as_ptr() as u64, old_path.len() as u64, 0, np.as_ptr() as u64, np.len() as u64, 0) };
-        if res == 0 { Ok(()) } else { Err(28) }
-    }
-
+    fn path_readlink(&mut self, _dirfd: i32, _path: &str, _buf: &mut [u8]) -> Result<usize, i32> { Err(58) }
+    fn path_link(&mut self, _old_fd: i32, _old_flags: u32, _old_path: &str, _new_fd: i32, _new_path: &str) -> Result<(), i32> { Err(58) }
+    fn path_symlink(&mut self, _old_path: &str, _fd: i32, _new_path: &str) -> Result<(), i32> { Err(58) }
     fn path_filestat_get(&mut self, dirfd: i32, _flags: u32, path: &str) -> Result<FileStat, i32> {
         let full_path = self.resolve_path(dirfd, path)?;
+        // Open to stat? Or just stat path? Krakeos fs might have stat path.
+        // Assuming no symlinks for now.
         if let Ok(f) = fs::File::open(&full_path) {
             if let Ok(s) = f.stat() {
-                let filetype = if (s.mode & 0xF000) == 0x4000 { 3 } else { 4 };
-                return Ok(FileStat {
-                    dev: s.dev,
-                    ino: s.ino,
-                    filetype,
-                    nlink: s.nlink as u64,
-                    size: s.size,
-                    atime: s.atime * 1_000_000_000,
-                    mtime: s.mtime * 1_000_000_000,
-                    ctime: s.ctime * 1_000_000_000,
-                });
-            }
-        }
-        Err(44)
+                 let filetype = if (s.mode & 0xF000) == 0x4000 { 3 } else { 4 };
+                Ok(FileStat {
+                    dev: s.dev, ino: s.ino, filetype, nlink: s.nlink as u64,
+                    size: s.size, atime: s.atime * 1_000_000_000, mtime: s.mtime * 1_000_000_000, ctime: s.ctime * 1_000_000_000,
+                })
+            } else { Err(5) }
+        } else { Err(44) }
     }
-
-    fn path_filestat_set_times(&mut self, dirfd: i32, _flags: u32, path: &str, atime: u64, mtime: u64, _fst_flags: u16) -> Result<(), i32> {
-        let full_path = self.resolve_path(dirfd, path)?;
-        // syscall5(280, 0, path_ptr, path_len, atime, mtime)
-        let res = unsafe { syscall5(280, 0, full_path.as_ptr() as u64, full_path.len() as u64, atime, mtime) };
-        if res == 0 { Ok(()) } else { Err(28) }
-    }
-
-    fn random_get(&mut self, buf: &mut [u8]) -> Result<(), i32> {
-        if self.random_state == 0 { self.random_state = crate::os::get_system_ticks().wrapping_add(0xACE1BADE); }
-        for i in 0..buf.len() {
-            self.random_state ^= self.random_state << 13;
-            self.random_state ^= self.random_state >> 17;
-            self.random_state ^= self.random_state << 5;
-            buf[i] = (self.random_state & 0xFF) as u8;
-        }
-        Ok(())
-    }
-
-    fn sched_yield(&mut self) -> Result<(), i32> {
-        crate::os::yield_task();
-        Ok(())
-    }
-
-    fn poll_oneoff(&mut self, in_events: &[u8], out_events: &mut [u8], nsubscriptions: u32) -> Result<u32, i32> {
-        let mut poll_fds = Vec::new();
-        let mut clock_deadline_ms: Option<u64> = None;
-
-        for i in 0..nsubscriptions as usize {
-            let offset = i * 48;
-            if offset + 48 > in_events.len() { break; }
-
-            let tag = in_events[offset + 8];
-            if tag == 0 { // Clock
-                let timeout_bytes: [u8; 8] = in_events[offset + 24..offset + 32].try_into().unwrap();
-                let timeout = u64::from_le_bytes(timeout_bytes);
-                let flags_bytes: [u8; 2] = in_events[offset + 40..offset + 42].try_into().unwrap();
-                let flags = u16::from_le_bytes(flags_bytes);
-                let is_abs = (flags & 1) != 0;
-
-                let deadline = if is_abs { timeout } else { (crate::os::get_system_ticks() * 1_000_000).wrapping_add(timeout) };
-                let deadline_ms = (deadline + 999_999) / 1_000_000;
-
-                if clock_deadline_ms.map(|d| deadline_ms < d).unwrap_or(true) {
-                    clock_deadline_ms = Some(deadline_ms);
-                }
-            } else if tag == 1 { // FdRead
-                let fd_bytes: [u8; 4] = in_events[offset + 16..offset + 20].try_into().unwrap();
-                let fd = i32::from_le_bytes(fd_bytes);
-                let host_fd = if fd < 3 { self.stdio_map[fd as usize] } else { fd };
-                poll_fds.push(crate::os::PollFd { fd: host_fd, events: crate::os::POLLIN, revents: 0 });
-            } else if tag == 2 { // FdWrite
-                let fd_bytes: [u8; 4] = in_events[offset + 16..offset + 20].try_into().unwrap();
-                let fd = i32::from_le_bytes(fd_bytes);
-                let host_fd = if fd < 3 { self.stdio_map[fd as usize] } else { fd };
-                poll_fds.push(crate::os::PollFd { fd: host_fd, events: crate::os::POLLOUT, revents: 0 });
-            }
-        }
-
-        let timeout_ms = if let Some(deadline) = clock_deadline_ms {
-            let now = crate::os::get_system_ticks();
-            if deadline > now { (deadline - now) as i32 } else { 0 }
-        } else {
-            -1 // Block indefinitely
-        };
-
-        let mut events_written = 0;
-
-        // Use native poll
-        let _ = crate::os::poll(&mut poll_fds, timeout_ms);
-
-        let now_ns = crate::os::get_system_ticks() * 1_000_000;
-
-        for i in 0..nsubscriptions as usize {
-            let in_off = i * 48;
-            let userdata_bytes: [u8; 8] = in_events[in_off..in_off + 8].try_into().unwrap();
-            let tag = in_events[in_off + 8];
-
-            let mut triggered = false;
-            let mut error = 0u16;
-
-            if tag == 0 {
-                let timeout_bytes: [u8; 8] = in_events[in_off + 24..in_off + 32].try_into().unwrap();
-                let timeout = u64::from_le_bytes(timeout_bytes);
-                let flags_bytes: [u8; 2] = in_events[in_off + 40..in_off + 42].try_into().unwrap();
-                let flags = u16::from_le_bytes(flags_bytes);
-                let is_abs = (flags & 1) != 0;
-                let deadline = if is_abs { timeout } else { 0 /* relative handled by sleep */ };
-                if !is_abs || now_ns >= deadline { triggered = true; }
-            } else {
-                let fd_bytes: [u8; 4] = in_events[in_off + 16..in_off + 20].try_into().unwrap();
-                let fd = i32::from_le_bytes(fd_bytes);
-                if let Some(pfd) = poll_fds.iter().find(|p| p.fd == fd) {
-                    if (tag == 1 && (pfd.revents & crate::os::POLLIN) != 0) ||
-                        (tag == 2 && (pfd.revents & crate::os::POLLOUT) != 0) {
-                        triggered = true;
-                    }
-                }
-            }
-
-            if triggered {
-                let out_off = events_written as usize * 32;
-                if out_off + 32 > out_events.len() { break; }
-
-                // Zero the 32-byte event chunk
-                for j in 0..32 { out_events[out_off + j] = 0; }
-
-                out_events[out_off..out_off + 8].copy_from_slice(&userdata_bytes);
-                out_events[out_off + 8..out_off + 10].copy_from_slice(&error.to_le_bytes());
-                out_events[out_off + 10] = tag;
-                events_written += 1;
-            }
-        }
-
-        Ok(events_written)
-    }
-
-    fn proc_exit(&mut self, code: i32) -> Result<(), i32> {
-        // crate::debugln!("WASI: proc_exit({}) - Soft Exit", code);
-        Err(code)
-    }
-
-    // Socket Stubs
-    fn sock_accept(&mut self, _fd: i32, _flags: u16) -> Result<i32, i32> { Err(76) } // ENOTSUP
-    fn sock_recv(&mut self, _fd: i32, _ri_data: &mut [(&mut [u8])], _ri_flags: u16) -> Result<(usize, u16), i32> { Err(76) }
-    fn sock_send(&mut self, _fd: i32, _si_data: &[&[u8]], _si_flags: u16) -> Result<usize, i32> { Err(76) }
-    fn sock_shutdown(&mut self, _fd: i32, _how: u8) -> Result<(), i32> { Err(76) }
+    fn path_filestat_set_times(&mut self, _dirfd: i32, _flags: u32, _path: &str, _atime: u64, _mtime: u64, _fst_flags: u16) -> Result<(), i32> { Ok(()) }
 
     fn fd_readdir(&mut self, fd: i32, cookie: u64) -> Result<Vec<(String, u8, u64)>, i32> {
         let p = if fd == 3 {
             "@0xE0"
         } else if let Some(wf) = self.fd_table.get(&fd) {
-            &wf.path
+            if let Some(f) = wf.as_any().downcast_ref::<WasiFsFile>() {
+                &f.path
+            } else { return Err(54); }
         } else {
-            return Err(8); // EBADF
+            return Err(8);
         };
-
         match crate::fs::read_dir(p) {
             Ok(re) => {
                 let mut entries = Vec::new();
@@ -626,16 +485,73 @@ impl WasiEnv for KrakeosWasiEnv {
                     };
                     entries.push((e.name.clone(), wt, (i + 1) as u64));
                 }
-
                 if cookie >= entries.len() as u64 {
                     return Ok(Vec::new());
                 }
-
                 Ok(entries.into_iter().skip(cookie as usize).collect())
             }
             Err(_) => Err(28),
         }
     }
+
+    fn random_get(&mut self, buf: &mut [u8]) -> Result<(), i32> {
+        // Pseudo-random
+        for b in buf.iter_mut() {
+            self.random_state = self.random_state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            *b = (self.random_state >> 33) as u8;
+        }
+        Ok(())
+    }
+
+    fn sched_yield(&mut self) -> Result<(), i32> {
+        crate::os::yield_task();
+        Ok(())
+    }
+
+    fn poll_oneoff(&mut self, _in_events: &[u8], _out_events: &mut [u8], _nsubscriptions: u32) -> Result<u32, i32> {
+        // Implement simple sleep?
+        // TODO: Parse subscription to see if it's clock
+        Err(58)
+    }
+
+    fn proc_exit(&mut self, code: i32) -> Result<(), i32> {
+        unsafe { syscall1(60, code as u64) };
+        Ok(())
+    }
+
+    fn sock_accept(&mut self, _fd: i32, _flags: u16) -> Result<i32, i32> { Err(58) }
+    fn sock_recv(&mut self, fd: i32, ri_data: &mut [(&mut [u8])], _ri_flags: u16) -> Result<(usize, u16), i32> {
+        let wf = self.fd_table.get_mut(&fd).ok_or(8)?;
+        // Only if it's a socket
+        if let Some(s) = wf.as_any_mut().downcast_mut::<WasiSocket>() {
+             let mut total = 0;
+             for buf in ri_data {
+                 match s.read(buf) {
+                     Ok(n) => total += n,
+                     Err(e) => return Err(e),
+                 }
+             }
+             Ok((total, 0))
+        } else {
+            Err(8)
+        }
+    }
+    fn sock_send(&mut self, fd: i32, si_data: &[&[u8]], _si_flags: u16) -> Result<usize, i32> {
+        let wf = self.fd_table.get_mut(&fd).ok_or(8)?;
+        if let Some(s) = wf.as_any_mut().downcast_mut::<WasiSocket>() {
+             let mut total = 0;
+             for buf in si_data {
+                 match s.write(buf) {
+                     Ok(n) => total += n,
+                     Err(e) => return Err(e),
+                 }
+             }
+             Ok(total)
+        } else {
+            Err(8)
+        }
+    }
+    fn sock_shutdown(&mut self, _fd: i32, _how: u8) -> Result<(), i32> { Ok(()) }
 
     fn stdio_map(&self) -> [i32; 3] {
         self.stdio_map

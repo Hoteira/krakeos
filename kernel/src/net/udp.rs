@@ -39,9 +39,20 @@ pub fn handle_udp(packet: &[u8], src_ip: [u8; 4], dst_ip: [u8; 4]) {
 pub fn send_udp(src_port: u16, dst_ip: [u8; 4], dst_port: u16, payload: &[u8]) {
     // 1. Build UDP
     let udp = UdpPacket::new(src_port, dst_port, payload.to_vec());
+    let udp_bytes = udp.to_bytes();
+
+    // Loopback check
+    let is_loopback = dst_ip == [127, 0, 0, 1] || dst_ip == unsafe { LOCAL_IP };
+    if is_loopback {
+        // Direct dispatch to local socket
+        // src_ip should be LOCAL_IP or 127.0.0.1
+        let src_ip = if dst_ip == [127, 0, 0, 1] { [127, 0, 0, 1] } else { unsafe { LOCAL_IP } };
+        handle_udp(&udp_bytes, src_ip, dst_ip);
+        return;
+    }
     
     // 2. Build IPv4
-    let ip = Ipv4Packet::new(unsafe { LOCAL_IP }, dst_ip, IpProto::UDP, udp.to_bytes());
+    let ip = Ipv4Packet::new(unsafe { LOCAL_IP }, dst_ip, IpProto::UDP, udp_bytes);
     
     // 3. Resolve MAC (ARP)
     // HACK: For now, if broadcast IP, use broadcast MAC. 

@@ -36,6 +36,7 @@ pub trait WasiEnv {
     fn fd_write(&mut self, fd: i32, iovs: &[&[u8]]) -> Result<usize, i32>;
     fn fd_seek(&mut self, fd: i32, offset: i64, whence: u8) -> Result<u64, i32>;
     fn fd_tell(&mut self, fd: i32) -> Result<u64, i32>;
+    fn fd_renumber(&mut self, from: i32, to: i32) -> Result<(), i32>;
     fn fd_sync(&mut self, fd: i32) -> Result<(), i32>;
     fn fd_datasync(&mut self, fd: i32) -> Result<(), i32>;
     fn fd_advise(&mut self, fd: i32, offset: u64, len: u64, advice: u8) -> Result<(), i32>;

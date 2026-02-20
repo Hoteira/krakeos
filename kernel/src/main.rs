@@ -15,6 +15,7 @@ mod tss;
 pub mod debug;
 pub mod window_manager;
 pub mod sync;
+pub mod net;
 
 use crate::boot::{BootInfo, BOOT_INFO};
 use crate::fs::ext2::fs::Ext2;
