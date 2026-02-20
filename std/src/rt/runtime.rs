@@ -1,6 +1,6 @@
 use core::arch::naked_asm;
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(not(target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
 #[unsafe(naked)]
 pub unsafe extern "C" fn _start() -> ! {
@@ -14,7 +14,7 @@ pub unsafe extern "C" fn _start() -> ! {
     )
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(not(target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rust_start(stack: *const usize) -> ! {
     let argc = *stack as i32;

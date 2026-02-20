@@ -5,7 +5,7 @@ unsafe extern "C" {
     pub fn instance_network() -> i32;
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn instance_network() -> i32 {
     0 // Return a dummy network handle
 }

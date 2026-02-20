@@ -34,12 +34,12 @@ impl<T> Mutex<T> {
 
     pub fn int_lock(&self) -> IntMutexGuard<'_, T> {
         let rflags: u64;
-        #[cfg(not(feature = "userland"))]
+        #[cfg(not(target_arch = "wasm32"))]
         unsafe {
             core::arch::asm!("pushfq; pop {}", out(reg) rflags);
             core::arch::asm!("cli");
         }
-        #[cfg(feature = "userland")]
+        #[cfg(target_arch = "wasm32")]
         {
             rflags = 0;
         }
@@ -96,7 +96,7 @@ impl<'a, T> core::ops::DerefMut for IntMutexGuard<'a, T> {
 impl<'a, T> Drop for IntMutexGuard<'a, T> {
     fn drop(&mut self) {
         self.lock.store(false, Ordering::Release);
-        #[cfg(not(feature = "userland"))]
+        #[cfg(not(target_arch = "wasm32"))]
         unsafe {
             if (self.rflags & 0x200) != 0 {
                 core::arch::asm!("sti");

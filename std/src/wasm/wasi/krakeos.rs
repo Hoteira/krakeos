@@ -152,13 +152,12 @@ impl KrakeosWasiEnv {
 
     fn resolve_path(&self, dirfd: i32, path: &str) -> Result<String, i32> {
         if path.starts_with("/dev/udp") { return Ok(String::from(path)); }
+        if path.starts_with('@') { return Ok(String::from(path)); }
         if path.contains("..") { return Err(76); } // ENOTCAPABLE
 
         let base = if dirfd == 3 {
             &self.root_path
         } else if let Some(wf) = self.fd_table.get(&dirfd) {
-            // Check if it's a file?
-            // For now assume dirfd points to something with a path
             if let Some(f) = wf.as_any().downcast_ref::<WasiFsFile>() {
                 &f.path
             } else {
@@ -169,6 +168,8 @@ impl KrakeosWasiEnv {
         };
 
         let clean = path.trim_start_matches('.').trim_start_matches('/');
+        if clean.is_empty() { return Ok(base.clone()); }
+        
         if base.ends_with('/') {
             Ok(format!("{}{}", base, clean))
         } else {

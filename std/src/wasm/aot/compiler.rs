@@ -16,6 +16,10 @@ pub struct AotCompiler<'a> {
     pub stack_depth: usize,
     pub func_labels: Vec<usize>,
     pub trap_label: usize,
+    pub trap_oob_label: usize,
+    pub trap_fuel_label: usize,
+    pub trap_indirect_label: usize,
+    pub trap_unreachable_label: usize,
     pub result_count: usize,
 }
 
@@ -45,6 +49,10 @@ impl<'a> AotCompiler<'a> {
             func_labels.push(emitter.new_label());
         }
         let trap_label = emitter.new_label();
+        let trap_oob_label = emitter.new_label();
+        let trap_fuel_label = emitter.new_label();
+        let trap_indirect_label = emitter.new_label();
+        let trap_unreachable_label = emitter.new_label();
         Self {
             validation_info,
             emitter,
@@ -52,6 +60,10 @@ impl<'a> AotCompiler<'a> {
             stack_depth: 0,
             func_labels,
             trap_label,
+            trap_oob_label,
+            trap_fuel_label,
+            trap_indirect_label,
+            trap_unreachable_label,
             result_count: 0,
         }
     }
@@ -59,11 +71,21 @@ impl<'a> AotCompiler<'a> {
     pub fn compile_module(&mut self) -> crate::wasm::aot::runtime::AotModule {
         let mut func_offsets = Vec::new();
         
-        self.emitter.bind_label(self.trap_label);
-        self.emitter.mov_reg_imm64(Reg::RAX, -16i64 as u64);
-        self.emitter.and_reg_reg(Reg::RSP, Reg::RAX); // Align to 16 bytes
-        self.emitter.mov_reg_imm64(Reg::RAX, crate::wasm::aot::trampoline::aot_trap as usize as u64);
-        self.emitter.call_reg(Reg::RAX);
+        let traps = [
+            (self.trap_label, crate::wasm::aot::trampoline::aot_trap as usize),
+            (self.trap_oob_label, crate::wasm::aot::trampoline::aot_trap_oob as usize),
+            (self.trap_fuel_label, crate::wasm::aot::trampoline::aot_trap_fuel as usize),
+            (self.trap_indirect_label, crate::wasm::aot::trampoline::aot_trap_indirect as usize),
+            (self.trap_unreachable_label, crate::wasm::aot::trampoline::aot_trap_unreachable as usize),
+        ];
+
+        for (label, func) in traps {
+            self.emitter.bind_label(label);
+            self.emitter.mov_reg_imm64(Reg::RAX, -16i64 as u64);
+            self.emitter.and_reg_reg(Reg::RSP, Reg::RAX); // Align
+            self.emitter.mov_reg_imm64(Reg::RAX, func as u64);
+            self.emitter.call_reg(Reg::RAX);
+        }
 
         for i in 0..self.validation_info.functions.len() {
             let func_idx = self.validation_info.imports_length.imported_functions + i;
@@ -159,6 +181,7 @@ impl<'a> AotCompiler<'a> {
 
         while reader.pc < span.from + span.len {
             let instr = Instruction::read(&mut reader).unwrap();
+            self.emit_integrity_check();
             self.compile_instruction(instr, &mut reader);
         }
 
@@ -201,13 +224,18 @@ impl<'a> AotCompiler<'a> {
         self.emitter.emit_u8(0x8B); self.emitter.modrm(0, Reg::RCX as u8, Reg::RAX as u8);
         self.emitter.sub_reg32_imm32(Reg::RCX, cost);
         self.emitter.emit_u8(0x89); self.emitter.modrm(0, Reg::RCX as u8, Reg::RAX as u8);
-        self.emitter.jcc_label(0x88, self.trap_label);
+        self.emitter.jcc_label(0x88, self.trap_fuel_label);
+    }
+
+    fn emit_integrity_check(&mut self) {
+        // Force reload memory base (R14) from context [RDI + 16]
+        self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16);
     }
 
     fn compile_instruction(&mut self, instr: Instruction, reader: &mut WasmReader) {
         match instr {
             Instruction::Nop => {}
-            Instruction::Unreachable => self.emitter.jmp_label(self.trap_label),
+            Instruction::Unreachable => self.emitter.jmp_label(self.trap_unreachable_label),
             Instruction::Drop => { self.emitter.add_reg_imm32(Reg::RSP, 16); self.stack_depth -= 1; }
             Instruction::Select => {
                 self.emitter.pop_wasm_stack(Reg::RCX); // condition
@@ -882,7 +910,7 @@ impl<'a> AotCompiler<'a> {
                 self.emitter.pop_reg(Reg::RDI);
                 
                 self.emitter.test_reg_reg(Reg::RAX, Reg::RAX);
-                self.emitter.jcc_label(0x84, self.trap_label);
+                self.emitter.jcc_label(0x84, self.trap_indirect_label);
                 
                 self.emitter.mov_reg_reg(Reg::RBX, Reg::RDI);
                 self.emitter.call_reg(Reg::RAX);
@@ -1263,7 +1291,7 @@ impl<'a> AotCompiler<'a> {
         self.emitter.add_reg_imm32(Reg::R11, size);
         self.emitter.mov_reg_mem64(Reg::R10, Reg::RDI, 24);
         self.emitter.cmp_reg_reg(Reg::R11, Reg::R10);
-        self.emitter.jcc_label(0x87, self.trap_label);
+        self.emitter.jcc_label(0x87, self.trap_oob_label);
     }
 
     fn emit_load_i32(&mut self, memarg: MemArg) {
@@ -1663,7 +1691,7 @@ impl<'a> AotCompiler<'a> {
             I16X8_ADD_SAT_U => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i16x8_add_sat_u as usize),
             I16X8_SUB_SAT_S => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i16x8_sub_sat_s as usize),
             I16X8_SUB_SAT_U => self.emit_simd_trampoline_binop(crate::wasm::aot::trampoline::aot_i16x8_sub_sat_u as usize),
-            _ => self.emitter.jmp_label(self.trap_label),
+            _ => self.emitter.jmp_label(self.trap_unreachable_label),
         }
     }
 

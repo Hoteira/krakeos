@@ -17,7 +17,7 @@ pub fn free(ptr: usize, _size: usize) {
 
 pub fn shm_get(name: &str, size: u64) -> Option<u64> {
     let res = unsafe {
-        crate::os::syscall(120, name.as_ptr() as u64, name.len() as u64, size)
+        crate::sys::syscall(120, name.as_ptr() as u64, name.len() as u64, size)
     };
-    if res == u64::MAX { None } else { Some(res) }
+    if res == 0 || res == u64::MAX { None } else { Some(res) }
 }

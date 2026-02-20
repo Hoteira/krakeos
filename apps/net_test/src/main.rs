@@ -77,12 +77,7 @@ pub fn main() {
         }
         
         // Basic delay/yield
-        for _ in 0..10000 { 
-            #[cfg(target_arch = "x86_64")]
-            unsafe { core::arch::asm!("nop"); }
-            #[cfg(target_arch = "wasm32")]
-            std::sys::yield_task();
-        }
+        std::sys::yield_task();
     }
 
     std::debugln!("NET_TEST: Timed out waiting for data.");

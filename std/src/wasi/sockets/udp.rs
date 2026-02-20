@@ -18,7 +18,7 @@ unsafe extern "C" {
     pub fn receive(stream: i32, max_results: u64, result_ptr: *mut u8);
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn create_udp_socket(address_family: i32, result_ptr: *mut u8) {
     let res = crate::sys::syscall6(41, address_family as u64, 2, 0, 0, 0, 0); // SOCK_DGRAM=2
     if res == u64::MAX {
@@ -29,7 +29,7 @@ pub unsafe fn create_udp_socket(address_family: i32, result_ptr: *mut u8) {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn start_bind(socket: i32, _network: i32, ip_addr_ptr: *const u8, result_ptr: *mut u8) {
     let res = crate::sys::syscall6(49, socket as u64, ip_addr_ptr as u64, 16, 0, 0, 0);
     if res == 0 {
@@ -39,7 +39,7 @@ pub unsafe fn start_bind(socket: i32, _network: i32, ip_addr_ptr: *const u8, res
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn send(stream: i32, buf_ptr: *const u8, buf_len: u32, dest_addr_ptr: *const u8, result_ptr: *mut u8) {
     let res = crate::sys::syscall6(44, stream as u64, buf_ptr as u64, buf_len as u64, 0, dest_addr_ptr as u64, 16);
     if res != u64::MAX {
@@ -50,7 +50,7 @@ pub unsafe fn send(stream: i32, buf_ptr: *const u8, buf_len: u32, dest_addr_ptr:
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn receive(stream: i32, max_results: u64, result_ptr: *mut u8) {
     let buf_ptr = result_ptr.add(32);
     let mut addr_len: u32 = 16;

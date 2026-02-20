@@ -88,11 +88,11 @@ impl Color {
 }
 
 pub fn get_screen_width() -> usize {
-    unsafe { syscall(106, 0, 0, 0) as usize }
+    unsafe { crate::wasi::krakeos::get_screen_width() as usize }
 }
 
 pub fn get_screen_height() -> usize {
-    unsafe { syscall(107, 0, 0, 0) as usize }
+    unsafe { crate::wasi::krakeos::get_screen_height() as usize }
 }
 
 pub fn add_window(window: &Window) -> usize {

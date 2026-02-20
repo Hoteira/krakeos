@@ -66,10 +66,19 @@ pub fn create_wasi_imports<T: Config>(linker: &mut Linker, store: &mut Store<'_,
     define("sched_yield", vec![], vec![i32_t], sched_yield);
     define("poll_oneoff", vec![i32_t, i32_t, i32_t, i32_t], vec![i32_t], poll_oneoff);
 
-    // Provide env.__wasm_call_dtors as it is often expected by Rust WASM modules
+    // Provide env.__wasm_call_dtors and __wasi_proc_exit as it is often expected by Rust WASM modules
     let func_type = FuncType { params: ResultType { valtypes: vec![] }, returns: ResultType { valtypes: vec![] } };
     let func_addr = store.func_alloc_unchecked(func_type, |_, _| Ok(vec![]));
     let _ = linker.define_unchecked(String::from("env"), String::from("__wasm_call_dtors"), ExternVal::Func(func_addr));
+
+    let exit_type = FuncType { params: ResultType { valtypes: vec![i32_t] }, returns: ResultType { valtypes: vec![] } };
+    let exit_addr = store.func_alloc_unchecked(exit_type, proc_exit_host);
+    let _ = linker.define_unchecked(String::from("env"), String::from("__wasi_proc_exit"), ExternVal::Func(exit_addr));
+}
+
+// Rename proc_exit to avoid confusion with the wrapper
+fn proc_exit_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    proc_exit(store, args)
 }
 
 // Helpers
@@ -81,11 +90,15 @@ fn wasi_ctx<'a, T: Config>(store: &'a mut Store<'_, T>) -> &'a mut WasiCtx {
 }
 
 fn write_bytes<T: Config>(store: &mut Store<'_, T>, addr: u32, bytes: &[u8]) -> Result<(), ()> {
-    let mem = if let Some(m) = store.memories.iter().next() { m } else { return Err(()); };
+    let module_addr = store.caller_module.ok_or(())?;
+    let mem_addr = *store.modules.get(module_addr).mem_addrs.get(0).ok_or(())?;
+    let mem = store.memories.get(mem_addr);
     mem.mem.init(addr as usize, bytes, 0, bytes.len()).map_err(|_| ())
 }
 fn read_bytes<T: Config>(store: &Store<'_, T>, addr: u32, buf: &mut [u8]) -> Result<(), ()> {
-    let mem = if let Some(m) = store.memories.iter().next() { m } else { return Err(()); };
+    let module_addr = store.caller_module.ok_or(())?;
+    let mem_addr = *store.modules.get(module_addr).mem_addrs.get(0).ok_or(())?;
+    let mem = store.memories.get(mem_addr);
     mem.mem.read_slice(addr as usize, buf).map_err(|_| ())
 }
 fn write_u16<T: Config>(store: &mut Store<'_, T>, addr: u32, val: u16) -> Result<(), ()> { write_bytes(store, addr, &val.to_le_bytes()) }
@@ -529,7 +542,11 @@ fn fd_read<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<
     // Construct slice of mutable slices
     let mut slices: Vec<&mut [u8]> = buffers.iter_mut().map(|v| v.as_mut_slice()).collect();
 
-    match wasi_ctx(store).env.fd_read(fd, &mut slices) {
+    let wasi = wasi_ctx(store);
+    let stdio_map = wasi.env.stdio_map();
+    let actual_fd = if fd >= 0 && fd <= 2 { stdio_map[fd as usize] } else { fd };
+
+    match wasi.env.fd_read(actual_fd, &mut slices) {
         Ok(n) => {
             // Write back
             let mut remaining = n;
@@ -594,7 +611,17 @@ fn fd_write<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec
 
     let slices: Vec<&[u8]> = buffers.iter().map(|v| v.as_slice()).collect();
 
-    match wasi_ctx(store).env.fd_write(fd, &slices) {
+    let wasi = wasi_ctx(store);
+    let stdio_map = wasi.env.stdio_map();
+    
+    // Check for stdio mapping
+    let actual_fd = if fd >= 0 && fd <= 2 {
+        stdio_map[fd as usize]
+    } else {
+        fd
+    };
+
+    match wasi.env.fd_write(actual_fd, &slices) {
         Ok(n) => {
             let _ = write_u32(store, n_ptr, n as u32);
             Ok(vec![Value::I32(0)])

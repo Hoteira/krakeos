@@ -69,45 +69,20 @@ unsafe fn grow_handler(min_size: usize) -> Option<(usize, usize)> {
         return None;
     }
 
-    #[cfg(feature = "userland")]
-    {
-        #[cfg(target_arch = "wasm32")]
-        {
-            let pages = (min_size + 65535) / 65536;
-            let ptr = crate::sys::alloc_pages(min_size);
-            if ptr.is_null() { return None; }
-            let size = pages * 65536;
-            let start = ptr as usize;
-            let end = start + size;
-            Some((start, end))
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let mut size = 4096 * 1024; // Default 4MB chunks
-            if min_size > size {
-                size = min_size.next_power_of_two();
-            }
-
-            // Get current break
-            let current_brk = crate::os::brk(0);
-            if current_brk == 0 {
-                return None;
-            }
-
-            // Align requested size to page boundary (4096)
-            let new_brk_req = align_up(current_brk + size, 4096);
-
-            // Request extension
-            let new_brk = crate::os::brk(new_brk_req);
-
-            if new_brk < new_brk_req {
-                return None;
-            }
-
-            Some((current_brk, new_brk))
-        }
-    }
+    // Unified growth using sys::alloc_pages
+    let ptr = crate::sys::alloc_pages(min_size);
+    if ptr.is_null() { return None; }
+    
+    let start = ptr as usize;
+    // We assume alloc_pages returns exactly the size requested (or aligned up)
+    // To be safe, we calculate the end based on min_size aligned to page boundaries
+    let actual_size = if cfg!(target_arch = "wasm32") {
+        (min_size + 65535) & !65535
+    } else {
+        (min_size + 4095) & !4095
+    };
+    
+    Some((start, start + actual_size))
 }
 
 unsafe impl GlobalAlloc for Allocator {

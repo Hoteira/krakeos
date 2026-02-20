@@ -23,37 +23,37 @@ unsafe extern "C" {
     pub fn accept(socket: i32, result_ptr: *mut u8);
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn start_bind(_socket: i32, _network: i32, _ip_addr_ptr: *const u8, result_ptr: *mut u8) {
     *result_ptr = 1; // Not supported natively yet
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn finish_bind(_socket: i32, result_ptr: *mut u8) {
     *result_ptr = 1;
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn start_connect(_socket: i32, _network: i32, _ip_addr_ptr: *const u8, result_ptr: *mut u8) {
     *result_ptr = 1;
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn finish_connect(_socket: i32, result_ptr: *mut u8) {
     *result_ptr = 1;
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn start_listen(_socket: i32, result_ptr: *mut u8) {
     *result_ptr = 1;
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn finish_listen(_socket: i32, result_ptr: *mut u8) {
     *result_ptr = 1;
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn accept(_socket: i32, result_ptr: *mut u8) {
     *result_ptr = 1;
 }

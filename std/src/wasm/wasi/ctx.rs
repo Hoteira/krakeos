@@ -14,6 +14,9 @@ pub struct WasiCtx {
 impl WasiCtx {
     pub fn new(args: Vec<String>, root_path: String, fds: &[(u8, u8)]) -> Self {
         let mut resource_table = BTreeMap::new();
+        resource_table.insert(0, WasiResource::InputStream(InputStreamSource::Stdin));
+        resource_table.insert(1, WasiResource::OutputStream(OutputStreamSource::Stdout));
+        resource_table.insert(2, WasiResource::OutputStream(OutputStreamSource::Stderr));
         resource_table.insert(3, WasiResource::Directory(String::from("/")));
 
         Self {
