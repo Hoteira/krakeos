@@ -278,7 +278,7 @@ pub fn main() {
                 }
 
                 cmd_buffer.clear();
-                std::os::file_write(STDOUT_FD, b"> ");
+                std::os::file_write(STDOUT_FD, b"\r> ");
             } else if b == 0x08 || b == 0x7F {
                 if !cmd_buffer.is_empty() {
                     cmd_buffer.pop();

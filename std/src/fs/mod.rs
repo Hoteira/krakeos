@@ -116,7 +116,7 @@ impl Read for File {
                 }
             }
             if !r.ptr.is_null() {
-                crate::memory::free(r.ptr as usize, r.len);
+                crate::memory::free(r.ptr as usize, buffer.len());
             }
             Ok(copy_len)
         } else {

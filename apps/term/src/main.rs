@@ -391,12 +391,12 @@ fn main() {
                                         let height = geometry.height.saturating_sub(padding * 2);
             
                                         if width > 0 {
-                                            let char_width = (text.size as f32 * 0.8) as usize;
+                                            let char_width = (text.size as f32 * 0.65) as usize;
                                             if char_width > 0 {
                                                 let chars_per_line = width / char_width;
                                                 let mut visual_lines = 0;
             
-                                                let current_lines = &term_buffer.lines;
+                                                let current_lines = if term_buffer.is_alt { &term_buffer.alt_lines } else { &term_buffer.lines };
                                                 for line in current_lines {
                                                     let len = line.len();
                                                     if len == 0 {
@@ -407,17 +407,16 @@ fn main() {
                                                 }
             
                                                 let line_height = (text.size as f32 * 1.2) as usize;
-                                                let content_height = visual_lines * line_height;
-                                                geometry.content_height = content_height;
-            
-                                                if content_height > height {
-                                                    let is_at_bottom = geometry.scroll_offset_y >= content_height.saturating_sub(height).saturating_sub(40);
-                                                    if is_at_bottom {
-                                                        geometry.scroll_offset_y = content_height.saturating_sub(height).saturating_add(20);
-                                                    }
-                                                } else {
-                                                    geometry.scroll_offset_y = 0;
+                                                let content_height = (visual_lines * line_height).saturating_add(20);
+                                                
+                                                let max_scroll = content_height.saturating_sub(height);
+                                                let is_at_bottom = geometry.scroll_offset_y >= max_scroll.saturating_sub(100);
+                                                
+                                                if is_at_bottom || (geometry.scroll_offset_y == 0 && content_height > height) {
+                                                    geometry.scroll_offset_y = max_scroll;
                                                 }
+                                                
+                                                geometry.content_height = content_height;
                                             }
                                         }
                                     }
