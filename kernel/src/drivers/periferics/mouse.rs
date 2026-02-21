@@ -73,8 +73,6 @@ pub fn init_mouse() {
     let id = mouse_read();
 
     unsafe {
-        // Force 4-byte mode if requested, but only if we think it's supported or forced.
-        // The user asked "are you forcing 4 bytes mode?", implying we should.
         MOUSE_PACKET_SIZE = 4;
         if id == 3 || id == 4 {
             println!("Mouse: ID: {}. 4-byte packet mode (Scroll Enabled).", id);

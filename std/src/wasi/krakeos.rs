@@ -151,15 +151,6 @@ pub unsafe fn get_screen_height() -> u32 {
     krakeos_syscall(107, 0, 0, 0) as u32
 }
 
-#[cfg(target_arch = "wasm32")]
-#[link(wasm_import_module = "krakeos:net/raw@0.2.0")]
-unsafe extern "C" {
-    #[link_name = "send"]
-    pub fn krakeos_net_send(ptr: *const u8, len: u32) -> i32;
-    #[link_name = "recv"]
-    pub fn krakeos_net_recv(ptr: *mut u8, len: u32) -> i32;
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn krakeos_net_send(_ptr: *const u8, _len: u32) -> i32 {
     -1

@@ -408,9 +408,13 @@ fn main() {
             
                                                 let line_height = (text.size as f32 * 1.2) as usize;
                                                 let content_height = visual_lines * line_height;
+                                                geometry.content_height = content_height;
             
                                                 if content_height > height {
-                                                    geometry.scroll_offset_y = content_height.saturating_sub(height).saturating_add(20);
+                                                    let is_at_bottom = geometry.scroll_offset_y >= content_height.saturating_sub(height).saturating_sub(40);
+                                                    if is_at_bottom {
+                                                        geometry.scroll_offset_y = content_height.saturating_sub(height).saturating_add(20);
+                                                    }
                                                 } else {
                                                     geometry.scroll_offset_y = 0;
                                                 }
