@@ -14,7 +14,34 @@ pub fn execute_builtin(
     out_fd: usize,
 ) -> i32 {
     if cmd == "help" {
-        std::os::file_write(out_fd, b"Available commands: help, clear, ls, cd, pwd, touch, mkdir, rm, mv, cp, cat, sleep, osfetch, echo, export, wasm\n");
+        let help_text = "
+KrakeOS Shell Builtin Commands:
+--------------------------------------------------
+File System:
+  ls [path]          List directory contents
+  cd [path]          Change current working directory
+  pwd                Print current working directory
+  touch <file>       Create an empty file
+  mkdir <dir>        Create a new directory
+  rm <path>          Remove a file or directory
+  mv <src> <dst>     Move/Rename a file or directory
+  cp <src> <dst>     Copy a file
+  cat [file]         Concatenate and print files
+
+System:
+  help               Show this help message
+  clear              Clear the screen
+  sleep <ms>         Suspend execution for a period
+  osfetch            Show system information
+  echo [text]        Display a line of text
+  export <VAR=VAL>   Set an environment variable
+  exit               Exit the shell
+
+WASM:
+  wasm [args]        Run a WASM module
+--------------------------------------------------
+";
+        std::os::file_write(out_fd, help_text.as_bytes());
         return 0;
     } else if cmd == "wasm" {
         let mut root_path = None;

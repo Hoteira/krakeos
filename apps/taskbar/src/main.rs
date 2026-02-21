@@ -54,7 +54,8 @@ pub fn main() {
     let unit = screen_h as f32 / 8.0;
     let font_size = unit * 4.0;
 
-    let mut l = Widget::label(2, " \u{E8F0}  Guest | ")
+    let user_name = std::os::user::get_current_user();
+    let mut l = Widget::label(2, &format!(" \u{E8F0}  {} | ", user_name.trim()))
         .y(Size::Absolute((unit) as usize))
         .set_text_color(Color::rgb(255, 255, 255))
         .background_color(Color::rgba(0, 0, 0, 0))

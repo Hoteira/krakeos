@@ -114,10 +114,15 @@ impl Mouse {
             LAST_INPUT = data[0];
         }
 
-        let scroll_val = data[3] as i8;
+        // Scroll value is a 4-bit signed value in Explorer IntelliMouse mode (ID 4)
+        // Bit 3 is the sign bit.
+        let mut scroll_val = (data[3] & 0x0F) as i8;
+        if (scroll_val & 0x08) != 0 {
+            scroll_val |= !0x0F; // Sign extend to 8-bit
+        }
 
         if scroll_val != 0 {
-            debugln!("Mouse Scroll: {}", scroll_val);
+            // debugln!("Mouse Scroll: {}", scroll_val);
         }
 
         if self.left && !prev_left {
