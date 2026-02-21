@@ -5,6 +5,8 @@ unsafe extern "C" {
     pub fn monotonic_clock_now() -> u64;
     #[link_name = "resolution"]
     pub fn monotonic_clock_resolution() -> u64;
+    #[link_name = "subscribe-duration"]
+    pub fn monotonic_clock_subscribe_duration(duration: u64) -> i32;
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -42,7 +44,13 @@ pub unsafe fn wall_clock_now(result_ptr: *mut u8) {
 pub unsafe fn sleep(ms: u64) {
     #[cfg(target_arch = "wasm32")]
     {
-        crate::sys::syscall(35, ms, 0, 0);
+        // Use subscribe-duration and then poll
+        let pollable = monotonic_clock_subscribe_duration(ms * 1_000_000);
+        // We need to poll on this pollable.
+        // Import poll_oneoff or poll.block
+        crate::wasi::io::poll_block(pollable);
+        // Then drop
+        crate::wasi::io::pollable_drop(pollable);
     }
     #[cfg(not(target_arch = "wasm32"))]
     {

@@ -1,20 +1,46 @@
 #[cfg(target_arch = "wasm32")]
-#[link(wasm_import_module = "krakeos:core/system@0.2.0")]
-unsafe extern "C" {
-    #[link_name = "syscall"]
-    pub fn krakeos_syscall(num: u64, arg1: u64, arg2: u64, arg3: u64) -> u64;
-    #[link_name = "syscall5"]
-    pub fn krakeos_syscall5(num: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64) -> u64;
-    #[link_name = "syscall6"]
-    pub fn krakeos_syscall6(num: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> u64;
-    #[link_name = "syscall7"]
-    pub fn krakeos_syscall7(num: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64, arg6: u64) -> u64;
-}
-
-#[cfg(target_arch = "wasm32")]
 #[link(wasm_import_module = "wasi_snapshot_preview1")]
 unsafe extern "C" {
     fn sched_yield() -> i32;
+}
+
+#[cfg(target_arch = "wasm32")]
+#[link(wasm_import_module = "krakeos:system/process@0.2.0")]
+unsafe extern "C" {
+    #[link_name = "spawn"]
+    pub fn process_spawn(path_ptr: *const u8, path_len: usize, args_ptr: *const u8, args_len: usize, fds_ptr: *const u8, fds_len: usize) -> u64;
+    #[link_name = "waitpid"]
+    pub fn process_waitpid(pid: u64) -> i32;
+    #[link_name = "pipe"]
+    pub fn process_pipe(fds_ptr: *mut u8) -> i32;
+}
+
+#[cfg(target_arch = "wasm32")]
+#[link(wasm_import_module = "krakeos:system/window@0.2.0")]
+unsafe extern "C" {
+    #[link_name = "create"]
+    pub fn window_create(attributes_ptr: *const u8) -> u64;
+    #[link_name = "update"]
+    pub fn window_update(handle: u64, attributes_ptr: *const u8);
+    #[link_name = "get-events"]
+    pub fn window_get_events(handle: u64, buf_ptr: *mut u8, max: u32) -> i32;
+}
+
+#[cfg(target_arch = "wasm32")]
+#[link(wasm_import_module = "krakeos:system/memory@0.2.0")]
+unsafe extern "C" {
+    #[link_name = "shm-get"]
+    pub fn shm_get(name_ptr: *const u8, name_len: usize, size: usize) -> u64;
+}
+
+#[cfg(target_arch = "wasm32")]
+pub unsafe fn krakeos_net_send(_ptr: *const u8, _len: u32) -> i32 {
+    -1
+}
+
+#[cfg(target_arch = "wasm32")]
+pub unsafe fn krakeos_net_recv(_ptr: *mut u8, _len: u32) -> i32 {
+    0
 }
 
 #[cfg(not(target_arch = "wasm32"))]

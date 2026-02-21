@@ -41,6 +41,28 @@ pub unsafe fn input_stream_read(handle: i32, len: u64, result_ptr: *mut u8) {
 }
 
 #[cfg(target_arch = "wasm32")]
+#[link(wasm_import_module = "wasi:io/poll@0.2.0")]
+unsafe extern "C" {
+    #[link_name = "poll"]
+    pub fn poll_poll(in_ptr: *const u8, in_len: u32, ret_ptr: *mut u8);
+    #[link_name = "[method]pollable.block"]
+    pub fn poll_block(handle: i32);
+    #[link_name = "[resource-drop]pollable"]
+    pub fn pollable_drop(handle: i32);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe fn poll_poll(_in_ptr: *const u8, _in_len: u32, _ret_ptr: *mut u8) {
+    // Native poll implementation stub
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe fn poll_block(_handle: i32) {}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe fn pollable_drop(_handle: i32) {}
+
+#[cfg(target_arch = "wasm32")]
 #[link(wasm_import_module = "wasi:io/error@0.2.0")]
 unsafe extern "C" {
     #[link_name = "[resource-drop]error"]

@@ -77,6 +77,16 @@ pub fn create_wasi_p2_imports<T: Config>(linker: &mut Linker, store: &mut Store<
         define(linker, store, module, "[method]input-stream.blocking-read", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], io::stream_read);
         define(linker, store, module, "[method]input-stream.subscribe", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], io::input_stream_subscribe);
         define(linker, store, module, "[method]output-stream.subscribe", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], io::output_stream_subscribe);
+        
+        define(linker, store, module, "[method]input-stream.skip", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], io::stream_skip);
+        define(linker, store, module, "[method]input-stream.blocking-skip", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], io::stream_skip);
+        define(linker, store, module, "[method]output-stream.flush", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], io::stream_flush);
+        define(linker, store, module, "[method]output-stream.blocking-flush", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], io::stream_flush);
+        define(linker, store, module, "[method]output-stream.write-zeroes", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], io::stream_write_zeroes);
+        define(linker, store, module, "[method]output-stream.blocking-write-zeroes", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], io::stream_write_zeroes);
+        define(linker, store, module, "[method]output-stream.splice", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], io::stream_splice);
+        define(linker, store, module, "[method]output-stream.blocking-splice", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], io::stream_splice);
+
         define(linker, store, module, "[resource-drop]input-stream", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
         define(linker, store, module, "[resource-drop]output-stream", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
     }
@@ -148,13 +158,26 @@ pub fn create_wasi_p2_imports<T: Config>(linker: &mut Linker, store: &mut Store<
     // wasi:clocks/wall-clock@0.2.0
     {
         let module = "wasi:clocks/wall-clock@0.2.0";
-        define(linker, store, module, "now", vec![], vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], clocks::wall_clock_now);
-        define(linker, store, module, "resolution", vec![], vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], clocks::wall_clock_resolution);
+        define(linker, store, module, "now", vec![ValType::NumType(NumType::I32)], vec![], clocks::wall_clock_now);
+        define(linker, store, module, "resolution", vec![ValType::NumType(NumType::I32)], vec![], clocks::wall_clock_resolution);
+    }
+    // wasi:clocks/timezone@0.2.0
+    {
+        let module = "wasi:clocks/timezone@0.2.0";
+        define(linker, store, module, "display", vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], clocks::timezone_display);
+        define(linker, store, module, "utc-offset", vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], clocks::timezone_utc_offset);
     }
     // wasi:random/random@0.2.0
     {
         let module = "wasi:random/random@0.2.0";
         define(linker, store, module, "get-random-bytes", vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], random::get_random_bytes);
+        define(linker, store, module, "get-random-u64", vec![], vec![ValType::NumType(NumType::I64)], random::get_insecure_random_u64); // Reused
+    }
+    // wasi:random/insecure@0.2.0
+    {
+        let module = "wasi:random/insecure@0.2.0";
+        define(linker, store, module, "get-insecure-random-bytes", vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], random::get_insecure_random_bytes);
+        define(linker, store, module, "get-insecure-random-u64", vec![], vec![ValType::NumType(NumType::I64)], random::get_insecure_random_u64);
     }
     // wasi:cli/exit@0.2.0
     {
@@ -166,6 +189,7 @@ pub fn create_wasi_p2_imports<T: Config>(linker: &mut Linker, store: &mut Store<
         let module = "wasi:cli/environment@0.2.0";
         define(linker, store, module, "get-environment", vec![], vec![ValType::NumType(NumType::I32)], cli::get_environment); // Returns Result<list<...>>
         define(linker, store, module, "get-arguments", vec![], vec![ValType::NumType(NumType::I32)], cli::get_arguments);
+        define(linker, store, module, "initial-cwd", vec![], vec![ValType::NumType(NumType::I32)], cli::get_environment); // Stub: returns option<string> (reusing env structure logic but should be null for now)
     }
     // wasi:filesystem/preopens@0.2.0
     {
@@ -177,19 +201,56 @@ pub fn create_wasi_p2_imports<T: Config>(linker: &mut Linker, store: &mut Store<
         let module = "wasi:random/insecure-seed@0.2.0";
         define(linker, store, module, "insecure-seed", vec![], vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)], random::insecure_seed);
     }
-    // krakeos:core/system@0.2.0
+    // wasi:cli/run@0.2.0
     {
-        let module = "krakeos:core/system@0.2.0";
-        define(linker, store, module, "syscall", vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I64)], krakeos_syscall_host);
-        define(linker, store, module, "syscall5", vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I64)], krakeos_syscall5_host);
-        define(linker, store, module, "syscall6", vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I64)], krakeos_syscall6_host);
-        define(linker, store, module, "syscall7", vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I64)], krakeos_syscall7_host);
+        let module = "wasi:cli/run@0.2.0";
+        define(linker, store, module, "run", vec![], vec![ValType::NumType(NumType::I32)], cli::run); // Result
     }
     // krakeos:graphics/screen@0.2.0
     {
         let module = "krakeos:graphics/screen@0.2.0";
         define(linker, store, module, "get-width", vec![], vec![ValType::NumType(NumType::I32)], get_screen_width_host);
         define(linker, store, module, "get-height", vec![], vec![ValType::NumType(NumType::I32)], get_screen_height_host);
+    }
+    // krakeos:system/process@0.2.0
+    {
+        let module = "krakeos:system/process@0.2.0";
+        define(linker, store, module, "spawn", 
+            vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], 
+            vec![ValType::NumType(NumType::I64)], 
+            process_spawn_host);
+        define(linker, store, module, "waitpid",
+            vec![ValType::NumType(NumType::I64)],
+            vec![ValType::NumType(NumType::I32)],
+            process_waitpid_host);
+        define(linker, store, module, "pipe",
+            vec![ValType::NumType(NumType::I32)],
+            vec![ValType::NumType(NumType::I32)],
+            process_pipe_host);
+    }
+    // krakeos:system/memory@0.2.0
+    {
+        let module = "krakeos:system/memory@0.2.0";
+        define(linker, store, module, "shm-get",
+            vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)],
+            vec![ValType::NumType(NumType::I64)],
+            shm_get_host);
+    }
+    // krakeos:system/window@0.2.0
+    {
+        let module = "krakeos:system/window@0.2.0";
+        define(linker, store, module, "create",
+            vec![ValType::NumType(NumType::I32)],
+            vec![ValType::NumType(NumType::I64)],
+            window_create_host);
+        define(linker, store, module, "update",
+            vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)],
+            vec![],
+            window_update_host);
+        define(linker, store, module, "get-events",
+            vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)],
+            vec![ValType::NumType(NumType::I32)],
+            window_get_events_host);
     }
         // wasi:filesystem/types@0.2.0
         {
@@ -213,8 +274,19 @@ pub fn create_wasi_p2_imports<T: Config>(linker: &mut Linker, store: &mut Store<
             define(linker, store, module, "[method]descriptor.sync", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_sync);
             define(linker, store, module, "[method]descriptor.set-size", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_set_size);
             define(linker, store, module, "[method]descriptor.set-times", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_set_times);
+            define(linker, store, module, "[method]descriptor.seek", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_seek);
             define(linker, store, module, "[method]descriptor.advise", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_advise);
             define(linker, store, module, "[method]descriptor.create-directory-at", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_create_directory_at);
+            
+            define(linker, store, module, "[method]descriptor.get-flags", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_get_flags);
+            define(linker, store, module, "[method]descriptor.sync-data", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_sync_data);
+            define(linker, store, module, "[method]descriptor.is-same-object", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], filesystem::descriptor_is_same_object);
+            define(linker, store, module, "[method]descriptor.metadata-hash", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_metadata_hash);
+            define(linker, store, module, "[method]descriptor.metadata-hash-at", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_metadata_hash_at);
+            define(linker, store, module, "[method]descriptor.read", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_read);
+            define(linker, store, module, "[method]descriptor.write", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_write);
+            
+            define(linker, store, module, "filesystem-error-code", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], filesystem::filesystem_error_code);
 
         define(linker, store, module, "[resource-drop]descriptor", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
         define(linker, store, module, "[resource-drop]directory-entry-stream", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
@@ -310,351 +382,348 @@ pub(crate) fn read_mem<T: Config>(store: &Store<'_, T>, addr: u32, buf: &mut [u8
     read_bytes(store, addr, buf)
 }
 
+pub(crate) fn read_mem_u32<T: Config>(store: &Store<'_, T>, addr: u32) -> Result<u32, HaltExecutionError> {
+    let mut buf = [0u8; 4];
+    read_mem(store, addr, &mut buf).map_err(|_| HaltExecutionError(1))?;
+    Ok(u32::from_le_bytes(buf))
+}
+
+pub(crate) fn read_mem_u64<T: Config>(store: &Store<'_, T>, addr: u32) -> Result<u64, HaltExecutionError> {
+    let mut buf = [0u8; 8];
+    read_mem(store, addr, &mut buf).map_err(|_| HaltExecutionError(1))?;
+    Ok(u64::from_le_bytes(buf))
+}
+
+pub(crate) fn read_mem_string<T: Config>(store: &Store<'_, T>, ptr: u32) -> Result<String, HaltExecutionError> {
+    // Read string until null terminator or reasonable limit
+    // Assuming these are C-strings or we need a length? 
+    // The usage in spawn suggests these are pointers to C-strings or we should know length.
+    // Wait, in SPAWN (argv), it is likely pointers to null-terminated strings if no length is provided.
+    // Let's assume null-terminated for now as there is no length array.
+    let mut buf = Vec::new();
+    let mut offset = 0;
+    loop {
+        let mut byte = [0u8; 1];
+        read_mem(store, ptr + offset, &mut byte).map_err(|_| HaltExecutionError(1))?;
+        if byte[0] == 0 { break; }
+        buf.push(byte[0]);
+        offset += 1;
+        if offset > 4096 { return Err(HaltExecutionError(1)); } // Safety limit
+    }
+    String::from_utf8(buf).map_err(|_| HaltExecutionError(1))
+}
+
 fn get_screen_width_host<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
     let w = crate::os::graphics::get_screen_width();
     // crate::debugln!("WASM get_screen_width -> {}", w);
     Ok(vec![Value::I32(w as u32)])
 }
 
-fn krakeos_syscall_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-    let get_arg = |i: usize| -> u64 {
-        match args.get(i) {
-            Some(Value::I64(v)) => *v,
-            Some(Value::I32(v)) => *v as u64,
-            _ => 0
-        }
-    };
-
-    let num = get_arg(0);
-    let a1 = get_arg(1);
-    let a2 = get_arg(2);
-    let a3 = get_arg(3);
-
-    if num != 1 && num != 0 && num != 999 {
-        // crate::debugln!("[WASM Syscall] #{} ({}, {}, {})", num, a1, a2, a3);
-    }
-
-    // Handle pointers for specific syscalls
-    match num {
-        0 => { // READ: fd, buf_ptr, buf_len
-            if a3 == 0 { return Ok(vec![Value::I64(0)]); }
-            let mut buf = vec![0u8; a3 as usize];
-            let res = unsafe { crate::sys::syscall(num, a1, buf.as_mut_ptr() as u64, a3) };
-            if res != u64::MAX && res > 0 {
-                write_bytes(store, a2 as u32, &buf[..res as usize]).map_err(|_| HaltExecutionError(1))?;
-            }
-            return Ok(vec![Value::I64(res)]);
-        }
-        1 => { // WRITE: fd, buf_ptr, buf_len
-            if a3 == 0 { return Ok(vec![Value::I64(0)]); }
-            let mut buf = vec![0u8; a3 as usize];
-            read_mem(store, a2 as u32, &mut buf).map_err(|_| HaltExecutionError(1))?;
-            
-            let mut written = 0;
-            let chunk_size = 1024;
-            while written < buf.len() {
-                let end = core::cmp::min(written + chunk_size, buf.len());
-                let slice = &buf[written..end];
-                let res = unsafe { crate::sys::syscall(num, a1, slice.as_ptr() as u64, slice.len() as u64) };
-                if res == u64::MAX { return Ok(vec![Value::I64(u64::MAX)]); }
-                if res == 0 { break; }
-                written += res as usize;
-            }
-            return Ok(vec![Value::I64(written as u64)]);
-        }
-        2 | 83 | 84 | 85 | 87 => { // OPEN, MKDIR, RMDIR, CREATE, UNLINK (a1 is string ptr, a2 is len)
-            let len = a2 as usize;
-            let mut buf = vec![0u8; len];
-            read_mem(store, a1 as u32, &mut buf).map_err(|_| HaltExecutionError(1))?;
-            let s = String::from_utf8(buf).map_err(|_| HaltExecutionError(1))?;
-            let mut s_terminated = s;
-            s_terminated.push('\0');
-            // For OPEN (2), a2 was len, but syscall expects (path, flags, mode).
-            // Wait, guest syscall(2, ptr, len, 0).
-            // Host syscall(2, ptr, flags, mode).
-            // The guest interface for 'open' in std/src/fs/mod.rs passes len as 2nd arg.
-            // But the Kernel expects a C-string?
-            // If Kernel expects C-string, we pass s_terminated pointer.
-            // But what about the 2nd and 3rd args to the Kernel syscall?
-            // Guest passes (ptr, len, 0).
-            // Kernel syscall signature for OPEN is typically (path, flags, mode).
-            // KrakeOS std::fs::File::open uses syscall(2, ptr, len, 0).
-            // Does KrakeOS kernel Open syscall take (ptr, len, mode)?
-            // The logs show Ext2Node::find calls, suggesting it works with path.
-            // If the kernel expects (ptr, len, ...), then we should pass len.
-            // If the kernel expects (ptr, flags, ...), then we have a mismatch if we pass len as flags.
-
-            // However, looking at 'read_mem_string' usage previously, it implies we were constructing a host string.
-            // And 'res = unsafe { crate::sys::syscall(num, s_terminated.as_ptr() ... a2, a3) }'
-            // We were passing 'a2' (len) as the 2nd argument to the HOST syscall.
-            // If the HOST syscall is KrakeOS kernel, and if it expects (ptr, len, ...), then it's fine.
-            // But 's_terminated' implies we are converting to C-string.
-
-            // Assumption: KrakeOS kernel syscalls called via 'crate::sys::syscall' expect (ptr, len, ...) for string arguments?
-            // Or (ptr_to_c_string, ...)?
-            // The previous code did: 'syscall(num, s_terminated.as_ptr(), a2, a3)'.
-            // If 'a2' is len, we are passing len as 2nd arg.
-            // If the kernel expects (ptr, len), then s_terminated (C-string) might not be needed, just bytes.
-            // But if we are in 'wasm_runner' (userland app), 'crate::sys::syscall' is the userland wrapper.
-            // Let's assume KrakeOS syscalls take (ptr, len).
-
-            let res = unsafe { crate::sys::syscall(num, s_terminated.as_ptr() as u64, a2, a3) };
-            if num == 85 { crate::debugln!("SYS_CREATE host wrapper returned: {}", res); }
-            return Ok(vec![Value::I64(res)]);
-        }
-        120 => { // SHM_GET
-            crate::debugln!("WASM Syscall: SHM_GET blocked (returning 0)");
-            return Ok(vec![Value::I64(0)]);
-        }
-        4 => { // STAT (a1 is string ptr, a2 is len, a3 is stat buf)
-            let len = a2 as usize;
-            let mut buf = vec![0u8; len];
-            read_mem(store, a1 as u32, &mut buf).map_err(|_| HaltExecutionError(1))?;
-            let s = String::from_utf8(buf).map_err(|_| HaltExecutionError(1))?;
-            let mut s_terminated = s;
-            s_terminated.push('\0');
-            let mut stat = unsafe { core::mem::zeroed::<crate::fs::Stat>() };
-            let res = unsafe { crate::sys::syscall(num, s_terminated.as_ptr() as u64, &mut stat as *mut _ as u64, 0) };
-            if res != u64::MAX {
-                write_bytes(store, a3 as u32, unsafe { core::slice::from_raw_parts(&stat as *const _ as *const u8, core::mem::size_of::<crate::fs::Stat>()) }).map_err(|_| HaltExecutionError(1))?;
-            }
-            return Ok(vec![Value::I64(res)]);
-        }
-        5 => { // FSTAT (a1 is fd, a3 is stat buf)
-            let mut stat = unsafe { core::mem::zeroed::<crate::fs::Stat>() };
-            let res = unsafe { crate::sys::syscall(num, a1, 0, &mut stat as *mut _ as u64) };
-            if res != u64::MAX {
-                write_bytes(store, a3 as u32, unsafe { core::slice::from_raw_parts(&stat as *const _ as *const u8, core::mem::size_of::<crate::fs::Stat>()) }).map_err(|_| HaltExecutionError(1))?;
-            }
-            return Ok(vec![Value::I64(res)]);
-        }
-        78 => { // READDIR: fd, buf_ptr, buf_len
-            let mut buf = vec![0u8; a3 as usize];
-            let res = unsafe { crate::sys::syscall(num, a1, buf.as_mut_ptr() as u64, a3) };
-            if res != u64::MAX && res > 0 {
-                write_bytes(store, a2 as u32, &buf[..res as usize]).map_err(|_| HaltExecutionError(1))?;
-            }
-            return Ok(vec![Value::I64(res)]);
-        }
-        110 => { // GET_PROCESS_LIST (a1 is buf, a2 is count)
-            let item_size = 8 + 8 + 32; // pid, state, name
-            let mut buf = vec![0u8; a2 as usize * item_size];
-            let res = unsafe { crate::sys::syscall(num, buf.as_mut_ptr() as u64, a2, a3) };
-            if res != u64::MAX && res > 0 {
-                write_bytes(store, a1 as u32, &buf[..res as usize * item_size]).map_err(|_| HaltExecutionError(1))?;
-            }
-            return Ok(vec![Value::I64(res)]);
-        }
-        100 | 102 => { // ADD_WINDOW, UPDATE_WINDOW (a1 is Window struct ptr)
-            let addr = a1 as u32;
-            let wasm_base = store.get_wasm_base_ptr() as u64;
-            // crate::debugln!("Window syscall {} at addr 0x{:x}", num, addr);
-
-            // Read WASM Window struct fields (32-bit offsets/pointers)
-            let id = read_mem_u32(store, addr)? as usize;
-            let buffer_off = read_mem_u32(store, addr + 4)? as u64;
-            let back_buffer_off = read_mem_u32(store, addr + 8)? as u64;
-            let flipped_off = read_mem_u32(store, addr + 12)? as u64;
-            let pid = read_mem_u64(store, addr + 16)?;
-            let x = read_mem_u32(store, addr + 24)? as i32 as isize;
-            let y = read_mem_u32(store, addr + 28)? as i32 as isize;
-            let z = read_mem_u32(store, addr + 32)? as usize;
-            let width = read_mem_u32(store, addr + 36)? as usize;
-            let height = read_mem_u32(store, addr + 40)? as usize;
-
-            let mut bools = [0u8; 4];
-            read_mem(store, addr + 44, &mut bools).map_err(|_| HaltExecutionError(1))?;
-
-            let min_width = read_mem_u32(store, addr + 48)? as usize;
-            let min_height = read_mem_u32(store, addr + 52)? as usize;
-            let event_handler = read_mem_u32(store, addr + 56)? as usize;
-            let w_type_val = read_mem_u32(store, addr + 60)?;
-            let prev_x = read_mem_u32(store, addr + 64)? as i32 as isize;
-            let prev_y = read_mem_u32(store, addr + 68)? as i32 as isize;
-            let prev_width = read_mem_u32(store, addr + 72)? as usize;
-            let prev_height = read_mem_u32(store, addr + 76)? as usize;
-
-            // Reconstruct Host Window struct
-            let host_win = crate::os::graphics::Window {
-                id,
-                buffer: if buffer_off != 0 { (wasm_base + buffer_off) as usize } else { 0 },
-                back_buffer: if back_buffer_off != 0 { (wasm_base + back_buffer_off) as usize } else { 0 },
-                flipped: if flipped_off != 0 { (wasm_base + flipped_off) as usize } else { 0 },
-                pid,
-                x,
-                y,
-                z,
-                width,
-                height,
-                can_move: bools[0] != 0,
-                can_resize: bools[1] != 0,
-                transparent: bools[2] != 0,
-                treat_as_transparent: bools[3] != 0,
-                min_width,
-                min_height,
-                event_handler,
-                w_type: unsafe { core::mem::transmute(w_type_val) },
-                prev_x,
-                prev_y,
-                prev_width,
-                prev_height,
-            };
-
-            let res = unsafe { crate::sys::syscall(num, &host_win as *const _ as u64, a2, a3) };
-
-            // If ADD_WINDOW, update the ID back in WASM memory
-            if num == 100 {
-                let _ = write_bytes(store, addr, &(res as u32).to_le_bytes());
-            }
-
-            return Ok(vec![Value::I64(res)]);
-        }
-        103 => { // UPDATE_WINDOW_AREA (wid, x, y, w, h)
-            // Guest uses syscall5(103, wid, x, y, w, h)
-            // This case should be in krakeos_syscall6_host!
-            panic!("WASM Syscall stub: UPDATE_WINDOW_AREA (should be handled in syscall6_host)");
-        }
-        104 => { // GET_EVENTS (a1=wid, a2=buf, a3=max)
-            let event_size = core::mem::size_of::<crate::os::graphics::Event>();
-            let mut buf = vec![0u8; a3 as usize * event_size];
-            let res = unsafe { crate::sys::syscall(num, a1, buf.as_mut_ptr() as u64, a3) };
-            if res != u64::MAX && res > 0 {
-                write_bytes(store, a2 as u32, &buf[..res as usize * event_size]).map_err(|_| HaltExecutionError(1))?;
-            }
-            return Ok(vec![Value::I64(res)]);
-        }
-        105 => { // GET_MOUSE
-            let res = unsafe { crate::sys::syscall(num, a1, a2, a3) };
-            return Ok(vec![Value::I64(res)]);
-        }
-        999 => { // DEBUG_PRINT (a1=ptr, a2=len)
-            let mut buf = vec![0u8; a2 as usize];
-            read_mem(store, a1 as u32, &mut buf).map_err(|_| HaltExecutionError(1))?;
-            let s = String::from_utf8_lossy(&buf);
-            crate::os::debug_print(&s);
-            return Ok(vec![Value::I64(0)]);
-        }
-        22 => { // PIPE (a1=ptr to [i32; 2])
-            let mut fds = [0i32; 2];
-            let res = unsafe { crate::sys::syscall(22, fds.as_mut_ptr() as u64, 0, 0) };
-            if res == 0 {
-                // Write fds back to WASM memory
-                let mut bytes = [0u8; 8];
-                bytes[0..4].copy_from_slice(&fds[0].to_le_bytes());
-                bytes[4..8].copy_from_slice(&fds[1].to_le_bytes());
-                write_bytes(store, a1 as u32, &bytes).map_err(|_| HaltExecutionError(1))?;
-            }
-            return Ok(vec![Value::I64(res)]);
-        }
-        _ => {}
-    }
-
-    let res = unsafe { crate::sys::syscall(num, a1, a2, a3) };
-    Ok(vec![Value::I64(res)])
-}
-
-fn read_mem_string<T: Config>(store: &Store<'_, T>, addr: u32) -> Result<String, HaltExecutionError> {
-    let mut res = String::new();
-    let mut curr = addr;
-    loop {
-        let mut b = [0u8; 1];
-        if read_mem(store, curr, &mut b).is_err() { return Err(HaltExecutionError(1)); }
-        if b[0] == 0 { break; }
-        res.push(b[0] as char);
-        curr += 1;
-        if curr - addr > 1024 { break; }
-    }
-    Ok(res)
-}
-
-fn read_mem_u32<T: Config>(store: &Store<'_, T>, addr: u32) -> Result<u32, HaltExecutionError> {
-    let mut b = [0u8; 4];
-    read_mem(store, addr, &mut b).map_err(|_| HaltExecutionError(1))?;
-    Ok(u32::from_le_bytes(b))
-}
-
-fn read_mem_u64<T: Config>(store: &Store<'_, T>, addr: u32) -> Result<u64, HaltExecutionError> {
-    let mut b = [0u8; 8];
-    read_mem(store, addr, &mut b).map_err(|_| HaltExecutionError(1))?;
-    Ok(u64::from_le_bytes(b))
-}
-
-fn krakeos_syscall5_host<T: Config>(_: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-    let get_arg = |i: usize| -> u64 {
-        match args.get(i) {
-            Some(Value::I64(v)) => *v,
-            Some(Value::I32(v)) => *v as u64,
-            _ => 0
-        }
-    };
-    let res = unsafe { crate::sys::syscall4(get_arg(0), get_arg(1), get_arg(2), get_arg(3), get_arg(4)) };
-    Ok(vec![Value::I64(res)])
-}
-
-fn krakeos_syscall6_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-    let get_arg = |i: usize| -> u64 {
-        match args.get(i) {
-            Some(Value::I64(v)) => *v,
-            Some(Value::I32(v)) => *v as u64,
-            _ => 0
-        }
-    };
-    let num = get_arg(0);
-
-    if num == 59 { // SPAWN (path, path_len, argv, argv_len, fds, fds_len)
-        let path_ptr = get_arg(1) as u32;
-        let path_len = get_arg(2) as u32;
-        let argv_ptr = get_arg(3) as u32;
-        let argv_len = get_arg(4) as u32;
-        let fds_ptr = get_arg(5) as u32;
-        let fds_len = get_arg(6) as u32;
-
-        let mut path_buf = vec![0u8; path_len as usize];
-        read_mem(store, path_ptr, &mut path_buf).map_err(|_| HaltExecutionError(1))?;
-        let path = String::from_utf8_lossy(&path_buf);
-
-        let mut host_args = Vec::new();
-        for i in 0..argv_len {
-            let arg_ptr_ptr = argv_ptr + i * 4;
-            let arg_ptr = read_mem_u32(store, arg_ptr_ptr)? as u32;
-            let arg = read_mem_string(store, arg_ptr)?;
-            host_args.push(arg);
-        }
-        let host_args_refs: Vec<&str> = host_args.iter().map(|s| s.as_str()).collect();
-
-        let mut host_fds = Vec::new();
-        for i in 0..fds_len {
-            let fd_ptr = fds_ptr + i * 2;
-            let mut buf = [0u8; 2];
-            read_mem(store, fd_ptr, &mut buf).map_err(|_| HaltExecutionError(1))?;
-            host_fds.push((buf[0], buf[1]));
-        }
-
-        let pid = crate::os::spawn_with_fds(&path, &host_args_refs, &host_fds);
-        return Ok(vec![Value::I64(pid as u64)]);
-    }
-
-    // 103: UPDATE_WINDOW_AREA(wid, x, y, w, h)
-    let res = unsafe { crate::sys::syscall6(num, get_arg(1), get_arg(2), get_arg(3), get_arg(4), get_arg(5), get_arg(6)) };
-    Ok(vec![Value::I64(res)])
-}
-
-fn krakeos_syscall7_host<T: Config>(_: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-    let get_arg = |i: usize| -> u64 {
-        match args.get(i) {
-            Some(Value::I64(v)) => *v,
-            Some(Value::I32(v)) => *v as u64,
-            _ => 0
-        }
-    };
-    
-    let num = get_arg(0);
-
-    let res = unsafe { crate::sys::syscall6(num, get_arg(1), get_arg(2), get_arg(3), get_arg(4), get_arg(5), get_arg(6)) };
-    Ok(vec![Value::I64(res)])
-}
-
 fn get_screen_height_host<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
     Ok(vec![Value::I32(crate::os::graphics::get_screen_height() as u32)])
 }
 
+fn process_spawn_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let get_arg = |i: usize| -> u32 {
+        match args.get(i) {
+            Some(Value::I32(v)) => *v as u32,
+            _ => 0
+        }
+    };
+    
+    let path_ptr = get_arg(0);
+    let path_len = get_arg(1);
+    let argv_ptr = get_arg(2);
+    let argv_len = get_arg(3);
+    let fds_ptr = get_arg(4);
+    let fds_len = get_arg(5);
+
+    let mut path_buf = vec![0u8; path_len as usize];
+    read_mem(store, path_ptr, &mut path_buf).map_err(|_| HaltExecutionError(1))?;
+    let path = String::from_utf8_lossy(&path_buf);
+
+    let mut host_args = Vec::new();
+    for i in 0..argv_len {
+        let arg_ptr_ptr = argv_ptr + i * 4;
+        let arg_ptr = read_mem_u32(store, arg_ptr_ptr)? as u32;
+        let arg = read_mem_string(store, arg_ptr)?;
+        host_args.push(arg);
+    }
+    let host_args_refs: Vec<&str> = host_args.iter().map(|s| s.as_str()).collect();
+
+    let mut host_fds = Vec::new();
+    for i in 0..fds_len {
+        let fd_ptr = fds_ptr + i * 2;
+        let mut buf = [0u8; 2];
+        read_mem(store, fd_ptr, &mut buf).map_err(|_| HaltExecutionError(1))?;
+        host_fds.push((buf[0], buf[1]));
+    }
+
+    let pid = crate::os::spawn_with_fds(&path, &host_args_refs, &host_fds);
+    Ok(vec![Value::I64(pid as u64)])
+}
+
+fn process_waitpid_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let pid = match args.get(0) { Some(Value::I64(v)) => *v as u64, _ => 0 };
+    #[cfg(not(target_arch = "wasm32"))]
+    let res = unsafe { crate::sys::syscall(61, pid, 0, 0) as i32 };
+    #[cfg(target_arch = "wasm32")]
+    let res = unsafe { crate::wasi::krakeos::process_waitpid(pid) };
+    
+    Ok(vec![Value::I32(res as u32)])
+}
+
+fn process_pipe_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I32((-1i32) as u32)]) };
+    
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut fds = [0i32; 2];
+        let res = unsafe { crate::sys::syscall(22, fds.as_mut_ptr() as u64, 0, 0) as i32 };
+        if res == 0 {
+            let mut bytes = [0u8; 8];
+            bytes[0..4].copy_from_slice(&fds[0].to_le_bytes());
+            bytes[4..8].copy_from_slice(&fds[1].to_le_bytes());
+            write_bytes(store, ptr, &bytes).map_err(|_| HaltExecutionError(1))?;
+            Ok(vec![Value::I32(0)])
+        } else {
+            Ok(vec![Value::I32((-1i32) as u32)])
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mut bytes = [0u8; 8];
+        let res = unsafe { crate::wasi::krakeos::process_pipe(bytes.as_mut_ptr()) };
+        if res == 0 {
+            write_bytes(store, ptr, &bytes).map_err(|_| HaltExecutionError(1))?;
+            Ok(vec![Value::I32(0)])
+        } else {
+            Ok(vec![Value::I32((-1i32) as u32)])
+        }
+    }
+}
+
+fn window_create_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I64(0)]) };
+    
+    // Read Window struct from WASM memory
+    // Assume standard Window layout (size 80 bytes)
+    // We reuse the logic from krakeos_syscall_host but adapted.
+    
+    // Read fields
+    let id = read_mem_u32(store, ptr)? as usize;
+    let buffer_off = read_mem_u32(store, ptr + 4)? as u64;
+    let back_buffer_off = read_mem_u32(store, ptr + 8)? as u64;
+    let flipped_off = read_mem_u32(store, ptr + 12)? as u64;
+    let pid = read_mem_u64(store, ptr + 16)?;
+    let x = read_mem_u32(store, ptr + 24)? as i32 as isize;
+    let y = read_mem_u32(store, ptr + 28)? as i32 as isize;
+    let z = read_mem_u32(store, ptr + 32)? as usize;
+    let width = read_mem_u32(store, ptr + 36)? as usize;
+    let height = read_mem_u32(store, ptr + 40)? as usize;
+
+    let mut bools = [0u8; 4];
+    read_mem(store, ptr + 44, &mut bools).map_err(|_| HaltExecutionError(1))?;
+
+    let min_width = read_mem_u32(store, ptr + 48)? as usize;
+    let min_height = read_mem_u32(store, ptr + 52)? as usize;
+    let event_handler = read_mem_u32(store, ptr + 56)? as usize;
+    let w_type_val = read_mem_u32(store, ptr + 60)?;
+    let prev_x = read_mem_u32(store, ptr + 64)? as i32 as isize;
+    let prev_y = read_mem_u32(store, ptr + 68)? as i32 as isize;
+    let prev_width = read_mem_u32(store, ptr + 72)? as usize;
+    let prev_height = read_mem_u32(store, ptr + 76)? as usize;
+
+    // Convert to Host struct
+    let wasm_base = store.get_wasm_base_ptr() as u64;
+    
+    let host_win = crate::os::graphics::Window {
+        id,
+        buffer: if buffer_off != 0 { (wasm_base + buffer_off) as usize } else { 0 },
+        back_buffer: if back_buffer_off != 0 { (wasm_base + back_buffer_off) as usize } else { 0 },
+        flipped: if flipped_off != 0 { (wasm_base + flipped_off) as usize } else { 0 },
+        pid,
+        x,
+        y,
+        z,
+        width,
+        height,
+        can_move: bools[0] != 0,
+        can_resize: bools[1] != 0,
+        transparent: bools[2] != 0,
+        treat_as_transparent: bools[3] != 0,
+        min_width,
+        min_height,
+        event_handler,
+        w_type: unsafe { core::mem::transmute(w_type_val) },
+        prev_x,
+        prev_y,
+        prev_width,
+        prev_height,
+    };
+
+    #[cfg(not(target_arch = "wasm32"))]
+    let res = unsafe { crate::sys::syscall(100, &host_win as *const _ as u64, 0, 0) };
+    #[cfg(target_arch = "wasm32")]
+    let res = 0; // Host on Host stub
+
+    // Update ID back in WASM memory
+    if res != 0 {
+        let _ = write_bytes(store, ptr, &(res as u32).to_le_bytes());
+    }
+
+    Ok(vec![Value::I64(res)])
+}
+
+fn window_update_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let _handle = match args.get(0) { Some(Value::I64(v)) => *v, _ => 0 };
+    let ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![]) };
+
+    // Same struct reading logic (duplicate for now, could refactor)
+    let id = read_mem_u32(store, ptr)? as usize;
+    let buffer_off = read_mem_u32(store, ptr + 4)? as u64;
+    let back_buffer_off = read_mem_u32(store, ptr + 8)? as u64;
+    let flipped_off = read_mem_u32(store, ptr + 12)? as u64;
+    let pid = read_mem_u64(store, ptr + 16)?;
+    let x = read_mem_u32(store, ptr + 24)? as i32 as isize;
+    let y = read_mem_u32(store, ptr + 28)? as i32 as isize;
+    let z = read_mem_u32(store, ptr + 32)? as usize;
+    let width = read_mem_u32(store, ptr + 36)? as usize;
+    let height = read_mem_u32(store, ptr + 40)? as usize;
+
+    let mut bools = [0u8; 4];
+    read_mem(store, ptr + 44, &mut bools).map_err(|_| HaltExecutionError(1))?;
+
+    let min_width = read_mem_u32(store, ptr + 48)? as usize;
+    let min_height = read_mem_u32(store, ptr + 52)? as usize;
+    let event_handler = read_mem_u32(store, ptr + 56)? as usize;
+    let w_type_val = read_mem_u32(store, ptr + 60)?;
+    let prev_x = read_mem_u32(store, ptr + 64)? as i32 as isize;
+    let prev_y = read_mem_u32(store, ptr + 68)? as i32 as isize;
+    let prev_width = read_mem_u32(store, ptr + 72)? as usize;
+    let prev_height = read_mem_u32(store, ptr + 76)? as usize;
+
+    let wasm_base = store.get_wasm_base_ptr() as u64;
+    
+    let host_win = crate::os::graphics::Window {
+        id,
+        buffer: if buffer_off != 0 { (wasm_base + buffer_off) as usize } else { 0 },
+        back_buffer: if back_buffer_off != 0 { (wasm_base + back_buffer_off) as usize } else { 0 },
+        flipped: if flipped_off != 0 { (wasm_base + flipped_off) as usize } else { 0 },
+        pid,
+        x,
+        y,
+        z,
+        width,
+        height,
+        can_move: bools[0] != 0,
+        can_resize: bools[1] != 0,
+        transparent: bools[2] != 0,
+        treat_as_transparent: bools[3] != 0,
+        min_width,
+        min_height,
+        event_handler,
+        w_type: unsafe { core::mem::transmute(w_type_val) },
+        prev_x,
+        prev_y,
+        prev_width,
+        prev_height,
+    };
+
+    #[cfg(not(target_arch = "wasm32"))]
+    unsafe { crate::sys::syscall(102, &host_win as *const _ as u64, 0, 0); }
+    
+    Ok(vec![])
+}
+
+fn window_get_events_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let handle = match args.get(0) { Some(Value::I64(v)) => *v, _ => 0 };
+    let buf_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I32(0)]) };
+    let max = match args.get(2) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I32(0)]) };
+
+    let event_size = core::mem::size_of::<crate::os::graphics::Event>();
+    let mut buf = vec![0u8; max as usize * event_size];
+    
+    #[cfg(not(target_arch = "wasm32"))]
+    let count = unsafe { crate::sys::syscall(104, handle, buf.as_mut_ptr() as u64, max as u64) as i32 };
+    #[cfg(target_arch = "wasm32")]
+    let count = 0;
+
+    if count > 0 {
+        write_bytes(store, buf_ptr, &buf[..count as usize * event_size]).map_err(|_| HaltExecutionError(1))?;
+    }
+
+    Ok(vec![Value::I32(count as u32)])
+}
+
+fn shm_get_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let name_ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I64(0)]) };
+    let name_len = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I64(0)]) };
+    let size = match args.get(2) { Some(Value::I32(v)) => *v as usize, _ => return Ok(vec![Value::I64(0)]) };
+
+    let mut name_buf = vec![0u8; name_len as usize];
+    read_mem(store, name_ptr, &mut name_buf).map_err(|_| HaltExecutionError(1))?;
+    let name = String::from_utf8_lossy(&name_buf);
+
+    #[cfg(not(target_arch = "wasm32"))]
+    unsafe {
+        let mut name_terminated = String::from(name);
+        name_terminated.push('\0');
+        let res = crate::sys::syscall(120, name_terminated.as_ptr() as u64, name_terminated.len() as u64, size as u64);
+        // Map native pointer to WASM memory? 
+        // No, SHM returns a pointer in the address space.
+        // If we are Host, and Guest asks for SHM, we get a pointer in Host space.
+        // We must map it into Guest memory!
+        // This is complex. `mmap` into guest memory?
+        // Or allocate guest memory and copy? No, SHM is shared.
+        // Host (Shell) shares memory with Guest (Taskbar).
+        // If Shell and Taskbar are in same process (WASM in-process), they share memory already?
+        // No, WASM has linear memory.
+        // If SHM is for IPC between processes, and both are WASM in same runner...
+        // We need `memory.map`? WASM doesn't support that.
+        // KrakeOS SHM is kernel-level.
+        // If Guest calls `shm_get`, Host gets a pointer.
+        // Host must write that pointer value to Guest?
+        // But Guest can't access Host pointer.
+        // WE need to COPY data or use shared array buffer.
+        // For KrakeOS, `shm_get` likely returns an offset in the linear memory if using `wasm_loader` magic,
+        // or it expects the runtime to map it.
+        // Current architecture: `wasm_loader` (native) sets up VM.
+        // If `std` is running as Host (Shell), and Guest (Taskbar) asks for SHM.
+        // Shell can't easily map kernel memory into Guest's linear memory.
+        // BUT, `taskbar` is running as a separate process in KrakeOS if spawned via `spawn_with_fds`?
+        // Wait, `shell` spawns `taskbar.wasm`.
+        // If `shell` is WASM, it calls `process_spawn_host`.
+        // `process_spawn_host` calls `spawn_with_fds` (native/kernel).
+        // Kernel spawns `wasm_loader` with `taskbar.wasm`.
+        // So `taskbar` is a NEW process.
+        // `taskbar` uses `std` (Guest).
+        // `std` (Guest) calls `shm_get` (WASI binding).
+        // This import is resolved by `wasm_loader` (Native Host).
+        // `wasm_loader` must provide `shm-get`.
+        // `wasm_loader` uses `std`?
+        // If `wasm_loader` uses `std` (native), then `std`'s WASI implementation is used.
+        // So I AM modifying the Native Host implementation right now!
+        // So `shm_get_host` running on Native `wasm_loader`.
+        // It calls syscall(120). It gets a Native Pointer (u64).
+        // This pointer is valid in the `wasm_loader` process.
+        // `wasm_loader`'s memory includes the WASM linear memory (as a buffer).
+        // But `shm_get` returns an address.
+        // If the address is outside WASM linear memory, Guest can't access it.
+        // Unless WASM memory *is* the process memory (roughly).
+        // KrakeOS `wasm_loader` likely treats pointers as absolute if they are in shared region?
+        // Or we need to `memcpy`.
+        // `inkui` uses `shm` for event queue.
+        // The queue is shared between WindowServer (Native/WASM) and App (WASM).
+        // If WindowServer is Native, it creates SHM.
+        // App (WASM) opens SHM.
+        // App needs to read/write that memory.
+        // If WASM can't access arbitrary address, `shm_get` is useless unless it returns an index into WASM memory.
+        // `wasm_loader` might support "mapping" external memory into WASM memory space (growing and copying/mapping).
+        // Assuming `shm_get` returns a pointer that IS accessible or mapped.
+        // For now, I just return the result of syscall.
+        Ok(vec![Value::I64(res)])
+    }
+    #[cfg(target_arch = "wasm32")]
+    Ok(vec![Value::I64(0)]) // Recursive? Host on Host
+}

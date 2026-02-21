@@ -1,3 +1,4 @@
+#[cfg(not(target_arch = "wasm32"))]
 use crate::os::syscall;
 use core::cell::UnsafeCell;
 use rust_alloc::alloc::{alloc, dealloc, Layout};
@@ -44,9 +45,12 @@ where
     });
     let args_ptr = Box::into_raw(args);
 
+    #[cfg(not(target_arch = "wasm32"))]
     let tid = unsafe {
         syscall(112, thread_start::<F, T> as usize as u64, stack_ptr as u64, args_ptr as u64)
     } as usize;
+    #[cfg(target_arch = "wasm32")]
+    let tid = 0; // Threads not supported in pure WASM yet
 
     JoinHandle {
         id: tid,
@@ -70,6 +74,7 @@ where
         *(*args.packet).result.get() = Some(res);
 
         // Exit thread
+        #[cfg(not(target_arch = "wasm32"))]
         crate::os::syscall(113, 0, 0, 0);
     }
 }
@@ -86,6 +91,7 @@ impl<T> JoinHandle<T> {
 
         unsafe {
             // Wait for thread to exit
+            #[cfg(not(target_arch = "wasm32"))]
             loop {
                 let res = crate::os::syscall(61, id as u64, 0, 0); // SYS_WAIT4
                 if res != u64::MAX {

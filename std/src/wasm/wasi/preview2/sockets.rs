@@ -4,17 +4,16 @@ use crate::wasm::{
     common::{config::Config, value::Value},
     interpreter::store::{HaltExecutionError, Store},
 };
-use super::{read_mem, write_bytes};
+use super::{read_mem, write_bytes, write_u32, write_u64, call_cabi_realloc};
 
 pub fn adapter_close_badfd<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-    // Return EBADF (76)
     Ok(vec![Value::I32(76)])
 }
 
 pub fn tcp_create_socket<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
     let result_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
     let mut buf = [0u8; 4];
-    buf[0] = 1; // Err (not supported natively yet)
+    buf[0] = 1; 
     write_bytes(store, result_ptr, &buf).map_err(|_| HaltExecutionError(1))?;
     Ok(vec![])
 }
@@ -22,7 +21,7 @@ pub fn tcp_create_socket<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) 
 pub fn tcp_start_bind<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
     let result_ptr = match args.get(3) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
     let mut buf = [0u8; 4];
-    buf[0] = 1; // Err
+    buf[0] = 1;
     write_bytes(store, result_ptr, &buf).map_err(|_| HaltExecutionError(1))?;
     Ok(vec![])
 }
@@ -30,7 +29,7 @@ pub fn tcp_start_bind<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> 
 pub fn tcp_finish_bind<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
     let result_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
     let mut buf = [0u8; 4];
-    buf[0] = 1; // Err
+    buf[0] = 1;
     write_bytes(store, result_ptr, &buf).map_err(|_| HaltExecutionError(1))?;
     Ok(vec![])
 }
@@ -38,7 +37,7 @@ pub fn tcp_finish_bind<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) ->
 pub fn tcp_start_connect<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
     let result_ptr = match args.get(3) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
     let mut buf = [0u8; 4];
-    buf[0] = 1; // Err
+    buf[0] = 1;
     write_bytes(store, result_ptr, &buf).map_err(|_| HaltExecutionError(1))?;
     Ok(vec![])
 }
@@ -46,7 +45,7 @@ pub fn tcp_start_connect<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) 
 pub fn tcp_finish_connect<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
     let result_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
     let mut buf = [0u8; 4];
-    buf[0] = 1; // Err
+    buf[0] = 1;
     write_bytes(store, result_ptr, &buf).map_err(|_| HaltExecutionError(1))?;
     Ok(vec![])
 }
@@ -54,7 +53,7 @@ pub fn tcp_finish_connect<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>)
 pub fn tcp_start_listen<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
     let result_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
     let mut buf = [0u8; 4];
-    buf[0] = 1; // Err
+    buf[0] = 1;
     write_bytes(store, result_ptr, &buf).map_err(|_| HaltExecutionError(1))?;
     Ok(vec![])
 }
@@ -62,7 +61,7 @@ pub fn tcp_start_listen<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -
 pub fn tcp_finish_listen<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
     let result_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
     let mut buf = [0u8; 4];
-    buf[0] = 1; // Err
+    buf[0] = 1;
     write_bytes(store, result_ptr, &buf).map_err(|_| HaltExecutionError(1))?;
     Ok(vec![])
 }
@@ -70,19 +69,19 @@ pub fn tcp_finish_listen<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) 
 pub fn tcp_accept<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
     let result_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
     let mut buf = [0u8; 4];
-    buf[0] = 1; // Err
+    buf[0] = 1;
     write_bytes(store, result_ptr, &buf).map_err(|_| HaltExecutionError(1))?;
     Ok(vec![])
 }
 
 pub fn instance_network<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-    Ok(vec![Value::I32(0)]) // Return a dummy network handle
+    Ok(vec![Value::I32(0)])
 }
 
 pub fn resolve_addresses<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
     let result_ptr = match args.get(3) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
     let mut buf = [0u8; 4];
-    buf[0] = 1; // Err (DNS not supported natively yet)
+    buf[0] = 1;
     write_bytes(store, result_ptr, &buf).map_err(|_| HaltExecutionError(1))?;
     Ok(vec![])
 }
@@ -91,7 +90,11 @@ pub fn create_udp_socket<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) 
     let address_family = match args.get(0) { Some(Value::I32(v)) => *v, _ => return Err(HaltExecutionError(1)) };
     let result_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
 
+    #[cfg(not(target_arch = "wasm32"))]
     let res = unsafe { crate::sys::syscall6(41, address_family as u64, 2, 0, 0, 0, 0) };
+    #[cfg(target_arch = "wasm32")]
+    let res = u64::MAX;
+
     let mut buf = [0u8; 8];
     if res == u64::MAX {
         buf[0] = 1;
@@ -112,7 +115,11 @@ pub fn start_bind<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Resu
     let mut ip_addr = vec![0u8; 16];
     read_mem(store, ip_addr_ptr, &mut ip_addr).map_err(|_| HaltExecutionError(1))?;
 
+    #[cfg(not(target_arch = "wasm32"))]
     let res = unsafe { crate::sys::syscall6(49, socket as u64, ip_addr.as_ptr() as u64, 16, 0, 0, 0) };
+    #[cfg(target_arch = "wasm32")]
+    let res = u64::MAX;
+
     let mut buf = [0u8; 4];
     buf[0] = if res == 0 { 0 } else { 1 };
     write_bytes(store, result_ptr, &buf).map_err(|_| HaltExecutionError(1))?;
@@ -132,8 +139,11 @@ pub fn send<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec
     let mut dest_addr = vec![0u8; 16];
     read_mem(store, dest_addr_ptr, &mut dest_addr).map_err(|_| HaltExecutionError(1))?;
 
+    #[cfg(not(target_arch = "wasm32"))]
     let res = unsafe { crate::sys::syscall6(44, stream as u64, payload.as_ptr() as u64, buf_len as u64, 0, dest_addr.as_ptr() as u64, 16) };
-    
+    #[cfg(target_arch = "wasm32")]
+    let res = u64::MAX;
+
     let mut result_buf = [0u8; 16];
     if res != u64::MAX {
         result_buf[0] = 0;
@@ -154,9 +164,12 @@ pub fn receive<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<
     let mut src_addr = vec![0u8; 16];
     let mut addr_len: u32 = 16;
 
+    #[cfg(not(target_arch = "wasm32"))]
     let res = unsafe {
         crate::sys::syscall6(45, stream as u64, payload.as_mut_ptr() as u64, max_results, 0, src_addr.as_mut_ptr() as u64, &mut addr_len as *mut u32 as u64)
     };
+    #[cfg(target_arch = "wasm32")]
+    let res = u64::MAX;
 
     let mut header = vec![0u8; 32 + max_results as usize];
     if res != u64::MAX && res > 0 {

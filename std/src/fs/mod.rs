@@ -80,8 +80,11 @@ impl File {
     }
 
     pub fn set_len(&self, size: u64) -> Result<()> {
-        let res = unsafe { crate::sys::syscall(77, self.fd as u64, size, 0) as i32 };
-        if res == 0 {
+        let mut result = [0u8; 8];
+        unsafe {
+            filesystem::set_size(self.fd as i32, size, result.as_mut_ptr());
+        }
+        if result[0] == 0 {
             Ok(())
         } else {
             Err(Error::from_raw_os_error(5))
@@ -113,7 +116,7 @@ impl Read for File {
                 }
             }
             if !r.ptr.is_null() {
-                crate::memory::free(r.ptr as usize, buffer.len());
+                crate::memory::free(r.ptr as usize, r.len);
             }
             Ok(copy_len)
         } else {
@@ -148,21 +151,22 @@ impl Seek for File {
             SeekFrom::End(off) => (off, 2),
         };
 
-        let res = unsafe {
-            crate::sys::syscall(8, self.fd as u64, offset as u64, whence as u64)
-        };
+        let mut result = [0u8; 16];
+        unsafe {
+            filesystem::seek(self.fd as i32, offset as u64, whence, result.as_mut_ptr());
+        }
 
-        if res == u64::MAX {
-            Err(Error::from_raw_os_error(29)) // ESPIPE
+        if result[0] == 0 {
+            Ok(unsafe { core::ptr::read_unaligned(result.as_ptr().add(8) as *const u64) })
         } else {
-            Ok(res)
+            Err(Error::from_raw_os_error(29)) // ESPIPE
         }
     }
 }
 
 impl Drop for File {
     fn drop(&mut self) {
-        unsafe { crate::sys::syscall(3, self.fd as u64, 0, 0); }
+        unsafe { filesystem::descriptor_drop(self.fd as i32); }
     }
 }
 
@@ -187,9 +191,12 @@ pub fn rename(from: &str, to: &str) -> Result<()> {
 }
 
 pub fn mount(disk_id: u8, fs_type: &str) -> Result<()> {
+    #[cfg(not(target_arch = "wasm32"))]
     let res = unsafe {
         crate::sys::syscall(165, disk_id as u64, fs_type.as_ptr() as u64, fs_type.len() as u64)
     };
+    #[cfg(target_arch = "wasm32")]
+    let res = u64::MAX; // Not supported
 
     if res == 0 {
         Ok(())
@@ -233,9 +240,12 @@ pub fn read_dir(path: &str) -> Result<Vec<DirEntry>> {
     let mut buffer = [0u8; 1024];
 
     loop {
+        #[cfg(not(target_arch = "wasm32"))]
         let res = unsafe {
             crate::sys::syscall(78, file.fd as u64, buffer.as_mut_ptr() as u64, buffer.len() as u64)
         };
+        #[cfg(target_arch = "wasm32")]
+        let res = u64::MAX; // Use wasi readdir later
 
         if res == u64::MAX {
             return Err(Error::from_raw_os_error(5));

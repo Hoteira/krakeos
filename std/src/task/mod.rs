@@ -50,7 +50,10 @@ fn task_waker_wake(data: *const ()) {
     let pid = task.pid;
     RUN_QUEUE.lock().push_back(task);
     // Wake up the thread by signaling a generic event with its PID
+    #[cfg(not(target_arch = "wasm32"))]
     unsafe { crate::os::syscall(132, 0, pid, 0); }
+    #[cfg(target_arch = "wasm32")]
+    { /* stub */ }
 }
 
 fn task_waker_wake_by_ref(data: *const ()) {
@@ -59,7 +62,10 @@ fn task_waker_wake_by_ref(data: *const ()) {
     let pid = task.pid;
     core::mem::forget(task); // Don't drop the original
     RUN_QUEUE.lock().push_back(task_clone);
+    #[cfg(not(target_arch = "wasm32"))]
     unsafe { crate::os::syscall(132, 0, pid, 0); }
+    #[cfg(target_arch = "wasm32")]
+    { /* stub */ }
 }
 
 fn task_waker_drop(data: *const ()) {

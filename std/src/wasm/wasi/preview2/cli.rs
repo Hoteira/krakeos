@@ -109,3 +109,7 @@ pub fn get_arguments<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> R
 
     Ok(vec![])
 }
+
+pub fn run<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    Ok(vec![Value::I32(0)])
+}

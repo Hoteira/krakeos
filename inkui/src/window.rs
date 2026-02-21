@@ -7,7 +7,6 @@ use alloc::vec::Vec;
 use core::slice;
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::os::graphics::{self, Items};
-use std::os::syscall;
 use std::sync::Mutex;
 
 static SIDE_QUEUE: Mutex<VecDeque<Event>> = Mutex::new(VecDeque::new());
@@ -283,9 +282,7 @@ impl Window {
         // 3. Fallback to legacy syscall if still empty
         if vec.is_empty() {
             let mut events: [Event; 64] = [Event::None; 64];
-            unsafe {
-                syscall(104, self.id as u64, events.as_mut_ptr() as u64, 64);
-            }
+            graphics::get_events(self.id, &mut events);
 
             for e in events {
                 if e == Event::None {
@@ -334,9 +331,7 @@ impl Window {
         let mut events: [Event; 64] = [Event::None; 64];
         let mut any_redraw = false;
 
-        unsafe {
-            syscall(104, self.id as u64, events.as_mut_ptr() as u64, 64);
-        }
+        graphics::get_events(self.id, &mut events);
 
         for event in events.iter() {
             match event {

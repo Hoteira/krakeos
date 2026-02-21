@@ -10,5 +10,5 @@ pub fn get_current_user() -> String {
 
 pub fn set_current_user(name: &str) {
     let mut user = CURRENT_USER.lock();
-    *user = Some(String::from(name));
+    *user = Some(String::from(name.trim()));
 }

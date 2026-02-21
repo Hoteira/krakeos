@@ -27,7 +27,8 @@ pub fn monotonic_clock_subscribe_duration<T: Config>(store: &mut Store<'_, T>, a
     Ok(vec![Value::I32(id as u32)])
 }
 
-pub fn wall_clock_now<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+pub fn wall_clock_now<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let ret_ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![]) };
     let (d, m, y) = crate::os::get_date();
     let (h, min, s) = crate::os::get_time();
     let yrs = if y >= 1970 { (y - 1970) as u64 } else { 0 };
@@ -37,9 +38,42 @@ pub fn wall_clock_now<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<
         + (h as u64) * 3600
         + (min as u64) * 60
         + s as u64;
-    Ok(vec![Value::I64(secs), Value::I32(0)])
+    
+    let _ = super::write_u64(store, ret_ptr, secs);
+    let _ = super::write_u32(store, ret_ptr + 8, 0);
+    Ok(vec![])
 }
 
-pub fn wall_clock_resolution<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-    Ok(vec![Value::I64(1), Value::I32(0)])
+pub fn wall_clock_resolution<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let ret_ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![]) };
+    let _ = super::write_u64(store, ret_ptr, 1);
+    let _ = super::write_u32(store, ret_ptr + 8, 0);
+    Ok(vec![])
+}
+
+pub fn timezone_display<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let _when_sec = match args.get(0) { Some(Value::I64(v)) => *v as u64, _ => 0 };
+    let _when_nsec = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+    let ret_ptr = match args.get(2) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![]) };
+
+    // timezone-display record:
+    // utc_offset: s32
+    // name: string
+    // in_daylight_savings_time: bool
+    
+    // UTC
+    let _ = super::write_u32(store, ret_ptr, 0); // offset 0
+    let name = "UTC";
+    let bytes = name.as_bytes();
+    let ptr = super::call_cabi_realloc(store, bytes.len() as u32, 1)?;
+    let _ = super::write_bytes(store, ptr, bytes);
+    let _ = super::write_u32(store, ret_ptr + 4, ptr);
+    let _ = super::write_u32(store, ret_ptr + 8, bytes.len() as u32);
+    let _ = super::write_bytes(store, ret_ptr + 12, &[0]); // false
+
+    Ok(vec![])
+}
+
+pub fn timezone_utc_offset<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    Ok(vec![Value::I32(0)])
 }
