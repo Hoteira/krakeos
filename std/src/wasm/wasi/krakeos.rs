@@ -180,7 +180,7 @@ impl KrakeosWasiEnv {
             return Err(76); // ENOTCAPABLE
         };
 
-        let clean = path.trim_start_matches('.').trim_start_matches('/');
+        let clean = path.trim_start_matches('.').trim_start_matches('/').trim_end_matches('/');
         if clean.is_empty() { return Ok(base.clone()); }
         
         if base.ends_with('/') {
@@ -244,10 +244,15 @@ impl WasiEnv for KrakeosWasiEnv {
         if fd >= 0 && fd <= 2 {
             let rb = if fd == 0 { 0x2 } else { 0x40 };
             Ok(FdStat { filetype: 2, rights_base: rb, rights_inheriting: rb, flags: 0 })
-        } else if let Some(_) = self.fd_table.get(&fd) {
-             Ok(FdStat { filetype: 4, rights_base: 0x3F, rights_inheriting: 0x3F, flags: 0 })
+        } else if let Some(wf) = self.fd_table.get(&fd) {
+             let ft = match wf.stat() {
+                 Ok(s) => if (s.mode & 0xF000) == 0x4000 { 3 } else { 4 },
+                 Err(_) => 4,
+             };
+             let (rb, ri) = if ft == 3 { (u64::MAX, u64::MAX) } else { (0x3F, 0x3F) };
+             Ok(FdStat { filetype: ft, rights_base: rb, rights_inheriting: ri, flags: 0 })
         } else if fd == 3 {
-             Ok(FdStat { filetype: 3, rights_base: 0x3F, rights_inheriting: 0x3F, flags: 0 })
+             Ok(FdStat { filetype: 3, rights_base: u64::MAX, rights_inheriting: u64::MAX, flags: 0 })
         } else {
             Err(8)
         }
@@ -379,7 +384,7 @@ impl WasiEnv for KrakeosWasiEnv {
 
     fn fd_prestat_dir_name(&self, fd: i32) -> Result<String, i32> {
         if fd == 3 {
-            Ok(self.root_path.clone())
+            Ok(String::from("/"))
         } else {
             Err(8)
         }

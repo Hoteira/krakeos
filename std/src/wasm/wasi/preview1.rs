@@ -863,37 +863,33 @@ fn fd_readdir<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<V
     let ck = args.get(3).and_then(|v| if let Value::I64(x) = v { Some(*x as u64) } else { None }).unwrap_or(0);
     let u_ptr = args.get(4).and_then(|v| if let Value::I32(x) = v { Some(*x as u32) } else { None }).unwrap_or(0);
 
-    match wasi_ctx(store).env.fd_readdir(fd, ck) {
-        Ok(entries) => {
-            let mut used = 0;
-            for (name, ft, inode) in entries {
-                let nb = name.as_bytes();
-                let nl = nb.len();
-                let es = 24 + nl;
-                
-                // Align to 8 bytes
-                let padding = (8 - (es % 8)) % 8;
-                let total_len = es + padding;
-
-                if (used + total_len) > b_len as usize {
-                    break;
-                }
-                let eb = b_ptr + used as u32;
-                if write_u64(store, eb, inode).is_err() || // Next cookie
-                    write_u64(store, eb + 8, inode).is_err() ||
-                    write_u32(store, eb + 16, nl as u32).is_err() ||
-                    write_bytes(store, eb + 20, &[ft, 0, 0, 0]).is_err() ||
-                    write_bytes(store, eb + 24, nb).is_err() { return Ok(vec![Value::I32(28)]); }
-                
-                if padding > 0 {
-                    if write_bytes(store, eb + es as u32, &vec![0u8; padding]).is_err() { return Ok(vec![Value::I32(28)]); }
-                }
-
-                used += total_len;
+        match wasi_ctx(store).env.fd_readdir(fd, ck) {
+            Ok(entries) => {
+                let mut used = 0;
+                                        for (name, ft, inode) in entries {
+                                            let nb = name.as_bytes();
+                                            let nl = nb.len();
+                                            let es = 24 + nl; // Standard header size is 24 bytes
+                                            
+                                            // WASI dirent is NOT aligned.
+                                            let total_len = es;
+                            
+                                            if (used + total_len) > b_len as usize {
+                                                break;
+                                            }
+                                            let eb = b_ptr + used as u32;
+                                            if write_u64(store, eb, inode).is_err() || // d_next
+                                                write_u64(store, eb + 8, inode).is_err() || // d_ino
+                                                write_u32(store, eb + 16, nl as u32).is_err() || // d_namlen
+                                                write_bytes(store, eb + 20, &[ft, 0, 0, 0]).is_err() || // d_type + padding
+                                                write_bytes(store, eb + 24, nb).is_err() { return Ok(vec![Value::I32(28)]); }
+                                            
+                                            used += total_len;
+                                        }
+                                            if u_ptr != 0 { let _ = write_u32(store, u_ptr, used as u32); }
+                Ok(vec![Value::I32(0)])
             }
-            if u_ptr != 0 { let _ = write_u32(store, u_ptr, used as u32); }
-            Ok(vec![Value::I32(0)])
+            Err(e) => Ok(vec![Value::I32(e as u32)])
         }
-        Err(e) => Ok(vec![Value::I32(e as u32)])
     }
-}
+    

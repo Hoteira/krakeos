@@ -375,7 +375,7 @@ impl Widget {
     }
 
     pub fn handle_key(&mut self, key: char) {
-        if let Widget::TextInput { text, .. } = self {
+        if let Widget::TextInput { text, geometry, .. } = self {
             if key == '\x08' {
                 if text.text.len() > text.min_len {
                     text.text.pop();
@@ -384,6 +384,12 @@ impl Widget {
                 text.text.push('\n');
             } else {
                 text.text.push(key);
+            }
+
+            // Autoscroll to bottom
+            let view_height = geometry.height.saturating_sub(geometry.padding * 2);
+            if geometry.content_height > view_height {
+                geometry.scroll_offset_y = geometry.content_height - view_height;
             }
         }
     }
