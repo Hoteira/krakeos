@@ -31,5 +31,8 @@ pub fn exit(code: i32) -> ! {
 }
 
 pub fn get_pid() -> u64 {
+    #[cfg(not(target_arch = "wasm32"))]
     unsafe { crate::os::syscall(39, 0, 0, 0) }
+    #[cfg(target_arch = "wasm32")]
+    0 // Stub for WASM
 }

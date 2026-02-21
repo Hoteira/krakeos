@@ -1,3 +1,5 @@
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(unused_imports)]
 use crate::sys::{syscall1, syscall6};
 use crate::rust_alloc::vec::Vec;
 use crate::wasi::sockets::udp;
@@ -88,7 +90,6 @@ impl Socket {
 
 impl Drop for Socket {
     fn drop(&mut self) {
-        // SYS_SOCKET_CLOSE = 50
-        unsafe { syscall1(50, self.handle as u64) };
+        unsafe { udp::udp_socket_drop(self.handle as i32) };
     }
 }

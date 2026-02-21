@@ -1,4 +1,7 @@
+#[cfg(not(target_arch = "wasm32"))]
 use crate::os::krakeos::syscall;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::os::krakeos::syscall5;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 #[repr(u32)]
@@ -96,15 +99,36 @@ pub fn get_screen_height() -> usize {
 }
 
 pub fn add_window(window: &Window) -> usize {
-    unsafe { crate::os::syscall(100, window as *const Window as u64, 0, 0) as usize }
+    #[cfg(not(target_arch = "wasm32"))]
+    unsafe { syscall(100, window as *const Window as u64, 0, 0) as usize }
+    #[cfg(target_arch = "wasm32")]
+    unsafe { crate::wasi::krakeos::window_create(window as *const Window as *const u8) as usize }
 }
 
 pub fn update_window(window: &Window) {
-    unsafe { crate::os::syscall(102, window as *const Window as u64, 0, 0); }
+    #[cfg(not(target_arch = "wasm32"))]
+    unsafe { syscall(102, window as *const Window as u64, 0, 0); }
+    #[cfg(target_arch = "wasm32")]
+    unsafe { crate::wasi::krakeos::window_update(0, window as *const Window as *const u8); }
 }
 
 pub fn update_window_area(id: usize, x: usize, y: usize, w: usize, h: usize) {
-    unsafe { crate::os::syscall5(103, id as u64, x as u64, y as u64, w as u64, h as u64); }
+    #[cfg(not(target_arch = "wasm32"))]
+    unsafe { syscall5(103, id as u64, x as u64, y as u64, w as u64, h as u64); }
+}
+
+pub fn get_events(wid: usize, events: &mut [Event]) -> usize {
+    #[cfg(not(target_arch = "wasm32"))]
+    unsafe {
+        crate::os::syscall(104, wid as u64, events.as_mut_ptr() as u64, events.len() as u64) as usize
+    }
+    #[cfg(target_arch = "wasm32")]
+    unsafe {
+        // We cast Event array to u8 buffer. Ensure layout matches!
+        // Event is repr(C).
+        let ptr = events.as_mut_ptr() as *mut u8;
+        crate::wasi::krakeos::window_get_events(wid as u64, ptr, events.len() as u32) as usize
+    }
 }
 
 pub use super::events::{Event, KeyboardEvent, MouseEvent, RedrawEvent, ResizeEvent};

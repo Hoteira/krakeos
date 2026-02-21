@@ -3,6 +3,7 @@ use crate::rust_alloc::format;
 use crate::rust_alloc::string::String;
 use crate::rust_alloc::vec::Vec;
 use crate::rust_alloc::boxed::Box;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::sys::{syscall4, syscall5, syscall6, syscall1};
 use crate::wasm::wasi::env::{FdStat, FileStat, WasiEnv};
 use crate::fs;
@@ -66,41 +67,50 @@ pub struct WasiSocket {
 
 impl WasiFile for WasiSocket {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, i32> {
-        // SYS_RECVFROM(fd, buf, len, flags, src_addr, addr_len)
-        let res = unsafe {
-            syscall6(SYS_RECVFROM, self.fd as u64, buf.as_mut_ptr() as u64, buf.len() as u64, 0, 0, 0)
-        };
-        if res == u64::MAX { Err(5) } else { Ok(res as usize) }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            // SYS_RECVFROM(fd, buf, len, flags, src_addr, addr_len)
+            let res = unsafe {
+                syscall6(SYS_RECVFROM, self.fd as u64, buf.as_mut_ptr() as u64, buf.len() as u64, 0, 0, 0)
+            };
+            if res == u64::MAX { Err(5) } else { Ok(res as usize) }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            // Stub or use crates::wasi::sockets
+            Err(58) // ENOTSUP
+        }
     }
     fn write(&mut self, buf: &[u8]) -> Result<usize, i32> {
-        // SYS_SENDTO(fd, buf, len, flags, dest_addr, addr_len)
-        let (dst_ptr, dst_len) = if let Some((ip, port)) = self.dst_addr {
-            // Construct sockaddr_in on stack?
-            // sockaddr_in = { family: u16=2, port: u16, addr: u32, zero: [u8;8] }
-            // We need a stable pointer. 
-            // Limitation: We can't easily pass stack pointer to syscall if syscall switches stacks?
-            // KrakeOS syscalls are `int 0x80` or `syscall` instruction. Memory is shared (userland).
-            // So stack pointer is fine.
-            let mut addr = [0u8; 16];
-            addr[0] = 2; // AF_INET
-            addr[1] = 0;
-            addr[2] = (port >> 8) as u8;
-            addr[3] = (port & 0xFF) as u8;
-            addr[4] = (ip >> 24) as u8;
-            addr[5] = (ip >> 16) as u8;
-            addr[6] = (ip >> 8) as u8;
-            addr[7] = (ip & 0xFF) as u8;
-            (addr.as_ptr() as u64, 16)
-        } else {
-            (0, 0)
-        };
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            // SYS_SENDTO(fd, buf, len, flags, dest_addr, addr_len)
+            let (dst_ptr, dst_len) = if let Some((ip, port)) = self.dst_addr {
+                let mut addr = [0u8; 16];
+                addr[0] = 2; // AF_INET
+                addr[1] = 0;
+                addr[2] = (port >> 8) as u8;
+                addr[3] = (port & 0xFF) as u8;
+                addr[4] = (ip >> 24) as u8;
+                addr[5] = (ip >> 16) as u8;
+                addr[6] = (ip >> 8) as u8;
+                addr[7] = (ip & 0xFF) as u8;
+                (addr.as_ptr() as u64, 16)
+            } else {
+                (0, 0)
+            };
 
-        if dst_ptr == 0 { return Err(28); } // EINVAL (Dest required for now)
+            if dst_ptr == 0 { return Err(28); }
 
-        let res = unsafe {
-            syscall6(SYS_SENDTO, self.fd as u64, buf.as_ptr() as u64, buf.len() as u64, 0, dst_ptr, dst_len)
-        };
-        if res == u64::MAX { Err(5) } else { Ok(res as usize) }
+            let res = unsafe {
+                syscall6(SYS_SENDTO, self.fd as u64, buf.as_ptr() as u64, buf.len() as u64, 0, dst_ptr, dst_len)
+            };
+            if res == u64::MAX { Err(5) } else { Ok(res as usize) }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            Err(58)
+        }
     }
     fn seek(&mut self, _pos: crate::io::SeekFrom) -> Result<u64, i32> { Err(29) } // ESPIPE
     fn stat(&self) -> Result<crate::fs::Stat, i32> {
@@ -114,7 +124,10 @@ impl WasiFile for WasiSocket {
 
 impl Drop for WasiSocket {
     fn drop(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
         unsafe { syscall1(50, self.fd as u64) };
+        #[cfg(target_arch = "wasm32")]
+        { /* Use socket drop binding */ }
     }
 }
 
@@ -380,39 +393,44 @@ impl WasiEnv for KrakeosWasiEnv {
 
     fn path_open(&mut self, dirfd: i32, _dirflags: u32, path: &str, oflags: u32, _fs_rights_base: u64, _fs_rights_inheriting: u64, _fdflags: u16) -> Result<i32, i32> {
         if path.starts_with("/dev/udp") {
-            let sock_fd = unsafe { syscall4(SYS_SOCKET, 2, 2, 0, 0) };
-            if sock_fd == u64::MAX { return Err(5); }
-            
-            let parts: Vec<&str> = path.split('/').collect();
-            let mut dst_addr = None;
-            
-            if parts.len() >= 5 && parts[3] == "bind" {
-                if let Ok(port) = parts[4].parse::<u16>() {
-                    let mut addr = [0u8; 16];
-                    addr[0] = 2; // AF_INET
-                    addr[2] = (port >> 8) as u8;
-                    addr[3] = (port & 0xFF) as u8;
-                    let res = unsafe { syscall4(SYS_BIND, sock_fd, addr.as_ptr() as u64, 16, 0) };
-                    if res != 0 { return Err(48); }
-                }
-            } else if parts.len() >= 5 {
-                if let Ok(port) = parts[4].parse::<u16>() {
-                    let ip_parts: Vec<&str> = parts[3].split('.').collect();
-                    if ip_parts.len() == 4 {
-                        let a = ip_parts[0].parse::<u8>().unwrap_or(0);
-                        let b = ip_parts[1].parse::<u8>().unwrap_or(0);
-                        let c = ip_parts[2].parse::<u8>().unwrap_or(0);
-                        let d = ip_parts[3].parse::<u8>().unwrap_or(0);
-                        let ip_u32 = ((a as u32) << 24) | ((b as u32) << 16) | ((c as u32) << 8) | (d as u32);
-                        dst_addr = Some((ip_u32, port));
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let sock_fd = unsafe { syscall4(SYS_SOCKET, 2, 2, 0, 0) };
+                if sock_fd == u64::MAX { return Err(5); }
+                
+                let parts: Vec<&str> = path.split('/').collect();
+                let mut dst_addr = None;
+                
+                if parts.len() >= 5 && parts[3] == "bind" {
+                    if let Ok(port) = parts[4].parse::<u16>() {
+                        let mut addr = [0u8; 16];
+                        addr[0] = 2; // AF_INET
+                        addr[2] = (port >> 8) as u8;
+                        addr[3] = (port & 0xFF) as u8;
+                        let res = unsafe { syscall4(SYS_BIND, sock_fd, addr.as_ptr() as u64, 16, 0) };
+                        if res != 0 { return Err(48); }
+                    }
+                } else if parts.len() >= 5 {
+                    if let Ok(port) = parts[4].parse::<u16>() {
+                        let ip_parts: Vec<&str> = parts[3].split('.').collect();
+                        if ip_parts.len() == 4 {
+                            let a = ip_parts[0].parse::<u8>().unwrap_or(0);
+                            let b = ip_parts[1].parse::<u8>().unwrap_or(0);
+                            let c = ip_parts[2].parse::<u8>().unwrap_or(0);
+                            let d = ip_parts[3].parse::<u8>().unwrap_or(0);
+                            let ip_u32 = ((a as u32) << 24) | ((b as u32) << 16) | ((c as u32) << 8) | (d as u32);
+                            dst_addr = Some((ip_u32, port));
+                        }
                     }
                 }
+                
+                let fd = self.next_fd;
+                self.next_fd += 1;
+                self.fd_table.insert(fd, Box::new(WasiSocket { fd: sock_fd as usize, dst_addr }));
+                return Ok(fd);
             }
-            
-            let fd = self.next_fd;
-            self.next_fd += 1;
-            self.fd_table.insert(fd, Box::new(WasiSocket { fd: sock_fd as usize, dst_addr }));
-            return Ok(fd);
+            #[cfg(target_arch = "wasm32")]
+            { return Err(58); }
         }
 
         let full_path = self.resolve_path(dirfd, path)?;
@@ -523,7 +541,10 @@ impl WasiEnv for KrakeosWasiEnv {
     }
 
     fn proc_exit(&mut self, code: i32) -> Result<(), i32> {
+        #[cfg(not(target_arch = "wasm32"))]
         unsafe { syscall1(60, code as u64) };
+        #[cfg(target_arch = "wasm32")]
+        unsafe { crate::wasi::cli::exit(code) };
         Ok(())
     }
 

@@ -27,7 +27,10 @@ impl Future for SleepFuture {
             // Register timer with kernel if we want to be efficient
             // For now, executor's yield/wait loop will wake us
             // SYS_REGISTER_EVENT(Timer, deadline_ms)
+            #[cfg(not(target_arch = "wasm32"))]
             unsafe { crate::os::syscall(131, 2, self.deadline_ms, 0); }
+            #[cfg(target_arch = "wasm32")]
+            { /* stub or use wasi poll */ }
             Poll::Pending
         }
     }

@@ -614,6 +614,28 @@ pub fn descriptor_set_times<T: Config>(store: &mut Store<'_, T>, args: Vec<Value
     Ok(vec![])
 }
 
+pub fn descriptor_seek<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let fd = match get_fd(store, match args.get(0) { Some(Value::I32(v)) => *v as i32, _ => -1 }) {
+        Ok(fd) => fd,
+        Err(_) => return Ok(vec![]),
+    };
+    let offset = match args.get(1) { Some(Value::I64(v)) => *v as u64, _ => 0 };
+    let whence = match args.get(2) { Some(Value::I32(v)) => *v as u8, _ => 0 };
+    let ret_ptr = match args.get(3) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+
+    match store.wasi_ctx.as_mut().unwrap().env.fd_seek(fd, offset as i64, whence) {
+        Ok(new_off) => {
+            let _ = write_u32(store, ret_ptr, 0);
+            let _ = write_u64(store, ret_ptr + 8, new_off);
+        }
+        Err(e) => {
+            let _ = write_u32(store, ret_ptr, 1);
+            let _ = write_u32(store, ret_ptr + 4, e as u32);
+        }
+    }
+    Ok(vec![])
+}
+
 pub fn descriptor_advise<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
     let fd = match get_fd(store, match args.get(0) { Some(Value::I32(v)) => *v as i32, _ => -1 }) {
         Ok(fd) => fd,
@@ -631,4 +653,157 @@ pub fn descriptor_advise<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) 
         }
     }
     Ok(vec![])
+}
+
+pub fn descriptor_sync_data<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let fd = match get_fd(store, match args.get(0) { Some(Value::I32(v)) => *v as i32, _ => -1 }) {
+        Ok(fd) => fd,
+        Err(_) => return Ok(vec![]),
+    };
+    let ret_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+    match store.wasi_ctx.as_mut().unwrap().env.fd_datasync(fd) {
+        Ok(_) => { let _ = write_u32(store, ret_ptr, 0); }
+        Err(e) => {
+            let _ = write_u32(store, ret_ptr, 1);
+            let _ = write_u32(store, ret_ptr + 4, e as u32);
+        }
+    }
+    Ok(vec![])
+}
+
+pub fn descriptor_get_flags<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let fd = match get_fd(store, match args.get(0) { Some(Value::I32(v)) => *v as i32, _ => -1 }) {
+        Ok(fd) => fd,
+        Err(_) => return Ok(vec![]),
+    };
+    let ret_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+    match store.wasi_ctx.as_ref().unwrap().env.fd_fdstat_get(fd) {
+        Ok(stat) => {
+            let _ = write_u32(store, ret_ptr, 0);
+            let _ = write_u32(store, ret_ptr + 4, stat.flags as u32);
+        }
+        Err(e) => {
+            let _ = write_u32(store, ret_ptr, 1);
+            let _ = write_u32(store, ret_ptr + 4, e as u32);
+        }
+    }
+    Ok(vec![])
+}
+
+pub fn descriptor_read<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    // read(length, offset) -> result<(list<u8>, bool), error-code>
+    let fd = match get_fd(store, match args.get(0) { Some(Value::I32(v)) => *v as i32, _ => -1 }) {
+        Ok(fd) => fd,
+        Err(_) => return Ok(vec![]),
+    };
+    let len = match args.get(1) { Some(Value::I64(v)) => *v as u64, _ => 0 };
+    let offset = match args.get(2) { Some(Value::I64(v)) => *v as u64, _ => 0 };
+    let ret_ptr = match args.get(3) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+
+    let mut buf = vec![0u8; len as usize];
+    let mut slices = [buf.as_mut_slice()];
+    
+    match store.wasi_ctx.as_mut().unwrap().env.fd_pread(fd, &mut slices, offset) {
+        Ok(n) => {
+            buf.truncate(n);
+            let ptr = call_cabi_realloc(store, n as u32, 1)?;
+            let _ = write_bytes(store, ptr, &buf);
+            let _ = write_u32(store, ret_ptr, 0);
+            let _ = write_u32(store, ret_ptr + 4, ptr);
+            let _ = write_u32(store, ret_ptr + 8, n as u32);
+            let _ = write_u32(store, ret_ptr + 12, if n == 0 { 1 } else { 0 }); // EOF?
+        }
+        Err(e) => {
+            let _ = write_u32(store, ret_ptr, 1);
+            let _ = write_u32(store, ret_ptr + 4, e as u32);
+        }
+    }
+    Ok(vec![])
+}
+
+pub fn descriptor_write<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    // write(buffer, offset) -> result<u64, error-code>
+    let fd = match get_fd(store, match args.get(0) { Some(Value::I32(v)) => *v as i32, _ => -1 }) {
+        Ok(fd) => fd,
+        Err(_) => return Ok(vec![]),
+    };
+    let buf_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+    let buf_len = match args.get(2) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+    let offset = match args.get(3) { Some(Value::I64(v)) => *v as u64, _ => 0 };
+    let ret_ptr = match args.get(4) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+
+    let mut buf = vec![0u8; buf_len as usize];
+    if read_mem(store, buf_ptr, &mut buf).is_err() {
+        let _ = write_u32(store, ret_ptr, 1);
+        let _ = write_u32(store, ret_ptr + 4, 21);
+        return Ok(vec![]);
+    }
+    let slices = [buf.as_slice()];
+
+    match store.wasi_ctx.as_mut().unwrap().env.fd_pwrite(fd, &slices, offset) {
+        Ok(n) => {
+            let _ = write_u32(store, ret_ptr, 0);
+            let _ = write_u64(store, ret_ptr + 8, n as u64);
+        }
+        Err(e) => {
+            let _ = write_u32(store, ret_ptr, 1);
+            let _ = write_u32(store, ret_ptr + 4, e as u32);
+        }
+    }
+    Ok(vec![])
+}
+
+pub fn descriptor_is_same_object<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let h1 = match args.get(0) { Some(Value::I32(v)) => *v as i32, _ => return Ok(vec![]) };
+    let h2 = match args.get(1) { Some(Value::I32(v)) => *v as i32, _ => return Ok(vec![]) };
+    let fd1 = get_fd(store, h1).unwrap_or(-1);
+    let fd2 = get_fd(store, h2).unwrap_or(-1);
+    
+    // Check dev/ino
+    let env = &mut store.wasi_ctx.as_mut().unwrap().env;
+    let s1 = env.fd_filestat_get(fd1);
+    let s2 = env.fd_filestat_get(fd2);
+    
+    let same = if let (Ok(st1), Ok(stat2)) = (s1, s2) {
+        st1.dev == stat2.dev && st1.ino == stat2.ino
+    } else {
+        false
+    };
+    Ok(vec![Value::I32(if same { 1 } else { 0 })])
+}
+
+pub fn descriptor_metadata_hash<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let fd = match get_fd(store, match args.get(0) { Some(Value::I32(v)) => *v as i32, _ => -1 }) {
+        Ok(fd) => fd,
+        Err(_) => return Ok(vec![]),
+    };
+    let ret_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+    match store.wasi_ctx.as_ref().unwrap().env.fd_filestat_get(fd) {
+        Ok(stat) => {
+            let _ = write_u32(store, ret_ptr, 0);
+            let hash = stat.dev.wrapping_add(stat.ino).wrapping_add(stat.mtime);
+            let _ = write_u64(store, ret_ptr + 8, hash); // lower
+            let _ = write_u64(store, ret_ptr + 16, 0); // upper
+        }
+        Err(e) => {
+            let _ = write_u32(store, ret_ptr, 1);
+            let _ = write_u32(store, ret_ptr + 4, e as u32);
+        }
+    }
+    Ok(vec![])
+}
+
+pub fn descriptor_metadata_hash_at<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    // Similar to stat_at but returns hash
+    descriptor_metadata_hash(store, args) // Stub reuse for now, ignoring path arg
+}
+
+pub fn filesystem_error_code<T: Config>(_: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    // err -> option<code>
+    // For now we map errno directly if possible, or just return it if it is one.
+    // The error passed here is a result of a previous call, likely encoded as u32.
+    // But this function expects an error resource handle? Or the error code itself?
+    // "filesystem-error-code(err) -> option<error-code>"
+    // If err is handle, we need resource.
+    Ok(vec![Value::I32(0), Value::I32(0)]) // Stub: None
 }

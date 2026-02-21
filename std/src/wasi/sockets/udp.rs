@@ -16,6 +16,9 @@ unsafe extern "C" {
 
     #[link_name = "[method]incoming-datagram-stream.receive"]
     pub fn receive(stream: i32, max_results: u64, result_ptr: *mut u8);
+
+    #[link_name = "[resource-drop]udp-socket"]
+    pub fn udp_socket_drop(handle: i32);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -27,6 +30,11 @@ pub unsafe fn create_udp_socket(address_family: i32, result_ptr: *mut u8) {
         *result_ptr = 0; // ok
         core::ptr::write_unaligned(result_ptr.add(4) as *mut i32, res as i32);
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe fn udp_socket_drop(handle: i32) {
+    crate::sys::syscall1(50, handle as u64);
 }
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -54,3 +54,18 @@ pub fn insecure_seed<T: Config>(store: &mut Store<'_, T>, _: Vec<Value>) -> Resu
     
     Ok(vec![Value::I64(low), Value::I64(high)])
 }
+
+pub fn get_insecure_random_bytes<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    // args: (len: u64), returns: list<u8>
+    // Just reuse secure random
+    get_random_bytes(store, args)
+}
+
+pub fn get_insecure_random_u64<T: Config>(store: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    let mut buf = [0u8; 8];
+    if let Some(ctx) = store.wasi_ctx.as_mut() {
+        let _ = ctx.env.random_get(&mut buf);
+    }
+    let val = u64::from_le_bytes(buf);
+    Ok(vec![Value::I64(val)])
+}

@@ -11,7 +11,16 @@ pub struct winsize {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn krake_syscall(n: u64, a1: u64, a2: u64, a3: u64, a4: u64) -> u64 { std::os::syscall4(n, a1, a2, a3, a4) }
+pub unsafe extern "C" fn krake_syscall(n: u64, a1: u64, a2: u64, a3: u64, a4: u64) -> u64 {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::os::syscall4(n, a1, a2, a3, a4)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        0
+    }
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn krake_sleep(ms: usize) {
@@ -19,7 +28,16 @@ pub unsafe extern "C" fn krake_sleep(ms: usize) {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn krake_get_time_ms() -> usize { std::os::syscall(109, 0, 0, 0) as usize }
+pub unsafe extern "C" fn krake_get_time_ms() -> usize {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::os::syscall(109, 0, 0, 0) as usize
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        0
+    }
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn krake_get_event(wid: usize, out_event: *mut u32) -> c_int {
