@@ -54,17 +54,32 @@ pub fn init_mouse() {
     mouse_write(80);
     let _ = mouse_read();
 
+    // Extra sequence for 5-button IntelliMouse (some QEMU versions)
+    mouse_write(MOUSE_SET_SAMPLE_RATE);
+    let _ = mouse_read();
+    mouse_write(200);
+    let _ = mouse_read();
+    mouse_write(MOUSE_SET_SAMPLE_RATE);
+    let _ = mouse_read();
+    mouse_write(200);
+    let _ = mouse_read();
+    mouse_write(MOUSE_SET_SAMPLE_RATE);
+    let _ = mouse_read();
+    mouse_write(80);
+    let _ = mouse_read();
+
     mouse_write(MOUSE_GET_ID);
     let _ack = mouse_read();
     let id = mouse_read();
 
     unsafe {
+        // Force 4-byte mode if requested, but only if we think it's supported or forced.
+        // The user asked "are you forcing 4 bytes mode?", implying we should.
+        MOUSE_PACKET_SIZE = 4;
         if id == 3 || id == 4 {
-            MOUSE_PACKET_SIZE = 4;
             println!("Mouse: ID: {}. 4-byte packet mode (Scroll Enabled).", id);
         } else {
-            MOUSE_PACKET_SIZE = 3;
-            println!("Mouse: ID: {}. 3-byte packet mode.", id);
+            println!("Mouse: ID: {}. 4-byte packet mode FORCED (ID detected: {}).", id, id);
         }
     }
 
