@@ -205,9 +205,16 @@ impl WasiEnv for KrakeosWasiEnv {
     }
 
     fn clock_time_get(&self, _id: u32, _precision: u64) -> Result<u64, i32> {
-        // Syscall 13 (time) returns unix timestamp in seconds. WASI expects nanoseconds.
-        let t = unsafe { syscall1(13, 0) };
-        Ok(t * 1_000_000_000)
+        let (d, m, y) = crate::os::get_date();
+        let (h, min, s) = crate::os::get_time();
+        let yrs = if y >= 1970 { (y - 1970) as u64 } else { 0 };
+        let secs = yrs * 31_536_000
+            + (m as u64).saturating_sub(1) * 2_592_000
+            + (d as u64).saturating_sub(1) * 86_400
+            + (h as u64) * 3600
+            + (min as u64) * 60
+            + s as u64;
+        Ok(secs * 1_000_000_000)
     }
 
     fn fd_close(&mut self, fd: i32) -> Result<(), i32> {
