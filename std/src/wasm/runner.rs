@@ -8,12 +8,18 @@ use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 
-pub fn run(path: &str, root_path: &str, fds: &[(u8, u8)], aot: bool) {
-    run_with_args(path, vec![path.to_string()], root_path, fds, aot);
+pub fn run(path: &str, root_path: &str, fds: &[(u8, u8)], aot: bool) -> i32 {
+    run_with_args(path, vec![path.to_string()], root_path, fds, aot)
 }
 
-pub fn run_with_args(path: &str, args: Vec<String>, root_path: &str, fds: &[(u8, u8)], aot: bool) {
-    run_with_env(path, args, root_path, fds, Vec::new(), aot);
+pub fn run_with_args(
+    path: &str,
+    args: Vec<String>,
+    root_path: &str,
+    fds: &[(u8, u8)],
+    aot: bool,
+) -> i32 {
+    run_with_env(path, args, root_path, fds, Vec::new(), aot)
 }
 
 pub fn run_with_env(
@@ -23,7 +29,7 @@ pub fn run_with_env(
     fds: &[(u8, u8)],
     env_vars: Vec<(String, String)>,
     aot: bool,
-) {
+) -> i32 {
     debugln!("[wasm-runner] Starting {} (AOT: {})...", path, aot);
 
     if let Ok(mut file) = File::open(path) {
@@ -84,19 +90,24 @@ pub fn run_with_env(
                             })
                     };
 
-                    if let Err(e) = res {
-                        match e {
-                            crate::wasm::RuntimeError::HostFunctionHaltedExecution(0) => {
-                                // Normal exit
-                            }
-                            crate::wasm::RuntimeError::HostFunctionHaltedExecution(code) => {
+                    let exit_code = match res {
+                        Ok(_) => 0,
+                        Err(crate::wasm::RuntimeError::HostFunctionHaltedExecution(code)) => {
+                            if code != 0 {
                                 debugln!("[wasm-runner] Process exited with code {}", code);
                             }
-                            _ => {
-                                debugln!("[wasm-runner] Execution error: {:?}", e);
-                            }
+                            code
                         }
+                        Err(e) => {
+                            debugln!("[wasm-runner] Execution error: {:?}", e);
+                            1
+                        }
+                    };
+                    unsafe {
+                        crate::wasm::wasi::ICRNL = false;
                     }
+                    debugln!("[wasm-runner] Finished {}.", path);
+                    return exit_code;
                 }
                 Err(e) => debugln!("[wasm-runner] Validation error: {:?}", e),
             }
@@ -108,4 +119,5 @@ pub fn run_with_env(
         debugln!("[wasm-runner] Could not open {}", path);
     }
     debugln!("[wasm-runner] Finished {}.", path);
+    1
 }
