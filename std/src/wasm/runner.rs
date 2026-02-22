@@ -1,26 +1,39 @@
 extern crate alloc;
-use alloc::vec::Vec;
-use alloc::string::{String, ToString};
-use alloc::vec;
+use crate::debugln;
 use crate::fs::File;
 use crate::io::Read;
-use crate::wasm::{validate, Linker, Store};
-use crate::wasm::wasi::{create_wasi_imports, create_wasi_p2_imports, WasiCtx};
-use crate::debugln;
+use crate::wasm::wasi::{WasiCtx, create_wasi_imports, create_wasi_p2_imports};
+use crate::wasm::{Linker, Store, validate};
+use alloc::string::{String, ToString};
+use alloc::vec;
+use alloc::vec::Vec;
 
 pub fn run(path: &str, root_path: &str, fds: &[(u8, u8)], aot: bool) {
     run_with_args(path, vec![path.to_string()], root_path, fds, aot);
 }
 
 pub fn run_with_args(path: &str, args: Vec<String>, root_path: &str, fds: &[(u8, u8)], aot: bool) {
+    run_with_env(path, args, root_path, fds, Vec::new(), aot);
+}
+
+pub fn run_with_env(
+    path: &str,
+    args: Vec<String>,
+    root_path: &str,
+    fds: &[(u8, u8)],
+    env_vars: Vec<(String, String)>,
+    aot: bool,
+) {
     debugln!("[wasm-runner] Starting {} (AOT: {})...", path, aot);
 
     if let Ok(mut file) = File::open(path) {
         let size = file.size();
         let mut buffer = Vec::with_capacity(size);
         if file.read_to_end(&mut buffer).is_ok() {
-            unsafe { crate::wasm::wasi::ICRNL = true; }
-             match validate(&buffer) {
+            unsafe {
+                crate::wasm::wasi::ICRNL = true;
+            }
+            match validate(&buffer) {
                 Ok(validation_info) => {
                     let mut store = Store::new(());
                     store.aot_enabled = aot;
@@ -28,16 +41,23 @@ pub fn run_with_args(path: &str, args: Vec<String>, root_path: &str, fds: &[(u8,
 
                     create_wasi_imports(&mut linker, &mut store);
                     create_wasi_p2_imports(&mut linker, &mut store);
-                    
-                    store.wasi_ctx = Some(WasiCtx::new(args, root_path.to_string(), fds));
+
+                    store.wasi_ctx = Some(WasiCtx::new_with_env(
+                        args,
+                        root_path.to_string(),
+                        fds,
+                        env_vars,
+                    ));
 
                     let res = if let Some(component) = &validation_info.component {
-                         debugln!("[wasm-runner] [COMPONENT] Executing...");
-                         crate::wasm::interpreter::component_executor::instantiate_component(
+                        debugln!("[wasm-runner] [COMPONENT] Executing...");
+                        crate::wasm::interpreter::component_executor::instantiate_component(
                             &mut store, &linker, component, &buffer,
-                        ).map(|_| ())
+                        )
+                        .map(|_| ())
                     } else {
-                        linker.module_instantiate_unchecked(&mut store, &validation_info, None)
+                        linker
+                            .module_instantiate_unchecked(&mut store, &validation_info, None)
                             .and_then(|instance| {
                                 let entry_point = store
                                     .instance_export_unchecked(instance.module_addr, "run")
@@ -45,16 +65,21 @@ pub fn run_with_args(path: &str, args: Vec<String>, root_path: &str, fds: &[(u8,
                                     .and_then(|e| e.as_func())
                                     .or_else(|| {
                                         store
-                                            .instance_export_unchecked(instance.module_addr, "_start")
+                                            .instance_export_unchecked(
+                                                instance.module_addr,
+                                                "_start",
+                                            )
                                             .ok()
                                             .and_then(|e| e.as_func())
                                     });
 
                                 if let Some(func_addr) = entry_point {
-                                    store.invoke_unchecked(func_addr, Vec::new(), None).map(|_| ())
+                                    store
+                                        .invoke_unchecked(func_addr, Vec::new(), None)
+                                        .map(|_| ())
                                 } else {
-                                     debugln!("[wasm-runner] No entry point found.");
-                                     Ok(())
+                                    debugln!("[wasm-runner] No entry point found.");
+                                    Ok(())
                                 }
                             })
                     };
@@ -74,8 +99,10 @@ pub fn run_with_args(path: &str, args: Vec<String>, root_path: &str, fds: &[(u8,
                     }
                 }
                 Err(e) => debugln!("[wasm-runner] Validation error: {:?}", e),
-             }
-             unsafe { crate::wasm::wasi::ICRNL = false; }
+            }
+            unsafe {
+                crate::wasm::wasi::ICRNL = false;
+            }
         }
     } else {
         debugln!("[wasm-runner] Could not open {}", path);

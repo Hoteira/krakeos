@@ -46,6 +46,7 @@ WASM:
     } else if cmd == "wasm" {
         let mut root_path = None;
         let mut use_aot = false;
+        let mut env_vars: Vec<(String, String)> = Vec::new();
         let mut actual_args = args.to_vec();
 
         // Parse flags
@@ -58,6 +59,20 @@ WASM:
                     actual_args.remove(i); // remove path
                 } else {
                     std::os::file_write(out_fd, b"Error: --dir requires a path\n");
+                    return 1;
+                }
+            } else if actual_args[i] == "--env" {
+                if i + 1 < actual_args.len() {
+                    let kv = actual_args[i + 1].clone();
+                    if let Some(eq) = kv.find('=') {
+                        let key = String::from(&kv[..eq]);
+                        let val = String::from(&kv[eq + 1..]);
+                        env_vars.push((key, val));
+                    }
+                    actual_args.remove(i); // remove --env
+                    actual_args.remove(i); // remove KEY=VALUE
+                } else {
+                    std::os::file_write(out_fd, b"Error: --env requires KEY=VALUE\n");
                     return 1;
                 }
             } else if actual_args[i] == "--aot" {
@@ -101,7 +116,14 @@ WASM:
             }
 
             let root = root_path.unwrap_or_else(|| String::from("@0xE0"));
-            std::wasm::run_with_args(&prog_path, actual_args, &root, &[(0, 0), (1, 1), (2, 2)], use_aot);
+            std::wasm::run_with_env(
+                &prog_path,
+                actual_args,
+                &root,
+                &[(0, 0), (1, 1), (2, 2)],
+                env_vars,
+                use_aot,
+            );
         } else {
             std::os::file_write(
                 out_fd,
@@ -109,7 +131,6 @@ WASM:
             );
             return 1;
         }
-
     } else if cmd == "export" {
         if !args.is_empty() {
             let arg = &args[0];
