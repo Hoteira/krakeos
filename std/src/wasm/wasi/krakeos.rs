@@ -451,12 +451,26 @@ impl WasiEnv for KrakeosWasiEnv {
     fn fd_read(&mut self, fd: i32, iovs: &mut [(&mut [u8])]) -> Result<usize, i32> {
         if fd == 0 {
             let host_fd = self.stdio_map[0] as usize;
+            let host_stdout = self.stdio_map[1] as usize;
             loop {
                 let mut total = 0;
                 for buf in iovs.iter_mut() {
                     let n = crate::os::file_read(host_fd, buf);
-                    total += n;
-                    if n < buf.len() {
+                    if n > 0 && n <= buf.len() {
+                        // Translate \r to \n
+                        for i in 0..n {
+                            if buf[i] == b'\r' {
+                                buf[i] = b'\n';
+                            }
+                        }
+                        // Echo stdin to stdout for interactive programs
+                        crate::os::file_write(host_stdout, &buf[..n]);
+                        total += n;
+                        if n < buf.len() {
+                            break;
+                        }
+                    } else if n == usize::MAX - 1 {
+                        // EWOULDBLOCK, yield and retry if total == 0
                         break;
                     }
                 }
