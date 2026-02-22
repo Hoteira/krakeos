@@ -4,7 +4,6 @@ use crate::rust_alloc::collections::BTreeMap;
 use crate::rust_alloc::string::String;
 use crate::rust_alloc::vec::Vec;
 
-
 pub struct WasiCtx {
     pub resource_table: BTreeMap<i32, WasiResource>,
     pub next_resource_id: i32,
@@ -13,6 +12,15 @@ pub struct WasiCtx {
 
 impl WasiCtx {
     pub fn new(args: Vec<String>, root_path: String, fds: &[(u8, u8)]) -> Self {
+        Self::new_with_env(args, root_path, fds, Vec::new())
+    }
+
+    pub fn new_with_env(
+        args: Vec<String>,
+        root_path: String,
+        fds: &[(u8, u8)],
+        env_vars: Vec<(String, String)>,
+    ) -> Self {
         let mut resource_table = BTreeMap::new();
         resource_table.insert(0, WasiResource::InputStream(InputStreamSource::Stdin));
         resource_table.insert(1, WasiResource::OutputStream(OutputStreamSource::Stdout));
@@ -22,7 +30,9 @@ impl WasiCtx {
         Self {
             resource_table,
             next_resource_id: 4,
-            env: Box::new(super::krakeos::KrakeosWasiEnv::new(args, root_path, fds)),
+            env: Box::new(super::krakeos::KrakeosWasiEnv::new_with_env(
+                args, root_path, fds, env_vars,
+            )),
         }
     }
 }
@@ -41,7 +51,10 @@ pub enum WasiResource {
     File(crate::fs::File),
     Directory(String),
     Descriptor(i32),
-    DirStream { entries: Vec<(String, u8, u64)>, index: usize },
+    DirStream {
+        entries: Vec<(String, u8, u64)>,
+        index: usize,
+    },
     TerminalInput(i32),
     TerminalOutput(i32),
 }
