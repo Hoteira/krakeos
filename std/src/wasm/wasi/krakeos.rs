@@ -985,15 +985,9 @@ impl WasiEnv for KrakeosWasiEnv {
     }
 
     fn proc_exit(&mut self, code: i32) -> Result<(), i32> {
-        #[cfg(not(target_arch = "wasm32"))]
-        unsafe {
-            syscall1(60, code as u64)
-        };
-        #[cfg(target_arch = "wasm32")]
-        unsafe {
-            crate::wasi::cli::exit(code)
-        };
-        Ok(())
+        // Return Err(code) so the WASM interpreter catches it and halts the guest execution
+        // instead of killing the host process.
+        Err(code)
     }
 
     fn sock_accept(&mut self, _fd: i32, _flags: u16) -> Result<i32, i32> {

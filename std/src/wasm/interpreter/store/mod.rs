@@ -1,22 +1,27 @@
 use self::component::ComponentInst;
-use crate::wasm::common::assert_validated::UnwrapValidatedExt;
-use crate::wasm::interpreter::loop_executor::{data_drop, elem_drop};
 use crate::rust_alloc::collections::btree_map::BTreeMap;
 use crate::rust_alloc::string::String;
 use crate::rust_alloc::vec;
 use crate::rust_alloc::vec::Vec;
+use crate::wasm::common::assert_validated::UnwrapValidatedExt;
+use crate::wasm::common::config::Config;
 use crate::wasm::common::indices::TypeIdx;
 use crate::wasm::common::reader::WasmReader;
 use crate::wasm::common::reader::span::Span;
+use crate::wasm::common::reader::types::Limits;
+use crate::wasm::common::reader::types::RefType;
+use crate::wasm::common::reader::types::ValType;
 use crate::wasm::common::reader::types::data::{DataMode, DataSegment};
 use crate::wasm::common::reader::types::element::{ActiveElem, ElemItems, ElemMode, ElemType};
 use crate::wasm::common::reader::types::export::{Export, ExportDesc};
 use crate::wasm::common::reader::types::global::GlobalType;
-use crate::wasm::common::reader::types::{
-    ExternType, FuncType, MemType, TableType,
-};
-use crate::wasm::common::config::Config;
+use crate::wasm::common::reader::types::{ExternType, FuncType, MemType, TableType};
+use crate::wasm::common::runtime_error::{RuntimeError, TrapError};
+use crate::wasm::common::validation::ValidationInfo;
+use crate::wasm::common::value::{Ref, Value};
+use crate::wasm::common::value_stack::Stack;
 use crate::wasm::interpreter::loop_executor::{self, memory_init, table_init};
+use crate::wasm::interpreter::loop_executor::{data_drop, elem_drop};
 use crate::wasm::interpreter::resumable::{
     Dormitory, FreshResumableRef, Resumable, ResumableRef, RunState,
 };
@@ -24,13 +29,6 @@ use crate::wasm::interpreter::store::addrs::{
     AddrVec, ComponentInstAddr, DataAddr, ElemAddr, FuncAddr, GlobalAddr, MemAddr, ModuleAddr,
     TableAddr,
 };
-use crate::wasm::common::value::{Ref, Value};
-use crate::wasm::common::value_stack::Stack;
-use crate::wasm::common::validation::ValidationInfo;
-use crate::wasm::common::runtime_error::{RuntimeError, TrapError};
-use crate::wasm::common::reader::types::ValType;
-use crate::wasm::common::reader::types::RefType;
-use crate::wasm::common::reader::types::Limits;
 use core::sync::atomic::{AtomicU64, Ordering};
 use instances::{
     DataInst, ElemInst, FuncInst, GlobalInst, HostFuncInst, MemInst, ModuleInst, TableInst,
@@ -123,12 +121,17 @@ impl<'a, T: Config> Store<'a, T> {
             .get_mut(module_addr)
             .func_addrs
             .extend(func_addrs);
-        
+
         // Constant expressions handling
         let mut global_init_vals = Vec::new();
         for global in &validation_info.globals {
-            let val = crate::wasm::interpreter::loop_executor::run_const_span(validation_info.wasm, &global.init_expr, module_addr, self)?
-                .unwrap_validated();
+            let val = crate::wasm::interpreter::loop_executor::run_const_span(
+                validation_info.wasm,
+                &global.init_expr,
+                module_addr,
+                self,
+            )?
+            .unwrap_validated();
             global_init_vals.push(val);
         }
 
@@ -151,10 +154,15 @@ impl<'a, T: Config> Store<'a, T> {
                 ElemItems::Exprs(_, exprs) => {
                     for expr in exprs {
                         new_list.push(
-                            crate::wasm::interpreter::loop_executor::run_const_span(validation_info.wasm, expr, module_addr, self)?
-                                .unwrap_validated()
-                                .try_into()
-                                .unwrap_validated(),
+                            crate::wasm::interpreter::loop_executor::run_const_span(
+                                validation_info.wasm,
+                                expr,
+                                module_addr,
+                                self,
+                            )?
+                            .unwrap_validated()
+                            .try_into()
+                            .unwrap_validated(),
                         )
                     }
                 }
@@ -222,7 +230,7 @@ impl<'a, T: Config> Store<'a, T> {
         module_inst.elem_addrs = elem_addrs;
         module_inst.data_addrs = data_addrs;
         module_inst.exports = export_insts;
-        
+
         // Initialize active element segments
         for (
             i,
@@ -232,13 +240,17 @@ impl<'a, T: Config> Store<'a, T> {
             },
         ) in validation_info.elements.iter().enumerate()
         {
-            if let ElemMode::Active(active) = mode
-            {
+            if let ElemMode::Active(active) = mode {
                 let n = elem_items.len() as u32;
-                let d: i32 = crate::wasm::interpreter::loop_executor::run_const_span(validation_info.wasm, &active.init_expr, module_addr, self)?
-                    .unwrap_validated()
-                    .try_into()
-                    .unwrap_validated();
+                let d: i32 = crate::wasm::interpreter::loop_executor::run_const_span(
+                    validation_info.wasm,
+                    &active.init_expr,
+                    module_addr,
+                    self,
+                )?
+                .unwrap_validated()
+                .try_into()
+                .unwrap_validated();
                 table_init(
                     &self.modules,
                     &mut self.tables,
@@ -257,16 +269,20 @@ impl<'a, T: Config> Store<'a, T> {
         }
         // Initialize active data segments
         for (i, DataSegment { init, mode }) in validation_info.data.iter().enumerate() {
-            if let DataMode::Active(active) = mode
-            {
+            if let DataMode::Active(active) = mode {
                 if active.memory_idx != 0 {
                     return Err(RuntimeError::MoreThanOneMemory);
                 }
                 let n = init.len() as u32;
-                let d: i32 = crate::wasm::interpreter::loop_executor::run_const_span(validation_info.wasm, &active.offset, module_addr, self)?
-                    .unwrap_validated()
-                    .try_into()
-                    .unwrap_validated();
+                let d: i32 = crate::wasm::interpreter::loop_executor::run_const_span(
+                    validation_info.wasm,
+                    &active.offset,
+                    module_addr,
+                    self,
+                )?
+                .unwrap_validated()
+                .try_into()
+                .unwrap_validated();
                 memory_init(
                     &self.modules,
                     &mut self.memories,
@@ -438,9 +454,13 @@ impl<'a, T: Config> Store<'a, T> {
                             };
 
                             let stack_size = 1024 * 1024 * 4; // 4MB stack
-                            let stack_ptr = unsafe { crate::memory::malloc(stack_size) } as *mut u128;
+                            let stack_ptr =
+                                unsafe { crate::memory::malloc(stack_size) } as *mut u128;
                             let locals_size = 1024 * 64; // 64KB locals
-                            let locals_ptr = unsafe { crate::memory::malloc(locals_size) } as *mut u128;
+                            let locals_ptr =
+                                unsafe { crate::memory::malloc(locals_size) } as *mut u128;
+
+                            let mut trap_code: i32 = 0;
 
                             let mut ctx = crate::wasm::aot::runtime::AotContext {
                                 store: self as *mut _ as *mut usize,
@@ -451,19 +471,22 @@ impl<'a, T: Config> Store<'a, T> {
                                 locals_base: locals_ptr,
                                 module_addr,
                                 stack_limit: stack_ptr as usize,
+                                trap_code: &mut trap_code as *mut i32,
                             };
 
                             // Prepare AOT stack with parameters
                             let mut sp = unsafe { stack_ptr.add(stack_size / 16) };
                             for param in params.iter().rev() {
                                 sp = unsafe { sp.sub(1) };
-                                unsafe { *sp = param.to_u128(); }
+                                unsafe {
+                                    *sp = param.to_u128();
+                                }
                             }
 
                             // crate::debugln!("WASI: [AOT] Entering generated machine code at {:#x}...", aot_ptr);
-                            
+
                             let final_sp: *mut u128;
-                            
+
                             #[cfg(not(target_arch = "wasm32"))]
                             unsafe {
                                 core::arch::asm!(
@@ -488,7 +511,12 @@ impl<'a, T: Config> Store<'a, T> {
                                 let _ = &mut ctx;
                                 panic!("AOT execution only supported on native targets");
                             }
-                            
+
+                            if trap_code != 0 {
+                                // A host function returned HaltExecutionError
+                                return Err(RuntimeError::HostFunctionHaltedExecution(trap_code));
+                            }
+
                             let mut results = Vec::new();
                             let num_returns = func_type.returns.valtypes.len();
                             for i in 0..num_returns {
@@ -501,7 +529,11 @@ impl<'a, T: Config> Store<'a, T> {
 
                             return Ok(RunState::Finished {
                                 values: results,
-                                maybe_remaining_fuel: if maybe_fuel.is_some() { Some(fuel) } else { None },
+                                maybe_remaining_fuel: if maybe_fuel.is_some() {
+                                    Some(fuel)
+                                } else {
+                                    None
+                                },
                             });
                         }
 
@@ -530,7 +562,9 @@ impl<'a, T: Config> Store<'a, T> {
                                 maybe_remaining_fuel: resumable.maybe_fuel,
                             }),
                             Some(required_fuel) => Ok(RunState::Resumable {
-                                resumable_ref: ResumableRef::Invoked(self.dormitory.insert(resumable)),
+                                resumable_ref: ResumableRef::Invoked(
+                                    self.dormitory.insert(resumable),
+                                ),
                                 required_fuel,
                             }),
                         }
