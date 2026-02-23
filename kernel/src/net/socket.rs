@@ -1,6 +1,6 @@
+use crate::sync::Mutex;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
-use crate::sync::Mutex;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SocketType {
@@ -20,12 +20,16 @@ pub struct Socket {
 pub struct SocketManager {
     pub sockets: BTreeMap<usize, Socket>,
     pub udp_bindings: BTreeMap<u16, usize>, // Port -> SocketID
+    /// Maps accepted/connected TCP socket id → packed ConnKey as u64
+    /// Encoding: [local_port(16) | remote_port(16) | remote_ip[0](8) | [1](8) | [2](8) | [3](8)]
+    pub tcp_connections: BTreeMap<usize, u64>,
     next_id: usize,
 }
 
 pub static SOCKET_MANAGER: Mutex<SocketManager> = Mutex::new(SocketManager {
     sockets: BTreeMap::new(),
     udp_bindings: BTreeMap::new(),
+    tcp_connections: BTreeMap::new(),
     next_id: 1,
 });
 
@@ -33,7 +37,7 @@ impl SocketManager {
     pub fn create_socket(&mut self, pid: u64, socket_type: SocketType) -> usize {
         let id = self.next_id;
         self.next_id += 1;
-        
+
         let socket = Socket {
             id,
             socket_type,
@@ -41,7 +45,7 @@ impl SocketManager {
             pid,
             rx_queue: Vec::new(),
         };
-        
+
         self.sockets.insert(id, socket);
         id
     }
@@ -51,11 +55,11 @@ impl SocketManager {
             if socket.local_port != 0 {
                 return Err("Socket already bound");
             }
-            
+
             if self.udp_bindings.contains_key(&port) {
                 return Err("Port already in use");
             }
-            
+
             socket.local_port = port;
             self.udp_bindings.insert(port, id);
             Ok(())
@@ -72,7 +76,7 @@ impl SocketManager {
             }
         }
     }
-    
+
     pub fn pop_packet(&mut self, id: usize) -> Option<Vec<u8>> {
         if let Some(socket) = self.sockets.get_mut(&id) {
             if !socket.rx_queue.is_empty() {

@@ -9,7 +9,7 @@ use crate::wasm::{
     },
     interpreter::{
         resumable::RunState,
-        store::{addrs::FuncAddr, ExternVal, HaltExecutionError, Store},
+        store::{ExternVal, HaltExecutionError, Store, addrs::FuncAddr},
     },
 };
 
@@ -29,276 +29,1480 @@ pub fn create_wasi_p2_imports<T: Config>(linker: &mut Linker, store: &mut Store<
     // wasi:cli/terminal-input@0.2.0
     {
         let module = "wasi:cli/terminal-input@0.2.0";
-        define(linker, store, module, "[resource-drop]terminal-input", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
+        define(
+            linker,
+            store,
+            module,
+            "[resource-drop]terminal-input",
+            vec![ValType::NumType(NumType::I32)],
+            vec![],
+            resource_drop,
+        );
     }
     // wasi:cli/terminal-output@0.2.0
     {
         let module = "wasi:cli/terminal-output@0.2.0";
-        define(linker, store, module, "[resource-drop]terminal-output", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
+        define(
+            linker,
+            store,
+            module,
+            "[resource-drop]terminal-output",
+            vec![ValType::NumType(NumType::I32)],
+            vec![],
+            resource_drop,
+        );
     }
     // wasi:cli/terminal-stdin@0.2.0
     {
         let module = "wasi:cli/terminal-stdin@0.2.0";
-        define(linker, store, module, "get-terminal-stdin", vec![], vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], terminal::get_terminal_stdin);
+        define(
+            linker,
+            store,
+            module,
+            "get-terminal-stdin",
+            vec![],
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            terminal::get_terminal_stdin,
+        );
     }
     // wasi:cli/terminal-stdout@0.2.0
     {
         let module = "wasi:cli/terminal-stdout@0.2.0";
-        define(linker, store, module, "get-terminal-stdout", vec![], vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], terminal::get_terminal_stdout);
+        define(
+            linker,
+            store,
+            module,
+            "get-terminal-stdout",
+            vec![],
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            terminal::get_terminal_stdout,
+        );
     }
     // wasi:cli/terminal-stderr@0.2.0
     {
         let module = "wasi:cli/terminal-stderr@0.2.0";
-        define(linker, store, module, "get-terminal-stderr", vec![], vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], terminal::get_terminal_stderr);
+        define(
+            linker,
+            store,
+            module,
+            "get-terminal-stderr",
+            vec![],
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            terminal::get_terminal_stderr,
+        );
     }
 
     // wasi:cli/stdout@0.2.0
     {
         let module = "wasi:cli/stdout@0.2.0";
-        define(linker, store, module, "get-stdout", vec![], vec![ValType::NumType(NumType::I32)], cli::get_stdout);
+        define(
+            linker,
+            store,
+            module,
+            "get-stdout",
+            vec![],
+            vec![ValType::NumType(NumType::I32)],
+            cli::get_stdout,
+        );
     }
     // wasi:cli/stdin@0.2.0
     {
         let module = "wasi:cli/stdin@0.2.0";
-        define(linker, store, module, "get-stdin", vec![], vec![ValType::NumType(NumType::I32)], cli::get_stdin);
+        define(
+            linker,
+            store,
+            module,
+            "get-stdin",
+            vec![],
+            vec![ValType::NumType(NumType::I32)],
+            cli::get_stdin,
+        );
     }
     // wasi:cli/stderr@0.2.0
     {
         let module = "wasi:cli/stderr@0.2.0";
-        define(linker, store, module, "get-stderr", vec![], vec![ValType::NumType(NumType::I32)], cli::get_stderr);
+        define(
+            linker,
+            store,
+            module,
+            "get-stderr",
+            vec![],
+            vec![ValType::NumType(NumType::I32)],
+            cli::get_stderr,
+        );
     }
     // wasi:io/streams@0.2.0
     {
         let module = "wasi:io/streams@0.2.0";
-        define(linker, store, module, "[method]output-stream.write", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], io::stream_write);
-        define(linker, store, module, "[method]output-stream.blocking-write", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], io::stream_write);
-        define(linker, store, module, "[method]output-stream.blocking-write-and-flush", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], io::stream_write);
-        define(linker, store, module, "[method]input-stream.read", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], io::stream_read);
-        define(linker, store, module, "[method]input-stream.blocking-read", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], io::stream_read);
-        define(linker, store, module, "[method]input-stream.subscribe", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], io::input_stream_subscribe);
-        define(linker, store, module, "[method]output-stream.subscribe", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], io::output_stream_subscribe);
-        
-        define(linker, store, module, "[method]input-stream.skip", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], io::stream_skip);
-        define(linker, store, module, "[method]input-stream.blocking-skip", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], io::stream_skip);
-        define(linker, store, module, "[method]output-stream.flush", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], io::stream_flush);
-        define(linker, store, module, "[method]output-stream.blocking-flush", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], io::stream_flush);
-        define(linker, store, module, "[method]output-stream.write-zeroes", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], io::stream_write_zeroes);
-        define(linker, store, module, "[method]output-stream.blocking-write-zeroes", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], io::stream_write_zeroes);
-        define(linker, store, module, "[method]output-stream.splice", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], io::stream_splice);
-        define(linker, store, module, "[method]output-stream.blocking-splice", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], io::stream_splice);
+        define(
+            linker,
+            store,
+            module,
+            "[method]output-stream.write",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            io::stream_write,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]output-stream.blocking-write",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            io::stream_write,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]output-stream.blocking-write-and-flush",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            io::stream_write,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]input-stream.read",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            io::stream_read,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]input-stream.blocking-read",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            io::stream_read,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]input-stream.subscribe",
+            vec![ValType::NumType(NumType::I32)],
+            vec![ValType::NumType(NumType::I32)],
+            io::input_stream_subscribe,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]output-stream.subscribe",
+            vec![ValType::NumType(NumType::I32)],
+            vec![ValType::NumType(NumType::I32)],
+            io::output_stream_subscribe,
+        );
 
-        define(linker, store, module, "[resource-drop]input-stream", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
-        define(linker, store, module, "[resource-drop]output-stream", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
+        define(
+            linker,
+            store,
+            module,
+            "[method]input-stream.skip",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            io::stream_skip,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]input-stream.blocking-skip",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            io::stream_skip,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]output-stream.flush",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            io::stream_flush,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]output-stream.blocking-flush",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            io::stream_flush,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]output-stream.write-zeroes",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            io::stream_write_zeroes,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]output-stream.blocking-write-zeroes",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            io::stream_write_zeroes,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]output-stream.splice",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            io::stream_splice,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]output-stream.blocking-splice",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            io::stream_splice,
+        );
+
+        define(
+            linker,
+            store,
+            module,
+            "[resource-drop]input-stream",
+            vec![ValType::NumType(NumType::I32)],
+            vec![],
+            resource_drop,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[resource-drop]output-stream",
+            vec![ValType::NumType(NumType::I32)],
+            vec![],
+            resource_drop,
+        );
     }
     // wasi:io/poll@0.2.0
     {
         let module = "wasi:io/poll@0.2.0";
-        define(linker, store, module, "poll", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], io::poll_poll);
-        define(linker, store, module, "[method]pollable.block", vec![ValType::NumType(NumType::I32)], vec![], io::poll_block);
-        define(linker, store, module, "[resource-drop]pollable", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
+        define(
+            linker,
+            store,
+            module,
+            "poll",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            io::poll_poll,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]pollable.block",
+            vec![ValType::NumType(NumType::I32)],
+            vec![],
+            io::poll_block,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[resource-drop]pollable",
+            vec![ValType::NumType(NumType::I32)],
+            vec![],
+            resource_drop,
+        );
     }
     // wasi:io/error@0.2.0
     {
         let module = "wasi:io/error@0.2.0";
-        define(linker, store, module, "[resource-drop]error", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
-        define(linker, store, module, "[method]error.to-debug-string", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], io::error_to_debug_string);
+        define(
+            linker,
+            store,
+            module,
+            "[resource-drop]error",
+            vec![ValType::NumType(NumType::I32)],
+            vec![],
+            resource_drop,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]error.to-debug-string",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            io::error_to_debug_string,
+        );
     }
     // wasi:sockets/udp@0.2.0
     {
         let module = "wasi:sockets/udp@0.2.0";
-        define(linker, store, module, "[resource-drop]udp-socket", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
-        define(linker, store, module, "[resource-drop]incoming-datagram-stream", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
-        define(linker, store, module, "[resource-drop]outgoing-datagram-stream", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
-        define(linker, store, module, "[method]udp-socket.create", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], sockets::create_udp_socket);
-        define(linker, store, module, "[method]udp-socket.start-bind", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], sockets::start_bind);
-        define(linker, store, module, "[method]outgoing-datagram-stream.send", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], sockets::send);
-        define(linker, store, module, "[method]incoming-datagram-stream.receive", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], sockets::receive);
+        define(
+            linker,
+            store,
+            module,
+            "[resource-drop]udp-socket",
+            vec![ValType::NumType(NumType::I32)],
+            vec![],
+            resource_drop,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[resource-drop]incoming-datagram-stream",
+            vec![ValType::NumType(NumType::I32)],
+            vec![],
+            resource_drop,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[resource-drop]outgoing-datagram-stream",
+            vec![ValType::NumType(NumType::I32)],
+            vec![],
+            resource_drop,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]udp-socket.create",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            sockets::create_udp_socket,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]udp-socket.start-bind",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            sockets::start_bind,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]outgoing-datagram-stream.send",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            sockets::send,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]incoming-datagram-stream.receive",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            sockets::receive,
+        );
     }
     // wasi:sockets/tcp@0.2.0
     {
         let module = "wasi:sockets/tcp@0.2.0";
-        define(linker, store, module, "[resource-drop]tcp-socket", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
-        define(linker, store, module, "[method]tcp-socket.create", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], sockets::tcp_create_socket);
-        define(linker, store, module, "[method]tcp-socket.start-bind", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], sockets::tcp_start_bind);
-        define(linker, store, module, "[method]tcp-socket.finish-bind", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], sockets::tcp_finish_bind);
-        define(linker, store, module, "[method]tcp-socket.start-connect", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], sockets::tcp_start_connect);
-        define(linker, store, module, "[method]tcp-socket.finish-connect", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], sockets::tcp_finish_connect);
-        define(linker, store, module, "[method]tcp-socket.start-listen", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], sockets::tcp_start_listen);
-        define(linker, store, module, "[method]tcp-socket.finish-listen", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], sockets::tcp_finish_listen);
-        define(linker, store, module, "[method]tcp-socket.accept", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], sockets::tcp_accept);
+        define(
+            linker,
+            store,
+            module,
+            "[resource-drop]tcp-socket",
+            vec![ValType::NumType(NumType::I32)],
+            vec![],
+            resource_drop,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[constructor]tcp-socket",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            sockets::tcp_create_socket,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]tcp-socket.start-bind",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            sockets::tcp_start_bind,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]tcp-socket.finish-bind",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            sockets::tcp_finish_bind,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]tcp-socket.start-connect",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            sockets::tcp_start_connect,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]tcp-socket.finish-connect",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            sockets::tcp_finish_connect,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]tcp-socket.start-listen",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            sockets::tcp_start_listen,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]tcp-socket.finish-listen",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            sockets::tcp_finish_listen,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]tcp-socket.accept",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            sockets::tcp_accept,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]tcp-socket.send",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            sockets::tcp_send,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]tcp-socket.recv",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            sockets::tcp_recv,
+        );
     }
     // wasi:sockets/network@0.2.0
     {
         let module = "wasi:sockets/network@0.2.0";
-        define(linker, store, module, "[resource-drop]network", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
+        define(
+            linker,
+            store,
+            module,
+            "[resource-drop]network",
+            vec![ValType::NumType(NumType::I32)],
+            vec![],
+            resource_drop,
+        );
     }
     // wasi:sockets/instance-network@0.2.0
     {
         let module = "wasi:sockets/instance-network@0.2.0";
-        define(linker, store, module, "instance-network", vec![], vec![ValType::NumType(NumType::I32)], sockets::instance_network);
+        define(
+            linker,
+            store,
+            module,
+            "instance-network",
+            vec![],
+            vec![ValType::NumType(NumType::I32)],
+            sockets::instance_network,
+        );
     }
     // wasi:sockets/ip-name-lookup@0.2.0
     {
         let module = "wasi:sockets/ip-name-lookup@0.2.0";
-        define(linker, store, module, "[resource-drop]resolve-address-stream", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
-        define(linker, store, module, "resolve-addresses", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], sockets::resolve_addresses);
+        define(
+            linker,
+            store,
+            module,
+            "[resource-drop]resolve-address-stream",
+            vec![ValType::NumType(NumType::I32)],
+            vec![],
+            resource_drop,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "resolve-addresses",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            sockets::resolve_addresses,
+        );
     }
     // wasi_snapshot_preview1 (Adapter extras)
     {
         let module = "wasi_snapshot_preview1";
-        define(linker, store, module, "adapter_close_badfd", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], sockets::adapter_close_badfd);
+        define(
+            linker,
+            store,
+            module,
+            "adapter_close_badfd",
+            vec![ValType::NumType(NumType::I32)],
+            vec![ValType::NumType(NumType::I32)],
+            sockets::adapter_close_badfd,
+        );
     }
     // wasi:clocks/monotonic-clock@0.2.0
     {
         let module = "wasi:clocks/monotonic-clock@0.2.0";
-        define(linker, store, module, "now", vec![], vec![ValType::NumType(NumType::I64)], clocks::monotonic_clock_now);
-        define(linker, store, module, "resolution", vec![], vec![ValType::NumType(NumType::I64)], clocks::monotonic_clock_resolution);
-        define(linker, store, module, "subscribe-duration", vec![ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I32)], clocks::monotonic_clock_subscribe_duration);
+        define(
+            linker,
+            store,
+            module,
+            "now",
+            vec![],
+            vec![ValType::NumType(NumType::I64)],
+            clocks::monotonic_clock_now,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "resolution",
+            vec![],
+            vec![ValType::NumType(NumType::I64)],
+            clocks::monotonic_clock_resolution,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "subscribe-duration",
+            vec![ValType::NumType(NumType::I64)],
+            vec![ValType::NumType(NumType::I32)],
+            clocks::monotonic_clock_subscribe_duration,
+        );
     }
     // wasi:clocks/wall-clock@0.2.0
     {
         let module = "wasi:clocks/wall-clock@0.2.0";
-        define(linker, store, module, "now", vec![ValType::NumType(NumType::I32)], vec![], clocks::wall_clock_now);
-        define(linker, store, module, "resolution", vec![ValType::NumType(NumType::I32)], vec![], clocks::wall_clock_resolution);
+        define(
+            linker,
+            store,
+            module,
+            "now",
+            vec![ValType::NumType(NumType::I32)],
+            vec![],
+            clocks::wall_clock_now,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "resolution",
+            vec![ValType::NumType(NumType::I32)],
+            vec![],
+            clocks::wall_clock_resolution,
+        );
     }
     // wasi:clocks/timezone@0.2.0
     {
         let module = "wasi:clocks/timezone@0.2.0";
-        define(linker, store, module, "display", vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], clocks::timezone_display);
-        define(linker, store, module, "utc-offset", vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], clocks::timezone_utc_offset);
+        define(
+            linker,
+            store,
+            module,
+            "display",
+            vec![
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            clocks::timezone_display,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "utc-offset",
+            vec![
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![ValType::NumType(NumType::I32)],
+            clocks::timezone_utc_offset,
+        );
     }
     // wasi:random/random@0.2.0
     {
         let module = "wasi:random/random@0.2.0";
-        define(linker, store, module, "get-random-bytes", vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], random::get_random_bytes);
-        define(linker, store, module, "get-random-u64", vec![], vec![ValType::NumType(NumType::I64)], random::get_insecure_random_u64); // Reused
+        define(
+            linker,
+            store,
+            module,
+            "get-random-bytes",
+            vec![
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            random::get_random_bytes,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "get-random-u64",
+            vec![],
+            vec![ValType::NumType(NumType::I64)],
+            random::get_insecure_random_u64,
+        ); // Reused
     }
     // wasi:random/insecure@0.2.0
     {
         let module = "wasi:random/insecure@0.2.0";
-        define(linker, store, module, "get-insecure-random-bytes", vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], random::get_insecure_random_bytes);
-        define(linker, store, module, "get-insecure-random-u64", vec![], vec![ValType::NumType(NumType::I64)], random::get_insecure_random_u64);
+        define(
+            linker,
+            store,
+            module,
+            "get-insecure-random-bytes",
+            vec![
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            random::get_insecure_random_bytes,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "get-insecure-random-u64",
+            vec![],
+            vec![ValType::NumType(NumType::I64)],
+            random::get_insecure_random_u64,
+        );
     }
     // wasi:cli/exit@0.2.0
     {
         let module = "wasi:cli/exit@0.2.0";
-        define(linker, store, module, "exit", vec![ValType::NumType(NumType::I32)], vec![], cli::exit);
+        define(
+            linker,
+            store,
+            module,
+            "exit",
+            vec![ValType::NumType(NumType::I32)],
+            vec![],
+            cli::exit,
+        );
     }
     // wasi:cli/environment@0.2.0
     {
         let module = "wasi:cli/environment@0.2.0";
-        define(linker, store, module, "get-environment", vec![], vec![ValType::NumType(NumType::I32)], cli::get_environment); // Returns Result<list<...>>
-        define(linker, store, module, "get-arguments", vec![], vec![ValType::NumType(NumType::I32)], cli::get_arguments);
-        define(linker, store, module, "initial-cwd", vec![], vec![ValType::NumType(NumType::I32)], cli::get_environment); // Stub: returns option<string> (reusing env structure logic but should be null for now)
+        define(
+            linker,
+            store,
+            module,
+            "get-environment",
+            vec![],
+            vec![ValType::NumType(NumType::I32)],
+            cli::get_environment,
+        ); // Returns Result<list<...>>
+        define(
+            linker,
+            store,
+            module,
+            "get-arguments",
+            vec![],
+            vec![ValType::NumType(NumType::I32)],
+            cli::get_arguments,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "initial-cwd",
+            vec![],
+            vec![ValType::NumType(NumType::I32)],
+            cli::get_environment,
+        ); // Stub: returns option<string> (reusing env structure logic but should be null for now)
     }
     // wasi:filesystem/preopens@0.2.0
     {
         let module = "wasi:filesystem/preopens@0.2.0";
-        define(linker, store, module, "get-directories", vec![ValType::NumType(NumType::I32)], vec![], filesystem::get_directories);
+        define(
+            linker,
+            store,
+            module,
+            "get-directories",
+            vec![ValType::NumType(NumType::I32)],
+            vec![],
+            filesystem::get_directories,
+        );
     }
     // wasi:random/insecure-seed@0.2.0
     {
         let module = "wasi:random/insecure-seed@0.2.0";
-        define(linker, store, module, "insecure-seed", vec![], vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)], random::insecure_seed);
+        define(
+            linker,
+            store,
+            module,
+            "insecure-seed",
+            vec![],
+            vec![
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I64),
+            ],
+            random::insecure_seed,
+        );
     }
     // wasi:cli/run@0.2.0
     {
         let module = "wasi:cli/run@0.2.0";
-        define(linker, store, module, "run", vec![], vec![ValType::NumType(NumType::I32)], cli::run); // Result
+        define(
+            linker,
+            store,
+            module,
+            "run",
+            vec![],
+            vec![ValType::NumType(NumType::I32)],
+            cli::run,
+        ); // Result
     }
     // krakeos:graphics/screen@0.2.0
     {
         let module = "krakeos:graphics/screen@0.2.0";
-        define(linker, store, module, "get-width", vec![], vec![ValType::NumType(NumType::I32)], get_screen_width_host);
-        define(linker, store, module, "get-height", vec![], vec![ValType::NumType(NumType::I32)], get_screen_height_host);
+        define(
+            linker,
+            store,
+            module,
+            "get-width",
+            vec![],
+            vec![ValType::NumType(NumType::I32)],
+            get_screen_width_host,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "get-height",
+            vec![],
+            vec![ValType::NumType(NumType::I32)],
+            get_screen_height_host,
+        );
     }
     // krakeos:system/process@0.2.0
     {
         let module = "krakeos:system/process@0.2.0";
-        define(linker, store, module, "spawn", 
-            vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], 
-            vec![ValType::NumType(NumType::I64)], 
-            process_spawn_host);
-        define(linker, store, module, "waitpid",
+        define(
+            linker,
+            store,
+            module,
+            "spawn",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![ValType::NumType(NumType::I64)],
+            process_spawn_host,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "waitpid",
             vec![ValType::NumType(NumType::I64)],
             vec![ValType::NumType(NumType::I32)],
-            process_waitpid_host);
-        define(linker, store, module, "pipe",
+            process_waitpid_host,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "pipe",
             vec![ValType::NumType(NumType::I32)],
             vec![ValType::NumType(NumType::I32)],
-            process_pipe_host);
+            process_pipe_host,
+        );
     }
     // krakeos:system/memory@0.2.0
     {
         let module = "krakeos:system/memory@0.2.0";
-        define(linker, store, module, "shm-get",
-            vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)],
+        define(
+            linker,
+            store,
+            module,
+            "shm-get",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
             vec![ValType::NumType(NumType::I64)],
-            shm_get_host);
+            shm_get_host,
+        );
     }
     // krakeos:system/window@0.2.0
     {
         let module = "krakeos:system/window@0.2.0";
-        define(linker, store, module, "create",
+        define(
+            linker,
+            store,
+            module,
+            "create",
             vec![ValType::NumType(NumType::I32)],
             vec![ValType::NumType(NumType::I64)],
-            window_create_host);
-        define(linker, store, module, "update",
-            vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)],
+            window_create_host,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "update",
+            vec![
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I32),
+            ],
             vec![],
-            window_update_host);
-        define(linker, store, module, "get-events",
-            vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)],
+            window_update_host,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "get-events",
+            vec![
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
             vec![ValType::NumType(NumType::I32)],
-            window_get_events_host);
+            window_get_events_host,
+        );
     }
-        // wasi:filesystem/types@0.2.0
-        {
-            let module = "wasi:filesystem/types@0.2.0";
-            define(linker, store, module, "[method]descriptor.read-via-stream", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::filesystem_types_read_via_stream);
-            define(linker, store, module, "[method]descriptor.write-via-stream", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::filesystem_types_write_via_stream);
-            define(linker, store, module, "[method]descriptor.append-via-stream", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::filesystem_types_append_via_stream);
-            define(linker, store, module, "[method]descriptor.type", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_type);
-            define(linker, store, module, "[method]descriptor.stat", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_stat);
-            define(linker, store, module, "[method]descriptor.open-at", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_open_at);
-            define(linker, store, module, "[method]descriptor.read-directory", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_read_directory);
-            define(linker, store, module, "[method]directory-entry-stream.read-directory-entry", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::directory_entry_stream_read_directory_entry);
-            define(linker, store, module, "[method]descriptor.stat-at", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_stat_at);
-            define(linker, store, module, "[method]descriptor.set-times-at", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_set_times_at);
-            define(linker, store, module, "[method]descriptor.link-at", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_link_at);
-            define(linker, store, module, "[method]descriptor.unlink-file-at", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_unlink_file_at);
-            define(linker, store, module, "[method]descriptor.remove-directory-at", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_remove_directory_at);
-            define(linker, store, module, "[method]descriptor.rename-at", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_rename_at);
-            define(linker, store, module, "[method]descriptor.symlink-at", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_symlink_at);
-            define(linker, store, module, "[method]descriptor.readlink-at", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_readlink_at);
-            define(linker, store, module, "[method]descriptor.sync", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_sync);
-            define(linker, store, module, "[method]descriptor.set-size", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_set_size);
-            define(linker, store, module, "[method]descriptor.set-times", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_set_times);
-            define(linker, store, module, "[method]descriptor.seek", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_seek);
-            define(linker, store, module, "[method]descriptor.advise", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_advise);
-            define(linker, store, module, "[method]descriptor.create-directory-at", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_create_directory_at);
-            
-            define(linker, store, module, "[method]descriptor.get-flags", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_get_flags);
-            define(linker, store, module, "[method]descriptor.sync-data", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_sync_data);
-            define(linker, store, module, "[method]descriptor.is-same-object", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], filesystem::descriptor_is_same_object);
-            define(linker, store, module, "[method]descriptor.metadata-hash", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_metadata_hash);
-            define(linker, store, module, "[method]descriptor.metadata-hash-at", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_metadata_hash_at);
-            define(linker, store, module, "[method]descriptor.read", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_read);
-            define(linker, store, module, "[method]descriptor.write", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], filesystem::descriptor_write);
-            
-            define(linker, store, module, "filesystem-error-code", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], filesystem::filesystem_error_code);
+    // wasi:filesystem/types@0.2.0
+    {
+        let module = "wasi:filesystem/types@0.2.0";
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.read-via-stream",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::filesystem_types_read_via_stream,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.write-via-stream",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::filesystem_types_write_via_stream,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.append-via-stream",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::filesystem_types_append_via_stream,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.type",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::descriptor_type,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.stat",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::descriptor_stat,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.open-at",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::descriptor_open_at,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.read-directory",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::descriptor_read_directory,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]directory-entry-stream.read-directory-entry",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::directory_entry_stream_read_directory_entry,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.stat-at",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::descriptor_stat_at,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.set-times-at",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::descriptor_set_times_at,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.link-at",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::descriptor_link_at,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.unlink-file-at",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::descriptor_unlink_file_at,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.remove-directory-at",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::descriptor_remove_directory_at,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.rename-at",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::descriptor_rename_at,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.symlink-at",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::descriptor_symlink_at,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.readlink-at",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::descriptor_readlink_at,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.sync",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::descriptor_sync,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.set-size",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::descriptor_set_size,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.set-times",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::descriptor_set_times,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.seek",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::descriptor_seek,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.advise",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::descriptor_advise,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.create-directory-at",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::descriptor_create_directory_at,
+        );
 
-        define(linker, store, module, "[resource-drop]descriptor", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
-        define(linker, store, module, "[resource-drop]directory-entry-stream", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.get-flags",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::descriptor_get_flags,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.sync-data",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::descriptor_sync_data,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.is-same-object",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![ValType::NumType(NumType::I32)],
+            filesystem::descriptor_is_same_object,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.metadata-hash",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::descriptor_metadata_hash,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.metadata-hash-at",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::descriptor_metadata_hash_at,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.read",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::descriptor_read,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[method]descriptor.write",
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I64),
+                ValType::NumType(NumType::I32),
+            ],
+            vec![],
+            filesystem::descriptor_write,
+        );
+
+        define(
+            linker,
+            store,
+            module,
+            "filesystem-error-code",
+            vec![ValType::NumType(NumType::I32)],
+            vec![
+                ValType::NumType(NumType::I32),
+                ValType::NumType(NumType::I32),
+            ],
+            filesystem::filesystem_error_code,
+        );
+
+        define(
+            linker,
+            store,
+            module,
+            "[resource-drop]descriptor",
+            vec![ValType::NumType(NumType::I32)],
+            vec![],
+            resource_drop,
+        );
+        define(
+            linker,
+            store,
+            module,
+            "[resource-drop]directory-entry-stream",
+            vec![ValType::NumType(NumType::I32)],
+            vec![],
+            resource_drop,
+        );
 
         // Also add __wasm_call_dtors and __wasi_proc_exit to env for compatibility
-        let func_type = FuncType { params: ResultType { valtypes: vec![] }, returns: ResultType { valtypes: vec![] } };
+        let func_type = FuncType {
+            params: ResultType { valtypes: vec![] },
+            returns: ResultType { valtypes: vec![] },
+        };
         let func_addr = store.func_alloc_unchecked(func_type, |_, _| Ok(vec![]));
-        let _ = linker.define_unchecked(String::from("env"), String::from("__wasm_call_dtors"), ExternVal::Func(func_addr));
+        let _ = linker.define_unchecked(
+            String::from("env"),
+            String::from("__wasm_call_dtors"),
+            ExternVal::Func(func_addr),
+        );
 
-        let exit_type = FuncType { params: ResultType { valtypes: vec![ValType::NumType(NumType::I32)] }, returns: ResultType { valtypes: vec![] } };
+        let exit_type = FuncType {
+            params: ResultType {
+                valtypes: vec![ValType::NumType(NumType::I32)],
+            },
+            returns: ResultType { valtypes: vec![] },
+        };
         let exit_addr = store.func_alloc_unchecked(exit_type, cli::exit);
-        let _ = linker.define_unchecked(String::from("env"), String::from("__wasi_proc_exit"), ExternVal::Func(exit_addr));
+        let _ = linker.define_unchecked(
+            String::from("env"),
+            String::from("__wasi_proc_exit"),
+            ExternVal::Func(exit_addr),
+        );
     }
 }
 
@@ -316,10 +1520,17 @@ pub(crate) fn define<T: Config>(
         returns: ResultType { valtypes: returns },
     };
     let func_addr = store.func_alloc_unchecked(func_type, func);
-    let _ = linker.define_unchecked(String::from(module), String::from(name), ExternVal::Func(func_addr));
+    let _ = linker.define_unchecked(
+        String::from(module),
+        String::from(name),
+        ExternVal::Func(func_addr),
+    );
 }
 
-pub(crate) fn resource_drop<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+pub(crate) fn resource_drop<T: Config>(
+    store: &mut Store<'_, T>,
+    args: Vec<Value>,
+) -> Result<Vec<Value>, HaltExecutionError> {
     let handle = match args.get(0) {
         Some(Value::I32(v)) => *v as i32,
         _ => return Ok(vec![]),
@@ -331,7 +1542,10 @@ pub(crate) fn resource_drop<T: Config>(store: &mut Store<'_, T>, args: Vec<Value
 
 pub(crate) fn find_cabi_realloc<T: Config>(store: &Store<'_, T>) -> Option<FuncAddr> {
     let module_addr = store.caller_module?;
-    if let Ok(export) = store.instance_export(unsafe { Stored::from_bare(module_addr, store.id) }, "cabi_realloc") {
+    if let Ok(export) = store.instance_export(
+        unsafe { Stored::from_bare(module_addr, store.id) },
+        "cabi_realloc",
+    ) {
         if let Some(func) = export.as_func() {
             return Some(func.into_bare());
         }
@@ -340,9 +1554,18 @@ pub(crate) fn find_cabi_realloc<T: Config>(store: &Store<'_, T>) -> Option<FuncA
     None
 }
 
-pub(crate) fn call_cabi_realloc<T: Config>(store: &mut Store<'_, T>, new_size: u32, align: u32) -> Result<u32, HaltExecutionError> {
+pub(crate) fn call_cabi_realloc<T: Config>(
+    store: &mut Store<'_, T>,
+    new_size: u32,
+    align: u32,
+) -> Result<u32, HaltExecutionError> {
     let cabi_realloc_addr = find_cabi_realloc(store).ok_or(HaltExecutionError(1))?;
-    let args = vec![Value::I32(0), Value::I32(0), Value::I32(align), Value::I32(new_size)];
+    let args = vec![
+        Value::I32(0),
+        Value::I32(0),
+        Value::I32(align),
+        Value::I32(new_size),
+    ];
     match store.invoke_unchecked(cabi_realloc_addr, args, None) {
         Ok(RunState::Finished { values, .. }) => {
             if let Some(Value::I32(ptr)) = values.first() {
@@ -355,48 +1578,79 @@ pub(crate) fn call_cabi_realloc<T: Config>(store: &mut Store<'_, T>, new_size: u
     }
 }
 
-pub(crate) fn write_bytes<T: Config>(store: &mut Store<'_, T>, addr: u32, bytes: &[u8]) -> Result<(), ()> {
+pub(crate) fn write_bytes<T: Config>(
+    store: &mut Store<'_, T>,
+    addr: u32,
+    bytes: &[u8],
+) -> Result<(), ()> {
     let module_addr = store.caller_module.ok_or(())?;
     // This is a simplified lookup; assuming main memory is index 0
     let mem_addr = *store.modules.get(module_addr).mem_addrs.get(0).ok_or(())?;
     let mem = store.memories.get(mem_addr);
-    mem.mem.init(addr as usize, bytes, 0, bytes.len()).map_err(|_| ())
+    mem.mem
+        .init(addr as usize, bytes, 0, bytes.len())
+        .map_err(|_| ())
 }
 
-pub(crate) fn write_u32<T: Config>(store: &mut Store<'_, T>, addr: u32, val: u32) -> Result<(), ()> {
+pub(crate) fn write_u32<T: Config>(
+    store: &mut Store<'_, T>,
+    addr: u32,
+    val: u32,
+) -> Result<(), ()> {
     write_bytes(store, addr, &val.to_le_bytes())
 }
 
-pub(crate) fn write_u64<T: Config>(store: &mut Store<'_, T>, addr: u32, val: u64) -> Result<(), ()> {
+pub(crate) fn write_u64<T: Config>(
+    store: &mut Store<'_, T>,
+    addr: u32,
+    val: u64,
+) -> Result<(), ()> {
     write_bytes(store, addr, &val.to_le_bytes())
 }
 
-pub(crate) fn read_bytes<T: Config>(store: &Store<'_, T>, addr: u32, buf: &mut [u8]) -> Result<(), ()> {
+pub(crate) fn read_bytes<T: Config>(
+    store: &Store<'_, T>,
+    addr: u32,
+    buf: &mut [u8],
+) -> Result<(), ()> {
     let module_addr = store.caller_module.ok_or(())?;
     let mem_addr = *store.modules.get(module_addr).mem_addrs.get(0).ok_or(())?;
     let mem = store.memories.get(mem_addr);
     mem.mem.read_slice(addr as usize, buf).map_err(|_| ())
 }
 
-pub(crate) fn read_mem<T: Config>(store: &Store<'_, T>, addr: u32, buf: &mut [u8]) -> Result<(), ()> {
+pub(crate) fn read_mem<T: Config>(
+    store: &Store<'_, T>,
+    addr: u32,
+    buf: &mut [u8],
+) -> Result<(), ()> {
     read_bytes(store, addr, buf)
 }
 
-pub(crate) fn read_mem_u32<T: Config>(store: &Store<'_, T>, addr: u32) -> Result<u32, HaltExecutionError> {
+pub(crate) fn read_mem_u32<T: Config>(
+    store: &Store<'_, T>,
+    addr: u32,
+) -> Result<u32, HaltExecutionError> {
     let mut buf = [0u8; 4];
     read_mem(store, addr, &mut buf).map_err(|_| HaltExecutionError(1))?;
     Ok(u32::from_le_bytes(buf))
 }
 
-pub(crate) fn read_mem_u64<T: Config>(store: &Store<'_, T>, addr: u32) -> Result<u64, HaltExecutionError> {
+pub(crate) fn read_mem_u64<T: Config>(
+    store: &Store<'_, T>,
+    addr: u32,
+) -> Result<u64, HaltExecutionError> {
     let mut buf = [0u8; 8];
     read_mem(store, addr, &mut buf).map_err(|_| HaltExecutionError(1))?;
     Ok(u64::from_le_bytes(buf))
 }
 
-pub(crate) fn read_mem_string<T: Config>(store: &Store<'_, T>, ptr: u32) -> Result<String, HaltExecutionError> {
+pub(crate) fn read_mem_string<T: Config>(
+    store: &Store<'_, T>,
+    ptr: u32,
+) -> Result<String, HaltExecutionError> {
     // Read string until null terminator or reasonable limit
-    // Assuming these are C-strings or we need a length? 
+    // Assuming these are C-strings or we need a length?
     // The usage in spawn suggests these are pointers to C-strings or we should know length.
     // Wait, in SPAWN (argv), it is likely pointers to null-terminated strings if no length is provided.
     // Let's assume null-terminated for now as there is no length array.
@@ -405,32 +1659,47 @@ pub(crate) fn read_mem_string<T: Config>(store: &Store<'_, T>, ptr: u32) -> Resu
     loop {
         let mut byte = [0u8; 1];
         read_mem(store, ptr + offset, &mut byte).map_err(|_| HaltExecutionError(1))?;
-        if byte[0] == 0 { break; }
+        if byte[0] == 0 {
+            break;
+        }
         buf.push(byte[0]);
         offset += 1;
-        if offset > 4096 { return Err(HaltExecutionError(1)); } // Safety limit
+        if offset > 4096 {
+            return Err(HaltExecutionError(1));
+        } // Safety limit
     }
     String::from_utf8(buf).map_err(|_| HaltExecutionError(1))
 }
 
-fn get_screen_width_host<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+fn get_screen_width_host<T: Config>(
+    _: &mut Store<'_, T>,
+    _: Vec<Value>,
+) -> Result<Vec<Value>, HaltExecutionError> {
     let w = crate::os::graphics::get_screen_width();
     // crate::debugln!("WASM get_screen_width -> {}", w);
     Ok(vec![Value::I32(w as u32)])
 }
 
-fn get_screen_height_host<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-    Ok(vec![Value::I32(crate::os::graphics::get_screen_height() as u32)])
+fn get_screen_height_host<T: Config>(
+    _: &mut Store<'_, T>,
+    _: Vec<Value>,
+) -> Result<Vec<Value>, HaltExecutionError> {
+    Ok(vec![Value::I32(
+        crate::os::graphics::get_screen_height() as u32
+    )])
 }
 
-fn process_spawn_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+fn process_spawn_host<T: Config>(
+    store: &mut Store<'_, T>,
+    args: Vec<Value>,
+) -> Result<Vec<Value>, HaltExecutionError> {
     let get_arg = |i: usize| -> u32 {
         match args.get(i) {
             Some(Value::I32(v)) => *v as u32,
-            _ => 0
+            _ => 0,
         }
     };
-    
+
     let path_ptr = get_arg(0);
     let path_len = get_arg(1);
     let argv_ptr = get_arg(2);
@@ -463,19 +1732,31 @@ fn process_spawn_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> 
     Ok(vec![Value::I64(pid as u64)])
 }
 
-fn process_waitpid_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-    let pid = match args.get(0) { Some(Value::I64(v)) => *v as u64, _ => 0 };
+fn process_waitpid_host<T: Config>(
+    store: &mut Store<'_, T>,
+    args: Vec<Value>,
+) -> Result<Vec<Value>, HaltExecutionError> {
+    let pid = match args.get(0) {
+        Some(Value::I64(v)) => *v as u64,
+        _ => 0,
+    };
     #[cfg(not(target_arch = "wasm32"))]
     let res = unsafe { crate::sys::syscall(61, pid, 0, 0) as i32 };
     #[cfg(target_arch = "wasm32")]
     let res = unsafe { crate::wasi::krakeos::process_waitpid(pid) };
-    
+
     Ok(vec![Value::I32(res as u32)])
 }
 
-fn process_pipe_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-    let ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I32((-1i32) as u32)]) };
-    
+fn process_pipe_host<T: Config>(
+    store: &mut Store<'_, T>,
+    args: Vec<Value>,
+) -> Result<Vec<Value>, HaltExecutionError> {
+    let ptr = match args.get(0) {
+        Some(Value::I32(v)) => *v as u32,
+        _ => return Ok(vec![Value::I32((-1i32) as u32)]),
+    };
+
     #[cfg(not(target_arch = "wasm32"))]
     {
         let mut fds = [0i32; 2];
@@ -503,13 +1784,19 @@ fn process_pipe_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> R
     }
 }
 
-fn window_create_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-    let ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I64(0)]) };
-    
+fn window_create_host<T: Config>(
+    store: &mut Store<'_, T>,
+    args: Vec<Value>,
+) -> Result<Vec<Value>, HaltExecutionError> {
+    let ptr = match args.get(0) {
+        Some(Value::I32(v)) => *v as u32,
+        _ => return Ok(vec![Value::I64(0)]),
+    };
+
     // Read Window struct from WASM memory
     // Assume standard Window layout (size 80 bytes)
     // We reuse the logic from krakeos_syscall_host but adapted.
-    
+
     // Read fields
     let id = read_mem_u32(store, ptr)? as usize;
     let buffer_off = read_mem_u32(store, ptr + 4)? as u64;
@@ -536,12 +1823,24 @@ fn window_create_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> 
 
     // Convert to Host struct
     let wasm_base = store.get_wasm_base_ptr() as u64;
-    
+
     let host_win = crate::os::graphics::Window {
         id,
-        buffer: if buffer_off != 0 { (wasm_base + buffer_off) as usize } else { 0 },
-        back_buffer: if back_buffer_off != 0 { (wasm_base + back_buffer_off) as usize } else { 0 },
-        flipped: if flipped_off != 0 { (wasm_base + flipped_off) as usize } else { 0 },
+        buffer: if buffer_off != 0 {
+            (wasm_base + buffer_off) as usize
+        } else {
+            0
+        },
+        back_buffer: if back_buffer_off != 0 {
+            (wasm_base + back_buffer_off) as usize
+        } else {
+            0
+        },
+        flipped: if flipped_off != 0 {
+            (wasm_base + flipped_off) as usize
+        } else {
+            0
+        },
         pid,
         x,
         y,
@@ -575,9 +1874,18 @@ fn window_create_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> 
     Ok(vec![Value::I64(res)])
 }
 
-fn window_update_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-    let _handle = match args.get(0) { Some(Value::I64(v)) => *v, _ => 0 };
-    let ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![]) };
+fn window_update_host<T: Config>(
+    store: &mut Store<'_, T>,
+    args: Vec<Value>,
+) -> Result<Vec<Value>, HaltExecutionError> {
+    let _handle = match args.get(0) {
+        Some(Value::I64(v)) => *v,
+        _ => 0,
+    };
+    let ptr = match args.get(1) {
+        Some(Value::I32(v)) => *v as u32,
+        _ => return Ok(vec![]),
+    };
 
     // Same struct reading logic (duplicate for now, could refactor)
     let id = read_mem_u32(store, ptr)? as usize;
@@ -604,12 +1912,24 @@ fn window_update_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> 
     let prev_height = read_mem_u32(store, ptr + 76)? as usize;
 
     let wasm_base = store.get_wasm_base_ptr() as u64;
-    
+
     let host_win = crate::os::graphics::Window {
         id,
-        buffer: if buffer_off != 0 { (wasm_base + buffer_off) as usize } else { 0 },
-        back_buffer: if back_buffer_off != 0 { (wasm_base + back_buffer_off) as usize } else { 0 },
-        flipped: if flipped_off != 0 { (wasm_base + flipped_off) as usize } else { 0 },
+        buffer: if buffer_off != 0 {
+            (wasm_base + buffer_off) as usize
+        } else {
+            0
+        },
+        back_buffer: if back_buffer_off != 0 {
+            (wasm_base + back_buffer_off) as usize
+        } else {
+            0
+        },
+        flipped: if flipped_off != 0 {
+            (wasm_base + flipped_off) as usize
+        } else {
+            0
+        },
         pid,
         x,
         y,
@@ -631,35 +1951,63 @@ fn window_update_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> 
     };
 
     #[cfg(not(target_arch = "wasm32"))]
-    unsafe { crate::sys::syscall(102, &host_win as *const _ as u64, 0, 0); }
-    
+    unsafe {
+        crate::sys::syscall(102, &host_win as *const _ as u64, 0, 0);
+    }
+
     Ok(vec![])
 }
 
-fn window_get_events_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-    let handle = match args.get(0) { Some(Value::I64(v)) => *v, _ => 0 };
-    let buf_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I32(0)]) };
-    let max = match args.get(2) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I32(0)]) };
+fn window_get_events_host<T: Config>(
+    store: &mut Store<'_, T>,
+    args: Vec<Value>,
+) -> Result<Vec<Value>, HaltExecutionError> {
+    let handle = match args.get(0) {
+        Some(Value::I64(v)) => *v,
+        _ => 0,
+    };
+    let buf_ptr = match args.get(1) {
+        Some(Value::I32(v)) => *v as u32,
+        _ => return Ok(vec![Value::I32(0)]),
+    };
+    let max = match args.get(2) {
+        Some(Value::I32(v)) => *v as u32,
+        _ => return Ok(vec![Value::I32(0)]),
+    };
 
     let event_size = core::mem::size_of::<crate::os::graphics::Event>();
     let mut buf = vec![0u8; max as usize * event_size];
-    
+
     #[cfg(not(target_arch = "wasm32"))]
-    let count = unsafe { crate::sys::syscall(104, handle, buf.as_mut_ptr() as u64, max as u64) as i32 };
+    let count =
+        unsafe { crate::sys::syscall(104, handle, buf.as_mut_ptr() as u64, max as u64) as i32 };
     #[cfg(target_arch = "wasm32")]
     let count = 0;
 
     if count > 0 {
-        write_bytes(store, buf_ptr, &buf[..count as usize * event_size]).map_err(|_| HaltExecutionError(1))?;
+        write_bytes(store, buf_ptr, &buf[..count as usize * event_size])
+            .map_err(|_| HaltExecutionError(1))?;
     }
 
     Ok(vec![Value::I32(count as u32)])
 }
 
-fn shm_get_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-    let name_ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I64(0)]) };
-    let name_len = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I64(0)]) };
-    let size = match args.get(2) { Some(Value::I32(v)) => *v as usize, _ => return Ok(vec![Value::I64(0)]) };
+fn shm_get_host<T: Config>(
+    store: &mut Store<'_, T>,
+    args: Vec<Value>,
+) -> Result<Vec<Value>, HaltExecutionError> {
+    let name_ptr = match args.get(0) {
+        Some(Value::I32(v)) => *v as u32,
+        _ => return Ok(vec![Value::I64(0)]),
+    };
+    let name_len = match args.get(1) {
+        Some(Value::I32(v)) => *v as u32,
+        _ => return Ok(vec![Value::I64(0)]),
+    };
+    let size = match args.get(2) {
+        Some(Value::I32(v)) => *v as usize,
+        _ => return Ok(vec![Value::I64(0)]),
+    };
 
     let mut name_buf = vec![0u8; name_len as usize];
     read_mem(store, name_ptr, &mut name_buf).map_err(|_| HaltExecutionError(1))?;
@@ -669,8 +2017,13 @@ fn shm_get_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result
     unsafe {
         let mut name_terminated = String::from(name);
         name_terminated.push('\0');
-        let res = crate::sys::syscall(120, name_terminated.as_ptr() as u64, name_terminated.len() as u64, size as u64);
-        // Map native pointer to WASM memory? 
+        let res = crate::sys::syscall(
+            120,
+            name_terminated.as_ptr() as u64,
+            name_terminated.len() as u64,
+            size as u64,
+        );
+        // Map native pointer to WASM memory?
         // No, SHM returns a pointer in the address space.
         // If we are Host, and Guest asks for SHM, we get a pointer in Host space.
         // We must map it into Guest memory!

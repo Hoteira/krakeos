@@ -1788,22 +1788,36 @@ fn fd_write<T: Config>(
         })
         .unwrap_or(0);
 
-    let mut buffers = Vec::new();
+    // Read iovec array headers to get total size first
+    let mut iov_metas: Vec<(u32, u32)> = Vec::with_capacity(i_len as usize); // (ptr, len)
+    let mut total_bytes: usize = 0;
     for i in 0..i_len {
         let mut iov = [0u8; 8];
         if read_bytes(store, i_ptr + i * 8, &mut iov).is_err() {
             return Ok(vec![Value::I32(21)]);
         }
         let b_ptr = u32::from_le_bytes(iov[0..4].try_into().unwrap());
-        let b_len = u32::from_le_bytes(iov[4..8].try_into().unwrap());
-        let mut b = vec![0u8; b_len as usize];
-        if read_bytes(store, b_ptr, &mut b).is_err() {
-            return Ok(vec![Value::I32(21)]);
-        }
-        buffers.push(b);
+        let b_len = u32::from_le_bytes(iov[4..8].try_into().unwrap()) as usize;
+        iov_metas.push((b_ptr, b_len as u32));
+        total_bytes += b_len;
     }
 
-    let slices: Vec<&[u8]> = buffers.iter().map(|v| v.as_slice()).collect();
+    // Read all iov data into a single flat buffer — one allocation instead of N
+    let mut flat: Vec<u8> = vec![0u8; total_bytes];
+    let mut offsets: Vec<(usize, usize)> = Vec::with_capacity(iov_metas.len()); // (start, end)
+    let mut cursor = 0usize;
+    for (b_ptr, b_len) in &iov_metas {
+        let end = cursor + *b_len as usize;
+        if *b_len > 0 {
+            if read_bytes(store, *b_ptr, &mut flat[cursor..end]).is_err() {
+                return Ok(vec![Value::I32(21)]);
+            }
+        }
+        offsets.push((cursor, end));
+        cursor = end;
+    }
+
+    let slices: Vec<&[u8]> = offsets.iter().map(|(s, e)| &flat[*s..*e]).collect();
 
     let wasi = wasi_ctx(store);
     let stdio_map = wasi.env.stdio_map();
