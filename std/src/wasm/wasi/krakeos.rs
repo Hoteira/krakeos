@@ -525,12 +525,20 @@ impl WasiEnv for KrakeosWasiEnv {
     fn fd_write(&mut self, fd: i32, iovs: &[&[u8]]) -> Result<usize, i32> {
         if fd == 1 || fd == 2 {
             let host_fd = self.stdio_map[fd as usize] as usize;
-            let mut total = 0;
-            for buf in iovs {
-                let n = crate::os::file_write(host_fd, buf);
-                total += n;
+            // Batch all iovecs into one system call to avoid per-iov overhead
+            let total_len: usize = iovs.iter().map(|b| b.len()).sum();
+            if total_len == 0 {
+                return Ok(0);
             }
-            return Ok(total);
+            if iovs.len() == 1 {
+                // Fast path: single iov, no copy needed
+                return Ok(crate::os::file_write(host_fd, iovs[0]));
+            }
+            let mut batch = crate::rust_alloc::vec::Vec::with_capacity(total_len);
+            for buf in iovs {
+                batch.extend_from_slice(buf);
+            }
+            return Ok(crate::os::file_write(host_fd, &batch));
         }
 
         let wf = self.fd_table.get_mut(&fd).ok_or(8)?;

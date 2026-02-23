@@ -5,12 +5,12 @@ use core::arch::naked_asm;
 pub mod fs;
 pub use process::spawn_process;
 
-pub mod process;
-pub mod memory;
-pub mod window;
-pub mod misc;
 pub mod event;
+pub mod memory;
+pub mod misc;
 pub mod network;
+pub mod process;
+pub mod window;
 
 pub const SYS_READ: u64 = 0;
 pub const SYS_WRITE: u64 = 1;
@@ -31,10 +31,14 @@ pub const SYS_NANOSLEEP: u64 = 35;
 pub const SYS_GETPID: u64 = 39;
 pub const SYS_SOCKET: u64 = 41;
 pub const SYS_CONNECT: u64 = 42;
+pub const SYS_ACCEPT: u64 = 43;
 pub const SYS_SENDTO: u64 = 44;
 pub const SYS_RECVFROM: u64 = 45;
 pub const SYS_BIND: u64 = 49;
+pub const SYS_LISTEN: u64 = 51;
 pub const SYS_SOCKET_CLOSE: u64 = 50;
+pub const SYS_TCP_SEND: u64 = 52;
+pub const SYS_TCP_RECV: u64 = 53;
 pub const SYS_EXECVE: u64 = 59;
 pub const SYS_EXIT: u64 = 60;
 pub const SYS_WAIT4: u64 = 61;
@@ -51,7 +55,6 @@ pub const SYS_LINKAT: u64 = 265;
 pub const SYS_SYMLINKAT: u64 = 266;
 pub const SYS_READLINKAT: u64 = 267;
 pub const SYS_UTIMENSAT: u64 = 280;
-
 
 pub const SYS_ADD_WINDOW: u64 = 100;
 pub const SYS_REMOVE_WINDOW: u64 = 101;
@@ -91,10 +94,10 @@ pub extern "C" fn syscall_entry() {
             "mov [rip + {scratch}], r15",
             "mov r15, rsp",
             "mov rsp, [rip + {kernel_stack_ptr}]",
-            "push QWORD PTR 0x23", 
+            "push QWORD PTR 0x23",
             "push r15",
             "push r11",
-            "push QWORD PTR 0x33", 
+            "push QWORD PTR 0x33",
             "push rcx",
             "mov r15, [rip + {scratch}]",
             "push rbp",
@@ -112,7 +115,7 @@ pub extern "C" fn syscall_entry() {
             "push r13",
             "push r14",
             "push r15",
-            "cld", 
+            "cld",
             "mov rdi, rsp",
             "call syscall_dispatcher",
             "pop r15",
@@ -162,11 +165,15 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
         SYS_NANOSLEEP => process::handle_sleep(context),
         SYS_GETPID => process::handle_getpid(context),
         SYS_SOCKET => network::handle_socket(context),
-        SYS_CONNECT => context.rax = 0, // Stub
+        SYS_CONNECT => network::handle_connect(context),
+        SYS_ACCEPT => network::handle_accept(context),
         SYS_SENDTO => network::handle_sendto(context),
         SYS_RECVFROM => network::handle_recvfrom(context),
         SYS_BIND => network::handle_bind(context),
+        SYS_LISTEN => network::handle_listen(context),
         SYS_SOCKET_CLOSE => network::handle_close_socket(context),
+        SYS_TCP_SEND => network::handle_tcp_send(context),
+        SYS_TCP_RECV => network::handle_tcp_recv(context),
         SYS_EXECVE => process::handle_spawn(context),
         SYS_EXIT => process::handle_exit(context),
         SYS_WAIT4 => process::handle_wait_pid(context),
