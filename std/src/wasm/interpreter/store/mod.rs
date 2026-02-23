@@ -512,29 +512,39 @@ impl<'a, T: Config> Store<'a, T> {
                                 panic!("AOT execution only supported on native targets");
                             }
 
-                            if trap_code != 0 {
-                                // A host function returned HaltExecutionError
-                                return Err(RuntimeError::HostFunctionHaltedExecution(trap_code));
+                            // Collect results BEFORE freeing the stack memory
+                            let aot_result: Result<Vec<Value>, RuntimeError> = if trap_code != 0 {
+                                Err(RuntimeError::HostFunctionHaltedExecution(trap_code))
+                            } else {
+                                let num_returns = func_type.returns.valtypes.len();
+                                let mut results = Vec::with_capacity(num_returns);
+                                for i in 0..num_returns {
+                                    let val_ptr = unsafe { final_sp.add(i) };
+                                    let val_type = func_type.returns.valtypes[num_returns - 1 - i];
+                                    let val = Value::from_u128(unsafe { *val_ptr }, val_type);
+                                    results.push(val);
+                                }
+                                results.reverse();
+                                Ok(results)
+                            };
+
+                            // Free the AOT stack and locals — these were leaking on every call.
+                            unsafe {
+                                crate::memory::free(stack_ptr as usize, stack_size);
+                                crate::memory::free(locals_ptr as usize, locals_size);
                             }
 
-                            let mut results = Vec::new();
-                            let num_returns = func_type.returns.valtypes.len();
-                            for i in 0..num_returns {
-                                let val_ptr = unsafe { final_sp.add(i) };
-                                let val_type = func_type.returns.valtypes[num_returns - 1 - i];
-                                let val = Value::from_u128(unsafe { *val_ptr }, val_type);
-                                results.push(val);
-                            }
-                            results.reverse();
-
-                            return Ok(RunState::Finished {
-                                values: results,
-                                maybe_remaining_fuel: if maybe_fuel.is_some() {
-                                    Some(fuel)
-                                } else {
-                                    None
-                                },
-                            });
+                            return match aot_result {
+                                Ok(values) => Ok(RunState::Finished {
+                                    values,
+                                    maybe_remaining_fuel: if maybe_fuel.is_some() {
+                                        Some(fuel)
+                                    } else {
+                                        None
+                                    },
+                                }),
+                                Err(e) => Err(e),
+                            };
                         }
 
                         // Fallback to interpreter
