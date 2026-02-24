@@ -1,9 +1,14 @@
 #[cfg(target_arch = "wasm32")]
-#[link(wasm_import_module = "wasi:random/random@0.2.0")]
-unsafe extern "C" {
-    #[link_name = "get-random-bytes"]
-    pub fn get_random_bytes(len: u64, result_ptr: *mut u8);
+mod wasi_imports {
+    #[link(wasm_import_module = "wasi:random/random@0.2.0")]
+    unsafe extern "C" {
+        #[link_name = "get-random-bytes"]
+        pub fn get_random_bytes(len: u64, result_ptr: *mut u8);
+    }
 }
+
+#[cfg(target_arch = "wasm32")]
+pub use wasi_imports::*;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn get_random_bytes(len: u64, result_ptr: *mut u8) {

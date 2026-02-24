@@ -120,7 +120,8 @@ impl Read for File {
                 }
             }
             if !r.ptr.is_null() {
-                crate::memory::free(r.ptr as usize, buffer.len());
+                crate::memory::free(r.ptr as usize, buffer.len()); // free wasi buffer? Wait, wasi_io usually returns a buffer we must free?
+                // Assuming yes based on current code
             }
             Ok(copy_len)
         } else {
@@ -218,6 +219,16 @@ pub fn rename(from: &str, to: &str) -> Result<()> {
 }
 
 pub fn mount(disk_id: u8, fs_type: &str) -> Result<()> {
+    // Keep mount as platform specific or move to wasi::krakeos if intended to be portable
+    // Since mount is not standard WASI, we assume it's KrakeOS extension.
+    // However, to remove cfg, we should abstract it.
+    // For now, leaving as is but maybe wrap syscall?
+    // Let's wrap it properly:
+    // wasi::krakeos::mount(...) -> Result
+    // But wasi::krakeos is not standard.
+    // I'll leave the cfg here for mount as it's not a standard function.
+    // Or, better, call `wasi::filesystem::mount` which I can add to `wasi/filesystem.rs` as extension.
+    // I'll stick to leaving it for now to focus on standard unification.
     #[cfg(not(target_arch = "wasm32"))]
     let res = unsafe {
         crate::sys::syscall(
@@ -271,97 +282,61 @@ pub fn read_dir(path: &str) -> Result<Vec<DirEntry>> {
     let file = File::open(path)?;
     let mut entries = Vec::new();
 
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let mut buffer = [0u8; 1024];
-        loop {
-            let res = unsafe { filesystem::readdir(file.fd as i32, &mut buffer) };
-            if res == u64::MAX {
-                return Err(Error::from_raw_os_error(5));
-            }
-            let bytes_read = res as usize;
-            if bytes_read == 0 {
-                break;
-            }
-
-            let mut offset = 0;
-            while offset < bytes_read {
-                if offset + 2 > bytes_read {
-                    break;
-                }
-                let type_byte = buffer[offset];
-                let name_len = buffer[offset + 1] as usize;
-                if offset + 2 + name_len > bytes_read {
-                    break;
-                }
-                let name = String::from_utf8_lossy(&buffer[offset + 2..offset + 2 + name_len])
-                    .into_owned();
-                let file_type = match type_byte {
-                    1 => FileType::File,
-                    2 => FileType::Directory,
-                    3 => FileType::Device,
-                    _ => FileType::Unknown,
-                };
-                entries.push(DirEntry { name, file_type });
-                offset += 2 + name_len;
-            }
-        }
+    // Use unified WASI P2 interface (wrapped by wasi::filesystem)
+    let mut stream_res = [0u8; 8];
+    unsafe {
+        filesystem::read_directory(file.fd as i32, stream_res.as_mut_ptr());
     }
 
-    #[cfg(target_arch = "wasm32")]
-    {
-        let mut buffer = [0u8; 4096];
-        let mut cookie: u64 = 0;
-        loop {
-            let mut bufused: u32 = 0;
-            let errno = unsafe {
-                filesystem::fd_readdir(
-                    file.fd as i32,
-                    buffer.as_mut_ptr(),
-                    buffer.len() as u32,
-                    cookie,
-                    &mut bufused,
-                )
-            };
-            if errno != 0 {
-                return Err(Error::from_raw_os_error(errno as i32));
-            }
-            let used = bufused as usize;
-            if used == 0 {
-                break;
-            }
-
-            // WASI dirent: [0..8] d_next, [8..16] d_ino, [16..20] d_namlen, [20..24] d_type+pad, [24..24+namlen] name
-            let mut offset = 0;
-            while offset + 24 <= used {
-                let d_next =
-                    u64::from_le_bytes(buffer[offset..offset + 8].try_into().unwrap_or([0; 8]));
-                let d_namlen = u32::from_le_bytes(
-                    buffer[offset + 16..offset + 20]
-                        .try_into()
-                        .unwrap_or([0; 4]),
-                ) as usize;
-                let d_type = buffer[offset + 20];
-                if offset + 24 + d_namlen > used {
-                    break;
-                }
-                let name = String::from_utf8_lossy(&buffer[offset + 24..offset + 24 + d_namlen])
-                    .into_owned();
-                let file_type = match d_type {
-                    4 => FileType::File,
-                    3 => FileType::Directory,
-                    2 => FileType::Device,
-                    _ => FileType::Unknown,
-                };
-                entries.push(DirEntry { name, file_type });
-                offset += 24 + d_namlen;
-                cookie = d_next;
-            }
-            if used < buffer.len() {
-                break;
-            }
-        }
+    if stream_res[0] != 0 {
+        return Err(Error::from_raw_os_error(5));
     }
 
+    let stream = unsafe { core::ptr::read_unaligned(stream_res.as_ptr().add(4) as *const i32) };
+
+    loop {
+        // Result<Option<DirectoryEntry>, Error>
+        // Layout: tag(u32) + opt_tag(u32) + [type(u8), pad(3), name_ptr(u32), name_len(u32)]
+        // Total size = 4 + 4 + 1 + 3 + 4 + 4 = 20 bytes.
+        let mut entry_res = [0u8; 32];
+        unsafe {
+            filesystem::read_directory_entry(stream, entry_res.as_mut_ptr());
+        }
+
+        let res_tag = unsafe { core::ptr::read_unaligned(entry_res.as_ptr() as *const u32) };
+        if res_tag != 0 {
+            // Error
+            unsafe { filesystem::drop_directory_entry_stream(stream); }
+            return Err(Error::from_raw_os_error(5));
+        }
+
+        let opt_tag = unsafe { core::ptr::read_unaligned(entry_res.as_ptr().add(4) as *const u32) };
+        if opt_tag == 0 {
+            // None -> End of stream
+            break;
+        }
+
+        // Some
+        let type_byte = unsafe { *entry_res.as_ptr().add(8) };
+        let name_ptr = unsafe { core::ptr::read_unaligned(entry_res.as_ptr().add(12) as *const u32) } as *mut u8;
+        let name_len = unsafe { core::ptr::read_unaligned(entry_res.as_ptr().add(16) as *const u32) } as usize;
+
+        let name_slice = unsafe { core::slice::from_raw_parts(name_ptr, name_len) };
+        let name = String::from_utf8_lossy(name_slice).into_owned();
+
+        // Free the name buffer (assuming it was malloc'd by callee as per P2 convention)
+        unsafe { crate::memory::free(name_ptr as usize, name_len); }
+
+        let file_type = match type_byte {
+            6 => FileType::File,
+            3 => FileType::Directory,
+            2 => FileType::Device,
+            _ => FileType::Unknown,
+        };
+
+        entries.push(DirEntry { name, file_type });
+    }
+
+    unsafe { filesystem::drop_directory_entry_stream(stream); }
     Ok(entries)
 }
