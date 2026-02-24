@@ -4,41 +4,46 @@
 // When compiled to Native, these wrap KrakeOS kernel syscalls.
 
 #[cfg(target_arch = "wasm32")]
-#[link(wasm_import_module = "wasi:sockets/tcp@0.2.0")]
-unsafe extern "C" {
-    #[link_name = "[constructor]tcp-socket"]
-    pub fn create_tcp_socket(address_family: i32, result_ptr: *mut u8);
+mod wasi_imports {
+    #[link(wasm_import_module = "wasi:sockets/tcp@0.2.0")]
+    unsafe extern "C" {
+        #[link_name = "[constructor]tcp-socket"]
+        pub fn create_tcp_socket(address_family: i32, result_ptr: *mut u8);
 
-    #[link_name = "[method]tcp-socket.start-bind"]
-    pub fn start_bind(socket: i32, network: i32, ip_addr_ptr: *const u8, result_ptr: *mut u8);
+        #[link_name = "[method]tcp-socket.start-bind"]
+        pub fn start_bind(socket: i32, network: i32, ip_addr_ptr: *const u8, result_ptr: *mut u8);
 
-    #[link_name = "[method]tcp-socket.finish-bind"]
-    pub fn finish_bind(socket: i32, result_ptr: *mut u8);
+        #[link_name = "[method]tcp-socket.finish-bind"]
+        pub fn finish_bind(socket: i32, result_ptr: *mut u8);
 
-    #[link_name = "[method]tcp-socket.start-connect"]
-    pub fn start_connect(socket: i32, network: i32, ip_addr_ptr: *const u8, result_ptr: *mut u8);
+        #[link_name = "[method]tcp-socket.start-connect"]
+        pub fn start_connect(socket: i32, network: i32, ip_addr_ptr: *const u8, result_ptr: *mut u8);
 
-    #[link_name = "[method]tcp-socket.finish-connect"]
-    pub fn finish_connect(socket: i32, result_ptr: *mut u8);
+        #[link_name = "[method]tcp-socket.finish-connect"]
+        pub fn finish_connect(socket: i32, result_ptr: *mut u8);
 
-    #[link_name = "[method]tcp-socket.start-listen"]
-    pub fn start_listen(socket: i32, result_ptr: *mut u8);
+        #[link_name = "[method]tcp-socket.start-listen"]
+        pub fn start_listen(socket: i32, result_ptr: *mut u8);
 
-    #[link_name = "[method]tcp-socket.finish-listen"]
-    pub fn finish_listen(socket: i32, result_ptr: *mut u8);
+        #[link_name = "[method]tcp-socket.finish-listen"]
+        pub fn finish_listen(socket: i32, result_ptr: *mut u8);
 
-    #[link_name = "[method]tcp-socket.accept"]
-    pub fn accept(socket: i32, result_ptr: *mut u8);
+        #[link_name = "[method]tcp-socket.accept"]
+        pub fn accept(socket: i32, result_ptr: *mut u8);
 
-    #[link_name = "[method]tcp-socket.send"]
-    pub fn send(socket: i32, buf_ptr: *const u8, buf_len: u32, result_ptr: *mut u8);
+        #[link_name = "[method]tcp-socket.send"]
+        pub fn send(socket: i32, buf_ptr: *const u8, buf_len: u32, result_ptr: *mut u8);
 
-    #[link_name = "[method]tcp-socket.recv"]
-    pub fn recv(socket: i32, buf_ptr: *mut u8, buf_len: u32, result_ptr: *mut u8);
+        #[link_name = "[method]tcp-socket.recv"]
+        pub fn recv(socket: i32, buf_ptr: *mut u8, buf_len: u32, result_ptr: *mut u8);
 
-    #[link_name = "[resource-drop]tcp-socket"]
-    pub fn tcp_socket_drop(handle: i32);
+        #[link_name = "[resource-drop]tcp-socket"]
+        pub fn tcp_socket_drop(handle: i32);
+    }
 }
+
+#[cfg(target_arch = "wasm32")]
+pub use wasi_imports::*;
 
 // ── Native (non-WASM) implementations ────────────────────────────────────────
 

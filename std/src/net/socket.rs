@@ -1,6 +1,3 @@
-#[cfg(not(target_arch = "wasm32"))]
-#[allow(unused_imports)]
-use crate::sys::{syscall1, syscall6};
 use crate::rust_alloc::vec::Vec;
 use crate::wasi::sockets::udp;
 

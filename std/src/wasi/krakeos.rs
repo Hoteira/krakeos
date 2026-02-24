@@ -1,48 +1,104 @@
 #[cfg(target_arch = "wasm32")]
-#[link(wasm_import_module = "wasi_snapshot_preview1")]
-unsafe extern "C" {
-    fn sched_yield() -> i32;
+mod wasi_imports {
+    #[link(wasm_import_module = "wasi_snapshot_preview1")]
+    unsafe extern "C" {
+        pub fn sched_yield() -> i32;
+    }
+
+    #[link(wasm_import_module = "krakeos:system/process@0.2.0")]
+    unsafe extern "C" {
+        #[link_name = "spawn"]
+        pub fn process_spawn(path_ptr: *const u8, path_len: usize, args_ptr: *const u8, args_len: usize, fds_ptr: *const u8, fds_len: usize) -> u64;
+        #[link_name = "waitpid"]
+        pub fn process_waitpid(pid: u64) -> i32;
+        #[link_name = "pipe"]
+        pub fn process_pipe(fds_ptr: *mut u8) -> i32;
+    }
+
+    #[link(wasm_import_module = "krakeos:system/window@0.2.0")]
+    unsafe extern "C" {
+        #[link_name = "create"]
+        pub fn window_create(attributes_ptr: *const u8) -> u64;
+        #[link_name = "update"]
+        pub fn window_update(handle: u64, attributes_ptr: *const u8);
+        #[link_name = "get-events"]
+        pub fn window_get_events(handle: u64, buf_ptr: *mut u8, max: u32) -> i32;
+    }
+
+    #[link(wasm_import_module = "krakeos:system/memory@0.2.0")]
+    unsafe extern "C" {
+        #[link_name = "shm-get"]
+        pub fn shm_get(name_ptr: *const u8, name_len: usize, size: usize) -> u64;
+    }
+
+    #[link(wasm_import_module = "krakeos:graphics/screen@0.2.0")]
+    unsafe extern "C" {
+        #[link_name = "get-width"]
+        pub fn get_screen_width() -> u32;
+        #[link_name = "get-height"]
+        pub fn get_screen_height() -> u32;
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
-#[link(wasm_import_module = "krakeos:system/process@0.2.0")]
-unsafe extern "C" {
-    #[link_name = "spawn"]
-    pub fn process_spawn(path_ptr: *const u8, path_len: usize, args_ptr: *const u8, args_len: usize, fds_ptr: *const u8, fds_len: usize) -> u64;
-    #[link_name = "waitpid"]
-    pub fn process_waitpid(pid: u64) -> i32;
-    #[link_name = "pipe"]
-    pub fn process_pipe(fds_ptr: *mut u8) -> i32;
-}
+pub use wasi_imports::*;
 
-#[cfg(target_arch = "wasm32")]
-#[link(wasm_import_module = "krakeos:system/window@0.2.0")]
-unsafe extern "C" {
-    #[link_name = "create"]
-    pub fn window_create(attributes_ptr: *const u8) -> u64;
-    #[link_name = "update"]
-    pub fn window_update(handle: u64, attributes_ptr: *const u8);
-    #[link_name = "get-events"]
-    pub fn window_get_events(handle: u64, buf_ptr: *mut u8, max: u32) -> i32;
-}
-
-#[cfg(target_arch = "wasm32")]
-#[link(wasm_import_module = "krakeos:system/memory@0.2.0")]
-unsafe extern "C" {
-    #[link_name = "shm-get"]
-    pub fn shm_get(name_ptr: *const u8, name_len: usize, size: usize) -> u64;
-}
-
-#[cfg(target_arch = "wasm32")]
-pub unsafe fn krakeos_net_send(_ptr: *const u8, _len: u32) -> i32 {
-    -1
-}
-
-#[cfg(target_arch = "wasm32")]
-pub unsafe fn krakeos_net_recv(_ptr: *mut u8, _len: u32) -> i32 {
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe fn sched_yield() -> i32 {
+    core::arch::asm!("int 0x81");
     0
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe fn process_spawn(path_ptr: *const u8, path_len: usize, args_ptr: *const u8, args_len: usize, fds_ptr: *const u8, fds_len: usize) -> u64 {
+    krakeos_syscall7(59, path_ptr as u64, path_len as u64, args_ptr as u64, args_len as u64, fds_ptr as u64, fds_len as u64)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe fn process_waitpid(pid: u64) -> i32 {
+    krakeos_syscall(61, pid, 0, 0) as i32
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe fn process_pipe(fds_ptr: *mut u8) -> i32 {
+    // Syscall 22 expects *mut i32 array?
+    // os/krakeos/mod.rs calls syscall(22, fds.as_mut_ptr(), 0, 0) where fds is [i32; 2].
+    // Here fds_ptr is *mut u8 (generic pointer to result).
+    // KrakeOS syscall 22 writes to [i32; 2].
+    krakeos_syscall(22, fds_ptr as u64, 0, 0) as i32
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe fn window_create(attributes_ptr: *const u8) -> u64 {
+    krakeos_syscall(100, attributes_ptr as u64, 0, 0)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe fn window_update(handle: u64, attributes_ptr: *const u8) {
+    krakeos_syscall(102, handle, attributes_ptr as u64, 0);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe fn window_get_events(handle: u64, buf_ptr: *mut u8, max: u32) -> i32 {
+    krakeos_syscall(105, handle, buf_ptr as u64, max as u64) as i32
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe fn shm_get(name_ptr: *const u8, name_len: usize, size: usize) -> u64 {
+    krakeos_syscall(120, name_ptr as u64, name_len as u64, size as u64)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe fn get_screen_width() -> u32 {
+    krakeos_syscall(106, 0, 0, 0) as u32
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe fn get_screen_height() -> u32 {
+    krakeos_syscall(107, 0, 0, 0) as u32
+}
+
+// Low-level helpers required by std/sys
 #[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn krakeos_syscall(num: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
     let result: u64;
@@ -130,7 +186,6 @@ pub fn yield_task() {
 
 pub fn hlt_loop() -> ! {
     loop {
-        #[cfg(target_arch = "wasm32")]
         yield_task();
         #[cfg(not(target_arch = "wasm32"))]
         unsafe { core::arch::asm!("hlt"); }
@@ -158,31 +213,22 @@ pub unsafe fn alloc_pages(size: usize) -> *mut u8 {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-#[link(wasm_import_module = "krakeos:graphics/screen@0.2.0")]
-unsafe extern "C" {
-    #[link_name = "get-width"]
-    pub fn get_screen_width() -> u32;
-    #[link_name = "get-height"]
-    pub fn get_screen_height() -> u32;
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub unsafe fn get_screen_width() -> u32 {
-    krakeos_syscall(106, 0, 0, 0) as u32
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub unsafe fn get_screen_height() -> u32 {
-    krakeos_syscall(107, 0, 0, 0) as u32
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn krakeos_net_send(_ptr: *const u8, _len: u32) -> i32 {
     -1
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+pub unsafe fn krakeos_net_recv(_ptr: *mut u8, _len: u32) -> i32 {
+    0
+}
+
+#[cfg(target_arch = "wasm32")]
+pub unsafe fn krakeos_net_send(_ptr: *const u8, _len: u32) -> i32 {
+    -1
+}
+
+#[cfg(target_arch = "wasm32")]
 pub unsafe fn krakeos_net_recv(_ptr: *mut u8, _len: u32) -> i32 {
     0
 }
