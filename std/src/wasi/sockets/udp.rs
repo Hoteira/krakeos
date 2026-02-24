@@ -3,23 +3,28 @@
 // When compiled to Native, these directly wrap KrakeOS syscalls.
 
 #[cfg(target_arch = "wasm32")]
-#[link(wasm_import_module = "wasi:sockets/udp@0.2.0")]
-unsafe extern "C" {
-    #[link_name = "[method]udp-socket.create"]
-    pub fn create_udp_socket(address_family: i32, result_ptr: *mut u8);
+mod wasi_imports {
+    #[link(wasm_import_module = "wasi:sockets/udp@0.2.0")]
+    unsafe extern "C" {
+        #[link_name = "[method]udp-socket.create"]
+        pub fn create_udp_socket(address_family: i32, result_ptr: *mut u8);
 
-    #[link_name = "[method]udp-socket.start-bind"]
-    pub fn start_bind(socket: i32, network: i32, ip_addr_ptr: *const u8, result_ptr: *mut u8);
+        #[link_name = "[method]udp-socket.start-bind"]
+        pub fn start_bind(socket: i32, network: i32, ip_addr_ptr: *const u8, result_ptr: *mut u8);
 
-    #[link_name = "[method]outgoing-datagram-stream.send"]
-    pub fn send(stream: i32, buf_ptr: *const u8, buf_len: u32, dest_addr_ptr: *const u8, result_ptr: *mut u8);
+        #[link_name = "[method]outgoing-datagram-stream.send"]
+        pub fn send(stream: i32, buf_ptr: *const u8, buf_len: u32, dest_addr_ptr: *const u8, result_ptr: *mut u8);
 
-    #[link_name = "[method]incoming-datagram-stream.receive"]
-    pub fn receive(stream: i32, max_results: u64, result_ptr: *mut u8);
+        #[link_name = "[method]incoming-datagram-stream.receive"]
+        pub fn receive(stream: i32, max_results: u64, result_ptr: *mut u8);
 
-    #[link_name = "[resource-drop]udp-socket"]
-    pub fn udp_socket_drop(handle: i32);
+        #[link_name = "[resource-drop]udp-socket"]
+        pub fn udp_socket_drop(handle: i32);
+    }
 }
+
+#[cfg(target_arch = "wasm32")]
+pub use wasi_imports::*;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn create_udp_socket(address_family: i32, result_ptr: *mut u8) {
