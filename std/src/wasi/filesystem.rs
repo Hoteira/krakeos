@@ -1,3 +1,7 @@
+use crate::sync::Mutex;
+use crate::rust_alloc::collections::BTreeMap;
+use crate::rust_alloc::boxed::Box;
+use core::sync::atomic::{AtomicI32, Ordering};
 
 #[cfg(target_arch = "wasm32")]
 mod wasi_imports {
@@ -187,26 +191,40 @@ struct DirStream {
     offset: usize,
 }
 
+// Global resource map for directory streams on native
+#[cfg(not(target_arch = "wasm32"))]
+static NEXT_STREAM_ID: AtomicI32 = AtomicI32::new(1);
+
+#[cfg(not(target_arch = "wasm32"))]
+static DIR_STREAMS: Mutex<BTreeMap<i32, Box<DirStream>>> = Mutex::new(BTreeMap::new());
+
 #[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn read_directory(handle: i32, result_ptr: *mut u8) {
-    use crate::rust_alloc::alloc::{alloc, Layout};
-    let layout = Layout::new::<DirStream>();
-    let ptr = alloc(layout) as *mut DirStream;
-    if ptr.is_null() {
-        *result_ptr = 1; // Err
-        return;
-    }
-    (*ptr).fd = handle;
-    (*ptr).buf_size = 0;
-    (*ptr).offset = 0;
+    let stream = Box::new(DirStream {
+        fd: handle,
+        buffer: [0u8; 1024],
+        buf_size: 0,
+        offset: 0,
+    });
+
+    let id = NEXT_STREAM_ID.fetch_add(1, Ordering::SeqCst);
+
+    DIR_STREAMS.lock().insert(id, stream);
 
     *result_ptr = 0; // Ok
-    core::ptr::write_unaligned(result_ptr.add(4) as *mut i32, ptr as i32);
+    core::ptr::write_unaligned(result_ptr.add(4) as *mut i32, id);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub unsafe fn read_directory_entry(stream: i32, result_ptr: *mut u8) {
-    let state = &mut *(stream as *mut DirStream);
+pub unsafe fn read_directory_entry(stream_id: i32, result_ptr: *mut u8) {
+    let mut streams = DIR_STREAMS.lock();
+    let state = match streams.get_mut(&stream_id) {
+        Some(s) => s,
+        None => {
+            *result_ptr = 1; // Err (invalid handle)
+            return;
+        }
+    };
 
     loop {
         if state.offset < state.buf_size {
@@ -269,10 +287,8 @@ pub unsafe fn read_directory_entry(stream: i32, result_ptr: *mut u8) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub unsafe fn drop_directory_entry_stream(stream: i32) {
-    use crate::rust_alloc::alloc::{dealloc, Layout};
-    let layout = Layout::new::<DirStream>();
-    dealloc(stream as *mut u8, layout);
+pub unsafe fn drop_directory_entry_stream(stream_id: i32) {
+    DIR_STREAMS.lock().remove(&stream_id);
 }
 
 pub unsafe fn create_dir(path: &str) -> i32 {
