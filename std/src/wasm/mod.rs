@@ -5,6 +5,7 @@ pub mod common;
 pub mod component;
 pub mod interpreter;
 pub mod runner;
+#[cfg(feature = "userland")]
 pub mod wasi;
 
 pub use runner::{run, run_with_args, run_with_env};

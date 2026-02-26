@@ -2,6 +2,9 @@ use crate::rust_alloc::string::String;
 use crate::rust_alloc::vec::Vec;
 use crate::sync::Mutex;
 
+#[cfg(feature = "userland")]
+pub mod wasi;
+
 static ARGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static VARS: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
 

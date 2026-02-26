@@ -4,6 +4,8 @@ use rust_alloc::string::String;
 use rust_alloc::vec::Vec;
 
 pub mod async_file;
+#[cfg(feature = "userland")]
+pub mod wasi;
 pub use async_file::AsyncFile;
 
 #[repr(C)]

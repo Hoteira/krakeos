@@ -125,9 +125,9 @@ dependencies = [
 
 [[package]]
 name = "titanf"
-version = "2.3.3"
+version = "2.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "310fa5e06b2266907fa7453e5887a3e5da57c07ba7d728a33c1122331523e74c"
+checksum = "03f4d29660d7921f908d9480fb8bd09e01bfffcb6024496ba195214ffec1244b"
 
 [[package]]
 name = "tmap"

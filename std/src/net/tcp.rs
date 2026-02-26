@@ -99,6 +99,10 @@ impl Drop for TcpStream {
         unsafe {
             tcp::tcp_socket_drop(self.handle as i32);
         }
+        #[cfg(target_arch = "wasm32")]
+        unsafe {
+            crate::wasi::sockets::tcp::tcp_socket_drop(self.handle as i32);
+        }
     }
 }
 
@@ -151,6 +155,19 @@ impl TcpListener {
             Some(TcpStream {
                 handle: res as usize,
             })
+        }
+    }
+}
+
+impl Drop for TcpListener {
+    fn drop(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        unsafe {
+            crate::sys::syscall6(50, self.handle as u64, 0, 0, 0, 0, 0);
+        }
+        #[cfg(target_arch = "wasm32")]
+        unsafe {
+            crate::wasi::sockets::tcp::tcp_socket_drop(self.handle as i32);
         }
     }
 }

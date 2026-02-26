@@ -2,6 +2,8 @@ pub use core::time::Duration;
 use crate::wasi::clocks;
 
 pub mod async_time;
+#[cfg(feature = "userland")]
+pub mod wasi;
 
 pub fn sleep(duration: Duration) {
     let ms = duration.as_millis() as u64;

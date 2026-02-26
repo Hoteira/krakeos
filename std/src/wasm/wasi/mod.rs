@@ -1,3 +1,5 @@
+#[macro_use]
+pub mod macros;
 pub mod ctx;
 pub mod preview1;
 pub mod preview2;

@@ -9,6 +9,9 @@ pub mod net;
 pub mod events;
 pub use events::*;
 
+#[cfg(feature = "userland")]
+pub mod wasi;
+
 #[cfg(not(target_arch = "wasm32"))]
 pub use crate::sys::{syscall, syscall4, syscall5, syscall6};
 

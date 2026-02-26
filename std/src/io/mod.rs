@@ -1,5 +1,7 @@
 pub mod serial;
 pub mod async_io;
+#[cfg(feature = "userland")]
+pub mod wasi;
 
 pub use async_io::{AsyncRead, AsyncWrite};
 

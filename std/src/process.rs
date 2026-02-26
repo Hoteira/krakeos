@@ -2,6 +2,9 @@ pub trait Termination {
     fn report(self) -> i32;
 }
 
+#[cfg(feature = "userland")]
+pub mod wasi;
+
 impl Termination for () {
     fn report(self) -> i32 {
         0
