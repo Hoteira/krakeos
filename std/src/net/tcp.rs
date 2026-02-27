@@ -2,7 +2,7 @@
 // Uses unified WASI P2 sockets interface (shimmed on native).
 
 use crate::rust_alloc::vec::Vec;
-use crate::wasi::sockets::tcp;
+use crate::net::host::tcp;
 
 /// A connected TCP stream.
 pub struct TcpStream {
@@ -97,10 +97,6 @@ impl Drop for TcpStream {
         unsafe {
             tcp::tcp_socket_drop(self.handle as i32);
         }
-        #[cfg(target_arch = "wasm32")]
-        unsafe {
-            crate::wasi::sockets::tcp::tcp_socket_drop(self.handle as i32);
-        }
     }
 }
 
@@ -159,13 +155,8 @@ impl TcpListener {
 
 impl Drop for TcpListener {
     fn drop(&mut self) {
-        #[cfg(not(target_arch = "wasm32"))]
         unsafe {
-            crate::sys::syscall6(50, self.handle as u64, 0, 0, 0, 0, 0);
-        }
-        #[cfg(target_arch = "wasm32")]
-        unsafe {
-            crate::wasi::sockets::tcp::tcp_socket_drop(self.handle as i32);
+            crate::net::host::tcp::tcp_socket_drop(self.handle as i32);
         }
     }
 }

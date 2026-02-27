@@ -25,7 +25,7 @@ pub fn shm_get(name: &str, size: u64) -> Option<u64> {
     }
     #[cfg(target_arch = "wasm32")]
     unsafe {
-        let res = crate::wasi::krakeos::shm_get(name.as_ptr(), name.len(), size as usize);
+        let res = crate::os::krakeos::host::shm_get(name.as_ptr(), name.len(), size as usize);
         if res == 0 || res == u64::MAX { None } else { Some(res) }
     }
 }

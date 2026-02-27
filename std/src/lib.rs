@@ -22,8 +22,6 @@ pub mod sys;
 pub mod task;
 pub mod thread;
 pub mod time;
-pub mod wasi;
-
 #[cfg(feature = "userland")]
 #[macro_use]
 pub mod wasm;

@@ -60,7 +60,7 @@ crate::export_method!(
         #[cfg(not(target_arch = "wasm32"))]
         let res = unsafe { crate::sys::syscall(61, pid, 0, 0) as i32 };
         #[cfg(target_arch = "wasm32")]
-        let res = unsafe { crate::wasi::krakeos::process_waitpid(pid) };
+        let res = 0i32;
         Ok(vec![Value::I32(res as u32)])
     }
 );
@@ -84,14 +84,7 @@ crate::export_method!(
             } else { Ok(vec![Value::I32((-1i32) as u32)]) }
         }
         #[cfg(target_arch = "wasm32")]
-        {
-            let mut bytes = [0u8; 8];
-            let res = unsafe { crate::wasi::krakeos::process_pipe(bytes.as_mut_ptr()) };
-            if res == 0 {
-                write_bytes(store, ptr, &bytes).map_err(|_| HaltExecutionError(1))?;
-                Ok(vec![Value::I32(0)])
-            } else { Ok(vec![Value::I32((-1i32) as u32)]) }
-        }
+        Ok(vec![Value::I32((-1i32) as u32)])
     }
 );
 

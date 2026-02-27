@@ -1,12 +1,15 @@
 use crate::io::{Error, Read, Result, Seek, SeekFrom, Write};
-use crate::wasi::{filesystem, io as wasi_io};
 use rust_alloc::string::String;
 use rust_alloc::vec::Vec;
 
+pub mod host;
 pub mod async_file;
 #[cfg(feature = "userland")]
 pub mod wasi;
 pub use async_file::AsyncFile;
+
+use host as filesystem;
+use crate::io::host as wasi_io;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]

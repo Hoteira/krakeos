@@ -32,11 +32,6 @@ pub unsafe fn monotonic_clock_resolution() -> u64 {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn monotonic_clock_subscribe_duration(duration: u64) -> i32 {
-    // Return duration in ms as the handle.
-    // This is a hacky shim where the handle IS the data.
-    // Pollable handles in WASI are resources.
-    // Assuming duration fits in i32 (for ms).
-    // duration is ns.
     let ms = duration / 1_000_000;
     ms as i32
 }
@@ -56,7 +51,6 @@ pub unsafe fn wall_clock_now(result_ptr: *mut u8) {
     let s = res_time as u8;
 
     let yrs = if y >= 1970 { (y - 1970) as u64 } else { 0 };
-    // Simplified leap year logic for shim
     let secs = yrs * 31_536_000
         + (m as u64).saturating_sub(1) * 2_592_000
         + (d as u64).saturating_sub(1) * 86_400
@@ -69,8 +63,7 @@ pub unsafe fn wall_clock_now(result_ptr: *mut u8) {
 }
 
 pub unsafe fn sleep(ms: u64) {
-    // Use unified interface
     let pollable = monotonic_clock_subscribe_duration(ms * 1_000_000);
-    crate::wasi::io::poll_block(pollable);
-    crate::wasi::io::pollable_drop(pollable);
+    crate::io::host::poll_block(pollable);
+    crate::io::host::pollable_drop(pollable);
 }

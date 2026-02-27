@@ -1,3 +1,4 @@
+pub mod host;
 pub mod serial;
 pub mod async_io;
 #[cfg(feature = "userland")]

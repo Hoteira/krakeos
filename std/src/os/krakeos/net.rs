@@ -1,4 +1,4 @@
-use crate::wasi::krakeos;
+use super::host as krakeos;
 
 pub fn send(packet: &[u8]) -> i32 {
     unsafe {

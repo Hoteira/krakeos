@@ -91,25 +91,25 @@ impl Color {
 }
 
 pub fn get_screen_width() -> usize {
-    unsafe { crate::wasi::krakeos::get_screen_width() as usize }
+    unsafe { super::host::get_screen_width() as usize }
 }
 
 pub fn get_screen_height() -> usize {
-    unsafe { crate::wasi::krakeos::get_screen_height() as usize }
+    unsafe { super::host::get_screen_height() as usize }
 }
 
 pub fn add_window(window: &Window) -> usize {
     #[cfg(not(target_arch = "wasm32"))]
     unsafe { syscall(100, window as *const Window as u64, 0, 0) as usize }
     #[cfg(target_arch = "wasm32")]
-    unsafe { crate::wasi::krakeos::window_create(window as *const Window as *const u8) as usize }
+    unsafe { super::host::window_create(window as *const Window as *const u8) as usize }
 }
 
 pub fn update_window(window: &Window) {
     #[cfg(not(target_arch = "wasm32"))]
     unsafe { syscall(102, window as *const Window as u64, 0, 0); }
     #[cfg(target_arch = "wasm32")]
-    unsafe { crate::wasi::krakeos::window_update(0, window as *const Window as *const u8); }
+    unsafe { super::host::window_update(0, window as *const Window as *const u8); }
 }
 
 pub fn update_window_area(id: usize, x: usize, y: usize, w: usize, h: usize) {
@@ -127,7 +127,7 @@ pub fn get_events(wid: usize, events: &mut [Event]) -> usize {
         // We cast Event array to u8 buffer. Ensure layout matches!
         // Event is repr(C).
         let ptr = events.as_mut_ptr() as *mut u8;
-        crate::wasi::krakeos::window_get_events(wid as u64, ptr, events.len() as u32) as usize
+        super::host::window_get_events(wid as u64, ptr, events.len() as u32) as usize
     }
 }
 

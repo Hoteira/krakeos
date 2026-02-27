@@ -1,3 +1,4 @@
+pub mod host;
 pub mod graphics;
 pub use graphics::*;
 
@@ -34,10 +35,10 @@ pub fn print(s: &str) {
 }
 
 pub fn debug_print(s: &str) {
-    let stderr = unsafe { crate::wasi::cli::get_stderr() };
+    let stderr = unsafe { crate::io::host::get_stderr() };
     let mut res = [0u8; 8]; // result buffer
     unsafe {
-        crate::wasi::io::output_stream_blocking_write_and_flush(stderr, s.as_ptr(), s.len(), res.as_mut_ptr());
+        crate::io::host::output_stream_blocking_write_and_flush(stderr, s.as_ptr(), s.len(), res.as_mut_ptr());
     }
 }
 
@@ -71,14 +72,14 @@ pub fn file_write(fd: usize, buffer: &[u8]) -> usize {
 
 pub fn file_close(fd: usize) -> i32 {
     unsafe {
-        crate::wasi::filesystem::descriptor_drop(fd as i32);
+        crate::fs::host::descriptor_drop(fd as i32);
     }
     0
 }
 
 pub fn exit(code: u64) -> ! {
     unsafe {
-        crate::wasi::cli::exit(code as i32);
+        crate::io::host::exit(code as i32);
     }
 }
 
@@ -108,7 +109,7 @@ pub fn spawn_with_fds(path: &str, args: &[&str], fds: &[(u8, u8)]) -> usize {
     // On Native, pointers are u64.
 
     unsafe {
-        crate::wasi::krakeos::process_spawn(
+        host::process_spawn(
             path.as_ptr(), path.len(),
             arg_ptrs.as_ptr() as *const u8, arg_ptrs.len(),
             fds.as_ptr() as *const u8, fds.len()
@@ -126,7 +127,7 @@ pub fn get_system_ticks() -> u64 {
     // WASM impl divided by 1_000_000.
     // I will unify to use monotonic_clock_now / 1_000_000.
     unsafe {
-        crate::wasi::clocks::monotonic_clock_now() / 1_000_000
+        crate::time::host::monotonic_clock_now() / 1_000_000
     }
 }
 
@@ -176,7 +177,7 @@ pub fn poll(fds: &mut [PollFd], timeout: i32) -> i32 {
         let mut ready_indices_ptr = 0u32;
         let mut count = 0u32;
         
-        crate::wasi::io::poll_poll(
+        crate::io::host::poll_poll(
             handles_bytes.as_ptr(),
             handles.len() as u32,
             &mut ready_indices_ptr as *mut u32 as *mut u8
@@ -198,9 +199,9 @@ pub fn set_nonblock(fd: usize, nonblock: bool) -> i32 {
 pub fn get_date() -> (u8, u8, u16) {
     unsafe {
         let mut buf = [0u8; 16];
-        crate::wasi::clocks::wall_clock_now(buf.as_mut_ptr());
+        crate::time::host::wall_clock_now(buf.as_mut_ptr());
         let secs = core::ptr::read_unaligned(buf.as_ptr() as *const u64);
-        
+
         let days = secs / 86400;
         let (y, m, d) = epoch_to_date(days);
         (d as u8, m as u8, y as u16)
@@ -210,9 +211,9 @@ pub fn get_date() -> (u8, u8, u16) {
 pub fn get_time() -> (u8, u8, u8) {
     unsafe {
         let mut buf = [0u8; 16];
-        crate::wasi::clocks::wall_clock_now(buf.as_mut_ptr());
+        crate::time::host::wall_clock_now(buf.as_mut_ptr());
         let secs = core::ptr::read_unaligned(buf.as_ptr() as *const u64);
-        
+
         let s = (secs % 60) as u8;
         let m = ((secs / 60) % 60) as u8;
         let h = ((secs / 3600) % 24) as u8;
@@ -240,7 +241,7 @@ fn epoch_to_date(mut days: u64) -> (u64, u64, u64) {
 pub fn file_truncate(fd: usize, size: u64) -> i32 {
     unsafe {
         let mut res = 0u8;
-        crate::wasi::filesystem::set_size(fd as i32, size, &mut res);
+        crate::fs::host::set_size(fd as i32, size, &mut res);
         if res == 0 { 0 } else { -1 }
     }
 }
@@ -248,7 +249,7 @@ pub fn file_truncate(fd: usize, size: u64) -> i32 {
 pub fn file_seek(fd: usize, offset: i64, whence: i32) -> i64 {
     unsafe {
         let mut res_buf = [0u8; 16];
-        crate::wasi::filesystem::seek(fd as i32, offset as u64, whence, res_buf.as_mut_ptr());
+        crate::fs::host::seek(fd as i32, offset as u64, whence, res_buf.as_mut_ptr());
         if res_buf[0] == 0 {
             let new_offset = core::ptr::read_unaligned(res_buf.as_ptr().add(8) as *const u64);
             new_offset as i64
@@ -265,14 +266,14 @@ pub fn pipe(fds: &mut [i32; 2]) -> i32 {
         // Since i32 is 4 bytes, [i32; 2] is 8 bytes.
         // On native, shim calls syscall(22, fds.as_mut_ptr(), ...).
         // On WASM, it calls process_pipe(fds.as_mut_ptr()).
-        let res = crate::wasi::krakeos::process_pipe(fds.as_mut_ptr() as *mut u8);
+        let res = host::process_pipe(fds.as_mut_ptr() as *mut u8);
         res
     }
 }
 
 pub fn waitpid(pid: u64) -> i32 {
     unsafe {
-        crate::wasi::krakeos::process_waitpid(pid)
+        host::process_waitpid(pid)
     }
 }
 

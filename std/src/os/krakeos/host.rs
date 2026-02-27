@@ -61,10 +61,6 @@ pub unsafe fn process_waitpid(pid: u64) -> i32 {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn process_pipe(fds_ptr: *mut u8) -> i32 {
-    // Syscall 22 expects *mut i32 array?
-    // os/krakeos/mod.rs calls syscall(22, fds.as_mut_ptr(), 0, 0) where fds is [i32; 2].
-    // Here fds_ptr is *mut u8 (generic pointer to result).
-    // KrakeOS syscall 22 writes to [i32; 2].
     krakeos_syscall(22, fds_ptr as u64, 0, 0) as i32
 }
 
@@ -98,7 +94,7 @@ pub unsafe fn get_screen_height() -> u32 {
     krakeos_syscall(107, 0, 0, 0) as u32
 }
 
-// Low-level helpers required by std/sys
+// Low-level syscall helpers
 #[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn krakeos_syscall(num: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
     let result: u64;

@@ -776,7 +776,7 @@ pub extern "C" fn aot_call_indirect(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_call_host(ctx: &AotContext, func_idx: u32, sp: *mut u128) -> *mut u128 {
+pub extern "C" fn aot_call_host(ctx: &mut AotContext, func_idx: u32, sp: *mut u128) -> *mut u128 {
     if ctx.store.is_null() {
         unsafe {
             aot_trap();
@@ -796,16 +796,17 @@ pub extern "C" fn aot_call_host(ctx: &AotContext, func_idx: u32, sp: *mut u128) 
         sp
     ));
 
-    let mut params = Vec::with_capacity(ty.params.valtypes.len());
-    
+    let n_params = ty.params.valtypes.len();
+    let mut params = Vec::with_capacity(n_params);
+
     // Safety check: Ensure sp is not null and points to valid stack
     if sp.is_null() {
         unsafe { aot_trap(); }
     }
 
     unsafe {
-        for i in 0..ty.params.valtypes.len() {
-            let val_ptr = sp.sub(i + 1); // Param 0 is at sp-1, Param 1 at sp-2...
+        for i in 0..n_params {
+            let val_ptr = sp.add(n_params - 1 - i);
             let val_type = ty.params.valtypes[i];
             let val = Value::from_u128(*val_ptr, val_type);
             params.push(val);
@@ -842,13 +843,26 @@ pub extern "C" fn aot_call_host(ctx: &AotContext, func_idx: u32, sp: *mut u128) 
     };
     store.caller_module = None;
 
-    let mut current_sp = sp;
+    // Refresh context in case the host function caused memory to grow
+    if let Some(&mem_addr) = store.modules.get(module_addr).mem_addrs.first() {
+        let mem = &store.memories.get(mem_addr).mem;
+        ctx.memory_base = mem.get_base_ptr();
+        ctx.memory_size = mem.len();
+    }
+
+    let n_results = results.len();
+    let mut current_sp = unsafe { sp.add(n_params) };
     for res in results {
         current_sp = unsafe { current_sp.sub(1) };
         unsafe {
             *current_sp = res.to_u128();
         }
     }
+
+    crate::os::debug_print(&format!(
+        "AOT: host call done. sp={:p} n_params={} n_results={} returned_sp={:p}\n",
+        sp, n_params, n_results, current_sp
+    ));
 
     current_sp
 }

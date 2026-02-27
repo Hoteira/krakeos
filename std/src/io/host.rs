@@ -1,3 +1,7 @@
+// I/O stream WASI imports + CLI (stdin/stdout/stderr/exit)
+
+// ── I/O Streams ──
+
 #[cfg(target_arch = "wasm32")]
 mod wasi_imports {
     #[link(wasm_import_module = "wasi:io/streams@0.2.0")]
@@ -24,10 +28,36 @@ mod wasi_imports {
         #[link_name = "[resource-drop]error"]
         pub fn error_drop(handle: i32);
     }
+
+    #[link(wasm_import_module = "wasi:cli/stdout@0.2.0")]
+    unsafe extern "C" {
+        #[link_name = "get-stdout"]
+        pub fn get_stdout() -> i32;
+    }
+
+    #[link(wasm_import_module = "wasi:cli/stdin@0.2.0")]
+    unsafe extern "C" {
+        #[link_name = "get-stdin"]
+        pub fn get_stdin() -> i32;
+    }
+
+    #[link(wasm_import_module = "wasi:cli/stderr@0.2.0")]
+    unsafe extern "C" {
+        #[link_name = "get-stderr"]
+        pub fn get_stderr() -> i32;
+    }
+
+    #[link(wasm_import_module = "wasi:cli/exit@0.2.0")]
+    unsafe extern "C" {
+        #[link_name = "exit"]
+        pub fn exit(status: i32) -> !;
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
 pub use wasi_imports::*;
+
+// ── Native I/O stream shims ──
 
 #[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn output_stream_blocking_write_and_flush(handle: i32, ptr: *const u8, len: usize, result_ptr: *mut u8) {
@@ -81,4 +111,27 @@ pub unsafe fn pollable_drop(_handle: i32) {
 #[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn error_drop(_handle: i32) {
     // No-op for now on native
+}
+
+// ── Native CLI shims ──
+
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe fn get_stdout() -> i32 {
+    1 // FD 1
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe fn get_stdin() -> i32 {
+    0 // FD 0
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe fn get_stderr() -> i32 {
+    2 // FD 2
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe fn exit(status: i32) -> ! {
+    crate::sys::syscall1(60, status as u64);
+    loop {}
 }

@@ -1,5 +1,5 @@
 #[cfg(not(target_arch = "wasm32"))]
-pub use crate::wasi::krakeos::{
+pub use crate::os::krakeos::host::{
     krakeos_syscall as syscall,
     krakeos_syscall5 as syscall4,
     krakeos_syscall6 as syscall5,
@@ -10,7 +10,7 @@ pub use crate::wasi::krakeos::{
 };
 
 #[cfg(target_arch = "wasm32")]
-pub use crate::wasi::krakeos::{
+pub use crate::os::krakeos::host::{
     yield_task,
     hlt_loop,
     alloc_pages,

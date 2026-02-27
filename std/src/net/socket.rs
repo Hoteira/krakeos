@@ -1,5 +1,5 @@
 use crate::rust_alloc::vec::Vec;
-use crate::wasi::sockets::udp;
+use crate::net::host::udp;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SocketAddr {
