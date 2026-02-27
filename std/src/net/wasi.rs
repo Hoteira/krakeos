@@ -17,9 +17,11 @@ crate::export_method!(
         #[cfg(target_arch = "wasm32")]
         let res = u64::MAX;
         let mut buf = [0u8; 8];
-        if res == u64::MAX { buf[0] = 1; } else {
+        if res <= i32::MAX as u64 {
             buf[0] = 0;
             buf[4..8].copy_from_slice(&(res as i32).to_le_bytes());
+        } else {
+            buf[0] = 1;
         }
         write_bytes(store, result_ptr, &buf).map_err(|_| HaltExecutionError(1))?;
         Ok(vec![])
@@ -34,10 +36,8 @@ crate::export_method!(
         let socket = match args.get(0) { Some(Value::I32(v)) => *v, _ => return Err(HaltExecutionError(1)) };
         let ip_addr_ptr = match args.get(2) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
         let result_ptr = match args.get(3) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
-        
         let mut ip_addr = vec![0u8; 16];
         if read_mem(store, ip_addr_ptr, &mut ip_addr).is_err() { return Err(HaltExecutionError(1)); }
-
         #[cfg(not(target_arch = "wasm32"))]
         let res = unsafe { crate::sys::syscall6(49, socket as u64, ip_addr.as_ptr() as u64, 16, 0, 0, 0) };
         #[cfg(target_arch = "wasm32")]
@@ -70,10 +70,8 @@ crate::export_method!(
         let socket = match args.get(0) { Some(Value::I32(v)) => *v, _ => return Err(HaltExecutionError(1)) };
         let ip_addr_ptr = match args.get(2) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
         let result_ptr = match args.get(3) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
-        
         let mut ip_addr = vec![0u8; 16];
         if read_mem(store, ip_addr_ptr, &mut ip_addr).is_err() { return Err(HaltExecutionError(1)); }
-
         #[cfg(not(target_arch = "wasm32"))]
         let res = unsafe { crate::sys::syscall6(42, socket as u64, ip_addr.as_ptr() as u64, 16, 0, 0, 0) };
         #[cfg(target_arch = "wasm32")]
@@ -141,9 +139,11 @@ crate::export_method!(
         #[cfg(target_arch = "wasm32")]
         let res = u64::MAX;
         let mut buf = [0u8; 8];
-        if res == u64::MAX { buf[0] = 1; } else {
+        if res <= i32::MAX as u64 {
             buf[0] = 0;
             buf[4..8].copy_from_slice(&(res as i32).to_le_bytes());
+        } else {
+            buf[0] = 1;
         }
         write_bytes(store, result_ptr, &buf).map_err(|_| HaltExecutionError(1))?;
         Ok(vec![])
@@ -159,19 +159,17 @@ crate::export_method!(
         let buf_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
         let buf_len = match args.get(2) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
         let result_ptr = match args.get(3) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
-        
         let mut payload = vec![0u8; buf_len as usize];
         if read_mem(store, buf_ptr, &mut payload).is_err() { return Err(HaltExecutionError(1)); }
-
         #[cfg(not(target_arch = "wasm32"))]
         let res = unsafe { crate::sys::syscall6(52, socket as u64, payload.as_ptr() as u64, buf_len as u64, 0, 0, 0) };
         #[cfg(target_arch = "wasm32")]
         let res = u64::MAX;
-        let mut out_buf = [0u8; 8];
-        if res == u64::MAX { out_buf[0] = 1; } else {
+        let mut out_buf = [0u8; 16];
+        if res <= buf_len as u64 {
             out_buf[0] = 0;
-            out_buf[4..8].copy_from_slice(&(res as u32).to_le_bytes());
-        }
+            out_buf[8..16].copy_from_slice(&res.to_le_bytes());
+        } else { out_buf[0] = 1; }
         write_bytes(store, result_ptr, &out_buf).map_err(|_| HaltExecutionError(1))?;
         Ok(vec![])
     }
@@ -180,28 +178,30 @@ crate::export_method!(
 crate::export_method!(
     "wasi:sockets/tcp@0.2.0", "[method]tcp-socket.recv",
     [],
-    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![],
     pub fn tcp_recv<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         let socket = match args.get(0) { Some(Value::I32(v)) => *v, _ => return Err(HaltExecutionError(1)) };
-        let buf_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
-        let buf_len = match args.get(2) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
-        let result_ptr = match args.get(3) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
-        
-        let mut payload = vec![0u8; buf_len as usize];
-
+        let max_len = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
+        let result_ptr = match args.get(2) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
+        let mut payload = vec![0u8; max_len as usize];
         #[cfg(not(target_arch = "wasm32"))]
-        let res = unsafe { crate::sys::syscall6(53, socket as u64, payload.as_mut_ptr() as u64, buf_len as u64, 0, 0, 0) };
+        let res = unsafe { crate::sys::syscall6(53, socket as u64, payload.as_mut_ptr() as u64, max_len as u64, 0, 0, 0) };
         #[cfg(target_arch = "wasm32")]
         let res = u64::MAX;
-        let mut out_buf = [0u8; 8];
-        if res == u64::MAX { out_buf[0] = 1; } else {
-            out_buf[0] = 0;
-            out_buf[4..8].copy_from_slice(&(res as u32).to_le_bytes());
-            if res > 0 && res != u64::MAX {
-                write_bytes(store, buf_ptr, &payload[..res as usize]).map_err(|_| HaltExecutionError(1))?;
+        if res <= max_len as u64 {
+            let res_usize = res as usize;
+            let mut header = vec![0u8; 32];
+            header[0] = 0;
+            header[8..16].copy_from_slice(&res.to_le_bytes());
+            if res_usize > 0 {
+                header.extend_from_slice(&payload[..res_usize]);
             }
+            write_bytes(store, result_ptr, &header).map_err(|_| HaltExecutionError(1))?;
+        } else {
+            let mut header = [0u8; 32];
+            header[0] = 1;
+            write_bytes(store, result_ptr, &header).map_err(|_| HaltExecutionError(1))?;
         }
-        write_bytes(store, result_ptr, &out_buf).map_err(|_| HaltExecutionError(1))?;
         Ok(vec![])
     }
 );
@@ -218,10 +218,10 @@ crate::export_method!(
         #[cfg(target_arch = "wasm32")]
         let res = u64::MAX;
         let mut buf = [0u8; 8];
-        if res == u64::MAX { buf[0] = 1; } else {
+        if res <= i32::MAX as u64 {
             buf[0] = 0;
             buf[4..8].copy_from_slice(&(res as i32).to_le_bytes());
-        }
+        } else { buf[0] = 1; }
         write_bytes(store, result_ptr, &buf).map_err(|_| HaltExecutionError(1))?;
         Ok(vec![])
     }
@@ -260,14 +260,14 @@ crate::export_method!(
         let result_ptr = match args.get(4) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
         let mut payload = vec![0u8; buf_len as usize];
         if read_mem(store, buf_ptr, &mut payload).is_err() { return Err(HaltExecutionError(1)); }
-        let mut dest_addr = vec![0u8; 16];
+        let mut dest_addr = [0u8; 16];
         if read_mem(store, dest_addr_ptr, &mut dest_addr).is_err() { return Err(HaltExecutionError(1)); }
         #[cfg(not(target_arch = "wasm32"))]
         let res = unsafe { crate::sys::syscall6(44, stream as u64, payload.as_ptr() as u64, buf_len as u64, 0, dest_addr.as_ptr() as u64, 16) };
         #[cfg(target_arch = "wasm32")]
         let res = u64::MAX;
         let mut result_buf = [0u8; 16];
-        if res != u64::MAX {
+        if res <= buf_len as u64 {
             result_buf[0] = 0;
             result_buf[8..16].copy_from_slice(&res.to_le_bytes());
         } else { result_buf[0] = 1; }
@@ -282,23 +282,33 @@ crate::export_method!(
     vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![],
     pub fn udp_receive<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         let stream = match args.get(0) { Some(Value::I32(v)) => *v, _ => return Err(HaltExecutionError(1)) };
-        let max_results = match args.get(1) { Some(Value::I64(v)) => *v, _ => return Err(HaltExecutionError(1)) };
+        let max_results = match args.get(1) { Some(Value::I64(v)) => *v as u64, _ => return Err(HaltExecutionError(1)) };
         let result_ptr = match args.get(2) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
+        
         let mut payload = vec![0u8; max_results as usize];
-        let mut src_addr = vec![0u8; 16];
+        let mut src_addr = [0u8; 16];
         let mut addr_len: u32 = 16;
+
         #[cfg(not(target_arch = "wasm32"))]
         let res = unsafe { crate::sys::syscall6(45, stream as u64, payload.as_mut_ptr() as u64, max_results, 0, src_addr.as_mut_ptr() as u64, &mut addr_len as *mut u32 as u64) };
         #[cfg(target_arch = "wasm32")]
         let res = u64::MAX;
-        let mut header = vec![0u8; 32 + max_results as usize];
-        if res != u64::MAX && res > 0 {
+
+        if res <= max_results {
+            let res_usize = res as usize;
+            let mut header = vec![0u8; 32];
             header[0] = 0;
             header[8..16].copy_from_slice(&res.to_le_bytes());
             header[16..32].copy_from_slice(&src_addr);
-            header[32..32 + (res as usize)].copy_from_slice(&payload[..res as usize]);
-        } else { header[0] = 1; }
-        write_bytes(store, result_ptr, &header[..32 + if res != u64::MAX { res as usize } else { 0 }]).map_err(|_| HaltExecutionError(1))?;
+            if res_usize > 0 {
+                header.extend_from_slice(&payload[..res_usize]);
+            }
+            write_bytes(store, result_ptr, &header).map_err(|_| HaltExecutionError(1))?;
+        } else {
+            let mut header = [0u8; 32];
+            header[0] = 1;
+            write_bytes(store, result_ptr, &header).map_err(|_| HaltExecutionError(1))?;
+        }
         Ok(vec![])
     }
 );
@@ -335,24 +345,6 @@ crate::export_method!(
 );
 
 crate::export_method!(
-    "wasi:sockets/udp@0.2.0", "[resource-drop]incoming-datagram-stream",
-    [],
-    vec![ValType::NumType(NumType::I32)], vec![],
-    pub fn incoming_datagram_stream_drop<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-        crate::wasm::wasi::preview2::resource_drop(store, args)
-    }
-);
-
-crate::export_method!(
-    "wasi:sockets/udp@0.2.0", "[resource-drop]outgoing-datagram-stream",
-    [],
-    vec![ValType::NumType(NumType::I32)], vec![],
-    pub fn outgoing_datagram_stream_drop<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-        crate::wasm::wasi::preview2::resource_drop(store, args)
-    }
-);
-
-crate::export_method!(
     "wasi:sockets/tcp@0.2.0", "[resource-drop]tcp-socket",
     [],
     vec![ValType::NumType(NumType::I32)], vec![],
@@ -367,24 +359,6 @@ crate::export_method!(
     vec![ValType::NumType(NumType::I32)], vec![],
     pub fn network_drop<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         crate::wasm::wasi::preview2::resource_drop(store, args)
-    }
-);
-
-crate::export_method!(
-    "wasi:sockets/ip-name-lookup@0.2.0", "[resource-drop]resolve-address-stream",
-    [],
-    vec![ValType::NumType(NumType::I32)], vec![],
-    pub fn resolve_address_stream_drop<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-        crate::wasm::wasi::preview2::resource_drop(store, args)
-    }
-);
-
-crate::export_method!(
-    "wasi_snapshot_preview1", "adapter_close_badfd",
-    [],
-    vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
-    pub fn adapter_close_badfd<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-        Ok(vec![Value::I32(76)])
     }
 );
 
@@ -406,10 +380,6 @@ pub fn register_wasi<T: Config>(linker: &mut crate::wasm::Linker, store: &mut cr
     instance_network::register(linker, store);
     resolve_addresses::register(linker, store);
     udp_socket_drop::register(linker, store);
-    incoming_datagram_stream_drop::register(linker, store);
-    outgoing_datagram_stream_drop::register(linker, store);
     tcp_socket_drop::register(linker, store);
     network_drop::register(linker, store);
-    resolve_address_stream_drop::register(linker, store);
-    adapter_close_badfd::register(linker, store);
 }

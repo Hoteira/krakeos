@@ -56,6 +56,21 @@ pub extern "C" fn aot_trap_host() -> ! {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn aot_trap_unimplemented_fc() -> ! {
+    panic!("AOT Trap: Unimplemented FC Extension Instruction");
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_trap_unimplemented_simd() -> ! {
+    panic!("AOT Trap: Unimplemented SIMD Instruction");
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aot_trap_unimplemented_atomic() -> ! {
+    panic!("AOT Trap: Unimplemented Atomic Instruction");
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn aot_i32_div_s(a: i32, b: i32) -> i32 {
     if b == 0 {
         unsafe {
@@ -762,16 +777,35 @@ pub extern "C" fn aot_call_indirect(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_call_host(ctx: &AotContext, func_idx: u32, sp: *mut u128) -> *mut u128 {
+    if ctx.store.is_null() {
+        unsafe {
+            aot_trap();
+        }
+    }
     let store = unsafe { &mut *(ctx.store as *mut Store<()>) };
     let module_addr = ctx.module_addr;
     let func_addr = store.modules.get(module_addr).func_addrs[func_idx as usize];
     let func_inst = store.functions.get(func_addr);
     let ty = func_inst.ty();
 
+    crate::os::debug_print(&format!(
+        "AOT: Calling host func {} (addr {}) with {} params... sp={:p}\n",
+        func_idx,
+        func_addr,
+        ty.params.valtypes.len(),
+        sp
+    ));
+
     let mut params = Vec::with_capacity(ty.params.valtypes.len());
+    
+    // Safety check: Ensure sp is not null and points to valid stack
+    if sp.is_null() {
+        unsafe { aot_trap(); }
+    }
+
     unsafe {
         for i in 0..ty.params.valtypes.len() {
-            let val_ptr = sp.add(ty.params.valtypes.len() - 1 - i);
+            let val_ptr = sp.sub(i + 1); // Param 0 is at sp-1, Param 1 at sp-2...
             let val_type = ty.params.valtypes[i];
             let val = Value::from_u128(*val_ptr, val_type);
             params.push(val);
@@ -788,8 +822,6 @@ pub extern "C" fn aot_call_host(ctx: &AotContext, func_idx: u32, sp: *mut u128) 
                     unsafe {
                         *ctx.trap_code = if code == 0 { -1 } else { code };
                     }
-                    // We must return a dummy value and let the AOT compiler check `trap_code`
-                    // to unwind the stack immediately.
                     return sp;
                 }
             }
@@ -810,19 +842,7 @@ pub extern "C" fn aot_call_host(ctx: &AotContext, func_idx: u32, sp: *mut u128) 
     };
     store.caller_module = None;
 
-    // SP starts at the end of parameters.
-    // We need to move it up by the number of results.
-    // However, the caller already reserved space if results > params.
-    // In compiler.rs Call(idx):
-    // let reserve_space = if result_count > param_count { (result_count - param_count) * 16 } else { 0 };
-    // if reserve_space > 0 { self.emitter.sub_reg_imm32(Reg::RSP, reserve_space as u32); }
-    // sp = RSP + 16 (for push RDI) + reserve_space.
-
-    // Let's assume sp is passed correctly.
-    // Results should be placed at [new_sp], [new_sp + 16], ...
-    // where new_sp = sp + (params.len() - results.len()) * 16.
-
-    let mut current_sp = unsafe { sp.add(ty.params.valtypes.len()) };
+    let mut current_sp = sp;
     for res in results {
         current_sp = unsafe { current_sp.sub(1) };
         unsafe {

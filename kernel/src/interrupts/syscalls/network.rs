@@ -347,7 +347,7 @@ pub fn handle_connect(context: &mut CPUState) {
     unsafe {
         core::arch::asm!("sti");
     }
-    let res = crate::net::tcp::tcp_connect(local_port, dst_ip, dst_port);
+    let res = crate::net::tcp::tcp_connect(local_port, dst_ip, dst_port, socket_id);
     unsafe {
         core::arch::asm!("cli");
     }
@@ -433,10 +433,7 @@ pub fn handle_accept(context: &mut CPUState) {
             let new_socket_id = crate::net::socket::SOCKET_MANAGER
                 .lock()
                 .create_socket(0, crate::net::socket::SocketType::Tcp);
-            // Store the tcp connection key in the new socket's rx_queue[0] hack:
-            // encode ConnKey as bytes in the socket's rx_queue for now
-            // We'll track via a global tcp_conn_map on the socket manager instead.
-            // Actually, reuse `local_port` field + store key in a side-map:
+            
             {
                 let mut sm = crate::net::socket::SOCKET_MANAGER.lock();
                 if let Some(sock) = sm.sockets.get_mut(&new_socket_id) {
@@ -445,6 +442,12 @@ pub fn handle_accept(context: &mut CPUState) {
                 // Store packed key for send/recv lookup
                 sm.tcp_connections
                     .insert(new_socket_id, crate::net::tcp::conn_key_pack(key));
+                
+                // CRITICAL: Associate the new socket with the connection for the packet router
+                let mut tm = crate::net::tcp::TCP_MANAGER.lock();
+                if let Some(conn) = tm.connections.get_mut(&key) {
+                    conn.socket_id = new_socket_id;
+                }
             }
 
             // Assign to process socket table
@@ -504,11 +507,16 @@ pub fn handle_tcp_send(context: &mut CPUState) {
         }
     };
 
-    let data = unsafe { core::slice::from_raw_parts(buf_ptr, len) };
+    // Copy to kernel buffer first
+    let mut data = alloc::vec![0u8; len];
+    unsafe {
+        core::ptr::copy_nonoverlapping(buf_ptr, data.as_mut_ptr(), len);
+    }
+
     unsafe {
         core::arch::asm!("sti");
     }
-    let res = crate::net::tcp::tcp_send(key, data);
+    let res = crate::net::tcp::tcp_send(key, &data);
     unsafe {
         core::arch::asm!("cli");
     }
@@ -533,26 +541,23 @@ pub fn handle_tcp_recv(context: &mut CPUState) {
         }
     };
 
-    let key = match crate::net::socket::SOCKET_MANAGER
-        .lock()
-        .tcp_connections
-        .get(&socket_id)
-        .copied()
-    {
-        Some(packed) => crate::net::tcp::conn_key_unpack(packed),
-        None => {
-            context.rax = u64::MAX;
-            return;
-        }
-    };
-
-    let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr, len) };
+    // Enable interrupts to poll
     unsafe {
         core::arch::asm!("sti");
     }
-    let n = crate::net::tcp::tcp_recv(key, buf);
+    crate::drivers::network::virtio::poll_rx();
     unsafe {
         core::arch::asm!("cli");
     }
-    context.rax = n as u64;
+
+    let mut sm = crate::net::socket::SOCKET_MANAGER.lock();
+    if let Some(packet) = sm.pop_packet(socket_id) {
+        let copy_len = core::cmp::min(len, packet.len());
+        unsafe {
+            core::ptr::copy_nonoverlapping(packet.as_ptr(), buf_ptr, copy_len);
+        }
+        context.rax = copy_len as u64;
+    } else {
+        context.rax = 0; // Would block/Empty
+    }
 }

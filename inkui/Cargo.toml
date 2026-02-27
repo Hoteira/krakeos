@@ -8,5 +8,5 @@ edition.workspace = true
 # common = { path = "../common" }
 std = { path = "../std" }
 
-titanf = { version = "2.5.1", default-features = false }
+titanf = { version = "2.3.3", default-features = false }
 asvgard = { version = "0.2.3", default-features = false }

@@ -57,14 +57,14 @@ pub fn main() {
         true,
     );
 
-    std::thread::spawn(|| {
+    /*std::thread::spawn(|| {
         std::wasm::run(
             "@0xE0/apps/net_test.wasm",
             "/",
             &[(0, 0), (1, 1), (2, 2)],
-            true,
+            false,
         );
-    });
+    });*/
 
     std::thread::spawn(|| {
         std::wasm::run(

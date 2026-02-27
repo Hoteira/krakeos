@@ -278,6 +278,15 @@ pub fn handle_tcp(packet: &[u8], src_ip: [u8; 4]) {
                 // Data delivery
                 if !data.is_empty() {
                     conn.rx_buf.extend(data.iter().copied());
+                    
+                    let socket_id = conn.socket_id;
+                    if socket_id != 0 {
+                        let mut sm = crate::net::socket::SOCKET_MANAGER.lock();
+                        if let Some(socket) = sm.sockets.get_mut(&socket_id) {
+                            socket.rx_queue.push(data.to_vec());
+                        }
+                    }
+
                     conn.rcv_nxt = conn.rcv_nxt.wrapping_add(data.len() as u32);
                     let (snd_nxt, rcv_nxt, lp) = (conn.snd_nxt, conn.rcv_nxt, conn.key.local_port);
                     drop(mgr);
@@ -324,7 +333,12 @@ pub fn handle_tcp(packet: &[u8], src_ip: [u8; 4]) {
 // ────────────────────────────────────────────────────────────
 
 /// Active open: sends SYN, returns Ok once Established (blocking poll).
-pub fn tcp_connect(local_port: u16, dst_ip: [u8; 4], dst_port: u16) -> Result<(), &'static str> {
+pub fn tcp_connect(
+    local_port: u16,
+    dst_ip: [u8; 4],
+    dst_port: u16,
+    socket_id: usize,
+) -> Result<(), &'static str> {
     let key = ConnKey {
         local_port,
         remote_ip: dst_ip,
@@ -341,7 +355,7 @@ pub fn tcp_connect(local_port: u16, dst_ip: [u8; 4], dst_port: u16) -> Result<()
                 snd_nxt: isn.wrapping_add(1),
                 rcv_nxt: 0,
                 rx_buf: VecDeque::new(),
-                socket_id: 0,
+                socket_id,
             },
         );
     }

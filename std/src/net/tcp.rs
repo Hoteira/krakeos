@@ -47,7 +47,7 @@ impl TcpStream {
 
     /// Write data to the connection.
     pub fn write_all(&mut self, buf: &[u8]) -> Result<usize, i32> {
-        let mut result = [0u8; 8];
+        let mut result = [0u8; 16];
         unsafe {
             tcp::send(
                 self.handle as i32,
@@ -57,7 +57,7 @@ impl TcpStream {
             )
         };
         let res = if result[0] == 0 {
-            unsafe { core::ptr::read_unaligned(result.as_ptr().add(4) as *const u32) as u64 }
+            unsafe { core::ptr::read_unaligned(result.as_ptr().add(8) as *const u64) }
         } else {
             u64::MAX
         };
@@ -71,25 +71,23 @@ impl TcpStream {
 
     /// Read data from the connection. Returns 0 if no data ready yet.
     pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, i32> {
-        let mut result = [0u8; 8];
+        let mut wasi_buf = crate::rust_alloc::vec![0u8; 32 + buf.len()];
         unsafe {
             tcp::recv(
                 self.handle as i32,
-                buf.as_mut_ptr(),
                 buf.len() as u32,
-                result.as_mut_ptr(),
+                wasi_buf.as_mut_ptr(),
             )
         };
-        let res = if result[0] == 0 {
-            unsafe { core::ptr::read_unaligned(result.as_ptr().add(4) as *const u32) as u64 }
-        } else {
-            u64::MAX
-        };
 
-        if res == u64::MAX {
-            Err(-1)
+        if wasi_buf[0] == 0 {
+            let received_len = unsafe { core::ptr::read_unaligned(wasi_buf.as_ptr().add(8) as *const u64) } as usize;
+            if received_len > 0 {
+                buf[..received_len].copy_from_slice(&wasi_buf[32..32 + received_len]);
+            }
+            Ok(received_len)
         } else {
-            Ok(res as usize)
+            Err(-1)
         }
     }
 }

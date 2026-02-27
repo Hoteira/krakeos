@@ -29,11 +29,11 @@ pub use wasi_imports::*;
 #[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn create_udp_socket(address_family: i32, result_ptr: *mut u8) {
     let res = crate::sys::syscall6(41, address_family as u64, 2, 0, 0, 0, 0); // SOCK_DGRAM=2
-    if res == u64::MAX {
-        *result_ptr = 1; // err
-    } else {
+    if res <= i32::MAX as u64 {
         *result_ptr = 0; // ok
         core::ptr::write_unaligned(result_ptr.add(4) as *mut i32, res as i32);
+    } else {
+        *result_ptr = 1; // err
     }
 }
 
@@ -55,7 +55,7 @@ pub unsafe fn start_bind(socket: i32, _network: i32, ip_addr_ptr: *const u8, res
 #[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn send(stream: i32, buf_ptr: *const u8, buf_len: u32, dest_addr_ptr: *const u8, result_ptr: *mut u8) {
     let res = crate::sys::syscall6(44, stream as u64, buf_ptr as u64, buf_len as u64, 0, dest_addr_ptr as u64, 16);
-    if res != u64::MAX {
+    if res <= buf_len as u64 {
         *result_ptr = 0; // ok
         core::ptr::write_unaligned(result_ptr.add(8) as *mut u64, res);
     } else {
@@ -69,7 +69,7 @@ pub unsafe fn receive(stream: i32, max_results: u64, result_ptr: *mut u8) {
     let mut addr_len: u32 = 16;
     let src_addr_ptr = result_ptr.add(16);
     let res = crate::sys::syscall6(45, stream as u64, buf_ptr as u64, max_results, 0, src_addr_ptr as u64, &mut addr_len as *mut u32 as u64);
-    if res != u64::MAX && res > 0 {
+    if res <= max_results {
         *result_ptr = 0; // ok
         core::ptr::write_unaligned(result_ptr.add(8) as *mut u64, res);
     } else {

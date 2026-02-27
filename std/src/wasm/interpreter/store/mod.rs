@@ -476,7 +476,7 @@ impl<'a, T: Config> Store<'a, T> {
 
                             // Prepare AOT stack with parameters
                             let mut sp = unsafe { stack_ptr.add(stack_size / 16) };
-                            for param in params.iter().rev() {
+                            for param in params.iter() {
                                 sp = unsafe { sp.sub(1) };
                                 unsafe {
                                     *sp = param.to_u128();

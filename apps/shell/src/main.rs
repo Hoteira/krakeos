@@ -20,7 +20,6 @@ const STDIN_FD: usize = 0;
 const STDOUT_FD: usize = 1;
 
 pub fn main() {
-    debugln!("[shell] main started\n");
     let welcome_icon = core::char::from_u32(0xE8F0).unwrap_or(' ');
     let welcome_msg = format!("\nWelcome to KrakeOS Shell {} \n", welcome_icon);
     std::os::file_write(STDOUT_FD, welcome_msg.as_bytes());
