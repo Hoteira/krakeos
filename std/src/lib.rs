@@ -32,6 +32,7 @@ pub mod memory;
 pub mod net;
 pub mod os;
 pub mod process;
+pub mod random;
 pub mod rt;
 pub mod sync;
 pub mod sys;

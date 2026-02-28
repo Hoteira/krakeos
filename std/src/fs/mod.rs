@@ -2,149 +2,15 @@ use crate::io::{Error, Read, Result, Seek, SeekFrom, Write};
 use rust_alloc::string::String;
 use rust_alloc::vec::Vec;
 
+pub mod host;
 pub mod async_file;
+#[cfg(feature = "userland")]
+pub mod wasi;
 pub use async_file::AsyncFile;
 
-// --- Filesystem method_export! bindings (from wasi/filesystem.rs) ---
-
-method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.open-at",
-    pub unsafe fn open_at(
-        dir_handle: i32,
-        _flags: u32,
-        path_ptr: *const u8,
-        path_len: usize,
-        oflags: u32,
-        _flags_val: u32,
-        result_ptr: *mut u8,
-    ) {
-        let syscall_num = if (oflags & 0x1) != 0 { 85 } else { 2 };
-        let res = crate::sys::syscall(syscall_num, path_ptr as u64, path_len as u64, 0);
-        if res == u64::MAX {
-            core::ptr::write_unaligned(result_ptr as *mut u32, 1); // Err
-        } else {
-            core::ptr::write_unaligned(result_ptr as *mut u32, 0); // Ok
-            core::ptr::write_unaligned(result_ptr.add(4) as *mut i32, res as i32);
-        }
-    }
-);
-
-method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.stat",
-    pub unsafe fn stat(handle: i32, result_ptr: *mut u8) {
-        let mut s = core::mem::zeroed::<Stat>();
-        let res = crate::sys::syscall(5, handle as u64, 0, &mut s as *mut _ as u64);
-        if res == u64::MAX {
-            *result_ptr = 1; // Err
-        } else {
-            *result_ptr = 0; // Ok
-            core::ptr::copy_nonoverlapping(
-                &s as *const _ as *const u8,
-                result_ptr.add(8),
-                core::mem::size_of::<Stat>(),
-            );
-        }
-    }
-);
-
-method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.set-size",
-    pub unsafe fn set_size(handle: i32, size: u64, result_ptr: *mut u8) {
-        let res = crate::sys::syscall(77, handle as u64, size, 0);
-        if res == u64::MAX {
-            *result_ptr = 1;
-        } else {
-            *result_ptr = 0;
-        }
-    }
-);
-
-method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.seek",
-    pub unsafe fn seek(handle: i32, offset: u64, whence: i32, result_ptr: *mut u8) {
-        let res = crate::sys::syscall(8, handle as u64, offset, whence as u64);
-        if res == u64::MAX {
-            *result_ptr = 1;
-        } else {
-            *result_ptr = 0;
-            core::ptr::write_unaligned(result_ptr.add(8) as *mut u64, res);
-        }
-    }
-);
-
-method_export!("wasi:filesystem/types@0.2.0", "[resource-drop]descriptor",
-    pub unsafe fn descriptor_drop(handle: i32) {
-        crate::sys::syscall(3, handle as u64, 0, 0);
-    }
-);
-
-method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.create-directory-at",
-    pub unsafe fn create_directory_at(
-        handle: i32,
-        path_ptr: *const u8,
-        path_len: usize,
-        result_ptr: *mut u8,
-    ) {
-        let _ = handle;
-        let res = crate::sys::syscall(83, path_ptr as u64, path_len as u64, 0);
-        if res == u64::MAX {
-            *result_ptr = 1;
-        } else {
-            *result_ptr = 0;
-        }
-    }
-);
-
-method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.unlink-file-at",
-    pub unsafe fn unlink_file_at(handle: i32, path_ptr: *const u8, path_len: usize, result_ptr: *mut u8) {
-        let _ = handle;
-        let res = crate::sys::syscall(87, path_ptr as u64, path_len as u64, 0);
-        if res == u64::MAX {
-            *result_ptr = 1;
-        } else {
-            *result_ptr = 0;
-        }
-    }
-);
-
-method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.remove-directory-at",
-    pub unsafe fn remove_directory_at(
-        handle: i32,
-        path_ptr: *const u8,
-        path_len: usize,
-        result_ptr: *mut u8,
-    ) {
-        let _ = handle;
-        let res = crate::sys::syscall(84, path_ptr as u64, path_len as u64, 0);
-        if res == u64::MAX {
-            *result_ptr = 1;
-        } else {
-            *result_ptr = 0;
-        }
-    }
-);
-
-method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.rename-at",
-    pub unsafe fn rename_at(
-        handle: i32,
-        old_path_ptr: *const u8,
-        old_path_len: usize,
-        new_handle: i32,
-        new_path_ptr: *const u8,
-        new_path_len: usize,
-        result_ptr: *mut u8,
-    ) {
-        let _ = (handle, new_handle);
-        let res = crate::sys::syscall4(
-            82,
-            old_path_ptr as u64,
-            old_path_len as u64,
-            new_path_ptr as u64,
-            new_path_len as u64,
-        );
-        if res == u64::MAX {
-            *result_ptr = 1;
-        } else {
-            *result_ptr = 0;
-        }
-    }
-);
+// Re-export key bindings for callers that use crate::fs::descriptor_drop etc.
+pub use host::{open_at, stat, set_size, seek, descriptor_drop};
+pub use host::{create_directory_at, unlink_file_at, remove_directory_at, rename_at};
 
 // readdir support - uses WASI preview1 fd_readdir on wasm32, KrakeOS syscall 78 on native
 #[cfg(target_arch = "wasm32")]
@@ -162,70 +28,6 @@ unsafe extern "C" {
 #[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn readdir(fd: i32, buf: &mut [u8]) -> u64 {
     crate::sys::syscall(78, fd as u64, buf.as_mut_ptr() as u64, buf.len() as u64)
-}
-
-// --- Arch-gated helper functions ---
-
-#[cfg(not(target_arch = "wasm32"))]
-pub unsafe fn create_dir_raw(path: &str) -> i32 {
-    crate::sys::syscall(83, path.as_ptr() as u64, path.len() as u64, 0) as i32
-}
-
-#[cfg(target_arch = "wasm32")]
-pub unsafe fn create_dir_raw(path: &str) -> i32 {
-    let mut result_buf = [0u8; 4];
-    create_directory_at(3, path.as_ptr(), path.len(), result_buf.as_mut_ptr());
-    if result_buf[0] == 0 { 0 } else { -1 }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub unsafe fn remove_file_raw(path: &str) -> i32 {
-    crate::sys::syscall(87, path.as_ptr() as u64, path.len() as u64, 0) as i32
-}
-
-#[cfg(target_arch = "wasm32")]
-pub unsafe fn remove_file_raw(path: &str) -> i32 {
-    let mut result_buf = [0u8; 4];
-    unlink_file_at(3, path.as_ptr(), path.len(), result_buf.as_mut_ptr());
-    if result_buf[0] == 0 { 0 } else { -1 }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub unsafe fn remove_dir_raw(path: &str) -> i32 {
-    crate::sys::syscall(84, path.as_ptr() as u64, path.len() as u64, 0) as i32
-}
-
-#[cfg(target_arch = "wasm32")]
-pub unsafe fn remove_dir_raw(path: &str) -> i32 {
-    let mut result_buf = [0u8; 4];
-    remove_directory_at(3, path.as_ptr(), path.len(), result_buf.as_mut_ptr());
-    if result_buf[0] == 0 { 0 } else { -1 }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub unsafe fn rename_raw(from: &str, to: &str) -> i32 {
-    crate::sys::syscall4(
-        82,
-        from.as_ptr() as u64,
-        from.len() as u64,
-        to.as_ptr() as u64,
-        to.len() as u64,
-    ) as i32
-}
-
-#[cfg(target_arch = "wasm32")]
-pub unsafe fn rename_raw(from: &str, to: &str) -> i32 {
-    let mut result_buf = [0u8; 4];
-    rename_at(
-        3,
-        from.as_ptr(),
-        from.len(),
-        3,
-        to.as_ptr(),
-        to.len(),
-        result_buf.as_mut_ptr(),
-    );
-    if result_buf[0] == 0 { 0 } else { -1 }
 }
 
 // --- Types ---
@@ -330,7 +132,7 @@ impl Read for File {
         let mut result = [0u8; 24];
 
         unsafe {
-            crate::io::streams::input_stream_read(self.fd as i32, buffer.len() as u64, result.as_mut_ptr());
+            crate::io::host::input_stream_read(self.fd as i32, buffer.len() as u64, result.as_mut_ptr());
         }
 
         let r = unsafe { &*(result.as_ptr() as *const ReadResult) };
@@ -356,7 +158,7 @@ impl Write for File {
     fn write(&mut self, buffer: &[u8]) -> Result<usize> {
         let mut result = [0u8; 8];
         unsafe {
-            crate::io::streams::output_stream_blocking_write_and_flush(
+            crate::io::host::output_stream_blocking_write_and_flush(
                 self.fd as i32,
                 buffer.as_ptr(),
                 buffer.len(),
@@ -405,7 +207,7 @@ impl Drop for File {
 }
 
 pub fn create_dir(path: &str) -> Result<()> {
-    let res = unsafe { create_dir_raw(path) };
+    let res = unsafe { host::create_dir(path) };
     if res == 0 {
         Ok(())
     } else {
@@ -414,7 +216,7 @@ pub fn create_dir(path: &str) -> Result<()> {
 }
 
 pub fn remove_file(path: &str) -> Result<()> {
-    let res = unsafe { remove_file_raw(path) };
+    let res = unsafe { host::remove_file(path) };
     if res == 0 {
         Ok(())
     } else {
@@ -423,7 +225,7 @@ pub fn remove_file(path: &str) -> Result<()> {
 }
 
 pub fn remove_dir(path: &str) -> Result<()> {
-    let res = unsafe { remove_dir_raw(path) };
+    let res = unsafe { host::remove_dir(path) };
     if res == 0 {
         Ok(())
     } else {
@@ -432,7 +234,7 @@ pub fn remove_dir(path: &str) -> Result<()> {
 }
 
 pub fn rename(from: &str, to: &str) -> Result<()> {
-    let res = unsafe { rename_raw(from, to) };
+    let res = unsafe { host::rename(from, to) };
     if res == 0 {
         Ok(())
     } else {

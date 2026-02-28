@@ -9,6 +9,9 @@ pub mod net;
 pub mod events;
 pub use events::*;
 
+#[cfg(feature = "userland")]
+pub mod wasi;
+
 #[cfg(not(target_arch = "wasm32"))]
 pub use crate::sys::{syscall, syscall4, syscall5, syscall6};
 
@@ -112,9 +115,9 @@ pub fn debug_print(s: &str) {
     }
     #[cfg(target_arch = "wasm32")]
     unsafe {
-        let stderr = crate::io::streams::get_stderr();
+        let stderr = crate::io::host::get_stderr();
         let mut res = [0u8; 8];
-        crate::io::streams::output_stream_blocking_write_and_flush(stderr, s.as_ptr(), s.len(), res.as_mut_ptr());
+        crate::io::host::output_stream_blocking_write_and_flush(stderr, s.as_ptr(), s.len(), res.as_mut_ptr());
     }
 }
 
@@ -155,7 +158,7 @@ pub fn file_close(fd: usize) -> i32 {
 
 pub fn exit(code: u64) -> ! {
     unsafe {
-        crate::io::streams::cli_exit(code as i32);
+        crate::io::host::exit(code as i32);
     }
 }
 
@@ -199,7 +202,7 @@ pub fn spawn(path: &str) -> usize {
 }
 
 pub fn get_system_ticks() -> u64 {
-    unsafe { crate::time::monotonic_clock_now() / 1_000_000 }
+    unsafe { crate::time::host::monotonic_clock_now() / 1_000_000 }
 }
 
 pub fn brk(addr: usize) -> usize {
@@ -243,7 +246,7 @@ pub fn poll(fds: &mut [PollFd], timeout: i32) -> i32 {
         let mut ready_indices_ptr = 0u32;
         let _ = timeout;
 
-        crate::io::streams::poll_poll(
+        crate::io::host::poll_poll(
             handles_bytes.as_ptr(),
             handles.len() as u32,
             &mut ready_indices_ptr as *mut u32 as *mut u8
@@ -277,7 +280,7 @@ pub fn get_date() -> (u8, u8, u16) {
     #[cfg(target_arch = "wasm32")]
     unsafe {
         let mut buf = [0u8; 16];
-        crate::time::wall_clock_now(buf.as_mut_ptr());
+        crate::time::host::wall_clock_now(buf.as_mut_ptr());
         let secs = core::ptr::read_unaligned(buf.as_ptr() as *const u64);
         let days = secs / 86400;
         let (y, m, d) = epoch_to_date(days);
@@ -297,7 +300,7 @@ pub fn get_time() -> (u8, u8, u8) {
     #[cfg(target_arch = "wasm32")]
     unsafe {
         let mut buf = [0u8; 16];
-        crate::time::wall_clock_now(buf.as_mut_ptr());
+        crate::time::host::wall_clock_now(buf.as_mut_ptr());
         let secs = core::ptr::read_unaligned(buf.as_ptr() as *const u64);
         let s = (secs % 60) as u8;
         let m = ((secs / 60) % 60) as u8;
