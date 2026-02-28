@@ -48,7 +48,7 @@ pub fn main() {
 
     println!("Desktop Environment Initialized.");
 
-    println!("Starting WASM Apps...");
+    println!("Starting userland WASM Apps...");
 
     std::wasm::run("@0xE0/apps/aot_test.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
 
