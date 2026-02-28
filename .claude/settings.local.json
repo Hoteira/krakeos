@@ -1,7 +1,7 @@
 {
   "permissions": {
     "allow": [
-      "Bash(xargs grep:*)"
+      "Bash(cargo check:*)"
     ]
   }
 }

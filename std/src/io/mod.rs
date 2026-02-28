@@ -1,8 +1,6 @@
-pub mod host;
 pub mod serial;
 pub mod async_io;
-#[cfg(feature = "userland")]
-pub mod wasi;
+pub mod streams;
 
 pub use async_io::{AsyncRead, AsyncWrite};
 

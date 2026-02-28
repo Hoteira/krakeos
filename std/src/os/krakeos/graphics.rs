@@ -1,7 +1,36 @@
-#[cfg(not(target_arch = "wasm32"))]
-use crate::os::krakeos::syscall;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::os::krakeos::syscall5;
+// --- Window/screen method_export! bindings (from wasi/krakeos.rs) ---
+
+method_export!("krakeos:system/window@0.2.0", "create",
+    pub unsafe fn window_create(attributes_ptr: *const u8) -> u64 {
+        crate::sys::syscall(100, attributes_ptr as u64, 0, 0)
+    }
+);
+
+method_export!("krakeos:system/window@0.2.0", "update",
+    pub unsafe fn window_update(_handle: u64, attributes_ptr: *const u8) {
+        crate::sys::syscall(102, attributes_ptr as u64, 0, 0);
+    }
+);
+
+method_export!("krakeos:system/window@0.2.0", "get-events",
+    pub unsafe fn window_get_events(_handle: u64, buf_ptr: *mut u8, max: u32) -> i32 {
+        crate::sys::syscall(104, 0, buf_ptr as u64, max as u64) as i32
+    }
+);
+
+method_export!("krakeos:graphics/screen@0.2.0", "get-width",
+    pub unsafe fn screen_get_width() -> u32 {
+        crate::sys::syscall(106, 0, 0, 0) as u32
+    }
+);
+
+method_export!("krakeos:graphics/screen@0.2.0", "get-height",
+    pub unsafe fn screen_get_height() -> u32 {
+        crate::sys::syscall(107, 0, 0, 0) as u32
+    }
+);
+
+// --- Types ---
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 #[repr(u32)]
@@ -90,44 +119,33 @@ impl Color {
     }
 }
 
+// --- Simplified public API (no arch gating) ---
+
 pub fn get_screen_width() -> usize {
-    unsafe { super::host::get_screen_width() as usize }
+    unsafe { screen_get_width() as usize }
 }
 
 pub fn get_screen_height() -> usize {
-    unsafe { super::host::get_screen_height() as usize }
+    unsafe { screen_get_height() as usize }
 }
 
 pub fn add_window(window: &Window) -> usize {
-    #[cfg(not(target_arch = "wasm32"))]
-    unsafe { syscall(100, window as *const Window as u64, 0, 0) as usize }
-    #[cfg(target_arch = "wasm32")]
-    unsafe { super::host::window_create(window as *const Window as *const u8) as usize }
+    unsafe { window_create(window as *const Window as *const u8) as usize }
 }
 
 pub fn update_window(window: &Window) {
-    #[cfg(not(target_arch = "wasm32"))]
-    unsafe { syscall(102, window as *const Window as u64, 0, 0); }
-    #[cfg(target_arch = "wasm32")]
-    unsafe { super::host::window_update(0, window as *const Window as *const u8); }
+    unsafe { window_update(0, window as *const Window as *const u8); }
 }
 
 pub fn update_window_area(id: usize, x: usize, y: usize, w: usize, h: usize) {
     #[cfg(not(target_arch = "wasm32"))]
-    unsafe { syscall5(103, id as u64, x as u64, y as u64, w as u64, h as u64); }
+    unsafe { crate::sys::syscall5(103, id as u64, x as u64, y as u64, w as u64, h as u64); }
 }
 
 pub fn get_events(wid: usize, events: &mut [Event]) -> usize {
-    #[cfg(not(target_arch = "wasm32"))]
     unsafe {
-        crate::os::syscall(104, wid as u64, events.as_mut_ptr() as u64, events.len() as u64) as usize
-    }
-    #[cfg(target_arch = "wasm32")]
-    unsafe {
-        // We cast Event array to u8 buffer. Ensure layout matches!
-        // Event is repr(C).
         let ptr = events.as_mut_ptr() as *mut u8;
-        super::host::window_get_events(wid as u64, ptr, events.len() as u32) as usize
+        window_get_events(wid as u64, ptr, events.len() as u32) as usize
     }
 }
 

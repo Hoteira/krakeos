@@ -4,10 +4,10 @@ extern crate alloc;
 use alloc::string::{String, ToString};
 use inkui::{Color, Size, Widget, Window};
 use std::fs::File;
-use std::io::Read;
-use std::math::FloatMath;
 use std::os::Items;
+use std::io::Read;
 use std::{debugln, println};
+use std::math::FloatMath;
 
 pub fn main() {
     println!("Starting Userland Shell...");
@@ -50,34 +50,20 @@ pub fn main() {
 
     println!("Starting WASM Apps...");
 
-    std::wasm::run(
-        "@0xE0/apps/aot_test.wasm",
-        "/",
-        &[(0, 0), (1, 1), (2, 2)],
-        true,
-    );
+    std::wasm::run("@0xE0/apps/aot_test.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
 
     std::thread::spawn(|| {
-        std::wasm::run(
-            "@0xE0/apps/net_test.wasm",
-            "/",
-            &[(0, 0), (1, 1), (2, 2)],
-            false,
-        );
+        std::wasm::run("@0xE0/apps/net_test.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
     });
 
-    /*std::thread::spawn(|| {
-        std::wasm::run(
-            "@0xE0/apps/taskbar.wasm",
-            "/",
-            &[(0, 0), (1, 1), (2, 2)],
-            true,
-        );
+    std::thread::spawn(|| {
+        std::wasm::run("@0xE0/apps/taskbar.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
     });
 
-    std::os::spawn("@0xE0/sys/bin/term.elf");*/
+    std::os::spawn("@0xE0/sys/bin/term.elf");
 
     loop {
         std::os::yield_task();
     }
 }
+
