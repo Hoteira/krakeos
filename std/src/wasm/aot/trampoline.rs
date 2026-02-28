@@ -788,13 +788,13 @@ pub extern "C" fn aot_call_host(ctx: &mut AotContext, func_idx: u32, sp: *mut u1
     let func_inst = store.functions.get(func_addr);
     let ty = func_inst.ty();
 
-    crate::os::debug_print(&format!(
+    /*crate::os::debug_print(&format!(
         "AOT: Calling host func {} (addr {}) with {} params... sp={:p}\n",
         func_idx,
         func_addr,
         ty.params.valtypes.len(),
         sp
-    ));
+    ));*/
 
     let n_params = ty.params.valtypes.len();
     let mut params = Vec::with_capacity(n_params);
@@ -859,10 +859,10 @@ pub extern "C" fn aot_call_host(ctx: &mut AotContext, func_idx: u32, sp: *mut u1
         }
     }
 
-    crate::os::debug_print(&format!(
+    /*crate::os::debug_print(&format!(
         "AOT: host call done. sp={:p} n_params={} n_results={} returned_sp={:p}\n",
         sp, n_params, n_results, current_sp
-    ));
+    ));*/
 
     current_sp
 }
