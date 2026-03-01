@@ -57,10 +57,6 @@ pub fn poll_loopback() {
         }
     }
 
-    if processed > 0 {
-        crate::debugln!("poll_loopback: Processed {} loopback packets", processed);
-    }
-
     if flags & 0x200 != 0 {
         unsafe {
             core::arch::asm!("sti");
@@ -79,8 +75,6 @@ pub fn on_receive(packet: &[u8]) {
     let src_mac = [
         packet[6], packet[7], packet[8], packet[9], packet[10], packet[11],
     ];
-
-    crate::debugln!("on_receive: packet type={:#x}, len={}", eth_type, packet.len());
 
     match eth_type {
         0x0806 => {

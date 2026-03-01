@@ -136,9 +136,7 @@ pub fn get_screen_height() -> usize {
 }
 
 pub fn add_window(window: &Window) -> usize {
-    crate::debugln!("CALLING TCP FN add_window WITH ARGS: w={}, h={}", window.width, window.height);
     let res = unsafe { window_create(window as *const Window as *const u8) as usize };
-    crate::debugln!("TCP RESULT: add_window RESULT: {}", res);
     res
 }
 

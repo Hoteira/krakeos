@@ -214,9 +214,7 @@ pub fn debug_print(s: &str) {
 }
 
 pub fn sleep(ms: u64) {
-    crate::debugln!("CALLING TCP FN sleep WITH ARGS: ms={}", ms);
     crate::time::sleep(core::time::Duration::from_millis(ms));
-    crate::debugln!("TCP RESULT: sleep finished");
 }
 
 pub fn yield_task() {
@@ -224,14 +222,12 @@ pub fn yield_task() {
 }
 
 pub fn file_read(fd: usize, buffer: &mut [u8]) -> usize {
-    crate::debugln!("CALLING TCP FN file_read WITH ARGS: fd={}, len={}", fd, buffer.len());
     let mut file = crate::fs::File::from_raw_fd(fd);
     let res = match crate::io::Read::read(&mut file, buffer) {
         Ok(n) => n,
         Err(_) => 0,
     };
     core::mem::forget(file);
-    crate::debugln!("TCP RESULT: file_read RESULT: {}", res);
     res
 }
 
@@ -246,24 +242,19 @@ pub fn file_write(fd: usize, buffer: &[u8]) -> usize {
 }
 
 pub fn file_close(fd: usize) -> i32 {
-    crate::debugln!("CALLING TCP FN file_close WITH ARGS: fd={}", fd);
     unsafe {
         crate::fs::descriptor_drop(fd as i32);
     }
-    crate::debugln!("TCP RESULT: file_close finished");
     0
 }
 
 pub fn exit(code: u64) -> ! {
-    crate::debugln!("CALLING TCP FN exit WITH ARGS: code={}", code);
     unsafe {
         crate::io::host::exit(code as i32);
     }
 }
 
 pub fn spawn_with_fds(path: &str, args: &[&str], fds: &[(u8, u8)]) -> usize {
-    crate::debugln!("CALLING TCP FN spawn_with_fds WITH ARGS: path={}, args_len={}, fds_len={}", path, args.len(), fds.len());
-    
     let mut c_args = Vec::new();
     for &a in args {
         let mut s = String::from(a);
@@ -280,7 +271,6 @@ pub fn spawn_with_fds(path: &str, args: &[&str], fds: &[(u8, u8)]) -> usize {
             fds.as_ptr() as *const u8, fds.len()
         ) as usize
     };
-    crate::debugln!("TCP RESULT: spawn_with_fds RESULT: {}", res);
     res
 }
 
@@ -293,9 +283,7 @@ pub fn get_system_ticks() -> u64 {
 }
 
 pub fn brk(addr: usize) -> usize {
-    crate::debugln!("CALLING TCP FN brk WITH ARGS: addr={:#x}", addr);
     let res = unsafe { memory_brk(addr as u64) as usize };
-    crate::debugln!("TCP RESULT: brk RESULT: {:#x}", res);
     res
 }
 
@@ -311,34 +299,27 @@ pub const POLLIN: i16 = 0x001;
 pub const POLLOUT: i16 = 0x004;
 
 pub fn poll(fds: &mut [PollFd], timeout: i32) -> i32 {
-    crate::debugln!("CALLING TCP FN poll WITH ARGS: fds_len={}, timeout={}", fds.len(), timeout);
     let res = unsafe { process_poll(fds.as_mut_ptr() as *mut u8, fds.len() as u64, timeout as u64) };
-    crate::debugln!("TCP RESULT: poll RESULT: {}", res);
     res
 }
 
 pub fn set_nonblock(fd: usize, nonblock: bool) -> i32 {
-    crate::debugln!("CALLING TCP FN set_nonblock WITH ARGS: fd={}, nonblock={}", fd, nonblock);
     let res = unsafe { process_set_nonblock(fd as u64, nonblock as u64) };
-    crate::debugln!("TCP RESULT: set_nonblock RESULT: {}", res);
     res
 }
 
 pub fn get_date() -> (u8, u8, u16) {
-    crate::debugln!("CALLING TCP FN get_date WITH ARGS");
     unsafe {
         let mut buf = [0u8; 16];
         crate::time::host::wall_clock_now(buf.as_mut_ptr());
         let secs = core::ptr::read_unaligned(buf.as_ptr() as *const u64);
         let days = secs / 86400;
         let (y, m, d) = epoch_to_date(days);
-        crate::debugln!("TCP RESULT: get_date RESULT: {}/{}/{}", d, m, y);
         (d as u8, m as u8, y as u16)
     }
 }
 
 pub fn get_time() -> (u8, u8, u8) {
-    crate::debugln!("CALLING TCP FN get_time WITH ARGS");
     unsafe {
         let mut buf = [0u8; 16];
         crate::time::host::wall_clock_now(buf.as_mut_ptr());
@@ -346,7 +327,6 @@ pub fn get_time() -> (u8, u8, u8) {
         let s = (secs % 60) as u8;
         let m = ((secs / 60) % 60) as u8;
         let h = ((secs / 3600) % 24) as u8;
-        crate::debugln!("TCP RESULT: get_time RESULT: {}:{}:{}", h, m, s);
         (h, m, s)
     }
 }
@@ -365,16 +345,13 @@ fn epoch_to_date(mut days: u64) -> (u64, u64, u64) {
 }
 
 pub fn file_truncate(fd: usize, size: u64) -> i32 {
-    crate::debugln!("CALLING TCP FN file_truncate WITH ARGS: fd={}, size={}", fd, size);
     let mut res = 0u8;
     unsafe { crate::fs::set_size(fd as i32, size, &mut res); }
     let ret = if res == 0 { 0 } else { -1 };
-    crate::debugln!("TCP RESULT: file_truncate RESULT: {}", ret);
     ret
 }
 
 pub fn file_seek(fd: usize, offset: i64, whence: i32) -> i64 {
-    crate::debugln!("CALLING TCP FN file_seek WITH ARGS: fd={}, off={}, wh={}", fd, offset, whence);
     let mut res_buf = [0u8; 16];
     unsafe { crate::fs::seek(fd as i32, offset as u64, whence, res_buf.as_mut_ptr()); }
     let ret = if res_buf[0] == 0 {
@@ -382,26 +359,21 @@ pub fn file_seek(fd: usize, offset: i64, whence: i32) -> i64 {
     } else {
         -1
     };
-    crate::debugln!("TCP RESULT: file_seek RESULT: {}", ret);
     ret
 }
 
 pub fn pipe(fds: &mut [i32; 2]) -> i32 {
-    crate::debugln!("CALLING TCP FN pipe WITH ARGS");
     let mut bytes = [0u8; 8];
     let res = unsafe { process_pipe(bytes.as_mut_ptr()) };
     if res == 0 {
         fds[0] = i32::from_le_bytes(bytes[0..4].try_into().unwrap());
         fds[1] = i32::from_le_bytes(bytes[4..8].try_into().unwrap());
     }
-    crate::debugln!("TCP RESULT: pipe RESULT: {}", res);
     res
 }
 
 pub fn waitpid(pid: u64) -> i32 {
-    crate::debugln!("CALLING TCP FN waitpid WITH ARGS: pid={}", pid);
     let res = unsafe { process_waitpid(pid) };
-    crate::debugln!("TCP RESULT: waitpid RESULT: {}", res);
     res
 }
 
@@ -416,12 +388,10 @@ pub struct ProcessInfo {
 }
 
 pub fn get_process_list() -> crate::rust_alloc::vec::Vec<ProcessInfo> {
-    crate::debugln!("CALLING TCP FN get_process_list WITH ARGS");
     let mut buf = crate::rust_alloc::vec![ProcessInfo { pid: 0, state: 0, name: [0; 32] }; 64];
     let count = unsafe { process_get_list(buf.as_mut_ptr() as *mut u8, 64) };
     if count == u64::MAX { return crate::rust_alloc::vec::Vec::new(); }
     buf.truncate(count as usize);
-    crate::debugln!("TCP RESULT: get_process_list RESULT: {} items", count);
     buf
 }
 
@@ -437,8 +407,6 @@ pub struct WinSize {
 }
 
 pub fn ioctl(fd: usize, request: u64, arg: u64) -> i32 {
-    crate::debugln!("CALLING TCP FN ioctl WITH ARGS: fd={}, req={:#x}, arg={:#x}", fd, request, arg);
     let res = unsafe { process_ioctl(fd as u64, request, arg) };
-    crate::debugln!("TCP RESULT: ioctl RESULT: {}", res);
     res
 }
