@@ -199,7 +199,8 @@ pub fn phys_to_virt(phys: PhysAddr) -> super::address::VirtAddr {
 pub fn virt_to_phys(virt: u64) -> u64 {
     if virt >= 0xFFFFFFFF00000000 {
         virt - 0xFFFFFFFF00000000
-    } else if virt >= HHDM_OFFSET {
+    } else if virt >= HHDM_OFFSET && virt < HHDM_OFFSET + 0x1_0000_0000 {
+        // Only use the direct map for addresses within the first 4GB of physical RAM
         virt - HHDM_OFFSET
     } else {
         let cr3: u64;
@@ -216,11 +217,11 @@ pub fn virt_to_phys(virt: u64) -> u64 {
             let p1_idx = (virt >> 12) & 0x1FF;
 
             let p3_entry = pml4[p4_idx as usize];
-            if p3_entry.is_unused() { return virt; }
+            if p3_entry.is_unused() { return 0; }
 
             let p3 = &*(phys_to_virt(p3_entry.addr()).as_ptr() as *const PageTable);
             let p2_entry = p3[p3_idx as usize];
-            if p2_entry.is_unused() { return virt; }
+            if p2_entry.is_unused() { return 0; }
 
             if (p2_entry.as_u64() & PAGE_HUGE) != 0 {
                 return p2_entry.addr().as_u64() + (virt & 0x3FFFFFFF);
@@ -228,7 +229,7 @@ pub fn virt_to_phys(virt: u64) -> u64 {
 
             let p2 = &*(phys_to_virt(p2_entry.addr()).as_ptr() as *const PageTable);
             let p1_entry = p2[p2_idx as usize];
-            if p1_entry.is_unused() { return virt; }
+            if p1_entry.is_unused() { return 0; }
 
             if (p1_entry.as_u64() & PAGE_HUGE) != 0 {
                 return p1_entry.addr().as_u64() + (virt & 0x1FFFFF);
@@ -236,7 +237,7 @@ pub fn virt_to_phys(virt: u64) -> u64 {
 
             let p1 = &*(phys_to_virt(p1_entry.addr()).as_ptr() as *const PageTable);
             let final_entry = p1[p1_idx as usize];
-            if final_entry.is_unused() { return virt; }
+            if final_entry.is_unused() { return 0; }
 
             final_entry.addr().as_u64() + (virt & 0xFFF)
         }

@@ -4,89 +4,62 @@
 use crate::rust_alloc::vec::Vec;
 use crate::net::host::tcp;
 
-/// A connected TCP stream.
-pub struct TcpStream {
-    pub handle: usize,
-}
-
-/// A listening TCP socket.
-pub struct TcpListener {
-    handle: usize,
-}
+pub struct TcpStream { pub handle: usize }
+pub struct TcpListener { pub handle: usize }
 
 impl TcpStream {
-    /// Active open: connect to (ip, port). Blocks until Established or timeout.
     pub fn connect(ip: [u8; 4], port: u16) -> Option<Self> {
-        let mut result = [0u8; 8];
-        unsafe { tcp::create_tcp_socket(2, result.as_mut_ptr()) };
-        if result[0] != 0 {
-            return None;
-        }
-        let sock_fd = unsafe { core::ptr::read_unaligned(result.as_ptr().add(4) as *const i32) as usize };
+        crate::debugln!("CALLING TCP FN TcpStream::connect WITH ARGS: ip={:?}, port={}", ip, port);
+        let mut res = [0u8; 8];
+        unsafe { tcp::create_tcp_socket(2, res.as_mut_ptr()) };
+        if res[0] != 0 { crate::debugln!("TCP RESULT: TcpStream::connect FAILED (socket create)"); return None; }
+        let fd = unsafe { core::ptr::read_unaligned(res.as_ptr().add(4) as *const i32) as usize };
+        
+        let mut saddr = [0u8; 16]; saddr[0] = 2; saddr[2] = (port >> 8) as u8; saddr[3] = (port & 0xFF) as u8;
+        unsafe { core::ptr::copy_nonoverlapping(ip.as_ptr(), saddr.as_mut_ptr().add(4), 4); }
+        
+        let mut res_start = [0u8; 4];
+        unsafe { tcp::start_connect(fd as i32, 0, saddr.as_ptr(), res_start.as_mut_ptr()) };
+        if res_start[0] != 0 { crate::debugln!("TCP RESULT: TcpStream::connect FAILED (start_connect)"); return None; }
 
-        // Build sockaddr_in: family(2) + port_be(2) + ip(4)
-        let mut saddr = [0u8; 16];
-        saddr[0] = 2;
-        saddr[2] = (port >> 8) as u8;
-        saddr[3] = (port & 0xFF) as u8;
-        saddr[4] = ip[0];
-        saddr[5] = ip[1];
-        saddr[6] = ip[2];
-        saddr[7] = ip[3];
-
-        let mut result = [0u8; 4];
-        unsafe { tcp::start_connect(sock_fd as i32, 0, saddr.as_ptr(), result.as_mut_ptr()) };
-        let ok = result[0] == 0;
-
-        if ok {
-            Some(TcpStream { handle: sock_fd })
-        } else {
-            None
-        }
-    }
-
-    /// Write data to the connection.
-    pub fn write_all(&mut self, buf: &[u8]) -> Result<usize, i32> {
-        let mut result = [0u8; 16];
-        unsafe {
-            tcp::send(
-                self.handle as i32,
-                buf.as_ptr(),
-                buf.len() as u32,
-                result.as_mut_ptr(),
-            )
-        };
-        let res = if result[0] == 0 {
-            unsafe { core::ptr::read_unaligned(result.as_ptr().add(8) as *const u64) }
-        } else {
-            u64::MAX
-        };
-
-        if res == u64::MAX {
-            Err(-1)
-        } else {
-            Ok(res as usize)
-        }
-    }
-
-    /// Read data from the connection. Returns 0 if no data ready yet.
-    pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, i32> {
-        let mut wasi_buf = crate::rust_alloc::vec![0u8; 32 + buf.len()];
-        unsafe {
-            tcp::recv(
-                self.handle as i32,
-                buf.len() as u32,
-                wasi_buf.as_mut_ptr(),
-            )
-        };
-
-        if wasi_buf[0] == 0 {
-            let received_len = unsafe { core::ptr::read_unaligned(wasi_buf.as_ptr().add(8) as *const u64) } as usize;
-            if received_len > 0 {
-                buf[..received_len].copy_from_slice(&wasi_buf[32..32 + received_len]);
+        for i in 0..100 {
+            let mut res_fin = [0u8; 4];
+            unsafe { tcp::finish_connect(fd as i32, res_fin.as_mut_ptr()) };
+            if res_fin[0] == 0 {
+                crate::debugln!("TCP RESULT: TcpStream::connect SUCCESS, fd={} ({} iters)", fd, i);
+                return Some(TcpStream { handle: fd });
             }
-            Ok(received_len)
+            crate::sys::yield_task();
+        }
+        crate::debugln!("TCP RESULT: TcpStream::connect TIMEOUT");
+        None
+    }
+
+    pub fn write_all(&mut self, buf: &[u8]) -> Result<usize, i32> {
+        crate::debugln!("CALLING TCP FN TcpStream::write_all WITH ARGS: fd={}, len={}", self.handle, buf.len());
+        let mut res_buf = [0u8; 16];
+        unsafe { tcp::send(self.handle as i32, buf.as_ptr(), buf.len() as u32, res_buf.as_mut_ptr()) };
+        if res_buf[0] == 0 {
+            let n = unsafe { core::ptr::read_unaligned(res_buf.as_ptr().add(8) as *const u64) } as usize;
+            crate::debugln!("TCP RESULT: TcpStream::write_all SUCCESS, sent={}", n);
+            Ok(n)
         } else {
+            crate::debugln!("TCP RESULT: TcpStream::write_all FAILED");
+            Err(-1)
+        }
+    }
+
+    pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, i32> {
+        crate::debugln!("CALLING TCP FN TcpStream::read WITH ARGS: fd={}, max={}", self.handle, buf.len());
+        let mut wasi_buf = crate::rust_alloc::vec![0u8; 32 + buf.len()];
+        unsafe { tcp::recv(self.handle as i32, buf.len() as u32, wasi_buf.as_mut_ptr()) };
+        if wasi_buf[0] == 0 {
+            let n = unsafe { core::ptr::read_unaligned(wasi_buf.as_ptr().add(8) as *const u64) } as usize;
+            if n > 0 { buf[..n].copy_from_slice(&wasi_buf[32..32 + n]); }
+            crate::debugln!("TCP RESULT: TcpStream::read SUCCESS, read={}", n);
+            Ok(n)
+        } else {
+            crate::debugln!("TCP RESULT: TcpStream::read FAILED");
             Err(-1)
         }
     }
@@ -94,69 +67,48 @@ impl TcpStream {
 
 impl Drop for TcpStream {
     fn drop(&mut self) {
-        unsafe {
-            tcp::tcp_socket_drop(self.handle as i32);
-        }
+        crate::debugln!("CALLING TCP FN TcpStream::drop WITH ARGS: fd={}", self.handle);
+        unsafe { tcp::tcp_socket_drop(self.handle as i32); }
+        crate::debugln!("TCP RESULT: TcpStream::drop SUCCESS");
     }
 }
 
 impl TcpListener {
-    /// Bind to a port and start listening. Requires a prior bind() via socket API.
     pub fn bind(port: u16) -> Option<Self> {
-        let mut result = [0u8; 8];
-        unsafe { tcp::create_tcp_socket(2, result.as_mut_ptr()) };
-        if result[0] != 0 {
-            return None;
-        }
-        let sock_fd = unsafe { core::ptr::read_unaligned(result.as_ptr().add(4) as *const i32) as usize };
-
-        // Build sockaddr_in
-        let mut saddr = [0u8; 16];
-        saddr[0] = 2;
-        saddr[2] = (port >> 8) as u8;
-        saddr[3] = (port & 0xFF) as u8;
-
-        let mut result = [0u8; 4];
-        unsafe {
-            tcp::start_bind(sock_fd as i32, 0, saddr.as_ptr(), result.as_mut_ptr());
-        }
-        if result[0] != 0 {
-            return None;
-        }
-        unsafe {
-            tcp::start_listen(sock_fd as i32, result.as_mut_ptr());
-        }
-        if result[0] != 0 {
-            return None;
-        }
-
-        Some(TcpListener { handle: sock_fd })
+        crate::debugln!("CALLING TCP FN TcpListener::bind WITH ARGS: port={}", port);
+        let mut res = [0u8; 8];
+        unsafe { tcp::create_tcp_socket(2, res.as_mut_ptr()) };
+        if res[0] != 0 { return None; }
+        let fd = unsafe { core::ptr::read_unaligned(res.as_ptr().add(4) as *const i32) as usize };
+        let mut saddr = [0u8; 16]; saddr[0] = 2; saddr[2] = (port >> 8) as u8; saddr[3] = (port & 0xFF) as u8;
+        let mut res_op = [0u8; 4];
+        unsafe { tcp::start_bind(fd as i32, 0, saddr.as_ptr(), res_op.as_mut_ptr()); }
+        if res_op[0] != 0 { return None; }
+        unsafe { tcp::start_listen(fd as i32, res_op.as_mut_ptr()); }
+        if res_op[0] != 0 { return None; }
+        crate::debugln!("TCP RESULT: TcpListener::bind SUCCESS, fd={}", fd);
+        Some(TcpListener { handle: fd })
     }
 
-    /// Accept the next incoming connection. Returns None if nothing pending yet.
     pub fn accept(&self) -> Option<TcpStream> {
-        let mut result = [0u8; 8];
-        unsafe { tcp::accept(self.handle as i32, result.as_mut_ptr()) };
-        let res = if result[0] != 0 {
-            u64::MAX
+        crate::debugln!("CALLING TCP FN TcpListener::accept WITH ARGS: fd={}", self.handle);
+        let mut res = [0u8; 8];
+        unsafe { tcp::accept(self.handle as i32, res.as_mut_ptr()) };
+        if res[0] == 0 {
+            let nfd = unsafe { core::ptr::read_unaligned(res.as_ptr().add(4) as *const i32) as usize };
+            crate::debugln!("TCP RESULT: TcpListener::accept SUCCESS, new_fd={}", nfd);
+            Some(TcpStream { handle: nfd })
         } else {
-            unsafe { core::ptr::read_unaligned(result.as_ptr().add(4) as *const i32) as u64 }
-        };
-
-        if res == u64::MAX {
+            crate::debugln!("TCP RESULT: TcpListener::accept RESULT: NONE");
             None
-        } else {
-            Some(TcpStream {
-                handle: res as usize,
-            })
         }
     }
 }
 
 impl Drop for TcpListener {
     fn drop(&mut self) {
-        unsafe {
-            crate::net::host::tcp::tcp_socket_drop(self.handle as i32);
-        }
+        crate::debugln!("CALLING TCP FN TcpListener::drop WITH ARGS: fd={}", self.handle);
+        unsafe { tcp::tcp_socket_drop(self.handle as i32); }
+        crate::debugln!("TCP RESULT: TcpListener::drop SUCCESS");
     }
 }

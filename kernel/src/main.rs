@@ -54,13 +54,13 @@ pub extern "C" fn _start(bootinfo_ptr: u64) -> ! {
     debugln!("SIGNPOST: Initializing Memory...");
     memory::init();
 
-    unsafe {
+    /* unsafe {
         let pml4 = active_level_4_table();
         pml4[0].set_unused();
         let cr3: u64;
         asm!("mov {}, cr3", out(reg) cr3);
         asm!("mov cr3, {}", in(reg) cr3);
-    }
+    } */
 
     debugln!("SIGNPOST: Initializing ISTs...");
     crate::tss::init_ists();

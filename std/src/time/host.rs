@@ -1,14 +1,14 @@
-// Clock bindings — all via method_export!
+// wasi:clocks host functions
 
 method_export!("wasi:clocks/monotonic-clock@0.2.0", "now",
     pub unsafe fn monotonic_clock_now() -> u64 {
-        crate::sys::syscall(109, 0, 0, 0) * 1_000_000 // Convert ticks to ns
+        crate::sys::syscall(109, 0, 0, 0) * 1_000_000
     }
 );
 
 method_export!("wasi:clocks/monotonic-clock@0.2.0", "resolution",
     pub unsafe fn monotonic_clock_resolution() -> u64 {
-        1_000_000 // 1ms
+        1_000_000
     }
 );
 
@@ -21,13 +21,11 @@ method_export!("wasi:clocks/monotonic-clock@0.2.0", "subscribe-duration",
 
 method_export!("wasi:clocks/wall-clock@0.2.0", "now",
     pub unsafe fn wall_clock_now(result_ptr: *mut u8) {
-        // Syscall 115: Get Date -> (y<<16) | (m<<8) | d
         let res_date = crate::sys::syscall(115, 0, 0, 0);
         let y = (res_date >> 16) as u16;
         let m = (res_date >> 8) as u8;
         let d = res_date as u8;
 
-        // Syscall 108: Get Time -> (h<<16) | (m<<8) | s
         let res_time = crate::sys::syscall(108, 0, 0, 0);
         let h = (res_time >> 16) as u8;
         let min = (res_time >> 8) as u8;
@@ -42,7 +40,7 @@ method_export!("wasi:clocks/wall-clock@0.2.0", "now",
             + s as u64;
 
         core::ptr::write_unaligned(result_ptr as *mut u64, secs);
-        core::ptr::write_unaligned(result_ptr.add(8) as *mut u32, 0); // nanoseconds
+        core::ptr::write_unaligned(result_ptr.add(8) as *mut u32, 0);
     }
 );
 

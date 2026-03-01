@@ -12,24 +12,6 @@ pub use async_file::AsyncFile;
 pub use host::{open_at, stat, set_size, seek, descriptor_drop};
 pub use host::{create_directory_at, unlink_file_at, remove_directory_at, rename_at};
 
-// readdir support - uses WASI preview1 fd_readdir on wasm32, KrakeOS syscall 78 on native
-#[cfg(target_arch = "wasm32")]
-#[link(wasm_import_module = "wasi_snapshot_preview1")]
-unsafe extern "C" {
-    pub fn fd_readdir(
-        fd: i32,
-        buf_ptr: *mut u8,
-        buf_len: u32,
-        cookie: u64,
-        bufused_ptr: *mut u32,
-    ) -> i32;
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub unsafe fn readdir(fd: i32, buf: &mut [u8]) -> u64 {
-    crate::sys::syscall(78, fd as u64, buf.as_mut_ptr() as u64, buf.len() as u64)
-}
-
 // --- Types ---
 
 #[repr(C)]
@@ -187,7 +169,7 @@ impl Seek for File {
 
         let mut result = [0u8; 16];
         unsafe {
-            seek(self.fd as i32, offset as u64, whence, result.as_mut_ptr());
+            host::seek(self.fd as i32, offset as u64, whence, result.as_mut_ptr());
         }
 
         if result[0] == 0 {
@@ -243,18 +225,9 @@ pub fn rename(from: &str, to: &str) -> Result<()> {
 }
 
 pub fn mount(disk_id: u8, fs_type: &str) -> Result<()> {
-    #[cfg(not(target_arch = "wasm32"))]
-    let res = unsafe {
-        crate::sys::syscall(
-            165,
-            disk_id as u64,
-            fs_type.as_ptr() as u64,
-            fs_type.len() as u64,
-        )
-    };
-    #[cfg(target_arch = "wasm32")]
-    let res = u64::MAX; // Not supported
-
+    crate::debugln!("CALLING TCP FN mount WITH ARGS: disk_id={}, fs_type={}", disk_id, fs_type);
+    let res = unsafe { host::mount_host(disk_id as u64, fs_type.as_ptr(), fs_type.len()) };
+    crate::debugln!("TCP RESULT: mount RESULT: {}", res);
     if res == 0 {
         Ok(())
     } else {
@@ -293,99 +266,50 @@ pub struct DirEntry {
 }
 
 pub fn read_dir(path: &str) -> Result<Vec<DirEntry>> {
+    crate::debugln!("CALLING TCP FN read_dir WITH ARGS: path={}", path);
     let file = File::open(path)?;
     let mut entries = Vec::new();
 
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let mut buffer = [0u8; 1024];
-        loop {
-            let res = unsafe { readdir(file.fd as i32, &mut buffer) };
-            if res == u64::MAX {
-                return Err(Error::from_raw_os_error(5));
-            }
-            let bytes_read = res as usize;
-            if bytes_read == 0 {
-                break;
-            }
-
-            let mut offset = 0;
-            while offset < bytes_read {
-                if offset + 2 > bytes_read {
-                    break;
-                }
-                let type_byte = buffer[offset];
-                let name_len = buffer[offset + 1] as usize;
-                if offset + 2 + name_len > bytes_read {
-                    break;
-                }
-                let name = String::from_utf8_lossy(&buffer[offset + 2..offset + 2 + name_len])
-                    .into_owned();
-                let file_type = match type_byte {
-                    1 => FileType::File,
-                    2 => FileType::Directory,
-                    3 => FileType::Device,
-                    _ => FileType::Unknown,
-                };
-                entries.push(DirEntry { name, file_type });
-                offset += 2 + name_len;
-            }
-        }
+    let mut result_buf = [0u8; 8];
+    unsafe { host::read_directory(file.fd as i32, result_buf.as_mut_ptr()); }
+    
+    if result_buf[0] != 0 {
+        return Err(Error::from_raw_os_error(5));
     }
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        let mut buffer = [0u8; 4096];
-        let mut cookie: u64 = 0;
-        loop {
-            let mut bufused: u32 = 0;
-            let errno = unsafe {
-                fd_readdir(
-                    file.fd as i32,
-                    buffer.as_mut_ptr(),
-                    buffer.len() as u32,
-                    cookie,
-                    &mut bufused,
-                )
-            };
-            if errno != 0 {
-                return Err(Error::from_raw_os_error(errno as i32));
-            }
-            let used = bufused as usize;
-            if used == 0 {
-                break;
-            }
-
-            let mut offset = 0;
-            while offset + 24 <= used {
-                let d_next =
-                    u64::from_le_bytes(buffer[offset..offset + 8].try_into().unwrap_or([0; 8]));
-                let d_namlen = u32::from_le_bytes(
-                    buffer[offset + 16..offset + 20]
-                        .try_into()
-                        .unwrap_or([0; 4]),
-                ) as usize;
-                let d_type = buffer[offset + 20];
-                if offset + 24 + d_namlen > used {
-                    break;
-                }
-                let name = String::from_utf8_lossy(&buffer[offset + 24..offset + 24 + d_namlen])
-                    .into_owned();
-                let file_type = match d_type {
-                    4 => FileType::File,
-                    3 => FileType::Directory,
-                    2 => FileType::Device,
-                    _ => FileType::Unknown,
-                };
-                entries.push(DirEntry { name, file_type });
-                offset += 24 + d_namlen;
-                cookie = d_next;
-            }
-            if used < buffer.len() {
-                break;
-            }
-        }
+    
+    let stream_handle = unsafe { core::ptr::read_unaligned(result_buf.as_ptr().add(4) as *const i32) };
+    
+    loop {
+        let mut entry_buf = [0u8; 32];
+        unsafe { host::read_directory_entry(stream_handle, entry_buf.as_mut_ptr()); }
+        
+        if entry_buf[0] != 0 { break; } // Err or end
+        let has_value = unsafe { core::ptr::read_unaligned(entry_buf.as_ptr().add(4) as *const u32) };
+        if has_value == 0 { break; } // None
+        
+        let type_byte = entry_buf[8];
+        let name_ptr = unsafe { core::ptr::read_unaligned(entry_buf.as_ptr().add(12) as *const *mut u8) };
+        let name_len = unsafe { core::ptr::read_unaligned(entry_buf.as_ptr().add(16) as *const u32) } as usize;
+        
+        let name = unsafe {
+            let slice = core::slice::from_raw_parts(name_ptr, name_len);
+            let s = String::from_utf8_lossy(slice).into_owned();
+            crate::memory::free(name_ptr as usize, name_len);
+            s
+        };
+        
+        let file_type = match type_byte {
+            6 => FileType::File,
+            3 => FileType::Directory,
+            2 => FileType::Device,
+            _ => FileType::Unknown,
+        };
+        
+        entries.push(DirEntry { name, file_type });
     }
-
+    
+    unsafe { host::drop_directory_entry_stream(stream_handle); }
+    
+    crate::debugln!("TCP RESULT: read_dir RESULT: {} entries", entries.len());
     Ok(entries)
 }

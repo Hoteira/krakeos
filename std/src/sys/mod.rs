@@ -1,10 +1,16 @@
-// Raw syscall primitives (arch-gated: inline asm / memory.grow)
+// Raw host primitives (arch-gated via method_export!)
 
-#[cfg(target_arch = "wasm32")]
-#[link(wasm_import_module = "wasi_snapshot_preview1")]
-unsafe extern "C" {
-    fn sched_yield() -> i32;
-}
+method_export!("krakeos:system/process@0.2.0", "yield",
+    pub unsafe fn host_yield() {
+        core::arch::asm!("int 0x81");
+    }
+);
+
+method_export!("krakeos:system/memory@0.2.0", "brk",
+    pub unsafe fn host_brk(addr: u64) -> u64 {
+        crate::sys::syscall(12, addr, 0, 0)
+    }
+);
 
 #[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn syscall(num: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
@@ -81,19 +87,11 @@ pub unsafe fn syscall6(num: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg
 }
 
 pub fn yield_task() {
-    #[cfg(target_arch = "wasm32")]
-    unsafe {
-        let _ = sched_yield();
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    unsafe {
-        core::arch::asm!("int 0x81");
-    }
+    unsafe { host_yield(); }
 }
 
 pub fn hlt_loop() -> ! {
     loop {
-        #[cfg(target_arch = "wasm32")]
         yield_task();
         #[cfg(not(target_arch = "wasm32"))]
         unsafe { core::arch::asm!("hlt"); }
@@ -109,10 +107,10 @@ pub unsafe fn alloc_pages(size: usize) -> *mut u8 {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let current_brk = syscall(12, 0, 0, 0) as usize;
+        let current_brk = host_brk(0) as usize;
         if current_brk == 0 || current_brk == usize::MAX { return core::ptr::null_mut(); }
         let new_brk = (current_brk + size + 0xFFF) & !0xFFF;
-        let res = syscall(12, new_brk as u64, 0, 0) as usize;
+        let res = host_brk(new_brk as u64) as usize;
         if res != usize::MAX && res >= new_brk {
             current_brk as *mut u8
         } else {

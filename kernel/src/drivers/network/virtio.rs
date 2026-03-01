@@ -95,7 +95,6 @@ pub struct VirtioNetHdr {
     gso_size: u16,
     csum_start: u16,
     csum_offset: u16,
-    // num_buffers: u16, // Only if VIRTIO_NET_F_MRG_RXBUF
 }
 
 pub struct VirtioNetDevice {
@@ -227,12 +226,7 @@ pub fn init() -> Result<(), String> {
             }
             debugln!(
                 "VirtIO Net: MAC Address: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-                mac[0],
-                mac[1],
-                mac[2],
-                mac[3],
-                mac[4],
-                mac[5]
+                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
             );
         }
 
@@ -281,10 +275,6 @@ unsafe fn setup_queue(
     let size = 256;
     write_16(common_cfg.add(OFF_QUEUE_SIZE), size);
 
-    // Allocate queue memory
-    // Desc: 16 * size
-    // Avail: 6 + 2 * size + 2
-    // Used: 6 + 8 * size + 2
     let size_bytes = 16 * size as usize + 6 + 2 * size as usize + 2 + 6 + 8 * size as usize + 2;
     let pages = (size_bytes + 4095) / 4096;
 
@@ -296,7 +286,6 @@ unsafe fn setup_queue(
     let avail_addr = desc_addr + (16 * size as u64);
     let used_addr = (avail_addr + 6 + 2 * size as u64 + 2 + 3) & !3; // Align 4
 
-    // Initialize descriptor chain
     let desc_ptr = (desc_addr + crate::memory::paging::HHDM_OFFSET) as *mut VirtqDesc;
     for i in 0..size {
         (*desc_ptr.add(i as usize)).next = (i + 1);
@@ -327,24 +316,18 @@ unsafe fn setup_queue(
 
 unsafe fn fill_rx_queue(dev: &mut VirtioNetDevice) {
     if let Some(vq) = &mut dev.rx_queue {
-        // Fill all descriptors with empty buffers
         let num_bufs = vq.num as usize;
         for _ in 0..num_bufs {
             if vq.free_head == 0xFFFF {
                 break;
             }
 
-            // Alloc buffer (2048 bytes usually enough for MTU)
             if let Some(frame) = pmm::allocate_frame(0) {
                 let virt = frame + crate::memory::paging::HHDM_OFFSET;
-
-                // Add to device tracking
                 dev.rx_buffers.push_back((frame, virt, 2048));
 
                 let desc_idx = vq.free_head;
-                let desc_ptr =
-                    (vq.desc_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqDesc;
-
+                let desc_ptr = (vq.desc_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqDesc;
                 let next_idx = (*desc_ptr.add(desc_idx as usize)).next;
 
                 (*desc_ptr.add(desc_idx as usize)) = VirtqDesc {
@@ -356,8 +339,7 @@ unsafe fn fill_rx_queue(dev: &mut VirtioNetDevice) {
 
                 vq.free_head = next_idx;
 
-                let avail_ptr =
-                    (vq.avail_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqAvail;
+                let avail_ptr = (vq.avail_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqAvail;
                 let idx = (*avail_ptr).idx;
                 (*avail_ptr).ring[(idx % vq.num) as usize] = desc_idx;
 
@@ -365,7 +347,6 @@ unsafe fn fill_rx_queue(dev: &mut VirtioNetDevice) {
                 (*avail_ptr).idx = idx.wrapping_add(1);
             }
         }
-
         write_16(vq.notify_addr as *mut u8, vq.queue_index);
     }
 }
@@ -378,22 +359,81 @@ unsafe fn recycle_tx_descriptors(dev: &mut VirtioNetDevice) {
         while vq.last_used_idx != current_used_idx {
             let elem = (*used_ptr).ring[(vq.last_used_idx % vq.num) as usize];
             let id = elem.id as usize;
-
-            // Free the physical frame associated with this descriptor
             let desc_ptr = (vq.desc_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqDesc;
             let addr = (*desc_ptr.add(id)).addr;
 
-            // Assuming we allocated a whole frame for the packet in send_packet
             if addr != 0 {
                 pmm::free_frame(addr);
             }
 
-            // Return to free list
             (*desc_ptr.add(id)).flags = 0;
             (*desc_ptr.add(id)).next = vq.free_head;
             vq.free_head = id as u16;
 
             vq.last_used_idx = vq.last_used_idx.wrapping_add(1);
+        }
+    }
+}
+
+pub fn poll_rx() {
+    unsafe {
+        let dev_ptr = core::ptr::addr_of_mut!(NET_DEVICE);
+        if let Some(dev) = (*dev_ptr).as_mut() {
+            if let Some(vq) = &mut dev.rx_queue {
+                let used_ptr = (vq.used_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqUsed;
+                let used_idx = (*used_ptr).idx;
+
+                while vq.last_used_idx != used_idx {
+                    let elem = (*used_ptr).ring[(vq.last_used_idx % vq.num) as usize];
+                    let id = elem.id;
+                    let len = elem.len;
+
+                    let desc_ptr = (vq.desc_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqDesc;
+                    let desc = *desc_ptr.add(id as usize);
+
+                    let virt_addr = desc.addr + crate::memory::paging::HHDM_OFFSET;
+                    let hdr_size = core::mem::size_of::<VirtioNetHdr>();
+
+                    if len as usize > hdr_size {
+                        let packet_len = len as usize - hdr_size;
+                        let mut packet = alloc::vec![0u8; packet_len];
+                        core::ptr::copy_nonoverlapping(
+                            (virt_addr as *const u8).add(hdr_size),
+                            packet.as_mut_ptr(),
+                            packet_len,
+                        );
+
+                        crate::net::on_receive(&packet);
+                        dev.rx_packet_queue.lock().push_back(packet);
+                    }
+
+                    let avail_ptr = (vq.avail_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqAvail;
+                    let idx = (*avail_ptr).idx;
+                    (*avail_ptr).ring[(idx % vq.num) as usize] = id as u16;
+                    core::sync::atomic::fence(Ordering::SeqCst);
+                    (*avail_ptr).idx = idx.wrapping_add(1);
+
+                    vq.last_used_idx = vq.last_used_idx.wrapping_add(1);
+                }
+
+                if vq.last_used_idx != used_idx {
+                    write_16(vq.notify_addr as *mut u8, vq.queue_index);
+                }
+            }
+        }
+    }
+    crate::net::poll_loopback();
+}
+
+pub fn recv_packet() -> Option<alloc::vec::Vec<u8>> {
+    unsafe {
+        let dev_ptr = core::ptr::addr_of_mut!(NET_DEVICE);
+        if let Some(dev) = (*dev_ptr).as_mut() {
+            poll_rx();
+            dev.rx_packet_queue.lock().pop_front()
+        } else {
+            crate::net::poll_loopback();
+            None
         }
     }
 }
@@ -406,7 +446,6 @@ pub fn send_packet(data: &[u8]) -> usize {
             return 1;
         };
 
-        // Try to recycle used TX descriptors first to free up space
         recycle_tx_descriptors(dev);
 
         let vq = if let Some(q) = &mut dev.tx_queue {
@@ -415,39 +454,22 @@ pub fn send_packet(data: &[u8]) -> usize {
             return 2;
         };
 
-        // 1. Header (read-only)
-        // 2. Data (read-only)
-
         let head_idx = vq.free_head;
-        if head_idx == 0xFFFF {
-            return 3;
-        } // Full
+        if head_idx == 0xFFFF { return 3; }
 
         let desc_ptr = (vq.desc_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqDesc;
         let next_idx = (*desc_ptr.add(head_idx as usize)).next;
 
-        // Allocate header on stack or heap? Stack is virtual, driver needs phys.
-        // We can use a small pre-allocated pool or just allocate a page for now.
-        // For efficiency, we should have a pool. For now, alloc page.
         let hdr_frame = match pmm::allocate_frame(0) {
             Some(f) => f,
-            None => return 5, // OOM
+            None => return 5,
         };
         let hdr_virt = hdr_frame + crate::memory::paging::HHDM_OFFSET;
         let hdr = VirtioNetHdr::default();
         *(hdr_virt as *mut VirtioNetHdr) = hdr;
 
-        // Copy data to same page if fits, or separate
-        // Let's put header + data in one buffer for simplicity if possible,
-        // but VirtIO allows scattered.
-        // Let's use scattered: Desc 1 = Hdr, Desc 2 = Data.
-        // Wait, data comes from user pointer (virt). We need phys.
-        // Copy to kernel buffer.
-
         let total_len = core::mem::size_of::<VirtioNetHdr>() + data.len();
-        if total_len > 4096 {
-            return 4;
-        } // Too big for single page simple impl
+        if total_len > 4096 { return 4; }
 
         let ptr = hdr_virt as *mut u8;
         core::ptr::copy_nonoverlapping(
@@ -463,7 +485,7 @@ pub fn send_packet(data: &[u8]) -> usize {
             next: 0,
         };
 
-        vq.free_head = next_idx; // Consumed 1 desc
+        vq.free_head = next_idx;
 
         let avail_ptr = (vq.avail_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqAvail;
         let idx = (*avail_ptr).idx;
@@ -473,89 +495,6 @@ pub fn send_packet(data: &[u8]) -> usize {
         (*avail_ptr).idx = idx.wrapping_add(1);
 
         write_16(vq.notify_addr as *mut u8, vq.queue_index);
-
         0
-    }
-}
-
-pub fn poll_rx() {
-    crate::net::poll_loopback();
-    unsafe {
-        let dev_ptr = core::ptr::addr_of_mut!(NET_DEVICE);
-        let dev = if let Some(d) = (*dev_ptr).as_mut() {
-            d
-        } else {
-            return;
-        };
-        let vq = if let Some(q) = &mut dev.rx_queue {
-            q
-        } else {
-            return;
-        };
-
-        let used_ptr = (vq.used_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqUsed;
-        let used_idx = (*used_ptr).idx;
-
-        while vq.last_used_idx != used_idx {
-            let elem = (*used_ptr).ring[(vq.last_used_idx % vq.num) as usize];
-            let id = elem.id;
-            let len = elem.len;
-
-            // Find buffer
-            // In a real driver, we'd map id back to buffer.
-            // Here we just assume linear usage or scan?
-            // Actually `fill_rx_queue` pushed to `rx_buffers`.
-            // But descriptors are reused.
-            // We need to look at the descriptor at index `id`.
-
-            let desc_ptr = (vq.desc_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqDesc;
-            let desc = *desc_ptr.add(id as usize);
-
-            let virt_addr = desc.addr + crate::memory::paging::HHDM_OFFSET;
-            let hdr_size = core::mem::size_of::<VirtioNetHdr>();
-
-            if len as usize > hdr_size {
-                let packet_len = len as usize - hdr_size;
-                let mut packet = alloc::vec![0u8; packet_len];
-                core::ptr::copy_nonoverlapping(
-                    (virt_addr as *const u8).add(hdr_size),
-                    packet.as_mut_ptr(),
-                    packet_len,
-                );
-
-                // Pass to Kernel Stack
-                crate::net::on_receive(&packet);
-
-                dev.rx_packet_queue.lock().push_back(packet);
-            }
-
-            // Requeue buffer
-            // Reset length/flags? It's writable.
-            // Just add back to avail.
-            let avail_ptr = (vq.avail_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqAvail;
-            let idx = (*avail_ptr).idx;
-            (*avail_ptr).ring[(idx % vq.num) as usize] = id as u16;
-            core::sync::atomic::fence(Ordering::SeqCst);
-            (*avail_ptr).idx = idx.wrapping_add(1);
-
-            vq.last_used_idx = vq.last_used_idx.wrapping_add(1);
-        }
-
-        if vq.last_used_idx != used_idx {
-            write_16(vq.notify_addr as *mut u8, vq.queue_index);
-        }
-    }
-}
-
-pub fn recv_packet() -> Option<alloc::vec::Vec<u8>> {
-    unsafe {
-        let dev_ptr = core::ptr::addr_of_mut!(NET_DEVICE);
-        if let Some(dev) = (*dev_ptr).as_mut() {
-            // Poll first
-            poll_rx();
-            dev.rx_packet_queue.lock().pop_front()
-        } else {
-            None
-        }
     }
 }

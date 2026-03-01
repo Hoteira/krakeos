@@ -207,6 +207,12 @@ method_export!("wasi:filesystem/types@0.2.0", "[resource-drop]directory-entry-st
     }
 );
 
+method_export!("krakeos:system/filesystem@0.2.0", "mount",
+    pub unsafe fn mount_host(disk_id: u64, fs_type_ptr: *const u8, fs_type_len: usize) -> u64 {
+        crate::sys::syscall(165, disk_id, fs_type_ptr as u64, fs_type_len as u64)
+    }
+);
+
 // DirStream used by read_directory native impl
 #[cfg(not(target_arch = "wasm32"))]
 struct DirStream {

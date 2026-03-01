@@ -219,6 +219,10 @@ pub fn create_wasi_p2_imports<T: Config>(linker: &mut Linker, store: &mut Store<
             vec![ValType::NumType(NumType::I32)],
             vec![ValType::NumType(NumType::I32)],
             process_pipe_host);
+        define(linker, store, module, "yield",
+            vec![],
+            vec![],
+            crate::process::wasi::yield_host);
     }
     // krakeos:system/memory@0.2.0
     {

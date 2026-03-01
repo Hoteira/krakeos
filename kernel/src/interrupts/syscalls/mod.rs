@@ -39,6 +39,7 @@ pub const SYS_LISTEN: u64 = 51;
 pub const SYS_SOCKET_CLOSE: u64 = 50;
 pub const SYS_TCP_SEND: u64 = 52;
 pub const SYS_TCP_RECV: u64 = 53;
+pub const SYS_TCP_CONNECT_FINISH: u64 = 54;
 pub const SYS_EXECVE: u64 = 59;
 pub const SYS_EXIT: u64 = 60;
 pub const SYS_WAIT4: u64 = 61;
@@ -70,6 +71,7 @@ pub const SYS_GET_PROCESS_LIST: u64 = 110;
 pub const SYS_GET_PROCESS_MEM: u64 = 111;
 pub const SYS_SHM_GET: u64 = 120;
 pub const SYS_MMAP_FILE: u64 = 121;
+pub const SYS_YIELD: u64 = 129;
 
 pub const SYS_FTRUNCATE: u64 = 77;
 
@@ -91,14 +93,18 @@ pub const SYS_SET_NONBLOCK: u64 = 133;
 pub extern "C" fn syscall_entry() {
     unsafe {
         naked_asm!(
+            // 1. Save R15 to scratch
             "mov [rip + {scratch}], r15",
+            // 2. Switch to kernel stack
             "mov r15, rsp",
             "mov rsp, [rip + {kernel_stack_ptr}]",
-            "push QWORD PTR 0x23",
-            "push r15",
-            "push r11",
-            "push QWORD PTR 0x33",
-            "push rcx",
+            // 3. Build the IRETQ frame (pushed by CPU normally, we do it manually for SYSCALL)
+            "push QWORD PTR 0x23", // SS
+            "push r15",            // RSP
+            "push r11",            // RFLAGS
+            "push QWORD PTR 0x33", // CS
+            "push rcx",            // RIP
+            // 4. Restore R15 and push the rest of CPUState (r15 down to rbp)
             "mov r15, [rip + {scratch}]",
             "push rbp",
             "push rax",
@@ -115,9 +121,11 @@ pub extern "C" fn syscall_entry() {
             "push r13",
             "push r14",
             "push r15",
+            // 5. Call dispatcher
             "cld",
             "mov rdi, rsp",
             "call syscall_dispatcher",
+            // 6. Restore all registers
             "pop r15",
             "pop r14",
             "pop r13",
@@ -133,6 +141,7 @@ pub extern "C" fn syscall_entry() {
             "pop rbx",
             "pop rax",
             "pop rbp",
+            // 7. Return via IRETQ
             "iretq",
             kernel_stack_ptr = sym crate::interrupts::task::KERNEL_STACK_PTR,
             scratch = sym crate::interrupts::task::SCRATCH,
@@ -174,6 +183,7 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
         SYS_SOCKET_CLOSE => network::handle_close_socket(context),
         SYS_TCP_SEND => network::handle_tcp_send(context),
         SYS_TCP_RECV => network::handle_tcp_recv(context),
+        SYS_TCP_CONNECT_FINISH => network::handle_connect_finish(context),
         SYS_EXECVE => process::handle_spawn(context),
         SYS_EXIT => process::handle_exit(context),
         SYS_WAIT4 => process::handle_wait_pid(context),
@@ -219,6 +229,11 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
         SYS_REGISTER_EVENT => event::handle_register_event(context),
         SYS_SIGNAL_EVENT => event::handle_signal_event(context),
         SYS_SET_NONBLOCK => fs::handle_set_nonblock(context),
+        SYS_YIELD => {
+            // No-op here, the dispatcher will return and the naked_asm will handle iretq.
+            // Cooperative yielding is handled by the int 0x81 which actually switches.
+            // But we must allow this syscall to prevent 'Unknown syscall' noise.
+        }
 
         _ => {
             debugln!("[Syscall] Unknown syscall #{}", syscall_num);

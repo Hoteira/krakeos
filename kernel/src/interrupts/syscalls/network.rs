@@ -3,65 +3,57 @@ use crate::interrupts::task::CPUState;
 pub fn handle_net_send(context: &mut CPUState) {
     let ptr = context.rdi as *const u8;
     let len = context.rsi as usize;
+    crate::debugln!("CALLING TCP FN handle_net_send WITH ARGS: ptr={:#x}, len={}", ptr as u64, len);
 
     if ptr.is_null() || len == 0 {
+        crate::debugln!("TCP RESULT: handle_net_send FAILED (invalid args)");
         context.rax = 1;
         return;
     }
 
     let data = unsafe { core::slice::from_raw_parts(ptr, len) };
-
-    // Enable interrupts to allow keyboard to work
-    unsafe {
-        core::arch::asm!("sti");
-    }
-
+    crate::debugln!("SYSCALL: CALLING virtio::send_packet with data_len={}", len);
     let res = crate::drivers::network::virtio::send_packet(data);
-
-    unsafe {
-        core::arch::asm!("cli");
-    }
-
+    crate::debugln!("TCP RESULT: handle_net_send RESULT: {}", res as u64);
     context.rax = res as u64;
 }
 
 pub fn handle_net_recv(context: &mut CPUState) {
     let ptr = context.rdi as *mut u8;
     let len = context.rsi as usize;
+    crate::debugln!("CALLING TCP FN handle_net_recv WITH ARGS: ptr={:#x}, len={}", ptr as u64, len);
 
     if ptr.is_null() || len == 0 {
+        crate::debugln!("TCP RESULT: handle_net_recv FAILED (invalid args)");
         context.rax = 0;
         return;
     }
 
-    // Enable interrupts to allow keyboard to work
-    unsafe {
-        core::arch::asm!("sti");
-    }
-
+    crate::debugln!("SYSCALL: CALLING virtio::recv_packet");
     let packet_opt = crate::drivers::network::virtio::recv_packet();
-
-    unsafe {
-        core::arch::asm!("cli");
-    }
 
     if let Some(packet) = packet_opt {
         let copy_len = core::cmp::min(len, packet.len());
+        crate::debugln!("SYSCALL: packet received, copy_len={}", copy_len);
         unsafe {
             core::ptr::copy_nonoverlapping(packet.as_ptr(), ptr, copy_len);
         }
+        crate::debugln!("TCP RESULT: handle_net_recv RESULT: {}", copy_len);
         context.rax = copy_len as u64;
     } else {
+        crate::debugln!("TCP RESULT: handle_net_recv RESULT: 0 (no packet)");
         context.rax = 0;
     }
 }
 
 pub fn handle_socket(context: &mut CPUState) {
-    let domain = context.rdi; // 2 = AF_INET
-    let type_ = context.rsi; // 1 = SOCK_STREAM (TCP), 2 = SOCK_DGRAM (UDP)
-    let _proto = context.rdx;
+    let domain = context.rdi;
+    let type_ = context.rsi;
+    let proto = context.rdx;
+    crate::debugln!("CALLING TCP FN handle_socket WITH ARGS: domain={}, type={}, proto={}", domain, type_, proto);
 
     if domain != 2 || (type_ != 1 && type_ != 2) {
+        crate::debugln!("TCP RESULT: handle_socket FAILED (invalid domain/type)");
         context.rax = u64::MAX;
         return;
     }
@@ -74,69 +66,272 @@ pub fn handle_socket(context: &mut CPUState) {
 
     let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
     if let Some(current) = tm.current_task_idx() {
-        let pid = tm.tasks[current]
-            .as_ref()
-            .unwrap()
-            .process
-            .as_ref()
-            .unwrap()
-            .pid;
-        let socket_id = crate::net::socket::SOCKET_MANAGER
-            .lock()
-            .create_socket(pid, socket_kind);
+        let pid = tm.tasks[current].as_ref().unwrap().process.as_ref().unwrap().pid;
+        crate::debugln!("SYSCALL: socket for pid={}", pid);
+        let socket_id = crate::net::socket::SOCKET_MANAGER.lock().create_socket(pid, socket_kind);
+        
         if let Some(thread) = tm.tasks[current].as_mut() {
-            let proc = thread.process.as_ref().expect("Thread has no process");
-            let mut socket_table = proc.socket_table.lock();
+            let proc = thread.process.as_ref().unwrap();
+            let mut table = proc.socket_table.lock();
             for i in 0..16 {
-                if socket_table[i].is_none() {
-                    socket_table[i] = Some(socket_id);
+                if table[i].is_none() {
+                    table[i] = Some(socket_id);
+                    crate::debugln!("TCP RESULT: handle_socket RESULT: fd={}", i);
                     context.rax = i as u64;
                     return;
                 }
             }
         }
     }
+    crate::debugln!("TCP RESULT: handle_socket FAILED (no slots)");
     context.rax = u64::MAX;
 }
 
 pub fn handle_bind(context: &mut CPUState) {
     let fd = context.rdi as usize;
     let addr_ptr = context.rsi as *const u8;
-    let _addr_len = context.rdx;
+    crate::debugln!("CALLING TCP FN handle_bind WITH ARGS: fd={}, addr_ptr={:#x}", fd, addr_ptr as u64);
 
-    if addr_ptr.is_null() {
+    if addr_ptr.is_null() || fd >= 16 {
+        crate::debugln!("TCP RESULT: handle_bind FAILED (invalid args)");
         context.rax = u64::MAX;
         return;
     }
 
-    if fd >= 16 {
-        context.rax = u64::MAX;
-        return;
-    }
+    let port = unsafe { u16::from_be(*(addr_ptr.add(2) as *const u16)) };
+    crate::debugln!("SYSCALL: bind to port={}", port);
 
-    let port = unsafe {
-        // sockaddr_in: family(2), port(2), addr(4), zero(8)
-        let p_n = *(addr_ptr.add(2) as *const u16);
-        u16::from_be(p_n)
+    let socket_id = match get_socket_id(context, fd) {
+        Some(s) => s,
+        None => {
+            crate::debugln!("TCP RESULT: handle_bind FAILED (no socket)");
+            context.rax = u64::MAX;
+            return;
+        }
     };
 
-    let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
-    if let Some(current) = tm.current_task_idx() {
-        if let Some(thread) = tm.tasks[current].as_ref() {
-            let proc = thread.process.as_ref().unwrap();
-            let socket_id_opt = proc.socket_table.lock()[fd];
+    let res = crate::net::socket::SOCKET_MANAGER.lock().bind(socket_id, port);
+    let ret = if res.is_ok() { 0 } else { u64::MAX };
+    crate::debugln!("TCP RESULT: handle_bind RESULT: {}", ret);
+    context.rax = ret;
+}
 
-            if let Some(socket_id) = socket_id_opt {
-                drop(tm);
+pub fn handle_connect(context: &mut CPUState) {
+    let fd = context.rdi as usize;
+    let addr_ptr = context.rsi as *const u8;
+    crate::debugln!("CALLING TCP FN handle_connect WITH ARGS: fd={}, addr_ptr={:#x}", fd, addr_ptr as u64);
 
-                let res = crate::net::socket::SOCKET_MANAGER
-                    .lock()
-                    .bind(socket_id, port);
-                context.rax = if res.is_ok() { 0 } else { u64::MAX };
-                return;
+    if addr_ptr.is_null() || fd >= 16 {
+        crate::debugln!("TCP RESULT: handle_connect FAILED (invalid args)");
+        context.rax = u64::MAX;
+        return;
+    }
+
+    let (dst_ip, dst_port) = unsafe {
+        let port = u16::from_be_bytes([*addr_ptr.add(2), *addr_ptr.add(3)]);
+        let ip = [*addr_ptr.add(4), *addr_ptr.add(5), *addr_ptr.add(6), *addr_ptr.add(7)];
+        (ip, port)
+    };
+    crate::debugln!("SYSCALL: connect to {:?}:{}", dst_ip, dst_port);
+
+    let socket_id = match get_socket_id(context, fd) {
+        Some(s) => s,
+        None => {
+            crate::debugln!("TCP RESULT: handle_connect FAILED (no socket)");
+            context.rax = u64::MAX;
+            return;
+        }
+    };
+
+    let local_port = 49152 + (socket_id as u16 % 16384);
+    crate::debugln!("SYSCALL: local_port={}", local_port);
+
+    let res = crate::net::tcp::tcp_connect_start(local_port, dst_ip, dst_port, socket_id);
+    context.rax = if let Ok(key) = res {
+        crate::net::socket::SOCKET_MANAGER.lock().tcp_connections.insert(socket_id, crate::net::tcp::conn_key_pack(key));
+        crate::debugln!("TCP RESULT: handle_connect SUCCESS (initiated)");
+        0
+    } else {
+        crate::debugln!("TCP RESULT: handle_connect FAILED");
+        u64::MAX
+    };
+}
+
+pub fn handle_connect_finish(context: &mut CPUState) {
+    let fd = context.rdi as usize;
+    crate::debugln!("CALLING TCP FN handle_connect_finish WITH ARGS: fd={}", fd);
+    
+    // Poll loopback/physical queue to process SYN-ACK or other handshake steps
+    crate::drivers::network::virtio::poll_rx();
+
+    if fd >= 16 {
+        crate::debugln!("TCP RESULT: handle_connect_finish FAILED (invalid fd)");
+        context.rax = u64::MAX;
+        return;
+    }
+
+    let socket_id = match get_socket_id(context, fd) {
+        Some(s) => s,
+        None => {
+            crate::debugln!("TCP RESULT: handle_connect_finish FAILED (no socket)");
+            context.rax = u64::MAX;
+            return;
+        }
+    };
+
+    let key_packed = crate::net::socket::SOCKET_MANAGER.lock().tcp_connections.get(&socket_id).copied();
+    if let Some(packed) = key_packed {
+        let key = crate::net::tcp::conn_key_unpack(packed);
+        let connected = crate::net::tcp::tcp_connect_check(key);
+        let ret = if connected { 0 } else { 1 };
+        crate::debugln!("TCP RESULT: handle_connect_finish RESULT: {}", ret);
+        context.rax = ret as u64;
+    } else {
+        crate::debugln!("TCP RESULT: handle_connect_finish FAILED (no connection)");
+        context.rax = u64::MAX;
+    }
+}
+
+pub fn handle_listen(context: &mut CPUState) {
+    let fd = context.rdi as usize;
+    crate::debugln!("CALLING TCP FN handle_listen WITH ARGS: fd={}", fd);
+    
+    let socket_id = match get_socket_id(context, fd) {
+        Some(s) => s,
+        None => {
+            crate::debugln!("TCP RESULT: handle_listen FAILED (no socket)");
+            context.rax = u64::MAX;
+            return;
+        }
+    };
+
+    let local_port = crate::net::socket::SOCKET_MANAGER.lock().sockets.get(&socket_id).map(|s| s.local_port).unwrap_or(0);
+    if local_port == 0 {
+        crate::debugln!("TCP RESULT: handle_listen FAILED (not bound)");
+        context.rax = u64::MAX;
+        return;
+    }
+
+    crate::net::tcp::tcp_listen(local_port, socket_id);
+    crate::debugln!("TCP RESULT: handle_listen SUCCESS");
+    context.rax = 0;
+}
+
+pub fn handle_accept(context: &mut CPUState) {
+    let fd = context.rdi as usize;
+    crate::debugln!("CALLING TCP FN handle_accept WITH ARGS: fd={}", fd);
+    
+    let socket_id = match get_socket_id(context, fd) {
+        Some(s) => s,
+        None => {
+            crate::debugln!("TCP RESULT: handle_accept FAILED (no socket)");
+            context.rax = u64::MAX;
+            return;
+        }
+    };
+
+    crate::drivers::network::virtio::poll_rx();
+    if let Some(key) = crate::net::tcp::tcp_accept(socket_id) {
+        let new_sid = crate::net::socket::SOCKET_MANAGER.lock().create_socket(0, crate::net::socket::SocketType::Tcp);
+        {
+            let mut sm = crate::net::socket::SOCKET_MANAGER.lock();
+            if let Some(sock) = sm.sockets.get_mut(&new_sid) { sock.local_port = key.local_port; }
+            sm.tcp_connections.insert(new_sid, crate::net::tcp::conn_key_pack(key));
+            if let Some(conn) = crate::net::tcp::TCP_MANAGER.int_lock().connections.get_mut(&key) {
+                conn.socket_id = new_sid;
+            }
+        }
+        
+        let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        if let Some(current) = tm.current_task_idx() {
+            let proc = tm.tasks[current].as_ref().unwrap().process.as_ref().unwrap();
+            let mut table = proc.socket_table.lock();
+            for i in 0..16 {
+                if table[i].is_none() {
+                    table[i] = Some(new_sid);
+                    crate::debugln!("TCP RESULT: handle_accept RESULT: fd={}", i);
+                    context.rax = i as u64;
+                    return;
+                }
             }
         }
     }
+    crate::debugln!("TCP RESULT: handle_accept RESULT: WOULDBLOCK");
+    context.rax = u64::MAX;
+}
+
+pub fn handle_tcp_send(context: &mut CPUState) {
+    let fd = context.rdi as usize;
+    let buf_ptr = context.rsi as *const u8;
+    let len = context.rdx as usize;
+    crate::debugln!("CALLING TCP FN handle_tcp_send WITH ARGS: fd={}, len={}", fd, len);
+
+    let socket_id = match get_socket_id(context, fd) {
+        Some(s) => s,
+        None => {
+            crate::debugln!("TCP RESULT: handle_tcp_send FAILED (no socket)");
+            context.rax = u64::MAX;
+            return;
+        }
+    };
+
+    let key_packed = crate::net::socket::SOCKET_MANAGER.lock().tcp_connections.get(&socket_id).copied();
+    if let Some(packed) = key_packed {
+        let key = crate::net::tcp::conn_key_unpack(packed);
+        let data = unsafe { core::slice::from_raw_parts(buf_ptr, len) };
+        let res = crate::net::tcp::tcp_send(key, data);
+        let ret = res.map(|n| n as u64).unwrap_or(u64::MAX);
+        crate::debugln!("TCP RESULT: handle_tcp_send RESULT: {}", ret);
+        context.rax = ret;
+    } else {
+        crate::debugln!("TCP RESULT: handle_tcp_send FAILED (no connection)");
+        context.rax = u64::MAX;
+    }
+}
+
+pub fn handle_tcp_recv(context: &mut CPUState) {
+    let fd = context.rdi as usize;
+    let buf_ptr = context.rsi as *mut u8;
+    let len = context.rdx as usize;
+    crate::debugln!("CALLING TCP FN handle_tcp_recv WITH ARGS: fd={}, len={}", fd, len);
+
+    let socket_id = match get_socket_id(context, fd) {
+        Some(s) => s,
+        None => {
+            crate::debugln!("TCP RESULT: handle_tcp_recv FAILED (no socket)");
+            context.rax = u64::MAX;
+            return;
+        }
+    };
+
+    crate::drivers::network::virtio::poll_rx();
+    let mut sm = crate::net::socket::SOCKET_MANAGER.lock();
+    if let Some(packet) = sm.pop_packet(socket_id) {
+        let copy_len = core::cmp::min(len, packet.len());
+        unsafe { core::ptr::copy_nonoverlapping(packet.as_ptr(), buf_ptr, copy_len); }
+        crate::debugln!("TCP RESULT: handle_tcp_recv RESULT: {}", copy_len);
+        context.rax = copy_len as u64;
+    } else {
+        crate::debugln!("TCP RESULT: handle_tcp_recv RESULT: 0 (WOULDBLOCK)");
+        context.rax = 0;
+    }
+}
+
+pub fn handle_close_socket(context: &mut CPUState) {
+    let fd = context.rdi as usize;
+    crate::debugln!("CALLING TCP FN handle_close_socket WITH ARGS: fd={}", fd);
+    let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    if let Some(current) = tm.current_task_idx() {
+        let proc = tm.tasks[current].as_ref().unwrap().process.as_ref().unwrap();
+        let mut table = proc.socket_table.lock();
+        if fd < 16 {
+            table[fd] = None;
+            crate::debugln!("TCP RESULT: handle_close_socket SUCCESS");
+            context.rax = 0;
+            return;
+        }
+    }
+    crate::debugln!("TCP RESULT: handle_close_socket FAILED");
     context.rax = u64::MAX;
 }
 
@@ -144,64 +339,25 @@ pub fn handle_sendto(context: &mut CPUState) {
     let fd = context.rdi as usize;
     let buf_ptr = context.rsi as *const u8;
     let len = context.rdx as usize;
-    let _flags = context.r10;
     let dest_addr_ptr = context.r8 as *const u8;
-    let _dest_len = context.r9;
-
-    if buf_ptr.is_null() || dest_addr_ptr.is_null() || fd >= 16 {
-        context.rax = u64::MAX;
-        return;
-    }
-
-    let payload = unsafe { core::slice::from_raw_parts(buf_ptr, len) };
+    crate::debugln!("CALLING TCP FN handle_sendto WITH ARGS: fd={}, len={}", fd, len);
 
     let (dst_ip, dst_port) = unsafe {
-        let p_n = *(dest_addr_ptr.add(2) as *const u16);
-        let port = u16::from_be(p_n);
+        let port = u16::from_be(*(dest_addr_ptr.add(2) as *const u16));
         let ip_ptr = dest_addr_ptr.add(4);
-        let ip = [*ip_ptr, *ip_ptr.add(1), *ip_ptr.add(2), *ip_ptr.add(3)];
-        (ip, port)
+        ([*ip_ptr, *ip_ptr.add(1), *ip_ptr.add(2), *ip_ptr.add(3)], port)
     };
 
-    let mut socket_id = 0;
+    let socket_id = match get_socket_id(context, fd) { Some(s) => s, None => 0 };
     let mut src_port = 0;
-
-    {
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
-        if let Some(current) = tm.current_task_idx() {
-            if let Some(thread) = tm.tasks[current].as_ref() {
-                let proc = thread.process.as_ref().unwrap();
-                if let Some(sid) = proc.socket_table.lock()[fd] {
-                    socket_id = sid;
-                }
-            }
-        }
-    }
-
     if socket_id != 0 {
-        let sm = crate::net::socket::SOCKET_MANAGER.lock();
-        if let Some(socket) = sm.sockets.get(&socket_id) {
-            src_port = socket.local_port;
-        }
+        src_port = crate::net::socket::SOCKET_MANAGER.lock().sockets.get(&socket_id).map(|s| s.local_port).unwrap_or(0);
     }
+    if src_port == 0 { src_port = 49152 + (socket_id as u16 % 16384); }
 
-    if src_port == 0 {
-        // Ephemeral port hack
-        src_port = 49152 + (socket_id as u16 % 16384);
-        // Should really update the socket state
-    }
-
-    // Enable interrupts for virtio send
-    unsafe {
-        core::arch::asm!("sti");
-    }
-
-    crate::net::udp::send_udp(src_port, dst_ip, dst_port, payload);
-
-    unsafe {
-        core::arch::asm!("cli");
-    }
-
+    let data = unsafe { core::slice::from_raw_parts(buf_ptr, len) };
+    crate::net::udp::send_udp(src_port, dst_ip, dst_port, data);
+    crate::debugln!("TCP RESULT: handle_sendto RESULT: {}", len);
     context.rax = len as u64;
 }
 
@@ -209,355 +365,42 @@ pub fn handle_recvfrom(context: &mut CPUState) {
     let fd = context.rdi as usize;
     let buf_ptr = context.rsi as *mut u8;
     let len = context.rdx as usize;
-    let _flags = context.r10;
     let src_addr_ptr = context.r8 as *mut u8;
     let addr_len_ptr = context.r9 as *mut u32;
+    crate::debugln!("CALLING TCP FN handle_recvfrom WITH ARGS: fd={}, len={}", fd, len);
 
-    if buf_ptr.is_null() || fd >= 16 {
-        context.rax = u64::MAX;
-        return;
-    }
+    let socket_id = match get_socket_id(context, fd) { Some(s) => s, None => 0 };
+    if socket_id == 0 { context.rax = u64::MAX; return; }
 
-    let mut socket_id = 0;
-    {
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
-        if let Some(current) = tm.current_task_idx() {
-            if let Some(thread) = tm.tasks[current].as_ref() {
-                let proc = thread.process.as_ref().unwrap();
-                if let Some(sid) = proc.socket_table.lock()[fd] {
-                    socket_id = sid;
-                }
-            }
-        }
-    }
-
-    if socket_id == 0 {
-        context.rax = u64::MAX;
-        return;
-    }
-
-    // Enable interrupts to poll
-    unsafe {
-        core::arch::asm!("sti");
-    }
-
-    // Trigger a poll/pull from virtio just in case
     crate::drivers::network::virtio::poll_rx();
-
-    unsafe {
-        core::arch::asm!("cli");
-    }
-
     let mut sm = crate::net::socket::SOCKET_MANAGER.lock();
     if let Some(packet) = sm.pop_packet(socket_id) {
-        // Packet format in queue: SrcIP(4) + SrcPort(2) + Payload
         if packet.len() >= 6 {
             let src_ip = &packet[0..4];
             let src_port_be = &packet[4..6];
             let payload = &packet[6..];
-
             let copy_len = core::cmp::min(len, payload.len());
             unsafe {
                 core::ptr::copy_nonoverlapping(payload.as_ptr(), buf_ptr, copy_len);
-
                 if !src_addr_ptr.is_null() {
-                    // Fill sockaddr_in
-                    *(src_addr_ptr as *mut u16) = 2; // AF_INET
-                    let port_ptr = src_addr_ptr.add(2);
-                    *port_ptr = src_port_be[0];
-                    *port_ptr.add(1) = src_port_be[1];
-
-                    let ip_ptr = src_addr_ptr.add(4);
-                    core::ptr::copy_nonoverlapping(src_ip.as_ptr(), ip_ptr, 4);
+                    *(src_addr_ptr as *mut u16) = 2;
+                    core::ptr::copy_nonoverlapping(src_port_be.as_ptr(), src_addr_ptr.add(2), 2);
+                    core::ptr::copy_nonoverlapping(src_ip.as_ptr(), src_addr_ptr.add(4), 4);
                 }
-
-                if !addr_len_ptr.is_null() {
-                    *addr_len_ptr = 16;
-                }
+                if !addr_len_ptr.is_null() { *addr_len_ptr = 16; }
             }
+            crate::debugln!("TCP RESULT: handle_recvfrom RESULT: {}", copy_len);
             context.rax = copy_len as u64;
-        } else {
-            context.rax = 0;
-        }
-    } else {
-        context.rax = u64::MAX; // Error/Empty
-    }
-}
-
-pub fn handle_close_socket(context: &mut CPUState) {
-    let handle = context.rdi as usize;
-    let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
-    if let Some(current) = tm.current_task_idx() {
-        if let Some(thread) = tm.tasks[current].as_mut() {
-            let proc = thread.process.as_ref().expect("Thread has no process");
-            let mut socket_table = proc.socket_table.lock();
-            if handle < 16 {
-                socket_table[handle] = None;
-                context.rax = 0;
-                return;
-            }
+            return;
         }
     }
+    crate::debugln!("TCP RESULT: handle_recvfrom RESULT: WOULDBLOCK");
     context.rax = u64::MAX;
 }
-
-// ─────────────────────────────────────────────────────────
-// TCP syscall handlers
-// ─────────────────────────────────────────────────────────
 
 fn get_socket_id(context: &CPUState, fd: usize) -> Option<usize> {
     let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
     let current = tm.current_task_idx()?;
-    let thread = tm.tasks[current].as_ref()?;
-    let proc = thread.process.as_ref()?;
+    let proc = tm.tasks[current].as_ref()?.process.as_ref()?;
     proc.socket_table.lock()[fd]
-}
-
-/// syscall: connect(fd, sockaddr_in*, addrlen)  → 0 ok / MAX err
-pub fn handle_connect(context: &mut CPUState) {
-    let fd = context.rdi as usize;
-    let addr_ptr = context.rsi as *const u8;
-    if addr_ptr.is_null() || fd >= 16 {
-        context.rax = u64::MAX;
-        return;
-    }
-
-    let (dst_ip, dst_port) = unsafe {
-        let port = u16::from_be_bytes([*addr_ptr.add(2), *addr_ptr.add(3)]);
-        let ip = [
-            *addr_ptr.add(4),
-            *addr_ptr.add(5),
-            *addr_ptr.add(6),
-            *addr_ptr.add(7),
-        ];
-        (ip, port)
-    };
-
-    let socket_id = match get_socket_id(context, fd) {
-        Some(s) => s,
-        None => {
-            context.rax = u64::MAX;
-            return;
-        }
-    };
-
-    // Ephemeral local port from socket_id
-    let local_port = 49152 + (socket_id as u16 % 16384);
-
-    unsafe {
-        core::arch::asm!("sti");
-    }
-    let res = crate::net::tcp::tcp_connect(local_port, dst_ip, dst_port, socket_id);
-    unsafe {
-        core::arch::asm!("cli");
-    }
-
-    context.rax = if res.is_ok() {
-        // Map this socket to its connection for future send/recv calls!
-        let key = crate::net::tcp::ConnKey {
-            local_port,
-            remote_ip: dst_ip,
-            remote_port: dst_port,
-        };
-        crate::net::socket::SOCKET_MANAGER
-            .lock()
-            .tcp_connections
-            .insert(socket_id, crate::net::tcp::conn_key_pack(key));
-
-        0
-    } else {
-        u64::MAX
-    };
-}
-
-/// syscall: listen(fd, backlog)  → 0 ok
-pub fn handle_listen(context: &mut CPUState) {
-    let fd = context.rdi as usize;
-    if fd >= 16 {
-        context.rax = u64::MAX;
-        return;
-    }
-
-    let socket_id = match get_socket_id(context, fd) {
-        Some(s) => s,
-        None => {
-            context.rax = u64::MAX;
-            return;
-        }
-    };
-
-    // Bind port must have been set via bind() already
-    let local_port = crate::net::socket::SOCKET_MANAGER
-        .lock()
-        .sockets
-        .get(&socket_id)
-        .map(|s| s.local_port)
-        .unwrap_or(0);
-    if local_port == 0 {
-        context.rax = u64::MAX;
-        return;
-    }
-
-    crate::net::tcp::tcp_listen(local_port, socket_id);
-    context.rax = 0;
-}
-
-/// syscall: accept(fd, addr_out*, addrlen_out*)  → new_fd or MAX
-pub fn handle_accept(context: &mut CPUState) {
-    let fd = context.rdi as usize;
-    if fd >= 16 {
-        context.rax = u64::MAX;
-        return;
-    }
-
-    let socket_id = match get_socket_id(context, fd) {
-        Some(s) => s,
-        None => {
-            context.rax = u64::MAX;
-            return;
-        }
-    };
-
-    // Poll for a bit
-    for _ in 0..1000 {
-        unsafe {
-            core::arch::asm!("sti");
-        }
-        crate::drivers::network::virtio::poll_rx();
-        unsafe {
-            core::arch::asm!("cli");
-        }
-
-        if let Some(key) = crate::net::tcp::tcp_accept(socket_id) {
-            // Create a new socket entry to represent the accepted connection
-            let new_socket_id = crate::net::socket::SOCKET_MANAGER
-                .lock()
-                .create_socket(0, crate::net::socket::SocketType::Tcp);
-            
-            {
-                let mut sm = crate::net::socket::SOCKET_MANAGER.lock();
-                if let Some(sock) = sm.sockets.get_mut(&new_socket_id) {
-                    sock.local_port = key.local_port;
-                }
-                // Store packed key for send/recv lookup
-                sm.tcp_connections
-                    .insert(new_socket_id, crate::net::tcp::conn_key_pack(key));
-                
-                // CRITICAL: Associate the new socket with the connection for the packet router
-                let mut tm = crate::net::tcp::TCP_MANAGER.lock();
-                if let Some(conn) = tm.connections.get_mut(&key) {
-                    conn.socket_id = new_socket_id;
-                }
-            }
-
-            // Assign to process socket table
-            let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
-            if let Some(current) = tm.current_task_idx() {
-                if let Some(thread) = tm.tasks[current].as_ref() {
-                    if let Some(proc) = thread.process.as_ref() {
-                        let mut table = proc.socket_table.lock();
-                        for i in 0..16 {
-                            if table[i].is_none() {
-                                table[i] = Some(new_socket_id);
-                                context.rax = i as u64;
-                                return;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        for _ in 0..10000 {
-            unsafe {
-                core::arch::asm!("pause");
-            }
-        }
-    }
-    context.rax = u64::MAX;
-}
-
-/// syscall: send(fd, buf*, len, flags)  → bytes sent or MAX
-pub fn handle_tcp_send(context: &mut CPUState) {
-    let fd = context.rdi as usize;
-    let buf_ptr = context.rsi as *const u8;
-    let len = context.rdx as usize;
-    if buf_ptr.is_null() || fd >= 16 {
-        context.rax = u64::MAX;
-        return;
-    }
-
-    let socket_id = match get_socket_id(context, fd) {
-        Some(s) => s,
-        None => {
-            context.rax = u64::MAX;
-            return;
-        }
-    };
-
-    let key = match crate::net::socket::SOCKET_MANAGER
-        .lock()
-        .tcp_connections
-        .get(&socket_id)
-        .copied()
-    {
-        Some(packed) => crate::net::tcp::conn_key_unpack(packed),
-        None => {
-            context.rax = u64::MAX;
-            return;
-        }
-    };
-
-    // Copy to kernel buffer first
-    let mut data = alloc::vec![0u8; len];
-    unsafe {
-        core::ptr::copy_nonoverlapping(buf_ptr, data.as_mut_ptr(), len);
-    }
-
-    unsafe {
-        core::arch::asm!("sti");
-    }
-    let res = crate::net::tcp::tcp_send(key, &data);
-    unsafe {
-        core::arch::asm!("cli");
-    }
-    context.rax = res.map(|n| n as u64).unwrap_or(u64::MAX);
-}
-
-/// syscall: recv(fd, buf*, len, flags)  → bytes read, 0=would block, MAX=err
-pub fn handle_tcp_recv(context: &mut CPUState) {
-    let fd = context.rdi as usize;
-    let buf_ptr = context.rsi as *mut u8;
-    let len = context.rdx as usize;
-    if buf_ptr.is_null() || fd >= 16 {
-        context.rax = u64::MAX;
-        return;
-    }
-
-    let socket_id = match get_socket_id(context, fd) {
-        Some(s) => s,
-        None => {
-            context.rax = u64::MAX;
-            return;
-        }
-    };
-
-    // Enable interrupts to poll
-    unsafe {
-        core::arch::asm!("sti");
-    }
-    crate::drivers::network::virtio::poll_rx();
-    unsafe {
-        core::arch::asm!("cli");
-    }
-
-    let mut sm = crate::net::socket::SOCKET_MANAGER.lock();
-    if let Some(packet) = sm.pop_packet(socket_id) {
-        let copy_len = core::cmp::min(len, packet.len());
-        unsafe {
-            core::ptr::copy_nonoverlapping(packet.as_ptr(), buf_ptr, copy_len);
-        }
-        context.rax = copy_len as u64;
-    } else {
-        context.rax = 0; // Would block/Empty
-    }
 }

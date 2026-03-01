@@ -199,6 +199,12 @@ impl TaskManager {
     }
 
     pub fn schedule(&mut self, cpu_state: *mut CPUState) -> (*mut CPUState, u64, u64) {
+        // Stack pointer sanity check
+        let sp = cpu_state as u64;
+        if sp < 0x1000 {
+            crate::debugln!("CRITICAL: Stack pointer is dangerously low: {:#x}", sp);
+        }
+
         for i in 0..MAX_THREADS {
             if let Some(thread) = &mut self.tasks[i] {
                 if thread.state == ThreadState::Sleeping && unsafe { SYSTEM_TICKS } >= thread.wake_ticks {
@@ -468,9 +474,12 @@ unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
             SYSTEM_TICKS = SYSTEM_TICKS.wrapping_add(10);
         }
 
+        // Periodically poll network stack on every switch (tick or yield)
+        crate::drivers::network::virtio::poll_rx();
 
         let mut tm = TASK_MANAGER.lock();
 
+        let current_task_idx = tm.current_task;
 
         if is_timer {
 
@@ -481,10 +490,9 @@ unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
         }
 
 
-        let current_task = tm.current_task;
-
-        if current_task >= 0 {
-            if let Some(thread) = &mut tm.tasks[current_task as usize] {
+        if current_task_idx >= 0 {
+            if let Some(thread) = &mut tm.tasks[current_task_idx as usize] {
+                thread.cpu_state_ptr = rsp;
                 let fpu_ptr = thread.fpu_state.as_mut_ptr();
 
                 asm!("fxsave [{}]", in(reg) fpu_ptr);
@@ -493,15 +501,23 @@ unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
 
 
         let (new_state, k_stack, pml4_phys) = tm.schedule(rsp as *mut CPUState);
+        let new_task_idx = tm.current_task;
 
-
-        let current_task = tm.current_task;
-
-        if current_task >= 0 {
-            if let Some(thread) = &tm.tasks[current_task as usize] {
+        if new_task_idx >= 0 {
+            if let Some(thread) = &tm.tasks[new_task_idx as usize] {
                 let fpu_ptr = thread.fpu_state.as_ptr();
 
                 asm!("fxrstor [{}]", in(reg) fpu_ptr);
+            }
+        }
+
+        let new_cpu_state_ptr = new_state as u64;
+        if new_cpu_state_ptr == 0 {
+            crate::debugln!("TASK: Switch to NULL state! prev={}, next={}", current_task_idx, new_task_idx);
+        } else {
+            let next_rip = (*(new_cpu_state_ptr as *const CPUState)).rip;
+            if next_rip == 0 {
+                crate::debugln!("TASK: Switch to task with RIP=0! prev={}, next={}", current_task_idx, new_task_idx);
             }
         }
 

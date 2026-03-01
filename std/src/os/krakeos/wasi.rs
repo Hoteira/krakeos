@@ -5,13 +5,14 @@ use crate::wasm::{
     wasi::ctx::{WasiResource, InputStreamSource, OutputStreamSource},
 };
 use crate::wasm::wasi::preview2::{read_mem, read_mem_u32, read_mem_u64, write_bytes};
+use crate::os::krakeos as host;
 
 crate::export_method!(
     "krakeos:graphics/screen@0.2.0", "get-width",
     [],
     vec![], vec![ValType::NumType(NumType::I32)],
     pub fn get_screen_width<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-        Ok(vec![Value::I32(crate::os::graphics::get_screen_width() as u32)])
+        Ok(vec![Value::I32(host::get_screen_width() as u32)])
     }
 );
 
@@ -20,7 +21,7 @@ crate::export_method!(
     [],
     vec![], vec![ValType::NumType(NumType::I32)],
     pub fn get_screen_height<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-        Ok(vec![Value::I32(crate::os::graphics::get_screen_height() as u32)])
+        Ok(vec![Value::I32(host::get_screen_height() as u32)])
     }
 );
 
@@ -51,7 +52,7 @@ crate::export_method!(
         let prev_height = read_mem_u32(store, ptr + 76)? as usize;
 
         let wasm_base = store.get_wasm_base_ptr() as u64;
-        let host_win = crate::os::graphics::Window {
+        let host_win = host::Window {
             id: 0,
             buffer: if buffer_off != 0 { (wasm_base + buffer_off) as usize } else { 0 },
             back_buffer: if back_buffer_off != 0 { (wasm_base + back_buffer_off) as usize } else { 0 },
@@ -63,10 +64,7 @@ crate::export_method!(
             prev_x, prev_y, prev_width, prev_height,
         };
 
-        #[cfg(not(target_arch = "wasm32"))]
-        let res = unsafe { crate::sys::syscall(100, &host_win as *const _ as u64, 0, 0) };
-        #[cfg(target_arch = "wasm32")]
-        let res = 0;
+        let res = host::add_window(&host_win) as u64;
 
         if res != 0 { let _ = write_bytes(store, ptr, &(res as u32).to_le_bytes()); }
         Ok(vec![Value::I64(res)])
@@ -101,7 +99,7 @@ crate::export_method!(
         let prev_height = read_mem_u32(store, ptr + 76)? as usize;
 
         let wasm_base = store.get_wasm_base_ptr() as u64;
-        let host_win = crate::os::graphics::Window {
+        let host_win = host::Window {
             id,
             buffer: if buffer_off != 0 { (wasm_base + buffer_off) as usize } else { 0 },
             back_buffer: if back_buffer_off != 0 { (wasm_base + back_buffer_off) as usize } else { 0 },
@@ -113,8 +111,7 @@ crate::export_method!(
             prev_x, prev_y, prev_width, prev_height,
         };
 
-        #[cfg(not(target_arch = "wasm32"))]
-        unsafe { crate::sys::syscall(102, &host_win as *const _ as u64, 0, 0); }
+        host::update_window(&host_win);
         Ok(vec![])
     }
 );
@@ -127,13 +124,16 @@ crate::export_method!(
         let handle = match args.get(0) { Some(Value::I64(v)) => *v, _ => 0 };
         let buf_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I32(0)]) };
         let max = match args.get(2) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I32(0)]) };
-        let event_size = core::mem::size_of::<crate::os::graphics::Event>();
-        let mut buf = vec![0u8; max as usize * event_size];
-        #[cfg(not(target_arch = "wasm32"))]
-        let count = unsafe { crate::sys::syscall(104, handle, buf.as_mut_ptr() as u64, max as u64) as i32 };
-        #[cfg(target_arch = "wasm32")]
-        let count = 0;
-        if count > 0 { write_bytes(store, buf_ptr, &buf[..count as usize * event_size]).map_err(|_| HaltExecutionError(1))?; }
+        
+        let mut events = crate::rust_alloc::vec![host::Event::None; max as usize];
+        let count = host::get_events(handle as usize, &mut events);
+        
+        if count > 0 {
+            let bytes = unsafe {
+                core::slice::from_raw_parts(events.as_ptr() as *const u8, count * core::mem::size_of::<host::Event>())
+            };
+            write_bytes(store, buf_ptr, bytes).map_err(|_| HaltExecutionError(1))?;
+        }
         Ok(vec![Value::I32(count as u32)])
     }
 );
@@ -227,15 +227,9 @@ crate::export_method!(
         let mut name_buf = vec![0u8; name_len as usize];
         read_mem(store, name_ptr, &mut name_buf).map_err(|_| HaltExecutionError(1))?;
         let name = crate::rust_alloc::string::String::from_utf8_lossy(&name_buf);
-        #[cfg(not(target_arch = "wasm32"))]
-        unsafe {
-            let mut name_terminated = crate::rust_alloc::string::String::from(name);
-            name_terminated.push('\0');
-            let res = crate::sys::syscall(120, name_terminated.as_ptr() as u64, name_terminated.len() as u64, size as u64);
-            Ok(vec![Value::I64(res)])
-        }
-        #[cfg(target_arch = "wasm32")]
-        Ok(vec![Value::I64(0)])
+        
+        let res = host::shm_get(&name, size as u64).unwrap_or(0);
+        Ok(vec![Value::I64(res)])
     }
 );
 

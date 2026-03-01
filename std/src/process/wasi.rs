@@ -1,9 +1,10 @@
-use crate::rust_alloc::{vec, vec::Vec, string::String, string::ToString};
+use crate::rust_alloc::{string::String, vec, vec::Vec, string::ToString};
 use crate::wasm::{
     common::{config::Config, value::Value, reader::types::{ValType, NumType}},
     interpreter::store::{HaltExecutionError, Store},
 };
 use crate::wasm::wasi::preview2::{read_mem, read_mem_u32, read_mem_string, write_bytes};
+use crate::os::krakeos as host;
 
 crate::export_method!(
     "wasi:cli/exit@0.2.0", "exit",
@@ -46,7 +47,7 @@ crate::export_method!(
             host_fds.push((buf[0], buf[1]));
         }
 
-        let pid = crate::os::spawn_with_fds(&path, &host_args_refs, &host_fds);
+        let pid = host::spawn_with_fds(&path, &host_args_refs, &host_fds);
         Ok(vec![Value::I64(pid as u64)])
     }
 );
@@ -57,10 +58,7 @@ crate::export_method!(
     vec![ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I32)],
     pub fn waitpid<T: Config>(_: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         let pid = match args.get(0) { Some(Value::I64(v)) => *v as u64, _ => 0 };
-        #[cfg(not(target_arch = "wasm32"))]
-        let res = unsafe { crate::sys::syscall(61, pid, 0, 0) as i32 };
-        #[cfg(target_arch = "wasm32")]
-        let res = 0i32;
+        let res = host::waitpid(pid);
         Ok(vec![Value::I32(res as u32)])
     }
 );
@@ -71,20 +69,26 @@ crate::export_method!(
     vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
     pub fn pipe<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         let ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I32((-1i32) as u32)]) };
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let mut fds = [0i32; 2];
-            let res = unsafe { crate::sys::syscall(22, fds.as_mut_ptr() as u64, 0, 0) as i32 };
-            if res == 0 {
-                let mut bytes = [0u8; 8];
-                bytes[0..4].copy_from_slice(&fds[0].to_le_bytes());
-                bytes[4..8].copy_from_slice(&fds[1].to_le_bytes());
-                write_bytes(store, ptr, &bytes).map_err(|_| HaltExecutionError(1))?;
-                Ok(vec![Value::I32(0)])
-            } else { Ok(vec![Value::I32((-1i32) as u32)]) }
-        }
-        #[cfg(target_arch = "wasm32")]
-        Ok(vec![Value::I32((-1i32) as u32)])
+        
+        let mut fds = [0i32; 2];
+        let res = host::pipe(&mut fds);
+        if res == 0 {
+            let mut bytes = [0u8; 8];
+            bytes[0..4].copy_from_slice(&fds[0].to_le_bytes());
+            bytes[4..8].copy_from_slice(&fds[1].to_le_bytes());
+            write_bytes(store, ptr, &bytes).map_err(|_| HaltExecutionError(1))?;
+            Ok(vec![Value::I32(0)])
+        } else { Ok(vec![Value::I32((-1i32) as u32)]) }
+    }
+);
+
+crate::export_method!(
+    "krakeos:system/process@0.2.0", "yield",
+    [],
+    vec![], vec![],
+    pub fn yield_host<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        host::yield_task();
+        Ok(vec![])
     }
 );
 
@@ -103,7 +107,7 @@ crate::export_method!(
     [],
     vec![], vec![ValType::NumType(NumType::I32)],
     pub fn sched_yield_p1<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-        crate::os::yield_task();
+        host::yield_task();
         Ok(vec![Value::I32(0)])
     }
 );
@@ -113,6 +117,7 @@ pub fn register_wasi<T: Config>(linker: &mut crate::wasm::Linker, store: &mut cr
     spawn::register(linker, store);
     waitpid::register(linker, store);
     pipe::register(linker, store);
+    yield_host::register(linker, store);
     proc_exit_p1::register(linker, store);
     sched_yield_p1::register(linker, store);
 }

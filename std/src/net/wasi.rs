@@ -4,6 +4,7 @@ use crate::wasm::{
     interpreter::store::{HaltExecutionError, Store},
 };
 use crate::wasm::wasi::preview2::{read_mem, write_bytes};
+use crate::os::krakeos as host;
 
 crate::export_method!(
     "wasi:sockets/tcp@0.2.0", "[constructor]tcp-socket",
@@ -12,10 +13,9 @@ crate::export_method!(
     pub fn tcp_create_socket<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         let address_family = match args.get(0) { Some(Value::I32(v)) => *v, _ => return Err(HaltExecutionError(1)) };
         let result_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
-        #[cfg(not(target_arch = "wasm32"))]
-        let res = unsafe { crate::sys::syscall6(41, address_family as u64, 1, 0, 0, 0, 0) };
-        #[cfg(target_arch = "wasm32")]
-        let res = u64::MAX;
+        
+        let res = unsafe { host::socket_create(address_family as u64, 1) }; // 1 = SOCK_STREAM
+        
         let mut buf = [0u8; 8];
         if res <= i32::MAX as u64 {
             buf[0] = 0;
@@ -38,10 +38,9 @@ crate::export_method!(
         let result_ptr = match args.get(3) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
         let mut ip_addr = vec![0u8; 16];
         if read_mem(store, ip_addr_ptr, &mut ip_addr).is_err() { return Err(HaltExecutionError(1)); }
-        #[cfg(not(target_arch = "wasm32"))]
-        let res = unsafe { crate::sys::syscall6(49, socket as u64, ip_addr.as_ptr() as u64, 16, 0, 0, 0) };
-        #[cfg(target_arch = "wasm32")]
-        let res = u64::MAX;
+        
+        let res = unsafe { host::socket_bind(socket as u64, ip_addr.as_ptr(), 16) };
+        
         let mut buf = [0u8; 4];
         buf[0] = if res == 0 { 0 } else { 1 };
         write_bytes(store, result_ptr, &buf).map_err(|_| HaltExecutionError(1))?;
@@ -72,10 +71,9 @@ crate::export_method!(
         let result_ptr = match args.get(3) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
         let mut ip_addr = vec![0u8; 16];
         if read_mem(store, ip_addr_ptr, &mut ip_addr).is_err() { return Err(HaltExecutionError(1)); }
-        #[cfg(not(target_arch = "wasm32"))]
-        let res = unsafe { crate::sys::syscall6(42, socket as u64, ip_addr.as_ptr() as u64, 16, 0, 0, 0) };
-        #[cfg(target_arch = "wasm32")]
-        let res = u64::MAX;
+        
+        let res = unsafe { host::socket_connect(socket as u64, ip_addr.as_ptr(), 16) };
+        
         let mut buf = [0u8; 4];
         buf[0] = if res == 0 { 0 } else { 1 };
         write_bytes(store, result_ptr, &buf).map_err(|_| HaltExecutionError(1))?;
@@ -88,9 +86,13 @@ crate::export_method!(
     [],
     vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![],
     pub fn tcp_finish_connect<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let socket = match args.get(0) { Some(Value::I32(v)) => *v, _ => return Err(HaltExecutionError(1)) };
         let result_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
+        
+        let res = unsafe { host::socket_finish_connect(socket as u64) };
+        
         let mut buf = [0u8; 4];
-        buf[0] = 0;
+        buf[0] = if res == 0 { 0 } else { 1 };
         write_bytes(store, result_ptr, &buf).map_err(|_| HaltExecutionError(1))?;
         Ok(vec![])
     }
@@ -103,10 +105,9 @@ crate::export_method!(
     pub fn tcp_start_listen<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         let socket = match args.get(0) { Some(Value::I32(v)) => *v, _ => return Err(HaltExecutionError(1)) };
         let result_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
-        #[cfg(not(target_arch = "wasm32"))]
-        let res = unsafe { crate::sys::syscall6(51, socket as u64, 10, 0, 0, 0, 0) };
-        #[cfg(target_arch = "wasm32")]
-        let res = u64::MAX;
+        
+        let res = unsafe { host::socket_listen(socket as u64, 10) };
+        
         let mut buf = [0u8; 4];
         buf[0] = if res != u64::MAX { 0 } else { 1 };
         write_bytes(store, result_ptr, &buf).map_err(|_| HaltExecutionError(1))?;
@@ -134,10 +135,9 @@ crate::export_method!(
     pub fn tcp_accept<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         let socket = match args.get(0) { Some(Value::I32(v)) => *v, _ => return Err(HaltExecutionError(1)) };
         let result_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
-        #[cfg(not(target_arch = "wasm32"))]
-        let res = unsafe { crate::sys::syscall6(43, socket as u64, 0, 0, 0, 0, 0) };
-        #[cfg(target_arch = "wasm32")]
-        let res = u64::MAX;
+        
+        let res = unsafe { host::socket_accept(socket as u64) };
+        
         let mut buf = [0u8; 8];
         if res <= i32::MAX as u64 {
             buf[0] = 0;
@@ -161,10 +161,9 @@ crate::export_method!(
         let result_ptr = match args.get(3) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
         let mut payload = vec![0u8; buf_len as usize];
         if read_mem(store, buf_ptr, &mut payload).is_err() { return Err(HaltExecutionError(1)); }
-        #[cfg(not(target_arch = "wasm32"))]
-        let res = unsafe { crate::sys::syscall6(52, socket as u64, payload.as_ptr() as u64, buf_len as u64, 0, 0, 0) };
-        #[cfg(target_arch = "wasm32")]
-        let res = u64::MAX;
+        
+        let res = unsafe { host::socket_send(socket as u64, payload.as_ptr(), buf_len as u64) };
+        
         let mut out_buf = [0u8; 16];
         if res <= buf_len as u64 {
             out_buf[0] = 0;
@@ -184,10 +183,9 @@ crate::export_method!(
         let max_len = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
         let result_ptr = match args.get(2) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
         let mut payload = vec![0u8; max_len as usize];
-        #[cfg(not(target_arch = "wasm32"))]
-        let res = unsafe { crate::sys::syscall6(53, socket as u64, payload.as_mut_ptr() as u64, max_len as u64, 0, 0, 0) };
-        #[cfg(target_arch = "wasm32")]
-        let res = u64::MAX;
+        
+        let res = unsafe { host::socket_recv(socket as u64, payload.as_mut_ptr(), max_len as u64) };
+        
         if res <= max_len as u64 {
             let res_usize = res as usize;
             let mut header = vec![0u8; 32];
@@ -213,10 +211,9 @@ crate::export_method!(
     pub fn create_udp_socket<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         let address_family = match args.get(0) { Some(Value::I32(v)) => *v, _ => return Err(HaltExecutionError(1)) };
         let result_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
-        #[cfg(not(target_arch = "wasm32"))]
-        let res = unsafe { crate::sys::syscall6(41, address_family as u64, 2, 0, 0, 0, 0) };
-        #[cfg(target_arch = "wasm32")]
-        let res = u64::MAX;
+        
+        let res = unsafe { host::socket_create(address_family as u64, 2) }; // 2 = SOCK_DGRAM
+        
         let mut buf = [0u8; 8];
         if res <= i32::MAX as u64 {
             buf[0] = 0;
@@ -237,10 +234,9 @@ crate::export_method!(
         let result_ptr = match args.get(3) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
         let mut ip_addr = vec![0u8; 16];
         if read_mem(store, ip_addr_ptr, &mut ip_addr).is_err() { return Err(HaltExecutionError(1)); }
-        #[cfg(not(target_arch = "wasm32"))]
-        let res = unsafe { crate::sys::syscall6(49, socket as u64, ip_addr.as_ptr() as u64, 16, 0, 0, 0) };
-        #[cfg(target_arch = "wasm32")]
-        let res = u64::MAX;
+        
+        let res = unsafe { host::socket_bind(socket as u64, ip_addr.as_ptr(), 16) };
+        
         let mut buf = [0u8; 4];
         buf[0] = if res == 0 { 0 } else { 1 };
         write_bytes(store, result_ptr, &buf).map_err(|_| HaltExecutionError(1))?;
@@ -262,10 +258,9 @@ crate::export_method!(
         if read_mem(store, buf_ptr, &mut payload).is_err() { return Err(HaltExecutionError(1)); }
         let mut dest_addr = [0u8; 16];
         if read_mem(store, dest_addr_ptr, &mut dest_addr).is_err() { return Err(HaltExecutionError(1)); }
-        #[cfg(not(target_arch = "wasm32"))]
-        let res = unsafe { crate::sys::syscall6(44, stream as u64, payload.as_ptr() as u64, buf_len as u64, 0, dest_addr.as_ptr() as u64, 16) };
-        #[cfg(target_arch = "wasm32")]
-        let res = u64::MAX;
+        
+        let res = unsafe { host::socket_udp_send(stream as u64, payload.as_ptr(), buf_len as u64, dest_addr.as_ptr(), 16) };
+        
         let mut result_buf = [0u8; 16];
         if res <= buf_len as u64 {
             result_buf[0] = 0;
@@ -289,10 +284,7 @@ crate::export_method!(
         let mut src_addr = [0u8; 16];
         let mut addr_len: u32 = 16;
 
-        #[cfg(not(target_arch = "wasm32"))]
-        let res = unsafe { crate::sys::syscall6(45, stream as u64, payload.as_mut_ptr() as u64, max_results, 0, src_addr.as_mut_ptr() as u64, &mut addr_len as *mut u32 as u64) };
-        #[cfg(target_arch = "wasm32")]
-        let res = u64::MAX;
+        let res = unsafe { host::socket_udp_recv(stream as u64, payload.as_mut_ptr(), max_results, src_addr.as_mut_ptr(), &mut addr_len) };
 
         if res <= max_results {
             let res_usize = res as usize;

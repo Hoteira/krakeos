@@ -1,4 +1,4 @@
-// --- Window/screen method_export! bindings (from wasi/krakeos.rs) ---
+// --- Window/screen method_export! bindings ---
 
 method_export!("krakeos:system/window@0.2.0", "create",
     pub unsafe fn window_create(attributes_ptr: *const u8) -> u64 {
@@ -9,6 +9,12 @@ method_export!("krakeos:system/window@0.2.0", "create",
 method_export!("krakeos:system/window@0.2.0", "update",
     pub unsafe fn window_update(_handle: u64, attributes_ptr: *const u8) {
         crate::sys::syscall(102, attributes_ptr as u64, 0, 0);
+    }
+);
+
+method_export!("krakeos:system/window@0.2.0", "update-area",
+    pub unsafe fn window_update_area(id: u64, x: u64, y: u64, w: u64, h: u64) {
+        crate::sys::syscall5(103, id, x, y, w, h);
     }
 );
 
@@ -119,7 +125,7 @@ impl Color {
     }
 }
 
-// --- Simplified public API (no arch gating) ---
+// --- Simplified public API ---
 
 pub fn get_screen_width() -> usize {
     unsafe { screen_get_width() as usize }
@@ -130,7 +136,10 @@ pub fn get_screen_height() -> usize {
 }
 
 pub fn add_window(window: &Window) -> usize {
-    unsafe { window_create(window as *const Window as *const u8) as usize }
+    crate::debugln!("CALLING TCP FN add_window WITH ARGS: w={}, h={}", window.width, window.height);
+    let res = unsafe { window_create(window as *const Window as *const u8) as usize };
+    crate::debugln!("TCP RESULT: add_window RESULT: {}", res);
+    res
 }
 
 pub fn update_window(window: &Window) {
@@ -138,8 +147,7 @@ pub fn update_window(window: &Window) {
 }
 
 pub fn update_window_area(id: usize, x: usize, y: usize, w: usize, h: usize) {
-    #[cfg(not(target_arch = "wasm32"))]
-    unsafe { crate::sys::syscall5(103, id as u64, x as u64, y as u64, w as u64, h as u64); }
+    unsafe { window_update_area(id as u64, x as u64, y as u64, w as u64, h as u64); }
 }
 
 pub fn get_events(wid: usize, events: &mut [Event]) -> usize {

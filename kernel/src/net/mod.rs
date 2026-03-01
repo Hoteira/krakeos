@@ -19,7 +19,16 @@ pub fn push_loopback_packet(packet: Vec<u8>) {
     LOOPBACK_QUEUE.lock().push_back(packet);
 }
 
+use core::sync::atomic::{AtomicBool, Ordering};
+static IN_POLL: AtomicBool = AtomicBool::new(false);
+
+static mut LOOPBACK_DEPTH: u32 = 0;
+
 pub fn poll_loopback() {
+    if IN_POLL.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
     let flags: u64;
     unsafe {
         core::arch::asm!(
@@ -30,16 +39,26 @@ pub fn poll_loopback() {
         core::arch::asm!("cli");
     }
 
+    let mut processed = 0;
+    // Limit packets per poll to prevent infinite loop or stack stress
     loop {
         let packet_opt = {
             let mut q = LOOPBACK_QUEUE.lock();
             q.pop_front()
         };
         if let Some(packet) = packet_opt {
+            unsafe { LOOPBACK_DEPTH += 1; }
             crate::net::on_receive(&packet);
+            unsafe { LOOPBACK_DEPTH -= 1; }
+            processed += 1;
+            if processed >= 32 { break; }
         } else {
             break;
         }
+    }
+
+    if processed > 0 {
+        crate::debugln!("poll_loopback: Processed {} loopback packets", processed);
     }
 
     if flags & 0x200 != 0 {
@@ -47,6 +66,8 @@ pub fn poll_loopback() {
             core::arch::asm!("sti");
         }
     }
+    
+    IN_POLL.store(false, Ordering::SeqCst);
 }
 
 pub fn on_receive(packet: &[u8]) {
@@ -58,6 +79,8 @@ pub fn on_receive(packet: &[u8]) {
     let src_mac = [
         packet[6], packet[7], packet[8], packet[9], packet[10], packet[11],
     ];
+
+    crate::debugln!("on_receive: packet type={:#x}, len={}", eth_type, packet.len());
 
     match eth_type {
         0x0806 => {
