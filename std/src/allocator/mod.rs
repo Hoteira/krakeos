@@ -127,15 +127,15 @@ pub unsafe extern "C" fn cabi_realloc(ptr: *mut u8, old_size: usize, align: usiz
     if ptr.is_null() {
         if new_size == 0 { return align as *mut u8; }
         let layout = Layout::from_size_align(new_size, align).unwrap();
-        crate::rust_alloc::alloc::alloc(layout)
+        crate::alloc::alloc::alloc(layout)
     } else {
         if new_size == 0 {
             let layout = Layout::from_size_align(old_size, align).unwrap();
-            crate::rust_alloc::alloc::dealloc(ptr, layout);
+            crate::alloc::alloc::dealloc(ptr, layout);
             return core::ptr::null_mut();
         }
         let layout = Layout::from_size_align(old_size, align).unwrap();
-        let new_ptr = crate::rust_alloc::alloc::realloc(ptr, layout, new_size);
+        let new_ptr = crate::alloc::alloc::realloc(ptr, layout, new_size);
         new_ptr
     }
 }

@@ -1,6 +1,6 @@
 use super::ExternType;
-use crate::rust_alloc::borrow::ToOwned;
-use crate::rust_alloc::string::String;
+use crate::alloc::borrow::ToOwned;
+use crate::alloc::string::String;
 use crate::wasm::common::error::ValidationError;
 use crate::wasm::common::indices::{FuncIdx, GlobalIdx, MemIdx, TableIdx};
 use crate::wasm::common::reader::{WasmReadable, WasmReader};

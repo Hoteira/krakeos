@@ -1,8 +1,8 @@
 #[cfg(not(target_arch = "wasm32"))]
 use crate::os::syscall;
 use core::cell::UnsafeCell;
-use rust_alloc::alloc::{alloc, dealloc, Layout};
-use rust_alloc::boxed::Box;
+use alloc::alloc::{alloc, dealloc, Layout};
+use alloc::boxed::Box;
 
 pub struct JoinHandle<T> {
     id: usize,

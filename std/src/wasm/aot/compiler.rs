@@ -1,4 +1,4 @@
-use crate::rust_alloc::vec::Vec;
+use crate::alloc::vec::Vec;
 use crate::wasm::aot::emitter::{Reg, X64Emitter, XmmReg};
 use crate::wasm::common::indices::{FuncIdx, GlobalIdx, LabelIdx, LocalIdx};
 use crate::wasm::common::reader::types::BlockType;

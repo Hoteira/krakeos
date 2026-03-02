@@ -18,15 +18,15 @@ macro_rules! export_method {
                 };
                 let func_addr = store.func_alloc_unchecked(func_type, super::$func_name);
                 let _ = linker.define_unchecked(
-                    $crate::rust_alloc::string::String::from($module),
-                    $crate::rust_alloc::string::String::from($name),
+                    $crate::alloc::string::String::from($module),
+                    $crate::alloc::string::String::from($name),
                     $crate::wasm::interpreter::store::ExternVal::Func(func_addr),
                 );
                 $(
                     let (c_mod, c_name) = $compat;
                     let _ = linker.define_unchecked(
-                        $crate::rust_alloc::string::String::from(c_mod),
-                        $crate::rust_alloc::string::String::from(c_name),
+                        $crate::alloc::string::String::from(c_mod),
+                        $crate::alloc::string::String::from(c_name),
                         $crate::wasm::interpreter::store::ExternVal::Func(func_addr),
                     );
                 )*

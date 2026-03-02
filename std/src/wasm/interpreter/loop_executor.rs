@@ -1,6 +1,6 @@
 use crate::wasm::common::little_endian::LittleEndianBytes;
 use crate::wasm::interpreter::store::Store;
-use crate::rust_alloc::{vec, vec::Vec};
+use crate::alloc::{vec, vec::Vec};
 use crate::wasm::common::assert_validated::{UnreachableValidatedExt, UnwrapValidatedExt};
 use crate::wasm::common::config::Config;
 use crate::wasm::common::reader::types::RefType;

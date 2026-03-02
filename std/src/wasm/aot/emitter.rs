@@ -1,4 +1,4 @@
-use crate::rust_alloc::vec::Vec;
+use crate::alloc::vec::Vec;
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug)]

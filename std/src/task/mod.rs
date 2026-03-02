@@ -1,6 +1,6 @@
-use crate::rust_alloc::boxed::Box;
-use crate::rust_alloc::collections::VecDeque;
-use crate::rust_alloc::sync::Arc;
+use crate::alloc::boxed::Box;
+use crate::alloc::collections::VecDeque;
+use crate::alloc::sync::Arc;
 use crate::sync::Mutex;
 use core::future::Future;
 use core::pin::Pin;

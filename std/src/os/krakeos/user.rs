@@ -1,5 +1,5 @@
 use crate::sync::Mutex;
-use crate::rust_alloc::string::String;
+use crate::alloc::string::String;
 
 static CURRENT_USER: Mutex<Option<String>> = Mutex::new(None);
 

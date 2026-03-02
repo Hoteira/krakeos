@@ -3,7 +3,7 @@
 #![feature(core_intrinsics)]
 #![feature(asm_experimental_arch)]
 
-extern crate alloc as rust_alloc;
+extern crate alloc as alloc;
 
 #[macro_export]
 macro_rules! method_export {
@@ -22,7 +22,7 @@ macro_rules! method_export {
     };
 }
 
-pub mod alloc;
+pub mod allocator;
 pub mod env;
 pub mod fs;
 pub mod future;

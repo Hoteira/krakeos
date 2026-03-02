@@ -1,5 +1,5 @@
-use crate::rust_alloc::vec;
-use crate::rust_alloc::vec::Vec;
+use crate::alloc::vec;
+use crate::alloc::vec::Vec;
 use crate::wasm::common::error::ValidationError;
 use crate::wasm::common::reader::types::{FuncType, ResultType};
 use crate::wasm::common::reader::types::{NumType, RefType, ValType};

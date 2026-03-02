@@ -1,7 +1,7 @@
 // std::net TCP wrappers — TcpStream and TcpListener
 // Uses unified WASI P2 sockets interface (shimmed on native).
 
-use crate::rust_alloc::vec::Vec;
+use crate::alloc::vec::Vec;
 use crate::net::host::tcp;
 
 pub struct TcpStream { pub handle: usize }
@@ -44,7 +44,7 @@ impl TcpStream {
     }
 
     pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, i32> {
-        let mut wasi_buf = crate::rust_alloc::vec![0u8; 32 + buf.len()];
+        let mut wasi_buf = crate::alloc::vec![0u8; 32 + buf.len()];
         unsafe { tcp::recv(self.handle as i32, buf.len() as u32, wasi_buf.as_mut_ptr()) };
         if wasi_buf[0] == 0 {
             let n = unsafe { core::ptr::read_unaligned(wasi_buf.as_ptr().add(8) as *const u64) } as usize;

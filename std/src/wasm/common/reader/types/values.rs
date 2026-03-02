@@ -1,4 +1,4 @@
-use crate::rust_alloc::vec::Vec;
+use crate::alloc::vec::Vec;
 use crate::wasm::common::error::ValidationError;
 use crate::wasm::common::reader::WasmReader;
 
@@ -244,9 +244,9 @@ impl WasmReader<'_> {
         core::str::from_utf8(utf8_str).map_err(ValidationError::MalformedUtf8)
     }
 
-    pub fn read_component_name(&mut self) -> Result<crate::rust_alloc::string::String, ValidationError> {
-        use crate::rust_alloc::string::ToString;
-        use crate::rust_alloc::format;
+    pub fn read_component_name(&mut self) -> Result<crate::alloc::string::String, ValidationError> {
+        use crate::alloc::string::ToString;
+        use crate::alloc::format;
         let tag = self.read_u8()?;
         match tag {
             0x00 | 0x01 => Ok(self.read_name()?.to_string()),

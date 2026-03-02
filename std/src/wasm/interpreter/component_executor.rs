@@ -1,7 +1,7 @@
-use crate::rust_alloc::collections::BTreeMap;
-use crate::rust_alloc::format;
-use crate::rust_alloc::string::String;
-use crate::rust_alloc::vec::Vec;
+use crate::alloc::collections::BTreeMap;
+use crate::alloc::format;
+use crate::alloc::string::String;
+use crate::alloc::vec::Vec;
 use crate::wasm::component::types::{
     ComponentAliasKind, ComponentInstanceKind,
     ParsedComponent,
@@ -38,7 +38,7 @@ pub fn instantiate_component<'a, T: Config>(
         if let crate::wasm::interpreter::store::ExternVal::Func(func_addr) = *run_func {
             store.invoke_unchecked(
                 func_addr,
-                crate::rust_alloc::vec::Vec::<crate::wasm::common::value::Value>::new(),
+                crate::alloc::vec::Vec::<crate::wasm::common::value::Value>::new(),
                 None,
             ).map_err(|e| {
                 crate::debugln!("WASM Component Trap during 'run': {:?}", e);
@@ -61,7 +61,7 @@ pub fn instantiate_component<'a, T: Config>(
                     crate::debugln!("Entry Point Found: Executing User Module export '{}'...", name);
                     store.invoke_unchecked(
                         func_addr,
-                        crate::rust_alloc::vec::Vec::<crate::wasm::common::value::Value>::new(),
+                        crate::alloc::vec::Vec::<crate::wasm::common::value::Value>::new(),
                         None,
                     ).map_err(|e| {
                         crate::debugln!("WASM Component Trap during '{}': {:?}", name, e);

@@ -126,7 +126,7 @@ method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.rename-at",
 
 method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.read-directory",
     pub unsafe fn read_directory(handle: i32, result_ptr: *mut u8) {
-        use crate::rust_alloc::alloc::{alloc, Layout};
+        use crate::alloc::alloc::{alloc, Layout};
         let layout = Layout::new::<DirStream>();
         let ptr = alloc(layout) as *mut DirStream;
         if ptr.is_null() {
@@ -201,7 +201,7 @@ method_export!("wasi:filesystem/types@0.2.0", "[method]directory-entry-stream.re
 
 method_export!("wasi:filesystem/types@0.2.0", "[resource-drop]directory-entry-stream",
     pub unsafe fn drop_directory_entry_stream(stream: i32) {
-        use crate::rust_alloc::alloc::{dealloc, Layout};
+        use crate::alloc::alloc::{dealloc, Layout};
         let layout = Layout::new::<DirStream>();
         dealloc(stream as *mut u8, layout);
     }

@@ -1,4 +1,4 @@
-use crate::rust_alloc::{string::String, vec::Vec};
+use crate::alloc::{string::String, vec::Vec};
 use crate::wasm::common::runtime_error::RuntimeError;
 use crate::wasm::common::validation::ValidationInfo;
 use crate::wasm::common::reader::types::{FuncType, MemType, TableType};

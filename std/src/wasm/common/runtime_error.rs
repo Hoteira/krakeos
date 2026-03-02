@@ -1,4 +1,4 @@
-use crate::rust_alloc::string::String;
+use crate::alloc::string::String;
 use core::fmt::{Display, Formatter};
 
 #[derive(Debug, PartialEq, Eq, Clone)]

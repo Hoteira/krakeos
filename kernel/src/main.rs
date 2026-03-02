@@ -33,7 +33,7 @@ use crate::memory::address::PhysAddr;
 use crate::memory::paging::{active_level_4_table, phys_to_virt};
 
 #[global_allocator]
-static ALLOCATOR: std::alloc::Allocator = std::alloc::Allocator::new();
+static ALLOCATOR: std::allocator::Allocator = std::allocator::Allocator::new();
 
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".start")]

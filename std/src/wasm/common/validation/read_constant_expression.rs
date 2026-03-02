@@ -1,4 +1,4 @@
-use crate::rust_alloc::vec::Vec;
+use crate::alloc::vec::Vec;
 use crate::wasm::common::error::ValidationError;
 use crate::wasm::common::indices::{FuncIdx, GlobalIdx};
 use crate::wasm::common::reader::span::Span;

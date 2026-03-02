@@ -1,4 +1,4 @@
-use crate::rust_alloc::vec::Vec;
+use crate::alloc::vec::Vec;
 use crate::wasm::common::indices::MemIdx;
 use crate::wasm::common::rw_spinlock::RwSpinLock;
 use crate::wasm::common::little_endian::LittleEndianBytes;

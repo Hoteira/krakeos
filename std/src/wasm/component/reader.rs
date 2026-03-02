@@ -1,6 +1,6 @@
 use super::error::ComponentError;
 use super::types::*;
-use crate::rust_alloc::borrow::ToOwned;
+use crate::alloc::borrow::ToOwned;
 use crate::wasm::common::error::ValidationError;
 use crate::wasm::common::reader::{WasmReadable, WasmReader};
 

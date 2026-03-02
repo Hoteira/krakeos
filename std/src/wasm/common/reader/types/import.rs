@@ -1,7 +1,7 @@
 use super::global::GlobalType;
 use super::{ExternType, MemType, TableType};
-use crate::rust_alloc::borrow::ToOwned;
-use crate::rust_alloc::string::String;
+use crate::alloc::borrow::ToOwned;
+use crate::alloc::string::String;
 use crate::wasm::common::error::ValidationError;
 use crate::wasm::common::indices::TypeIdx;
 use crate::wasm::common::reader::{WasmReadable, WasmReader};

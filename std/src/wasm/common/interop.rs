@@ -1,10 +1,10 @@
 use super::value::ValueTypeMismatchError;
-use crate::rust_alloc::{fmt::Debug, vec};
+use crate::alloc::{fmt::Debug, vec};
 use crate::wasm::common::reader::types::{NumType, RefType, ValType};
 use crate::wasm::common::value::{ExternAddr, Ref, Value, F32, F64};
 
 use crate::wasm::common::config::Config;
-use crate::rust_alloc::{
+use crate::alloc::{
     collections::btree_map::{BTreeMap, Entry},
     string::String,
     vec::Vec,
@@ -232,7 +232,7 @@ impl TryFrom<Value> for RefExtern {
 
 pub trait InteropValueList: Debug + Copy {
     const TYS: &'static [ValType];
-    fn into_values(self) -> crate::rust_alloc::vec::Vec<Value>;
+    fn into_values(self) -> crate::alloc::vec::Vec<Value>;
     fn try_from_values(
         values: impl ExactSizeIterator<Item=Value>,
     ) -> Result<Self, ValueTypeMismatchError>;
@@ -240,8 +240,8 @@ pub trait InteropValueList: Debug + Copy {
 
 impl InteropValueList for () {
     const TYS: &'static [ValType] = &[];
-    fn into_values(self) -> crate::rust_alloc::vec::Vec<Value> {
-        crate::rust_alloc::vec::Vec::new()
+    fn into_values(self) -> crate::alloc::vec::Vec<Value> {
+        crate::alloc::vec::Vec::new()
     }
     fn try_from_values(
         values: impl ExactSizeIterator<Item=Value>,
@@ -259,7 +259,7 @@ where
     Value: From<A>,
 {
     const TYS: &'static [ValType] = &[A::TY];
-    fn into_values(self) -> crate::rust_alloc::vec::Vec<Value> {
+    fn into_values(self) -> crate::alloc::vec::Vec<Value> {
         vec![self.into()]
     }
     fn try_from_values(
@@ -278,7 +278,7 @@ where
     Value: From<A>,
 {
     const TYS: &'static [ValType] = &[A::TY];
-    fn into_values(self) -> crate::rust_alloc::vec::Vec<Value> {
+    fn into_values(self) -> crate::alloc::vec::Vec<Value> {
         vec![self.0.into()]
     }
     fn try_from_values(
@@ -298,7 +298,7 @@ where
     Value: From<A> + From<B>,
 {
     const TYS: &'static [ValType] = &[A::TY, B::TY];
-    fn into_values(self) -> crate::rust_alloc::vec::Vec<Value> {
+    fn into_values(self) -> crate::alloc::vec::Vec<Value> {
         vec![self.0.into(), self.1.into()]
     }
     fn try_from_values(
@@ -322,7 +322,7 @@ where
     Value: From<A> + From<B> + From<C>,
 {
     const TYS: &'static [ValType] = &[A::TY, B::TY, C::TY];
-    fn into_values(self) -> crate::rust_alloc::vec::Vec<Value> {
+    fn into_values(self) -> crate::alloc::vec::Vec<Value> {
         vec![self.0.into(), self.1.into(), self.2.into()]
     }
     fn try_from_values(

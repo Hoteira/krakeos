@@ -1,6 +1,6 @@
 use crate::io::{Error, Read, Result, Seek, SeekFrom, Write};
-use rust_alloc::string::String;
-use rust_alloc::vec::Vec;
+use alloc::string::String;
+use alloc::vec::Vec;
 
 pub mod host;
 pub mod async_file;
@@ -238,7 +238,7 @@ pub fn mount(disk_id: u8, fs_type: &str) -> Result<()> {
 pub fn read(path: &str) -> Result<Vec<u8>> {
     let mut file = File::open(path)?;
     let size = file.size();
-    let mut bytes = rust_alloc::vec![0u8; size];
+    let mut bytes = alloc::vec![0u8; size];
     let mut total_read = 0;
     while total_read < size {
         let n = file.read(&mut bytes[total_read..])?;

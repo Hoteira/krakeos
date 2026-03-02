@@ -1,7 +1,7 @@
 use crate::math::FloatMath;
 use crate::os::debug_print;
-use crate::rust_alloc::format;
-use crate::rust_alloc::vec::Vec;
+use crate::alloc::format;
+use crate::alloc::vec::Vec;
 use crate::wasm::aot::runtime::AotContext;
 use crate::wasm::common::runtime_error::RuntimeError;
 use crate::wasm::common::value::{F32, F64, Ref, Value};

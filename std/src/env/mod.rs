@@ -1,5 +1,5 @@
-use crate::rust_alloc::string::String;
-use crate::rust_alloc::vec::Vec;
+use crate::alloc::string::String;
+use crate::alloc::vec::Vec;
 use crate::sync::Mutex;
 
 #[cfg(feature = "userland")]
@@ -16,7 +16,7 @@ pub fn args() -> Args {
 }
 
 pub struct Args {
-    iter: crate::rust_alloc::vec::IntoIter<String>,
+    iter: crate::alloc::vec::IntoIter<String>,
 }
 
 impl Iterator for Args {
@@ -35,7 +35,7 @@ pub fn vars() -> Vars {
 }
 
 pub struct Vars {
-    iter: crate::rust_alloc::vec::IntoIter<(String, String)>,
+    iter: crate::alloc::vec::IntoIter<(String, String)>,
 }
 
 impl Iterator for Vars {

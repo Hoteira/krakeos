@@ -65,7 +65,7 @@ impl Socket {
     }
 
     pub fn recv_from(&self, buf: &mut [u8]) -> Result<(usize, SocketAddr), i32> {
-        let mut wasi_buf = crate::rust_alloc::vec![0u8; 32 + buf.len()];
+        let mut wasi_buf = crate::alloc::vec![0u8; 32 + buf.len()];
         unsafe { udp::receive(self.handle as i32, buf.len() as u64, wasi_buf.as_mut_ptr()) };
 
         if wasi_buf[0] == 0 {

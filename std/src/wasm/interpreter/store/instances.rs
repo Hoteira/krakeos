@@ -2,7 +2,7 @@ use super::{
     ExternVal, HaltExecutionError, Store,
     addrs::{DataAddr, ElemAddr, FuncAddr, GlobalAddr, MemAddr, ModuleAddr, TableAddr},
 };
-use crate::rust_alloc::{collections::btree_map::BTreeMap, string::String, vec, vec::Vec};
+use crate::alloc::{collections::btree_map::BTreeMap, string::String, vec, vec::Vec};
 use crate::wasm::common::reader::types::{GlobalType, Limits};
 use crate::wasm::common::reader::types::RefType;
 use crate::wasm::common::runtime_error::{RuntimeError, TrapError};

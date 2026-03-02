@@ -1,4 +1,4 @@
-use crate::rust_alloc::{vec, vec::Vec};
+use crate::alloc::{vec, vec::Vec};
 use crate::wasm::{
     common::{config::Config, value::Value, reader::types::{ValType, NumType}},
     interpreter::store::{HaltExecutionError, Store},

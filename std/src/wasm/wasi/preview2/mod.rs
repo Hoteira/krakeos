@@ -1,4 +1,4 @@
-use crate::rust_alloc::{string::String, vec, vec::Vec};
+use crate::alloc::{string::String, vec, vec::Vec};
 use crate::wasm::{
     common::{
         checked::{AbstractStored, Stored},

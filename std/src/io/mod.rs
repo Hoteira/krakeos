@@ -26,7 +26,7 @@ impl Error {
 pub trait Read {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
 
-    fn read_to_end(&mut self, buf: &mut rust_alloc::vec::Vec<u8>) -> Result<usize> {
+    fn read_to_end(&mut self, buf: &mut alloc::vec::Vec<u8>) -> Result<usize> {
         let mut total_read = 0;
         loop {
             if buf.len() == buf.capacity() {
@@ -54,10 +54,10 @@ pub trait Read {
         Ok(total_read)
     }
 
-    fn read_to_string(&mut self, buf: &mut rust_alloc::string::String) -> Result<usize> {
-        let mut bytes = rust_alloc::vec::Vec::new();
+    fn read_to_string(&mut self, buf: &mut alloc::string::String) -> Result<usize> {
+        let mut bytes = alloc::vec::Vec::new();
         let len = self.read_to_end(&mut bytes)?;
-        if let Ok(s) = rust_alloc::string::String::from_utf8(bytes) {
+        if let Ok(s) = alloc::string::String::from_utf8(bytes) {
             buf.push_str(&s);
             Ok(len)
         } else {

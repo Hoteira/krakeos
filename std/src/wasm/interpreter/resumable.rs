@@ -1,4 +1,4 @@
-use crate::rust_alloc::{
+use crate::alloc::{
     sync::{Arc, Weak},
     vec::Vec,
 };

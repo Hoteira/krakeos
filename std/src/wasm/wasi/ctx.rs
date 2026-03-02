@@ -1,8 +1,8 @@
 use super::env::WasiEnv;
-use crate::rust_alloc::boxed::Box;
-use crate::rust_alloc::collections::BTreeMap;
-use crate::rust_alloc::string::String;
-use crate::rust_alloc::vec::Vec;
+use crate::alloc::boxed::Box;
+use crate::alloc::collections::BTreeMap;
+use crate::alloc::string::String;
+use crate::alloc::vec::Vec;
 
 pub struct WasiCtx {
     pub resource_table: BTreeMap<i32, WasiResource>,

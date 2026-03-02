@@ -1,4 +1,4 @@
-use crate::rust_alloc::{vec, vec::Vec};
+use crate::alloc::{vec, vec::Vec};
 use crate::wasm::{
     common::{config::Config, value::Value, reader::types::{ValType, NumType}},
     interpreter::store::{HaltExecutionError, Store},
@@ -125,7 +125,7 @@ crate::export_method!(
         let buf_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I32(0)]) };
         let max = match args.get(2) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I32(0)]) };
         
-        let mut events = crate::rust_alloc::vec![host::Event::None; max as usize];
+        let mut events = crate::alloc::vec![host::Event::None; max as usize];
         let count = host::get_events(handle as usize, &mut events);
         
         if count > 0 {
@@ -226,7 +226,7 @@ crate::export_method!(
         let size = match args.get(2) { Some(Value::I32(v)) => *v as usize, _ => return Ok(vec![Value::I64(0)]) };
         let mut name_buf = vec![0u8; name_len as usize];
         read_mem(store, name_ptr, &mut name_buf).map_err(|_| HaltExecutionError(1))?;
-        let name = crate::rust_alloc::string::String::from_utf8_lossy(&name_buf);
+        let name = crate::alloc::string::String::from_utf8_lossy(&name_buf);
         
         let res = host::shm_get(&name, size as u64).unwrap_or(0);
         Ok(vec![Value::I64(res)])

@@ -1,4 +1,4 @@
-use crate::rust_alloc::{string::String};
+use crate::alloc::{string::String};
 use crate::wasm::{
     common::{
         config::Config,

@@ -1,9 +1,9 @@
 use crate::fs;
-use crate::rust_alloc::boxed::Box;
-use crate::rust_alloc::collections::BTreeMap;
-use crate::rust_alloc::format;
-use crate::rust_alloc::string::String;
-use crate::rust_alloc::vec::Vec;
+use crate::alloc::boxed::Box;
+use crate::alloc::collections::BTreeMap;
+use crate::alloc::format;
+use crate::alloc::string::String;
+use crate::alloc::vec::Vec;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::sys::{syscall1, syscall4, syscall5, syscall6};
 use crate::wasm::wasi::env::{FdStat, FileStat, WasiEnv};
@@ -534,7 +534,7 @@ impl WasiEnv for KrakeosWasiEnv {
                 // Fast path: single iov, no copy needed
                 return Ok(crate::os::file_write(host_fd, iovs[0]));
             }
-            let mut batch = crate::rust_alloc::vec::Vec::with_capacity(total_len);
+            let mut batch = crate::alloc::vec::Vec::with_capacity(total_len);
             for buf in iovs {
                 batch.extend_from_slice(buf);
             }

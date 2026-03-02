@@ -1,4 +1,4 @@
-use crate::rust_alloc::{vec, vec::Vec};
+use crate::alloc::{vec, vec::Vec};
 use crate::wasm::{
     common::{config::Config, value::Value, reader::types::{ValType, NumType}},
     interpreter::store::{HaltExecutionError, Store},
@@ -112,7 +112,7 @@ crate::export_method!(
         let env_vars = store.wasi_ctx.as_ref().ok_or(HaltExecutionError(1))?.env.environ_get().unwrap_or_default();
         let mut offset = 0;
         for (i, (k, v)) in env_vars.iter().enumerate() {
-            let entry = crate::rust_alloc::format!("{}={}", k, v);
+            let entry = crate::alloc::format!("{}={}", k, v);
             let p = b_ptr + offset;
             let _ = write_u32(store, e_ptr + (i as u32 * 4), p);
             let b = entry.as_bytes();

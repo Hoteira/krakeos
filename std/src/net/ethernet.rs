@@ -1,4 +1,4 @@
-use rust_alloc::vec::Vec;
+use alloc::vec::Vec;
 use super::packet::Packet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

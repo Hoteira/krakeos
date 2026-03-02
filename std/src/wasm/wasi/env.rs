@@ -1,5 +1,5 @@
-use crate::rust_alloc::string::String;
-use crate::rust_alloc::vec::Vec;
+use crate::alloc::string::String;
+use crate::alloc::vec::Vec;
 
 #[derive(Debug, Clone, Copy)]
 pub struct FdStat {

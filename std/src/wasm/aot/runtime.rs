@@ -1,4 +1,4 @@
-use crate::rust_alloc::vec::Vec;
+use crate::alloc::vec::Vec;
 use crate::wasm::common::config::Config;
 use crate::wasm::interpreter::store::Store;
 

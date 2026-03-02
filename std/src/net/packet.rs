@@ -1,4 +1,4 @@
-use rust_alloc::vec::Vec;
+use alloc::vec::Vec;
 
 pub trait Packet {
     fn to_bytes(&self) -> Vec<u8>;

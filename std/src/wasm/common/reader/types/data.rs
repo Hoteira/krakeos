@@ -1,4 +1,4 @@
-use crate::rust_alloc::{format, vec::Vec};
+use crate::alloc::{format, vec::Vec};
 use crate::wasm::common::{indices::MemIdx, reader::span::Span};
 use core::fmt::{Debug, Formatter};
 

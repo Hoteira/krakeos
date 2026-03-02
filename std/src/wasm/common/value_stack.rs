@@ -1,4 +1,4 @@
-use crate::rust_alloc::vec::{Drain, Vec};
+use crate::alloc::vec::{Drain, Vec};
 use crate::wasm::common::indices::LocalIdx;
 use crate::wasm::common::reader::types::{FuncType, ValType};
 use crate::wasm::common::assert_validated::UnwrapValidatedExt;

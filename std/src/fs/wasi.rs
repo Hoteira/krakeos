@@ -1,4 +1,4 @@
-use crate::rust_alloc::{vec, vec::Vec};
+use crate::alloc::{vec, vec::Vec};
 use crate::wasm::{
     common::{config::Config, value::Value, reader::types::{ValType, NumType}},
     interpreter::store::{HaltExecutionError, Store},
@@ -228,7 +228,7 @@ crate::export_method!(
             let _ = write_u32(store, ret_ptr + 4, 21);
             return Ok(vec![]);
         }
-        let path = crate::rust_alloc::string::String::from_utf8_lossy(&path_buf).into_owned();
+        let path = crate::alloc::string::String::from_utf8_lossy(&path_buf).into_owned();
 
         let rights = 0x3F;
         match store.wasi_ctx.as_mut().unwrap().env.path_open(dirfd, dirflags, &path, oflags, rights, rights, flags_val as u16) {
@@ -363,7 +363,7 @@ crate::export_method!(
             let _ = write_u32(store, ret_ptr + 4, 21);
             return Ok(vec![]);
         }
-        let path = crate::rust_alloc::string::String::from_utf8_lossy(&pb).into_owned();
+        let path = crate::alloc::string::String::from_utf8_lossy(&pb).into_owned();
 
         match store.wasi_ctx.as_mut().unwrap().env.path_filestat_get(fd, flags, &path) {
             Ok(stat) => {
@@ -406,7 +406,7 @@ crate::export_method!(
 
         let mut pb = vec![0u8; len as usize];
         if read_mem(store, ptr, &mut pb).is_err() { return Ok(vec![]); }
-        let path = crate::rust_alloc::string::String::from_utf8_lossy(&pb).into_owned();
+        let path = crate::alloc::string::String::from_utf8_lossy(&pb).into_owned();
 
         match store.wasi_ctx.as_mut().unwrap().env.path_filestat_set_times(fd, flags, &path, atime, mtime, fst_flags) {
             Ok(_) => { let _ = write_u32(store, ret_ptr, 0); }
@@ -434,7 +434,7 @@ crate::export_method!(
 
         let mut pb = vec![0u8; len as usize];
         if read_mem(store, ptr, &mut pb).is_err() { return Ok(vec![]); }
-        let path = crate::rust_alloc::string::String::from_utf8_lossy(&pb).into_owned();
+        let path = crate::alloc::string::String::from_utf8_lossy(&pb).into_owned();
 
         match store.wasi_ctx.as_mut().unwrap().env.path_create_directory(fd, &path) {
             Ok(_) => { let _ = write_u32(store, ret_ptr, 0); }
@@ -462,7 +462,7 @@ crate::export_method!(
 
         let mut pb = vec![0u8; len as usize];
         if read_mem(store, ptr, &mut pb).is_err() { return Ok(vec![]); }
-        let path = crate::rust_alloc::string::String::from_utf8_lossy(&pb).into_owned();
+        let path = crate::alloc::string::String::from_utf8_lossy(&pb).into_owned();
 
         match store.wasi_ctx.as_mut().unwrap().env.path_unlink_file(fd, &path) {
             Ok(_) => { let _ = write_u32(store, ret_ptr, 0); }
@@ -490,7 +490,7 @@ crate::export_method!(
 
         let mut pb = vec![0u8; len as usize];
         if read_mem(store, ptr, &mut pb).is_err() { return Ok(vec![]); }
-        let path = crate::rust_alloc::string::String::from_utf8_lossy(&pb).into_owned();
+        let path = crate::alloc::string::String::from_utf8_lossy(&pb).into_owned();
 
         match store.wasi_ctx.as_mut().unwrap().env.path_remove_directory(fd, &path) {
             Ok(_) => { let _ = write_u32(store, ret_ptr, 0); }
@@ -525,11 +525,11 @@ crate::export_method!(
 
         let mut ob = vec![0u8; old_path_len as usize];
         if read_mem(store, old_path_ptr, &mut ob).is_err() { return Ok(vec![]); }
-        let old_path = crate::rust_alloc::string::String::from_utf8_lossy(&ob).into_owned();
+        let old_path = crate::alloc::string::String::from_utf8_lossy(&ob).into_owned();
 
         let mut nb = vec![0u8; new_path_len as usize];
         if read_mem(store, new_path_ptr, &mut nb).is_err() { return Ok(vec![]); }
-        let new_path = crate::rust_alloc::string::String::from_utf8_lossy(&nb).into_owned();
+        let new_path = crate::alloc::string::String::from_utf8_lossy(&nb).into_owned();
 
         match store.wasi_ctx.as_mut().unwrap().env.path_link(old_fd, old_flags, &old_path, new_fd, &new_path) {
             Ok(_) => { let _ = write_u32(store, ret_ptr, 0); }
@@ -563,11 +563,11 @@ crate::export_method!(
 
         let mut ob = vec![0u8; old_path_len as usize];
         if read_mem(store, old_path_ptr, &mut ob).is_err() { return Ok(vec![]); }
-        let old_path = crate::rust_alloc::string::String::from_utf8_lossy(&ob).into_owned();
+        let old_path = crate::alloc::string::String::from_utf8_lossy(&ob).into_owned();
 
         let mut nb = vec![0u8; new_path_len as usize];
         if read_mem(store, new_path_ptr, &mut nb).is_err() { return Ok(vec![]); }
-        let new_path = crate::rust_alloc::string::String::from_utf8_lossy(&nb).into_owned();
+        let new_path = crate::alloc::string::String::from_utf8_lossy(&nb).into_owned();
 
         match store.wasi_ctx.as_mut().unwrap().env.path_rename(old_fd, &old_path, new_fd, &new_path) {
             Ok(_) => { let _ = write_u32(store, ret_ptr, 0); }
@@ -597,11 +597,11 @@ crate::export_method!(
 
         let mut ob = vec![0u8; old_path_len as usize];
         if read_mem(store, old_path_ptr, &mut ob).is_err() { return Ok(vec![]); }
-        let old_path = crate::rust_alloc::string::String::from_utf8_lossy(&ob).into_owned();
+        let old_path = crate::alloc::string::String::from_utf8_lossy(&ob).into_owned();
 
         let mut nb = vec![0u8; new_path_len as usize];
         if read_mem(store, new_path_ptr, &mut nb).is_err() { return Ok(vec![]); }
-        let new_path = crate::rust_alloc::string::String::from_utf8_lossy(&nb).into_owned();
+        let new_path = crate::alloc::string::String::from_utf8_lossy(&nb).into_owned();
 
         match store.wasi_ctx.as_mut().unwrap().env.path_symlink(&old_path, fd, &new_path) {
             Ok(_) => { let _ = write_u32(store, ret_ptr, 0); }
@@ -629,7 +629,7 @@ crate::export_method!(
 
         let mut pb = vec![0u8; path_len as usize];
         if read_mem(store, path_ptr, &mut pb).is_err() { return Ok(vec![]); }
-        let path = crate::rust_alloc::string::String::from_utf8_lossy(&pb).into_owned();
+        let path = crate::alloc::string::String::from_utf8_lossy(&pb).into_owned();
 
         let mut buf = vec![0u8; 1024];
         match store.wasi_ctx.as_mut().unwrap().env.path_readlink(fd, &path, &mut buf) {
@@ -1113,7 +1113,7 @@ crate::export_method!(
 
         let mut pb = vec![0u8; len as usize];
         if crate::wasm::wasi::preview2::read_bytes(store, ptr, &mut pb).is_err() { return Ok(vec![Value::I32(21)]); }
-        let path = crate::rust_alloc::string::String::from_utf8_lossy(&pb).into_owned();
+        let path = crate::alloc::string::String::from_utf8_lossy(&pb).into_owned();
 
         match wasi_ctx(store).env.path_open(dirfd, dirflags, &path, of, rb, ri, fdflags) {
             Ok(fd) => {

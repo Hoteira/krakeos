@@ -1,7 +1,7 @@
 use super::global::GlobalType;
 use crate::wasm::common::reader::types::RefType;
-use crate::rust_alloc::collections::btree_set::BTreeSet;
-use crate::rust_alloc::vec::Vec;
+use crate::alloc::collections::btree_set::BTreeSet;
+use crate::alloc::vec::Vec;
 use crate::wasm::common::error::ValidationError;
 use crate::wasm::common::indices::{FuncIdx, TableIdx};
 use crate::wasm::common::reader::span::Span;

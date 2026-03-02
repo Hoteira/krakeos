@@ -17,10 +17,10 @@ pub use crate::sys::{syscall, syscall4, syscall5, syscall6};
 
 use crate::sync::Mutex;
 use core::task::Waker;
-use crate::rust_alloc::collections::BTreeMap;
-use crate::rust_alloc::format;
-use crate::rust_alloc::string::String;
-use crate::rust_alloc::vec::Vec;
+use crate::alloc::collections::BTreeMap;
+use crate::alloc::format;
+use crate::alloc::string::String;
+use crate::alloc::vec::Vec;
 
 // --- Process method_export! bindings ---
 
@@ -387,10 +387,10 @@ pub struct ProcessInfo {
     pub name: [u8; 32],
 }
 
-pub fn get_process_list() -> crate::rust_alloc::vec::Vec<ProcessInfo> {
-    let mut buf = crate::rust_alloc::vec![ProcessInfo { pid: 0, state: 0, name: [0; 32] }; 64];
+pub fn get_process_list() -> crate::alloc::vec::Vec<ProcessInfo> {
+    let mut buf = crate::alloc::vec![ProcessInfo { pid: 0, state: 0, name: [0; 32] }; 64];
     let count = unsafe { process_get_list(buf.as_mut_ptr() as *mut u8, 64) };
-    if count == u64::MAX { return crate::rust_alloc::vec::Vec::new(); }
+    if count == u64::MAX { return crate::alloc::vec::Vec::new(); }
     buf.truncate(count as usize);
     buf
 }

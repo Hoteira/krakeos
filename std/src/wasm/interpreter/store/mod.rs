@@ -1,8 +1,8 @@
 use self::component::ComponentInst;
-use crate::rust_alloc::collections::btree_map::BTreeMap;
-use crate::rust_alloc::string::String;
-use crate::rust_alloc::vec;
-use crate::rust_alloc::vec::Vec;
+use crate::alloc::collections::btree_map::BTreeMap;
+use crate::alloc::string::String;
+use crate::alloc::vec;
+use crate::alloc::vec::Vec;
 use crate::wasm::common::assert_validated::UnwrapValidatedExt;
 use crate::wasm::common::config::Config;
 use crate::wasm::common::indices::TypeIdx;
