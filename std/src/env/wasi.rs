@@ -1,4 +1,4 @@
-use crate::alloc::{vec, vec::Vec};
+use crate::alloc::{vec, vec::Vec, string::String};
 use crate::wasm::{
     common::{config::Config, value::Value, reader::types::{ValType, NumType}},
     interpreter::store::{HaltExecutionError, Store},
@@ -61,7 +61,14 @@ crate::export_method!(
     [],
     vec![ValType::NumType(NumType::I32)], vec![],
     pub fn initial_cwd<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-        get_environment(store, args)
+        let ret_ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![]) };
+        let cwd = store.wasi_ctx.as_ref().ok_or(HaltExecutionError(1))?.env.initial_cwd().unwrap_or_else(|_| String::from("/"));
+        let ptr = call_cabi_realloc(store, cwd.len() as u32, 1)?;
+        let _ = write_bytes(store, ptr, cwd.as_bytes());
+        let _ = write_u32(store, ret_ptr, 1); // Some
+        let _ = write_u32(store, ret_ptr + 4, ptr);
+        let _ = write_u32(store, ret_ptr + 8, cwd.len() as u32);
+        Ok(vec![])
     }
 );
 

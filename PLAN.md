@@ -18,7 +18,7 @@ Format: **what changes -> build -> verify it still runs**.
 
 ---
 
-## Phase 1: Clean Up Dead Code, Safety & Formalize SAS (Steps 1-6)
+## [DONE] Phase 1: Clean Up Dead Code, Safety & Formalize SAS (Steps 1-6)
 
 ### Step 1 -- Make `method_export!` generate safe functions
 **Files:** `std/src/lib.rs`, `std/src/os/krakeos/mod.rs`, all call sites
@@ -36,7 +36,7 @@ Format: **what changes -> build -> verify it still runs**.
 
 ---
 
-### Step 2 -- Remove dead `pml4_phys` plumbing
+### [DONE] Step 2 -- Remove dead `pml4_phys` plumbing
 **Files:** `kernel/src/interrupts/task.rs`, `kernel/src/memory/vmm.rs`
 **Changes:**
 - Remove `pml4_phys` field from `Process` struct

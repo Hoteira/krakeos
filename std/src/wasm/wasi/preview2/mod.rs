@@ -179,9 +179,9 @@ pub fn create_wasi_p2_imports<T: Config>(linker: &mut Linker, store: &mut Store<
     // wasi:cli/environment@0.2.0
     {
         let module = "wasi:cli/environment@0.2.0";
-        define(linker, store, module, "get-environment", vec![], vec![ValType::NumType(NumType::I32)], crate::env::wasi::get_environment);
-        define(linker, store, module, "get-arguments", vec![], vec![ValType::NumType(NumType::I32)], crate::env::wasi::get_arguments);
-        define(linker, store, module, "initial-cwd", vec![], vec![ValType::NumType(NumType::I32)], crate::env::wasi::initial_cwd);
+        define(linker, store, module, "get-environment", vec![ValType::NumType(NumType::I32)], vec![], crate::env::wasi::get_environment);
+        define(linker, store, module, "get-arguments", vec![ValType::NumType(NumType::I32)], vec![], crate::env::wasi::get_arguments);
+        define(linker, store, module, "initial-cwd", vec![ValType::NumType(NumType::I32)], vec![], crate::env::wasi::initial_cwd);
     }
     // wasi:filesystem/preopens@0.2.0
     {

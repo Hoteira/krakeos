@@ -998,6 +998,10 @@ impl WasiEnv for KrakeosWasiEnv {
         Err(code)
     }
 
+    fn initial_cwd(&self) -> Result<String, i32> {
+        Ok(self.root_path.clone())
+    }
+
     fn sock_accept(&mut self, _fd: i32, _flags: u16) -> Result<i32, i32> {
         Err(58)
     }

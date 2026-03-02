@@ -238,6 +238,3 @@ pub fn map_mmio(phys: u64, size: usize) -> u64 {
     }
 }
 
-pub fn map_user_memory_into_kernel(_pid: u64, _start: u64, _size: u64) {
-    // This was dead code, putting it back as requested by scope reversion.
-}

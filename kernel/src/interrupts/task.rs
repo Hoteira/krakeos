@@ -12,7 +12,6 @@ const STACK_SIZE: u64 = 1024 * 1024;
 #[derive(Debug)]
 pub struct Process {
     pub pid: u64,
-    pub pml4_phys: u64,
     pub fd_table: Mutex<[i16; 16]>,
     pub socket_table: Mutex<[Option<usize>; 16]>,
     pub fd_nonblock: Mutex<[bool; 16]>,
@@ -91,7 +90,6 @@ impl Process {
 
         Arc::new(Self {
             pid,
-            pml4_phys: crate::memory::paging::active_level_4_table() as *mut _ as u64 - crate::memory::paging::HHDM_OFFSET,
             fd_table: Mutex::new([-1; 16]),
             socket_table: Mutex::new([None; 16]),
             fd_nonblock: Mutex::new([false; 16]),
@@ -197,7 +195,7 @@ impl TaskManager {
         }
     }
 
-    pub fn schedule(&mut self, cpu_state: *mut CPUState) -> (*mut CPUState, u64, u64) {
+    pub fn schedule(&mut self, cpu_state: *mut CPUState) -> (*mut CPUState, u64) {
         // Stack pointer sanity check
         let sp = cpu_state as u64;
         if sp < 0x1000 {
@@ -220,15 +218,13 @@ impl TaskManager {
 
         self.current_task = self.get_next_thread();
         if self.current_task < 0 {
-            return (cpu_state, 0, 0);
+            return (cpu_state, 0);
         }
 
         let thread = self.tasks[self.current_task as usize].as_ref().unwrap();
-        let pml4 = thread.process.as_ref().map(|p| p.pml4_phys).unwrap_or(0);
 
         (
             thread.cpu_state_ptr as *mut CPUState,
-            pml4,
             thread.kernel_stack,
         )
     }
@@ -495,7 +491,7 @@ unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
         }
 
 
-        let (new_state, pml4, k_stack) = tm.schedule(rsp as *mut CPUState);
+        let (new_state, k_stack) = tm.schedule(rsp as *mut CPUState);
         let new_task_idx = tm.current_task;
 
         if new_task_idx >= 0 {
@@ -503,14 +499,6 @@ unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
                 let fpu_ptr = thread.fpu_state.as_ptr();
 
                 asm!("fxrstor [{}]", in(reg) fpu_ptr);
-            }
-        }
-
-        if pml4 != 0 {
-            let current_cr3: u64;
-            asm!("mov {}, cr3", out(reg) current_cr3);
-            if current_cr3 != pml4 {
-                asm!("mov cr3, {}", in(reg) pml4);
             }
         }
 
