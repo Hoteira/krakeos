@@ -3,6 +3,7 @@ use crate::debugln;
 use crate::fs::File;
 use crate::io::Read;
 use crate::wasm::wasi::{WasiCtx, create_wasi_imports, create_wasi_p2_imports};
+use crate::wasm::container::{register_container, unregister_container};
 use crate::wasm::{Linker, Store, validate};
 use alloc::string::{String, ToString};
 use alloc::vec;
@@ -44,6 +45,9 @@ pub fn run_with_env(
                     let mut store = Store::new(());
                     store.aot_enabled = aot;
                     let mut linker = Linker::new();
+
+                    // Register container (bookkeeping only for now)
+                    let container_id = register_container(None, 0, 0, 0);
 
                     create_wasi_imports(&mut linker, &mut store);
                     create_wasi_p2_imports(&mut linker, &mut store);
@@ -107,6 +111,7 @@ pub fn run_with_env(
                         crate::wasm::wasi::ICRNL = false;
                     }
                     debugln!("[wasm-runner] Finished {}.", path);
+                    unregister_container(container_id, exit_code);
                     return exit_code;
                 }
                 Err(e) => debugln!("[wasm-runner] Validation error: {:?}", e),

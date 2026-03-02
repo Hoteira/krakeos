@@ -3,6 +3,7 @@ mod log_wrapper;
 pub mod aot;
 pub mod common;
 pub mod component;
+pub mod container;
 pub mod interpreter;
 pub mod runner;
 #[cfg(feature = "userland")]
