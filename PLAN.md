@@ -79,7 +79,7 @@ Format: **what changes -> build -> verify it still runs**.
 
 ---
 
-### Step 4 -- Add guard pages between process slots
+### [DONE] Step 4 -- Add guard pages between process slots
 **Files:** `kernel/src/memory/address_space.rs`, `kernel/src/memory/vmm.rs`, `kernel/src/interrupts/exceptions.rs`
 **Changes:**
 - After each slot allocation, leave one unmapped 4 KiB page as a guard between adjacent regions
