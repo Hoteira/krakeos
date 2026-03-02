@@ -53,7 +53,7 @@ Format: **what changes -> build -> verify it still runs**.
 
 ---
 
-### Step 3 -- Add SAS region constants and 1024-slot layout
+### [DONE] Step 3 -- Add SAS region constants and 1024-slot layout
 **Files:** `kernel/src/memory/address_space.rs`
 **Changes:**
 - Replace magic numbers in `AtomicU64` initializers with named constants (see Appendix A):

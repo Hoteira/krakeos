@@ -12,6 +12,9 @@ const STACK_SIZE: u64 = 1024 * 1024;
 #[derive(Debug)]
 pub struct Process {
     pub pid: u64,
+    pub slot_id: u32,
+    pub parent_pid: Option<u64>,
+    pub children: Mutex<Vec<u64>>,
     pub fd_table: Mutex<[i16; 16]>,
     pub socket_table: Mutex<[Option<usize>; 16]>,
     pub fd_nonblock: Mutex<[bool; 16]>,
@@ -81,8 +84,9 @@ impl Process {
         let root = b"@0xE0/";
         cwd[..root.len()].copy_from_slice(root);
 
-        let heap_start = 0x0000_0080_0000_0000 + (pid * 0x1_0000_0000);
-        let heap_limit = heap_start + 0x1_0000_0000 - 4096;
+        let slot_id = crate::memory::address_space::get_next_slot_id();
+        let heap_start = crate::memory::address_space::allocate_heap(0, pid, slot_id);
+        let heap_limit = heap_start + crate::memory::address_space::HEAP_SLOT_SIZE - 4096;
 
         let mut shm = crate::memory::shm::GLOBAL_SHM.lock();
         let q_name = alloc::format!("events_{}", pid);
@@ -90,6 +94,9 @@ impl Process {
 
         Arc::new(Self {
             pid,
+            slot_id,
+            parent_pid: None,
+            children: Mutex::new(Vec::new()),
             fd_table: Mutex::new([-1; 16]),
             socket_table: Mutex::new([None; 16]),
             fd_nonblock: Mutex::new([false; 16]),
@@ -276,6 +283,7 @@ impl TaskManager {
         let mut thread = Thread::new(name);
 
         let proc = Process::new(pid);
+        let slot_id = proc.slot_id;
 
         if let Some(fds) = fd_table {
             *proc.fd_table.lock() = fds;
@@ -291,7 +299,7 @@ impl TaskManager {
         let stack_pages = (STACK_SIZE / 4096) as usize;
         let u_frame_phys = pmm::allocate_frames(stack_pages, pid).ok_or(pmm::FrameError::NoMemory)?;
 
-        let u_stack_top = 0x0000_7FFF_FFFF_0000 - (pid * 0x1000000);
+        let u_stack_top = crate::memory::address_space::allocate_stack(STACK_SIZE, pid, slot_id);
         let u_stack_base = u_stack_top - STACK_SIZE;
 
         for i in 0..stack_pages {
