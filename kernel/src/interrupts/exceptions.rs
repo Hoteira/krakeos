@@ -244,6 +244,14 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
         let is_super = crate::drivers::periferics::keyboard::is_super_active();
         let mut handled_globally = false;
 
+        // Check for keyboard shortcuts
+        if is_super && pressed {
+            if key == 'p' as u32 {
+                crate::memory::vma::GLOBAL_VMA.lock().dump();
+                handled_globally = true;
+            }
+        }
+
         if !handled_globally {
             if pressed && !is_super {
                 KEYBOARD_BUFFER.lock().push_back(key);

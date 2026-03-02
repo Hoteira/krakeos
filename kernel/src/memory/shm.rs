@@ -26,6 +26,7 @@ impl ShmManager {
 
         // Create new
         let addr = address_space::allocate_shm(size);
+        crate::memory::vma::GLOBAL_VMA.lock().track(addr, size, 0); // PID 0 for global SHM
 
         // Commiting memory immediately for SHM (easier for now)
         let page_count = (size + 4095) / 4096;

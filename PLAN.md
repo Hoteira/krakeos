@@ -97,7 +97,7 @@ Format: **what changes -> build -> verify it still runs**.
 
 ---
 
-### Step 5 -- Add `slot_id` and container metadata to Process
+### [DONE] Step 5 -- Add `slot_id` and container metadata to Process
 **Files:** `kernel/src/interrupts/task.rs`
 **Changes:**
 - Add `slot_id: u32` field to `Process` (from the counter in Step 3)
@@ -115,7 +115,7 @@ Format: **what changes -> build -> verify it still runs**.
 
 ---
 
-### Step 6 -- Implement `Super+P` VMA/Memory dump
+### [DONE] Step 6 -- Implement `Super+P` VMA/Memory dump
 **Files:** `kernel/src/drivers/input/keyboard.rs`, `kernel/src/memory/vma.rs`
 **Changes:**
 - In keyboard interrupt handler, detect `Super + P` key combo
