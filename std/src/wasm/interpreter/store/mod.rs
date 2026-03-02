@@ -66,6 +66,7 @@ pub struct Store<'a, T: Config> {
     pub(crate) dormitory: Dormitory,
     pub caller_module: Option<ModuleAddr>,
     pub wasi_ctx: Option<crate::wasm::wasi::WasiCtx>,
+    pub sas_memory_base: Option<u64>,
 }
 
 impl<'a, T: Config> Store<'a, T> {
@@ -86,6 +87,7 @@ impl<'a, T: Config> Store<'a, T> {
             user_data,
             caller_module: None,
             wasi_ctx: None,
+            sas_memory_base: None,
         }
     }
 
@@ -372,9 +374,14 @@ impl<'a, T: Config> Store<'a, T> {
         })
     }
     fn alloc_mem(&mut self, ty: MemType) -> MemAddr {
+        let mem = if let Some(base) = self.sas_memory_base {
+            LinearMemory::new_sas(base, ty.limits.min.try_into().unwrap_validated())
+        } else {
+            LinearMemory::new_with_initial_pages(ty.limits.min.try_into().unwrap_validated())
+        };
         self.memories.insert(MemInst {
             ty,
-            mem: LinearMemory::new_with_initial_pages(ty.limits.min.try_into().unwrap_validated()),
+            mem,
         })
     }
     fn alloc_global(&mut self, ty: GlobalType, value: Value) -> GlobalAddr {

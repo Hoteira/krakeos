@@ -44,10 +44,15 @@ pub fn run_with_env(
                 Ok(validation_info) => {
                     let mut store = Store::new(());
                     store.aot_enabled = aot;
-                    let mut linker = Linker::new();
+                    
+                    // Allocate SAS memory base (256MB chunk within the process slot)
+                    let sas_base = crate::memory::allocate_sas_region(256 * 1024 * 1024);
+                    store.sas_memory_base = sas_base;
 
-                    // Register container (bookkeeping only for now)
-                    let container_id = register_container(None, 0, 0, 0);
+                    // Register container
+                    let container_id = register_container(None, sas_base.unwrap_or(0), 0, 0);
+
+                    let mut linker = Linker::new();
 
                     create_wasi_imports(&mut linker, &mut store);
                     create_wasi_p2_imports(&mut linker, &mut store);

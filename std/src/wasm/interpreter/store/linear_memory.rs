@@ -9,46 +9,108 @@ use core::{
     sync::atomic::{AtomicU8, Ordering},
 };
 
+pub enum LinearMemoryStorage {
+    Managed(Vec<AtomicU8>),
+    Sas {
+        base: *mut AtomicU8,
+        current_pages: u32,
+        max_pages: u32,
+    },
+}
+
 pub struct LinearMemory<const PAGE_SIZE: usize = { Limits::MEM_PAGE_SIZE as usize }> {
-    inner_data: RwSpinLock<Vec<AtomicU8>>,
+    storage: RwSpinLock<LinearMemoryStorage>,
 }
 
 pub type PageCountTy = u32;
 
 impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
     const PAGE_SIZE: usize = PAGE_SIZE;
+
     pub fn new() -> Self {
         Self {
-            inner_data: RwSpinLock::new(Vec::new()),
+            storage: RwSpinLock::new(LinearMemoryStorage::Managed(Vec::new())),
         }
     }
+
     pub fn new_with_initial_pages(pages: PageCountTy) -> Self {
         let size_bytes = Self::PAGE_SIZE * pages as usize;
         let mut data = Vec::with_capacity(size_bytes);
         data.resize_with(size_bytes, || AtomicU8::new(0));
         Self {
-            inner_data: RwSpinLock::new(data),
+            storage: RwSpinLock::new(LinearMemoryStorage::Managed(data)),
         }
     }
+
+    pub fn new_sas(base_addr: u64, pages: PageCountTy) -> Self {
+        let size_bytes = Self::PAGE_SIZE * pages as usize;
+        // Map the SAS pages immediately
+        unsafe {
+            // syscall 9 = MMAP(addr, len, prot, flags, fd, offset)
+            // prot=7 (READ|WRITE|EXEC), flags=0, fd=0, offset=0
+            crate::sys::syscall6(9, base_addr, size_bytes as u64, 7, 0, 0, 0);
+        }
+        Self {
+            storage: RwSpinLock::new(LinearMemoryStorage::Sas {
+                base: base_addr as *mut AtomicU8,
+                current_pages: pages,
+                max_pages: 65536, // 4GB max for WASM32
+            }),
+        }
+    }
+
     pub fn grow(&self, pages_to_add: PageCountTy) -> Result<(), ()> {
-        let mut lock_guard = self.inner_data.write();
-        let prior_length_bytes = lock_guard.len();
-        let new_length_bytes = prior_length_bytes + Self::PAGE_SIZE * pages_to_add as usize;
-        if lock_guard.try_reserve(new_length_bytes - prior_length_bytes).is_err() {
-            return Err(());
+        let mut lock_guard = self.storage.write();
+        match &mut *lock_guard {
+            LinearMemoryStorage::Managed(data) => {
+                let prior_length_bytes = data.len();
+                let new_length_bytes = prior_length_bytes + Self::PAGE_SIZE * pages_to_add as usize;
+                if data.try_reserve(new_length_bytes - prior_length_bytes).is_err() {
+                    return Err(());
+                }
+                data.resize_with(new_length_bytes, || AtomicU8::new(0));
+                Ok(())
+            }
+            LinearMemoryStorage::Sas { base, current_pages, max_pages } => {
+                if *current_pages + pages_to_add > *max_pages {
+                    return Err(());
+                }
+                let old_size = *current_pages as usize * Self::PAGE_SIZE;
+                let add_size = pages_to_add as usize * Self::PAGE_SIZE;
+                
+                unsafe {
+                    let target_addr = (*base as usize + old_size) as u64;
+                    crate::sys::syscall6(9, target_addr, add_size as u64, 7, 0, 0, 0);
+                }
+                
+                *current_pages += pages_to_add;
+                Ok(())
+            }
         }
-        lock_guard.resize_with(new_length_bytes, || AtomicU8::new(0));
-        Ok(())
     }
+
     pub fn pages(&self) -> PageCountTy {
-        PageCountTy::try_from(self.inner_data.read().len() / PAGE_SIZE).unwrap()
+        let lock_guard = self.storage.read();
+        match &*lock_guard {
+            LinearMemoryStorage::Managed(data) => PageCountTy::try_from(data.len() / PAGE_SIZE).unwrap(),
+            LinearMemoryStorage::Sas { current_pages, .. } => *current_pages,
+        }
     }
+
     pub fn len(&self) -> usize {
-        self.inner_data.read().len()
+        let lock_guard = self.storage.read();
+        match &*lock_guard {
+            LinearMemoryStorage::Managed(data) => data.len(),
+            LinearMemoryStorage::Sas { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
+        }
     }
 
     pub fn get_base_ptr(&self) -> *mut u8 {
-        self.inner_data.read().as_ptr() as *mut u8
+        let lock_guard = self.storage.read();
+        match &*lock_guard {
+            LinearMemoryStorage::Managed(data) => data.as_ptr() as *mut u8,
+            LinearMemoryStorage::Sas { base, .. } => *base as *mut u8,
+        }
     }
 
     pub fn store<const N: usize, T: LittleEndianBytes<N>>(
@@ -58,77 +120,135 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
     ) -> Result<(), RuntimeError> {
         self.store_bytes::<N>(index, value.to_le_bytes())
     }
+
     pub fn store_bytes<const N: usize>(
         &self,
         index: MemIdx,
         bytes: [u8; N],
     ) -> Result<(), RuntimeError> {
-        let lock_guard = self.inner_data.read();
-        if N > lock_guard.len() {
+        let lock_guard = self.storage.read();
+        let len = match &*lock_guard {
+            LinearMemoryStorage::Managed(data) => data.len(),
+            LinearMemoryStorage::Sas { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
+        };
+
+        if N > len || index > len - N {
             return Err(TrapError::MemoryOrDataAccessOutOfBounds.into());
         }
-        if index > lock_guard.len() - N {
-            return Err(TrapError::MemoryOrDataAccessOutOfBounds.into());
-        }
-        for (i, byte) in bytes.into_iter().enumerate() {
-            let dst = unsafe { lock_guard.get_unchecked(i + index) };
-            dst.store(byte, Ordering::Relaxed);
+
+        match &*lock_guard {
+            LinearMemoryStorage::Managed(data) => {
+                for (i, byte) in bytes.into_iter().enumerate() {
+                    let dst = unsafe { data.get_unchecked(i + index) };
+                    dst.store(byte, Ordering::Relaxed);
+                }
+            }
+            LinearMemoryStorage::Sas { base, .. } => {
+                for (i, byte) in bytes.into_iter().enumerate() {
+                    let dst = unsafe { &*base.add(i + index) };
+                    dst.store(byte, Ordering::Relaxed);
+                }
+            }
         }
         Ok(())
     }
+
     pub fn load<const N: usize, T: LittleEndianBytes<N>>(
         &self,
         index: MemIdx,
     ) -> Result<T, RuntimeError> {
         self.load_bytes::<N>(index).map(T::from_le_bytes)
     }
+
     pub fn load_bytes<const N: usize>(&self, index: MemIdx) -> Result<[u8; N], RuntimeError> {
-        let lock_guard = self.inner_data.read();
-        if N > lock_guard.len() {
+        let lock_guard = self.storage.read();
+        let len = match &*lock_guard {
+            LinearMemoryStorage::Managed(data) => data.len(),
+            LinearMemoryStorage::Sas { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
+        };
+
+        if N > len || index > len - N {
             return Err(TrapError::MemoryOrDataAccessOutOfBounds.into());
         }
-        if index > lock_guard.len() - N {
-            return Err(TrapError::MemoryOrDataAccessOutOfBounds.into());
-        }
+
         let mut bytes = [0; N];
-        for (i, byte) in bytes.iter_mut().enumerate() {
-            let src = unsafe { lock_guard.get_unchecked(i + index) };
-            *byte = src.load(Ordering::Relaxed);
+        match &*lock_guard {
+            LinearMemoryStorage::Managed(data) => {
+                for (i, byte) in bytes.iter_mut().enumerate() {
+                    let src = unsafe { data.get_unchecked(i + index) };
+                    *byte = src.load(Ordering::Relaxed);
+                }
+            }
+            LinearMemoryStorage::Sas { base, .. } => {
+                for (i, byte) in bytes.iter_mut().enumerate() {
+                    let src = unsafe { &*base.add(i + index) };
+                    *byte = src.load(Ordering::Relaxed);
+                }
+            }
         }
         Ok(bytes)
     }
+
     pub fn read_slice(&self, index: MemIdx, buf: &mut [u8]) -> Result<(), RuntimeError> {
-        let lock_guard = self.inner_data.read();
-        let len = buf.len();
-        if len > lock_guard.len() {
+        let lock_guard = self.storage.read();
+        let len = match &*lock_guard {
+            LinearMemoryStorage::Managed(data) => data.len(),
+            LinearMemoryStorage::Sas { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
+        };
+
+        let buf_len = buf.len();
+        if buf_len > len || index > len - buf_len {
             return Err(TrapError::MemoryOrDataAccessOutOfBounds.into());
         }
-        if index > lock_guard.len() - len {
-            return Err(TrapError::MemoryOrDataAccessOutOfBounds.into());
-        }
-        for (i, byte) in buf.iter_mut().enumerate() {
-            let src = unsafe { lock_guard.get_unchecked(i + index) };
-            *byte = src.load(Ordering::Relaxed);
+
+        match &*lock_guard {
+            LinearMemoryStorage::Managed(data) => {
+                for (i, byte) in buf.iter_mut().enumerate() {
+                    let src = unsafe { data.get_unchecked(i + index) };
+                    *byte = src.load(Ordering::Relaxed);
+                }
+            }
+            LinearMemoryStorage::Sas { base, .. } => {
+                for (i, byte) in buf.iter_mut().enumerate() {
+                    let src = unsafe { &*base.add(i + index) };
+                    *byte = src.load(Ordering::Relaxed);
+                }
+            }
         }
         Ok(())
     }
+
     pub fn fill(&self, index: MemIdx, data_byte: u8, count: MemIdx) -> Result<(), RuntimeError> {
-        let lock_guard = self.inner_data.read();
-        if count > lock_guard.len() {
-            return Err(TrapError::MemoryOrDataAccessOutOfBounds.into());
-        }
-        if index > lock_guard.len() - count {
+        let lock_guard = self.storage.read();
+        let len = match &*lock_guard {
+            LinearMemoryStorage::Managed(data) => data.len(),
+            LinearMemoryStorage::Sas { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
+        };
+
+        if count > len || index > len - count {
             return Err(TrapError::MemoryOrDataAccessOutOfBounds.into());
         }
         if count == 0 {
             return Ok(());
         }
-        for i in index..(index + count) {
-            let lin_mem_byte = unsafe { lock_guard.get_unchecked(i) };
-            lin_mem_byte.store(data_byte, Ordering::Relaxed);
+
+        match &*lock_guard {
+            LinearMemoryStorage::Managed(data) => {
+                for i in index..(index + count) {
+                    let lin_mem_byte = unsafe { data.get_unchecked(i) };
+                    lin_mem_byte.store(data_byte, Ordering::Relaxed);
+                }
+            }
+            LinearMemoryStorage::Sas { base, .. } => {
+                for i in index..(index + count) {
+                    let lin_mem_byte = unsafe { &*base.add(i) };
+                    lin_mem_byte.store(data_byte, Ordering::Relaxed);
+                }
+            }
         }
         Ok(())
     }
+
     pub fn copy(
         &self,
         destination_index: MemIdx,
@@ -136,37 +256,52 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
         source_index: MemIdx,
         count: MemIdx,
     ) -> Result<(), RuntimeError> {
-        let lock_guard_self = self.inner_data.read();
-        let lock_guard_other = source_mem.inner_data.read();
-        if count > lock_guard_other.len() {
+        let lock_guard_self = self.storage.read();
+        let lock_guard_other = source_mem.storage.read();
+
+        let len_self = match &*lock_guard_self {
+            LinearMemoryStorage::Managed(data) => data.len(),
+            LinearMemoryStorage::Sas { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
+        };
+        let len_other = match &*lock_guard_other {
+            LinearMemoryStorage::Managed(data) => data.len(),
+            LinearMemoryStorage::Sas { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
+        };
+
+        if count > len_other || source_index > len_other - count {
             return Err(TrapError::MemoryOrDataAccessOutOfBounds.into());
         }
-        if source_index > lock_guard_other.len() - count {
-            return Err(TrapError::MemoryOrDataAccessOutOfBounds.into());
-        }
-        if count > lock_guard_self.len() {
-            return Err(TrapError::MemoryOrDataAccessOutOfBounds.into());
-        }
-        if destination_index > lock_guard_self.len() - count {
+        if count > len_self || destination_index > len_self - count {
             return Err(TrapError::MemoryOrDataAccessOutOfBounds.into());
         }
         if count == 0 {
             return Ok(());
         }
-        let copy_one_byte = move |i| {
-            let src_byte: &AtomicU8 = unsafe { lock_guard_other.get_unchecked(i + source_index) };
-            let dst_byte: &AtomicU8 =
-                unsafe { lock_guard_self.get_unchecked(i + destination_index) };
-            let byte = src_byte.load(Ordering::Relaxed);
-            dst_byte.store(byte, Ordering::Relaxed);
+
+        let get_src = |i| match &*lock_guard_other {
+            LinearMemoryStorage::Managed(data) => unsafe { data.get_unchecked(i + source_index) },
+            LinearMemoryStorage::Sas { base, .. } => unsafe { &*base.add(i + source_index) },
         };
+
+        let get_dst = |i| match &*lock_guard_self {
+            LinearMemoryStorage::Managed(data) => unsafe { data.get_unchecked(i + destination_index) },
+            LinearMemoryStorage::Sas { base, .. } => unsafe { &*base.add(i + destination_index) },
+        };
+
         if destination_index <= source_index {
-            (0..count).for_each(copy_one_byte)
+            for i in 0..count {
+                let byte = get_src(i).load(Ordering::Relaxed);
+                get_dst(i).store(byte, Ordering::Relaxed);
+            }
         } else {
-            (0..count).rev().for_each(copy_one_byte)
+            for i in (0..count).rev() {
+                let byte = get_src(i).load(Ordering::Relaxed);
+                get_dst(i).store(byte, Ordering::Relaxed);
+            }
         }
         Ok(())
     }
+
     pub fn init(
         &self,
         destination_index: MemIdx,
@@ -174,27 +309,38 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
         source_index: MemIdx,
         count: MemIdx,
     ) -> Result<(), RuntimeError> {
-        let lock_guard_self = self.inner_data.read();
+        let lock_guard_self = self.storage.read();
+        let len_self = match &*lock_guard_self {
+            LinearMemoryStorage::Managed(data) => data.len(),
+            LinearMemoryStorage::Sas { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
+        };
+
         let data_len = source_data.len();
-        if count > data_len {
+        if count > data_len || source_index > data_len - count {
             return Err(TrapError::MemoryOrDataAccessOutOfBounds.into());
         }
-        if source_index > data_len - count {
-            return Err(TrapError::MemoryOrDataAccessOutOfBounds.into());
-        }
-        if count > lock_guard_self.len() {
-            return Err(TrapError::MemoryOrDataAccessOutOfBounds.into());
-        }
-        if destination_index > lock_guard_self.len() - count {
+        if count > len_self || destination_index > len_self - count {
             return Err(TrapError::MemoryOrDataAccessOutOfBounds.into());
         }
         if count == 0 {
             return Ok(());
         }
-        for i in 0..count {
-            let src_byte = unsafe { source_data.get_unchecked(i + source_index) };
-            let dst_byte = unsafe { lock_guard_self.get_unchecked(i + destination_index) };
-            dst_byte.store(*src_byte, Ordering::Relaxed);
+
+        match &*lock_guard_self {
+            LinearMemoryStorage::Managed(data) => {
+                for i in 0..count {
+                    let src_byte = unsafe { source_data.get_unchecked(i + source_index) };
+                    let dst_byte = unsafe { data.get_unchecked(i + destination_index) };
+                    dst_byte.store(*src_byte, Ordering::Relaxed);
+                }
+            }
+            LinearMemoryStorage::Sas { base, .. } => {
+                for i in 0..count {
+                    let src_byte = unsafe { source_data.get_unchecked(i + source_index) };
+                    let dst_byte = unsafe { &*base.add(i + destination_index) };
+                    dst_byte.store(*src_byte, Ordering::Relaxed);
+                }
+            }
         }
         Ok(())
     }

@@ -29,6 +29,13 @@ pub unsafe fn syscall(num: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
     result
 }
 
+#[cfg(target_arch = "wasm32")]
+pub unsafe fn syscall(num: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
+    // For nested WASM, we'll need a host call here. 
+    // For now, return error to satisfy compiler and prevent crashes.
+    0
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn syscall4(num: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64) -> u64 {
     let result: u64;
@@ -46,6 +53,9 @@ pub unsafe fn syscall4(num: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64) -> 
     );
     result
 }
+
+#[cfg(target_arch = "wasm32")]
+pub unsafe fn syscall4(num: u64, a1: u64, a2: u64, a3: u64, a4: u64) -> u64 { 0 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn syscall5(num: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> u64 {
@@ -66,6 +76,9 @@ pub unsafe fn syscall5(num: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg
     result
 }
 
+#[cfg(target_arch = "wasm32")]
+pub unsafe fn syscall5(num: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> u64 { 0 }
+
 #[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn syscall6(num: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64, arg6: u64) -> u64 {
     let result: u64;
@@ -85,6 +98,13 @@ pub unsafe fn syscall6(num: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg
     );
     result
 }
+
+#[cfg(target_arch = "wasm32")]
+pub unsafe fn syscall6(num: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64, a6: u64) -> u64 { 0 }
+
+pub unsafe fn syscall1(num: u64, a1: u64) -> u64 { syscall(num, a1, 0, 0) }
+pub unsafe fn syscall2(num: u64, a1: u64, a2: u64) -> u64 { syscall(num, a1, a2, 0) }
+pub unsafe fn syscall3(num: u64, a1: u64, a2: u64, a3: u64) -> u64 { syscall(num, a1, a2, a3) }
 
 pub fn yield_task() {
     host_yield();
@@ -118,10 +138,3 @@ pub unsafe fn alloc_pages(size: usize) -> *mut u8 {
         }
     }
 }
-
-#[cfg(not(target_arch = "wasm32"))]
-pub unsafe fn syscall1(num: u64, a1: u64) -> u64 { syscall(num, a1, 0, 0) }
-#[cfg(not(target_arch = "wasm32"))]
-pub unsafe fn syscall2(num: u64, a1: u64, a2: u64) -> u64 { syscall(num, a1, a2, 0) }
-#[cfg(not(target_arch = "wasm32"))]
-pub unsafe fn syscall3(num: u64, a1: u64, a2: u64, a3: u64) -> u64 { syscall(num, a1, a2, a3) }

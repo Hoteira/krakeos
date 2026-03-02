@@ -139,7 +139,7 @@ Format: **what changes -> build -> verify it still runs**.
 
 ## Phase 2: WASM Container Infrastructure (Steps 7-13)
 
-### Step 7 -- Add `WasmContainer` tracking struct (data only)
+### [DONE] Step 7 -- Add `WasmContainer` tracking struct (data only)
 **Files:** New: `std/src/wasm/container.rs`, update `std/src/wasm/mod.rs`
 **Changes:**
 - Define:
@@ -197,8 +197,8 @@ Format: **what changes -> build -> verify it still runs**.
 **Verify:** Build + boot. `aot_test.wasm` (AOT=true) works with SAS-backed memory.
 
 **Decisions:**
-- Use hardware guard pages for bounds checking instead of software?
-- Verify 16-byte stack alignment (CTX mandate)?
+- Use hardware guard pages for bounds checking instead of software
+- Verify 16-byte stack alignment
 
 ---
 

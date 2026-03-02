@@ -25,6 +25,7 @@ pub unsafe extern "C" fn rust_start(stack: *const usize) -> ! {
     let heap_size = 10 * 1024 * 1024;
     crate::os::brk(heap_start + heap_size);
     crate::allocator::init_heap(heap_start as *mut u8, heap_size);
+    crate::memory::init_sas_manager(heap_start as u64);
 
     let mut args = crate::alloc::vec::Vec::new();
     for i in 0..argc {
