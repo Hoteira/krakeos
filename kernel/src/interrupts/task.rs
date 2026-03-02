@@ -302,7 +302,8 @@ impl TaskManager {
         let u_stack_top = crate::memory::address_space::allocate_stack(STACK_SIZE, pid, slot_id);
         let u_stack_base = u_stack_top - STACK_SIZE;
 
-        for i in 0..stack_pages {
+        // Map user stack, but leave the bottom-most page unmapped as a guard
+        for i in 1..stack_pages {
             let offset = i as u64 * 4096;
             vmm::map_page(u_stack_base + offset, PhysAddr::new(u_frame_phys + offset),
                           paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER,

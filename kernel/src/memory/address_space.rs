@@ -20,14 +20,18 @@ pub fn get_next_slot_id() -> u32 {
 }
 
 pub fn allocate_code(_size: u64, _pid: u64, slot_id: u32) -> u64 {
+    // Slot Layout: [CODE (1GB - 4KB)] [GUARD (4KB)]
     CODE_REGION_BASE + (slot_id as u64) * CODE_SLOT_SIZE
 }
 
 pub fn allocate_heap(_size: u64, _pid: u64, slot_id: u32) -> u64 {
+    // Slot Layout: [HEAP (4GB - 4KB)] [GUARD (4KB)]
     HEAP_REGION_BASE + (slot_id as u64) * HEAP_SLOT_SIZE
 }
 
 pub fn allocate_stack(_size: u64, _pid: u64, slot_id: u32) -> u64 {
+    // Slot Layout: [GUARD (4KB)] [STACK (16MB - 4KB)]
+    // Grows downward, so the top is at the slot boundary
     STACK_REGION_TOP - (slot_id as u64) * STACK_SLOT_SIZE
 }
 

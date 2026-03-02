@@ -22,6 +22,10 @@ pub fn load_elf(data: &[u8], pid: u64) -> Result<u64, String> {
         }
     }
 
+    if total_size > crate::memory::address_space::CODE_SLOT_SIZE - 4096 {
+        return Err(format!("ELF too large for code slot: {} bytes", total_size));
+    }
+
     let slot_id = {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         tm.tasks[pid as usize].as_ref().unwrap().process.as_ref().unwrap().slot_id

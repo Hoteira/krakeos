@@ -141,14 +141,51 @@ pub extern "x86-interrupt" fn page_fault(info: &mut StackFrame, error_code: u64)
         core::arch::asm!("mov {}, cr2", out(reg) cr2);
     }
 
-    serial_println("\n=== PAGE FAULT ===");
-    serial_print("Address (CR2): ");
-    print_hex(cr2);
-    serial_print("\r\nError Code: ");
-    print_hex(error_code);
-    serial_print("\r\nRIP: ");
-    print_hex(info.instruction_pointer);
-    serial_println("");
+    // Check for guard page hits
+    use crate::memory::address_space::*;
+    let mut is_guard = false;
+    for slot in 0..MAX_SLOTS {
+        let stack_guard = STACK_REGION_TOP - (slot as u64 + 1) * STACK_SLOT_SIZE;
+        let heap_guard = HEAP_REGION_BASE + (slot as u64 + 1) * HEAP_SLOT_SIZE - 4096;
+        let code_guard = CODE_REGION_BASE + (slot as u64 + 1) * CODE_SLOT_SIZE - 4096;
+
+        if cr2 >= stack_guard && cr2 < stack_guard + 4096 {
+            serial_print("\nGuard page fault: slot ");
+            print_hex(slot as u64);
+            serial_print(", region stack, CR2=");
+            print_hex(cr2);
+            serial_println("");
+            is_guard = true;
+            break;
+        } else if cr2 >= heap_guard && cr2 < heap_guard + 4096 {
+            serial_print("\nGuard page fault: slot ");
+            print_hex(slot as u64);
+            serial_print(", region heap, CR2=");
+            print_hex(cr2);
+            serial_println("");
+            is_guard = true;
+            break;
+        } else if cr2 >= code_guard && cr2 < code_guard + 4096 {
+            serial_print("\nGuard page fault: slot ");
+            print_hex(slot as u64);
+            serial_print(", region code, CR2=");
+            print_hex(cr2);
+            serial_println("");
+            is_guard = true;
+            break;
+        }
+    }
+
+    if !is_guard {
+        serial_println("\n=== PAGE FAULT ===");
+        serial_print("Address (CR2): ");
+        print_hex(cr2);
+        serial_print("\r\nError Code: ");
+        print_hex(error_code);
+        serial_print("\r\nRIP: ");
+        print_hex(info.instruction_pointer);
+        serial_println("");
+    }
 
     if (info.code_segment & 3) == 3 {
         serial_println("User mode Page Fault. Terminating task.");
