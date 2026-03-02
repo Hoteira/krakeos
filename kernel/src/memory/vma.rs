@@ -38,14 +38,6 @@ impl VmaAllocator {
         }
         false
     }
-
-    pub fn dump(&self) {
-        crate::debugln!("--- VMA Dump ---");
-        for r in &self.regions {
-            crate::debugln!("PID {}: {:#x} - {:#x} ({} MB)", r.pid, r.start, r.start + r.size, r.size / 1024 / 1024);
-        }
-        crate::debugln!("----------------");
-    }
 }
 
 pub static GLOBAL_VMA: Mutex<VmaAllocator> = Mutex::new(VmaAllocator::new());

@@ -14,15 +14,7 @@ pub fn load_elf(data: &[u8], pid: u64) -> Result<u64, String> {
         return Err(format!("Security Violation: Non-PIE executable (Type {})", elf.header.e_type + 0));
     }
 
-    let mut total_size = 0;
-    for phdr in elf.program_headers() {
-        if ProgramType::from(phdr.p_type) == ProgramType::Load {
-            let end = phdr.p_vaddr + phdr.p_memsz;
-            if end > total_size { total_size = end; }
-        }
-    }
-
-    let load_base = crate::memory::address_space::allocate_code(total_size, pid);
+    let load_base = 0x0000_0001_0000_0000 + (pid * 0x40000000);
     crate::debugln!("load_elf: Base address: {:#x}", load_base);
 
     let mut max_end: u64 = 0;

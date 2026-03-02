@@ -181,7 +181,7 @@ pub fn create_wasi_p2_imports<T: Config>(linker: &mut Linker, store: &mut Store<
         let module = "wasi:cli/environment@0.2.0";
         define(linker, store, module, "get-environment", vec![], vec![ValType::NumType(NumType::I32)], crate::env::wasi::get_environment);
         define(linker, store, module, "get-arguments", vec![], vec![ValType::NumType(NumType::I32)], crate::env::wasi::get_arguments);
-        define(linker, store, module, "initial-cwd", vec![], vec![ValType::NumType(NumType::I32)], crate::env::wasi::get_environment);
+        define(linker, store, module, "initial-cwd", vec![], vec![ValType::NumType(NumType::I32)], crate::env::wasi::initial_cwd);
     }
     // wasi:filesystem/preopens@0.2.0
     {
@@ -487,7 +487,7 @@ fn process_waitpid_host<T: Config>(_store: &mut Store<'_, T>, args: Vec<Value>) 
     #[cfg(not(target_arch = "wasm32"))]
     let res = unsafe { crate::sys::syscall(61, pid, 0, 0) as i32 };
     #[cfg(target_arch = "wasm32")]
-    let res = unsafe { crate::os::krakeos::process_waitpid(pid) };
+    let res = crate::os::krakeos::process_waitpid(pid);
 
     Ok(vec![Value::I32(res as u32)])
 }
@@ -512,7 +512,7 @@ fn process_pipe_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> R
     #[cfg(target_arch = "wasm32")]
     {
         let mut bytes = [0u8; 8];
-        let res = unsafe { crate::os::krakeos::process_pipe(bytes.as_mut_ptr()) };
+        let res = crate::os::krakeos::process_pipe(bytes.as_mut_ptr());
         if res == 0 {
             write_bytes(store, ptr, &bytes).map_err(|_| HaltExecutionError(1))?;
             Ok(vec![Value::I32(0)])

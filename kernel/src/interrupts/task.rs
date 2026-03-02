@@ -82,9 +82,8 @@ impl Process {
         let root = b"@0xE0/";
         cwd[..root.len()].copy_from_slice(root);
 
-        let pml4_phys = unsafe { vmm::KERNEL_PML4 };
-        let heap_start = crate::memory::address_space::allocate_heap(0, pid);
-        let heap_limit = heap_start + 4 * 1024 * 1024 * 1024; // 4GB Limit
+        let heap_start = 0x0000_0080_0000_0000 + (pid * 0x1_0000_0000);
+        let heap_limit = heap_start + 0x1_0000_0000 - 4096;
 
         let mut shm = crate::memory::shm::GLOBAL_SHM.lock();
         let q_name = alloc::format!("events_{}", pid);
@@ -92,7 +91,7 @@ impl Process {
 
         Arc::new(Self {
             pid,
-            pml4_phys,
+            pml4_phys: crate::memory::paging::active_level_4_table() as *mut _ as u64 - crate::memory::paging::HHDM_OFFSET,
             fd_table: Mutex::new([-1; 16]),
             socket_table: Mutex::new([None; 16]),
             fd_nonblock: Mutex::new([false; 16]),
@@ -225,16 +224,12 @@ impl TaskManager {
         }
 
         let thread = self.tasks[self.current_task as usize].as_ref().unwrap();
-        let pml4 = if let Some(proc) = &thread.process {
-            proc.pml4_phys
-        } else {
-            0
-        };
+        let pml4 = thread.process.as_ref().map(|p| p.pml4_phys).unwrap_or(0);
 
         (
             thread.cpu_state_ptr as *mut CPUState,
-            thread.kernel_stack,
             pml4,
+            thread.kernel_stack,
         )
     }
 
@@ -300,7 +295,7 @@ impl TaskManager {
         let stack_pages = (STACK_SIZE / 4096) as usize;
         let u_frame_phys = pmm::allocate_frames(stack_pages, pid).ok_or(pmm::FrameError::NoMemory)?;
 
-        let u_stack_top = crate::memory::address_space::allocate_stack(STACK_SIZE, pid);
+        let u_stack_top = 0x0000_7FFF_FFFF_0000 - (pid * 0x1000000);
         let u_stack_base = u_stack_top - STACK_SIZE;
 
         for i in 0..stack_pages {
@@ -500,7 +495,7 @@ unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
         }
 
 
-        let (new_state, k_stack, pml4_phys) = tm.schedule(rsp as *mut CPUState);
+        let (new_state, pml4, k_stack) = tm.schedule(rsp as *mut CPUState);
         let new_task_idx = tm.current_task;
 
         if new_task_idx >= 0 {
@@ -508,6 +503,14 @@ unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
                 let fpu_ptr = thread.fpu_state.as_ptr();
 
                 asm!("fxrstor [{}]", in(reg) fpu_ptr);
+            }
+        }
+
+        if pml4 != 0 {
+            let current_cr3: u64;
+            asm!("mov {}, cr3", out(reg) current_cr3);
+            if current_cr3 != pml4 {
+                asm!("mov cr3, {}", in(reg) pml4);
             }
         }
 

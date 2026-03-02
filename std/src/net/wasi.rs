@@ -14,7 +14,7 @@ crate::export_method!(
         let address_family = match args.get(0) { Some(Value::I32(v)) => *v, _ => return Err(HaltExecutionError(1)) };
         let result_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
         
-        let res = unsafe { host::socket_create(address_family as u64, 1) }; // 1 = SOCK_STREAM
+        let res = host::socket_create(address_family as u64, 1); // 1 = SOCK_STREAM
         
         let mut buf = [0u8; 8];
         if res <= i32::MAX as u64 {
@@ -39,7 +39,7 @@ crate::export_method!(
         let mut ip_addr = vec![0u8; 16];
         if read_mem(store, ip_addr_ptr, &mut ip_addr).is_err() { return Err(HaltExecutionError(1)); }
         
-        let res = unsafe { host::socket_bind(socket as u64, ip_addr.as_ptr(), 16) };
+        let res = host::socket_bind(socket as u64, ip_addr.as_ptr(), 16);
         
         let mut buf = [0u8; 4];
         buf[0] = if res == 0 { 0 } else { 1 };
@@ -72,7 +72,7 @@ crate::export_method!(
         let mut ip_addr = vec![0u8; 16];
         if read_mem(store, ip_addr_ptr, &mut ip_addr).is_err() { return Err(HaltExecutionError(1)); }
         
-        let res = unsafe { host::socket_connect(socket as u64, ip_addr.as_ptr(), 16) };
+        let res = host::socket_connect(socket as u64, ip_addr.as_ptr(), 16);
         
         let mut buf = [0u8; 4];
         buf[0] = if res == 0 { 0 } else { 1 };
@@ -89,7 +89,7 @@ crate::export_method!(
         let socket = match args.get(0) { Some(Value::I32(v)) => *v, _ => return Err(HaltExecutionError(1)) };
         let result_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
         
-        let res = unsafe { host::socket_finish_connect(socket as u64) };
+        let res = host::socket_finish_connect(socket as u64);
         
         let mut buf = [0u8; 4];
         buf[0] = if res == 0 { 0 } else { 1 };
@@ -106,7 +106,7 @@ crate::export_method!(
         let socket = match args.get(0) { Some(Value::I32(v)) => *v, _ => return Err(HaltExecutionError(1)) };
         let result_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
         
-        let res = unsafe { host::socket_listen(socket as u64, 10) };
+        let res = host::socket_listen(socket as u64, 10);
         
         let mut buf = [0u8; 4];
         buf[0] = if res != u64::MAX { 0 } else { 1 };
@@ -136,7 +136,7 @@ crate::export_method!(
         let socket = match args.get(0) { Some(Value::I32(v)) => *v, _ => return Err(HaltExecutionError(1)) };
         let result_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
         
-        let res = unsafe { host::socket_accept(socket as u64) };
+        let res = host::socket_accept(socket as u64);
         
         let mut buf = [0u8; 8];
         if res <= i32::MAX as u64 {
@@ -162,7 +162,7 @@ crate::export_method!(
         let mut payload = vec![0u8; buf_len as usize];
         if read_mem(store, buf_ptr, &mut payload).is_err() { return Err(HaltExecutionError(1)); }
         
-        let res = unsafe { host::socket_send(socket as u64, payload.as_ptr(), buf_len as u64) };
+        let res = host::socket_send(socket as u64, payload.as_ptr(), buf_len as u64);
         
         let mut out_buf = [0u8; 16];
         if res <= buf_len as u64 {
@@ -184,7 +184,7 @@ crate::export_method!(
         let result_ptr = match args.get(2) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
         let mut payload = vec![0u8; max_len as usize];
         
-        let res = unsafe { host::socket_recv(socket as u64, payload.as_mut_ptr(), max_len as u64) };
+        let res = host::socket_recv(socket as u64, payload.as_mut_ptr(), max_len as u64);
         
         if res <= max_len as u64 {
             let res_usize = res as usize;
@@ -212,7 +212,7 @@ crate::export_method!(
         let address_family = match args.get(0) { Some(Value::I32(v)) => *v, _ => return Err(HaltExecutionError(1)) };
         let result_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
         
-        let res = unsafe { host::socket_create(address_family as u64, 2) }; // 2 = SOCK_DGRAM
+        let res = host::socket_create(address_family as u64, 2); // 2 = SOCK_DGRAM
         
         let mut buf = [0u8; 8];
         if res <= i32::MAX as u64 {
@@ -235,7 +235,7 @@ crate::export_method!(
         let mut ip_addr = vec![0u8; 16];
         if read_mem(store, ip_addr_ptr, &mut ip_addr).is_err() { return Err(HaltExecutionError(1)); }
         
-        let res = unsafe { host::socket_bind(socket as u64, ip_addr.as_ptr(), 16) };
+        let res = host::socket_bind(socket as u64, ip_addr.as_ptr(), 16);
         
         let mut buf = [0u8; 4];
         buf[0] = if res == 0 { 0 } else { 1 };
@@ -259,7 +259,7 @@ crate::export_method!(
         let mut dest_addr = [0u8; 16];
         if read_mem(store, dest_addr_ptr, &mut dest_addr).is_err() { return Err(HaltExecutionError(1)); }
         
-        let res = unsafe { host::socket_udp_send(stream as u64, payload.as_ptr(), buf_len as u64, dest_addr.as_ptr(), 16) };
+        let res = host::socket_udp_send(stream as u64, payload.as_ptr(), buf_len as u64, dest_addr.as_ptr(), 16);
         
         let mut result_buf = [0u8; 16];
         if res <= buf_len as u64 {
@@ -284,7 +284,7 @@ crate::export_method!(
         let mut src_addr = [0u8; 16];
         let mut addr_len: u32 = 16;
 
-        let res = unsafe { host::socket_udp_recv(stream as u64, payload.as_mut_ptr(), max_results, src_addr.as_mut_ptr(), &mut addr_len) };
+        let res = host::socket_udp_recv(stream as u64, payload.as_mut_ptr(), max_results, src_addr.as_mut_ptr(), &mut addr_len);
 
         if res <= max_results {
             let res_usize = res as usize;

@@ -61,9 +61,7 @@ crate::export_method!(
     [],
     vec![ValType::NumType(NumType::I32)], vec![],
     pub fn initial_cwd<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-        let ret_ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![]) };
-        let _ = write_u32(store, ret_ptr, 0); // None
-        Ok(vec![])
+        get_environment(store, args)
     }
 );
 

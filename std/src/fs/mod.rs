@@ -36,9 +36,7 @@ pub struct File {
 impl File {
     pub fn open(path: &str) -> Result<Self> {
         let mut result = [0u8; 8];
-        unsafe {
-            open_at(3, 0, path.as_ptr(), path.len(), 0, 0, result.as_mut_ptr());
-        }
+        open_at(3, 0, path.as_ptr(), path.len(), 0, 0, result.as_mut_ptr());
 
         if result[0] != 0 {
             Err(Error::from_raw_os_error(2)) // ENOENT
@@ -50,9 +48,7 @@ impl File {
 
     pub fn create(path: &str) -> Result<Self> {
         let mut result = [0u8; 8];
-        unsafe {
-            open_at(3, 0, path.as_ptr(), path.len(), 1, 0, result.as_mut_ptr());
-        }
+        open_at(3, 0, path.as_ptr(), path.len(), 1, 0, result.as_mut_ptr());
         if result[0] != 0 {
             Err(Error::from_raw_os_error(1))
         } else {
@@ -67,9 +63,7 @@ impl File {
 
     pub fn stat(&self) -> Result<Stat> {
         let mut result = [0u8; 128];
-        unsafe {
-            stat(self.fd as i32, result.as_mut_ptr());
-        }
+        stat(self.fd as i32, result.as_mut_ptr());
         if result[0] != 0 {
             Err(Error::from_raw_os_error(5))
         } else {
@@ -88,9 +82,7 @@ impl File {
 
     pub fn set_len(&self, size: u64) -> Result<()> {
         let mut result = [0u8; 8];
-        unsafe {
-            set_size(self.fd as i32, size, result.as_mut_ptr());
-        }
+        set_size(self.fd as i32, size, result.as_mut_ptr());
         if result[0] == 0 {
             Ok(())
         } else {
@@ -113,9 +105,7 @@ impl Read for File {
         }
         let mut result = [0u8; 24];
 
-        unsafe {
-            crate::io::host::input_stream_read(self.fd as i32, buffer.len() as u64, result.as_mut_ptr());
-        }
+        crate::io::host::input_stream_read(self.fd as i32, buffer.len() as u64, result.as_mut_ptr());
 
         let r = unsafe { &*(result.as_ptr() as *const ReadResult) };
 
@@ -139,14 +129,12 @@ impl Read for File {
 impl Write for File {
     fn write(&mut self, buffer: &[u8]) -> Result<usize> {
         let mut result = [0u8; 8];
-        unsafe {
-            crate::io::host::output_stream_blocking_write_and_flush(
-                self.fd as i32,
-                buffer.as_ptr(),
-                buffer.len(),
-                result.as_mut_ptr(),
-            );
-        }
+        crate::io::host::output_stream_blocking_write_and_flush(
+            self.fd as i32,
+            buffer.as_ptr(),
+            buffer.len(),
+            result.as_mut_ptr(),
+        );
         if result[0] == 0 {
             Ok(buffer.len())
         } else {
@@ -168,9 +156,7 @@ impl Seek for File {
         };
 
         let mut result = [0u8; 16];
-        unsafe {
-            host::seek(self.fd as i32, offset as u64, whence, result.as_mut_ptr());
-        }
+        host::seek(self.fd as i32, offset as u64, whence, result.as_mut_ptr());
 
         if result[0] == 0 {
             Ok(unsafe { core::ptr::read_unaligned(result.as_ptr().add(8) as *const u64) })
@@ -182,14 +168,12 @@ impl Seek for File {
 
 impl Drop for File {
     fn drop(&mut self) {
-        unsafe {
-            descriptor_drop(self.fd as i32);
-        }
+        descriptor_drop(self.fd as i32);
     }
 }
 
 pub fn create_dir(path: &str) -> Result<()> {
-    let res = unsafe { host::create_dir(path) };
+    let res = host::create_dir(path);
     if res == 0 {
         Ok(())
     } else {
@@ -198,7 +182,7 @@ pub fn create_dir(path: &str) -> Result<()> {
 }
 
 pub fn remove_file(path: &str) -> Result<()> {
-    let res = unsafe { host::remove_file(path) };
+    let res = host::remove_file(path);
     if res == 0 {
         Ok(())
     } else {
@@ -207,7 +191,7 @@ pub fn remove_file(path: &str) -> Result<()> {
 }
 
 pub fn remove_dir(path: &str) -> Result<()> {
-    let res = unsafe { host::remove_dir(path) };
+    let res = host::remove_dir(path);
     if res == 0 {
         Ok(())
     } else {
@@ -216,7 +200,7 @@ pub fn remove_dir(path: &str) -> Result<()> {
 }
 
 pub fn rename(from: &str, to: &str) -> Result<()> {
-    let res = unsafe { host::rename(from, to) };
+    let res = host::rename(from, to);
     if res == 0 {
         Ok(())
     } else {
@@ -226,7 +210,7 @@ pub fn rename(from: &str, to: &str) -> Result<()> {
 
 pub fn mount(disk_id: u8, fs_type: &str) -> Result<()> {
     crate::debugln!("CALLING TCP FN mount WITH ARGS: disk_id={}, fs_type={}", disk_id, fs_type);
-    let res = unsafe { host::mount_host(disk_id as u64, fs_type.as_ptr(), fs_type.len()) };
+    let res = host::mount_host(disk_id as u64, fs_type.as_ptr(), fs_type.len());
     crate::debugln!("TCP RESULT: mount RESULT: {}", res);
     if res == 0 {
         Ok(())
@@ -271,7 +255,7 @@ pub fn read_dir(path: &str) -> Result<Vec<DirEntry>> {
     let mut entries = Vec::new();
 
     let mut result_buf = [0u8; 8];
-    unsafe { host::read_directory(file.fd as i32, result_buf.as_mut_ptr()); }
+    host::read_directory(file.fd as i32, result_buf.as_mut_ptr());
     
     if result_buf[0] != 0 {
         return Err(Error::from_raw_os_error(5));
@@ -281,7 +265,7 @@ pub fn read_dir(path: &str) -> Result<Vec<DirEntry>> {
     
     loop {
         let mut entry_buf = [0u8; 32];
-        unsafe { host::read_directory_entry(stream_handle, entry_buf.as_mut_ptr()); }
+        host::read_directory_entry(stream_handle, entry_buf.as_mut_ptr());
         
         if entry_buf[0] != 0 { break; } // Err or end
         let has_value = unsafe { core::ptr::read_unaligned(entry_buf.as_ptr().add(4) as *const u32) };
@@ -308,7 +292,7 @@ pub fn read_dir(path: &str) -> Result<Vec<DirEntry>> {
         entries.push(DirEntry { name, file_type });
     }
     
-    unsafe { host::drop_directory_entry_stream(stream_handle); }
+    host::drop_directory_entry_stream(stream_handle);
     
     crate::debugln!("TCP RESULT: read_dir RESULT: {} entries", entries.len());
     Ok(entries)

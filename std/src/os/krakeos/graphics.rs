@@ -1,37 +1,37 @@
 // --- Window/screen method_export! bindings ---
 
 method_export!("krakeos:system/window@0.2.0", "create",
-    pub unsafe fn window_create(attributes_ptr: *const u8) -> u64 {
+    pub fn window_create(attributes_ptr: *const u8) -> u64 {
         crate::sys::syscall(100, attributes_ptr as u64, 0, 0)
     }
 );
 
 method_export!("krakeos:system/window@0.2.0", "update",
-    pub unsafe fn window_update(_handle: u64, attributes_ptr: *const u8) {
+    pub fn window_update(_handle: u64, attributes_ptr: *const u8) {
         crate::sys::syscall(102, attributes_ptr as u64, 0, 0);
     }
 );
 
 method_export!("krakeos:system/window@0.2.0", "update-area",
-    pub unsafe fn window_update_area(id: u64, x: u64, y: u64, w: u64, h: u64) {
+    pub fn window_update_area(id: u64, x: u64, y: u64, w: u64, h: u64) {
         crate::sys::syscall5(103, id, x, y, w, h);
     }
 );
 
 method_export!("krakeos:system/window@0.2.0", "get-events",
-    pub unsafe fn window_get_events(_handle: u64, buf_ptr: *mut u8, max: u32) -> i32 {
+    pub fn window_get_events(_handle: u64, buf_ptr: *mut u8, max: u32) -> i32 {
         crate::sys::syscall(104, 0, buf_ptr as u64, max as u64) as i32
     }
 );
 
 method_export!("krakeos:graphics/screen@0.2.0", "get-width",
-    pub unsafe fn screen_get_width() -> u32 {
+    pub fn screen_get_width() -> u32 {
         crate::sys::syscall(106, 0, 0, 0) as u32
     }
 );
 
 method_export!("krakeos:graphics/screen@0.2.0", "get-height",
-    pub unsafe fn screen_get_height() -> u32 {
+    pub fn screen_get_height() -> u32 {
         crate::sys::syscall(107, 0, 0, 0) as u32
     }
 );
@@ -128,31 +128,29 @@ impl Color {
 // --- Simplified public API ---
 
 pub fn get_screen_width() -> usize {
-    unsafe { screen_get_width() as usize }
+    screen_get_width() as usize
 }
 
 pub fn get_screen_height() -> usize {
-    unsafe { screen_get_height() as usize }
+    screen_get_height() as usize
 }
 
 pub fn add_window(window: &Window) -> usize {
-    let res = unsafe { window_create(window as *const Window as *const u8) as usize };
+    let res = window_create(window as *const Window as *const u8) as usize;
     res
 }
 
 pub fn update_window(window: &Window) {
-    unsafe { window_update(0, window as *const Window as *const u8); }
+    window_update(0, window as *const Window as *const u8);
 }
 
 pub fn update_window_area(id: usize, x: usize, y: usize, w: usize, h: usize) {
-    unsafe { window_update_area(id as u64, x as u64, y as u64, w as u64, h as u64); }
+    window_update_area(id as u64, x as u64, y as u64, w as u64, h as u64);
 }
 
 pub fn get_events(wid: usize, events: &mut [Event]) -> usize {
-    unsafe {
-        let ptr = events.as_mut_ptr() as *mut u8;
-        window_get_events(wid as u64, ptr, events.len() as u32) as usize
-    }
+    let ptr = events.as_mut_ptr() as *mut u8;
+    window_get_events(wid as u64, ptr, events.len() as u32) as usize
 }
 
 pub use super::events::{Event, KeyboardEvent, MouseEvent, RedrawEvent, ResizeEvent};

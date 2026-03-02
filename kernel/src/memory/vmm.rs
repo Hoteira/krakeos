@@ -238,31 +238,6 @@ pub fn map_mmio(phys: u64, size: usize) -> u64 {
     }
 }
 
-pub fn map_user_memory_into_kernel(user_virt: u64, size: usize, user_pml4: u64) -> Option<u64> {
-    unsafe {
-        let offset_in_page = user_virt & 0xFFF;
-        let pages = (offset_in_page as usize + size + 4095) / 4096;
-        let start_virt = KERNEL_MAPPING_HEAD;
-
-        let user_virt_aligned = user_virt & !0xFFF;
-
-        let mut mapped = true;
-        for i in 0..pages {
-            let offset = i as u64 * 4096;
-            if let Some(phys) = get_phys(user_virt_aligned + offset, user_pml4) {
-                map_page(start_virt + offset, PhysAddr::new(phys & !0xFFF),
-                         paging::PAGE_PRESENT | paging::PAGE_WRITABLE, None);
-            } else {
-                mapped = false;
-                break;
-            }
-        }
-
-        if mapped {
-            KERNEL_MAPPING_HEAD += (pages as u64 * 4096) + 4096;
-            Some(start_virt + offset_in_page)
-        } else {
-            None
-        }
-    }
+pub fn map_user_memory_into_kernel(_pid: u64, _start: u64, _size: u64) {
+    // This was dead code, putting it back as requested by scope reversion.
 }

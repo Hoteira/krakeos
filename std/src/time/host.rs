@@ -1,26 +1,26 @@
 // wasi:clocks host functions
 
 method_export!("wasi:clocks/monotonic-clock@0.2.0", "now",
-    pub unsafe fn monotonic_clock_now() -> u64 {
+    pub fn monotonic_clock_now() -> u64 {
         crate::sys::syscall(109, 0, 0, 0) * 1_000_000
     }
 );
 
 method_export!("wasi:clocks/monotonic-clock@0.2.0", "resolution",
-    pub unsafe fn monotonic_clock_resolution() -> u64 {
+    pub fn monotonic_clock_resolution() -> u64 {
         1_000_000
     }
 );
 
 method_export!("wasi:clocks/monotonic-clock@0.2.0", "subscribe-duration",
-    pub unsafe fn monotonic_clock_subscribe_duration(duration: u64) -> i32 {
+    pub fn monotonic_clock_subscribe_duration(duration: u64) -> i32 {
         let ms = duration / 1_000_000;
         ms as i32
     }
 );
 
 method_export!("wasi:clocks/wall-clock@0.2.0", "now",
-    pub unsafe fn wall_clock_now(result_ptr: *mut u8) {
+    pub fn wall_clock_now(result_ptr: *mut u8) {
         let res_date = crate::sys::syscall(115, 0, 0, 0);
         let y = (res_date >> 16) as u16;
         let m = (res_date >> 8) as u8;
@@ -44,7 +44,7 @@ method_export!("wasi:clocks/wall-clock@0.2.0", "now",
     }
 );
 
-pub unsafe fn sleep(ms: u64) {
+pub fn sleep(ms: u64) {
     let pollable = monotonic_clock_subscribe_duration(ms * 1_000_000);
     crate::io::host::poll_block(pollable);
     crate::io::host::pollable_drop(pollable);

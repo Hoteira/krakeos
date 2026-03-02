@@ -1,7 +1,7 @@
 // Filesystem bindings — all via method_export!
 
 method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.open-at",
-    pub unsafe fn open_at(
+    pub fn open_at(
         _dir_handle: i32,
         _flags: u32,
         path_ptr: *const u8,
@@ -22,7 +22,7 @@ method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.open-at",
 );
 
 method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.stat",
-    pub unsafe fn stat(handle: i32, result_ptr: *mut u8) {
+    pub fn stat(handle: i32, result_ptr: *mut u8) {
         let mut s = core::mem::zeroed::<crate::fs::Stat>();
         let res = crate::sys::syscall(5, handle as u64, 0, &mut s as *mut _ as u64);
         if res == u64::MAX {
@@ -39,7 +39,7 @@ method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.stat",
 );
 
 method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.set-size",
-    pub unsafe fn set_size(handle: i32, size: u64, result_ptr: *mut u8) {
+    pub fn set_size(handle: i32, size: u64, result_ptr: *mut u8) {
         let res = crate::sys::syscall(77, handle as u64, size, 0);
         if res == u64::MAX {
             *result_ptr = 1;
@@ -50,7 +50,7 @@ method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.set-size",
 );
 
 method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.seek",
-    pub unsafe fn seek(handle: i32, offset: u64, whence: i32, result_ptr: *mut u8) {
+    pub fn seek(handle: i32, offset: u64, whence: i32, result_ptr: *mut u8) {
         let res = crate::sys::syscall(8, handle as u64, offset, whence as u64);
         if res == u64::MAX {
             *result_ptr = 1;
@@ -62,13 +62,13 @@ method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.seek",
 );
 
 method_export!("wasi:filesystem/types@0.2.0", "[resource-drop]descriptor",
-    pub unsafe fn descriptor_drop(handle: i32) {
+    pub fn descriptor_drop(handle: i32) {
         crate::sys::syscall(3, handle as u64, 0, 0);
     }
 );
 
 method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.create-directory-at",
-    pub unsafe fn create_directory_at(
+    pub fn create_directory_at(
         _handle: i32,
         path_ptr: *const u8,
         path_len: usize,
@@ -80,7 +80,7 @@ method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.create-directo
 );
 
 method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.unlink-file-at",
-    pub unsafe fn unlink_file_at(
+    pub fn unlink_file_at(
         _handle: i32,
         path_ptr: *const u8,
         path_len: usize,
@@ -92,7 +92,7 @@ method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.unlink-file-at
 );
 
 method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.remove-directory-at",
-    pub unsafe fn remove_directory_at(
+    pub fn remove_directory_at(
         _handle: i32,
         path_ptr: *const u8,
         path_len: usize,
@@ -104,7 +104,7 @@ method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.remove-directo
 );
 
 method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.rename-at",
-    pub unsafe fn rename_at(
+    pub fn rename_at(
         _handle: i32,
         old_path_ptr: *const u8,
         old_path_len: usize,
@@ -125,7 +125,7 @@ method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.rename-at",
 );
 
 method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.read-directory",
-    pub unsafe fn read_directory(handle: i32, result_ptr: *mut u8) {
+    pub fn read_directory(handle: i32, result_ptr: *mut u8) {
         use crate::alloc::alloc::{alloc, Layout};
         let layout = Layout::new::<DirStream>();
         let ptr = alloc(layout) as *mut DirStream;
@@ -143,7 +143,7 @@ method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.read-directory
 );
 
 method_export!("wasi:filesystem/types@0.2.0", "[method]directory-entry-stream.read-directory-entry",
-    pub unsafe fn read_directory_entry(stream: i32, result_ptr: *mut u8) {
+    pub fn read_directory_entry(stream: i32, result_ptr: *mut u8) {
         let state = &mut *(stream as *mut DirStream);
 
         loop {
@@ -200,7 +200,7 @@ method_export!("wasi:filesystem/types@0.2.0", "[method]directory-entry-stream.re
 );
 
 method_export!("wasi:filesystem/types@0.2.0", "[resource-drop]directory-entry-stream",
-    pub unsafe fn drop_directory_entry_stream(stream: i32) {
+    pub fn drop_directory_entry_stream(stream: i32) {
         use crate::alloc::alloc::{dealloc, Layout};
         let layout = Layout::new::<DirStream>();
         dealloc(stream as *mut u8, layout);
@@ -208,7 +208,7 @@ method_export!("wasi:filesystem/types@0.2.0", "[resource-drop]directory-entry-st
 );
 
 method_export!("krakeos:system/filesystem@0.2.0", "mount",
-    pub unsafe fn mount_host(disk_id: u64, fs_type_ptr: *const u8, fs_type_len: usize) -> u64 {
+    pub fn mount_host(disk_id: u64, fs_type_ptr: *const u8, fs_type_len: usize) -> u64 {
         crate::sys::syscall(165, disk_id, fs_type_ptr as u64, fs_type_len as u64)
     }
 );
@@ -224,25 +224,25 @@ struct DirStream {
 
 // --- Helper functions that call the above bindings ---
 
-pub unsafe fn create_dir(path: &str) -> i32 {
+pub fn create_dir(path: &str) -> i32 {
     let mut result_buf = [0u8; 4];
     create_directory_at(3, path.as_ptr(), path.len(), result_buf.as_mut_ptr());
     if result_buf[0] == 0 { 0 } else { -1 }
 }
 
-pub unsafe fn remove_file(path: &str) -> i32 {
+pub fn remove_file(path: &str) -> i32 {
     let mut result_buf = [0u8; 4];
     unlink_file_at(3, path.as_ptr(), path.len(), result_buf.as_mut_ptr());
     if result_buf[0] == 0 { 0 } else { -1 }
 }
 
-pub unsafe fn remove_dir(path: &str) -> i32 {
+pub fn remove_dir(path: &str) -> i32 {
     let mut result_buf = [0u8; 4];
     remove_directory_at(3, path.as_ptr(), path.len(), result_buf.as_mut_ptr());
     if result_buf[0] == 0 { 0 } else { -1 }
 }
 
-pub unsafe fn rename(from: &str, to: &str) -> i32 {
+pub fn rename(from: &str, to: &str) -> i32 {
     let mut result_buf = [0u8; 4];
     rename_at(
         3,

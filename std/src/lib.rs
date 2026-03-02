@@ -8,17 +8,22 @@ extern crate alloc as alloc;
 #[macro_export]
 macro_rules! method_export {
     ($module:literal, $method:literal,
-     pub unsafe fn $name:ident($($arg:ident: $ty:ty),* $(,)?) $(-> $ret:ty)? $body:block
+     pub fn $name:ident($($arg:ident: $ty:ty),* $(,)?) $(-> $ret:ty)? $body:block
     ) => {
         #[cfg(target_arch = "wasm32")]
-        #[link(wasm_import_module = $module)]
-        unsafe extern "C" {
-            #[link_name = $method]
-            pub fn $name($($arg: $ty),*) $(-> $ret)?;
+        pub fn $name($($arg: $ty),*) $(-> $ret)? {
+            #[link(wasm_import_module = $module)]
+            unsafe extern "C" {
+                #[link_name = $method]
+                fn __raw($($arg: $ty),*) $(-> $ret)?;
+            }
+            unsafe { __raw($($arg),*) }
         }
 
         #[cfg(not(target_arch = "wasm32"))]
-        pub unsafe fn $name($($arg: $ty),*) $(-> $ret)? $body
+        pub fn $name($($arg: $ty),*) $(-> $ret)? {
+            unsafe { (|| $body)() }
+        }
     };
 }
 

@@ -1,13 +1,13 @@
 // Raw host primitives (arch-gated via method_export!)
 
 method_export!("krakeos:system/process@0.2.0", "yield",
-    pub unsafe fn host_yield() {
+    pub fn host_yield() {
         core::arch::asm!("int 0x81");
     }
 );
 
 method_export!("krakeos:system/memory@0.2.0", "brk",
-    pub unsafe fn host_brk(addr: u64) -> u64 {
+    pub fn host_brk(addr: u64) -> u64 {
         crate::sys::syscall(12, addr, 0, 0)
     }
 );
@@ -87,7 +87,7 @@ pub unsafe fn syscall6(num: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg
 }
 
 pub fn yield_task() {
-    unsafe { host_yield(); }
+    host_yield();
 }
 
 pub fn hlt_loop() -> ! {
