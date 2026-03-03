@@ -13,6 +13,9 @@ pub mod wasi;
 #[cfg(not(target_arch = "wasm32"))]
 pub use crate::sys::{syscall, syscall4, syscall5, syscall6};
 
+#[cfg(target_arch = "wasm32")]
+pub use crate::sys::syscall;
+
 use crate::sync::Mutex;
 use core::task::Waker;
 use crate::alloc::collections::BTreeMap;

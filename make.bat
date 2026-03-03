@@ -50,6 +50,9 @@ copy "target\wasm32-wasip2\release\net_test.wasm" "tree\apps\net_test.wasm"
 cargo build --package=container_test --target=wasm32-wasip2 --release
 copy "target\wasm32-wasip2\release\container_test.wasm" "tree\apps\container_test.wasm"
 
+cargo build --package=shell --target=wasm32-wasip2 --release
+copy "target\wasm32-wasip2\release\shell.wasm" "tree\apps\shell.wasm"
+
 cargo build --package=libc --target=bits64pie.json --release
 
 wsl dd if=build/kernel.bin of=build/disk.img seek=6144 bs=512 conv=notrunc

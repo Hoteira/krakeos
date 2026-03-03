@@ -232,18 +232,22 @@ pub fn main() {
                             final_args.extend(wasm_args);
 
                             let root = root_path.unwrap_or_else(|| String::from("@0xE0"));
-                            let wasm_exit = std::wasm::run_with_args(
-                                &prog_path,
-                                final_args,
-                                &root,
-                                &[(0, stdin_fd as u8), (1, stdout_fd as u8), (2, 2)],
-                                use_aot,
-                            );
-                            last_exit_code = wasm_exit as usize;
+                            
+                            // Per Step 26 decision: use containers (plant/harvest)
+                            match std::os::container_plant_from_path(&prog_path, 0, 0) {
+                                Ok(id) => {
+                                    children_pids.push(id);
+                                }
+                                Err(e) => {
+                                    let err = format!("Failed to plant container: {}\n", e);
+                                    std::os::file_write(STDOUT_FD, err.as_bytes());
+                                    last_exit_code = 1;
+                                }
+                            }
                         } else {
                             let pid = std::os::spawn_with_fds(&prog_path, &args_refs, &map);
                             if pid != usize::MAX {
-                                children_pids.push(pid);
+                                children_pids.push(pid as u64);
                             } else {
                                 let err = format!("Failed to spawn: {}\n", prog_path);
                                 std::os::file_write(STDOUT_FD, err.as_bytes());
@@ -267,8 +271,19 @@ pub fn main() {
                 prev_pipe_read = next_pipe_read;
             }
 
-            for pid in children_pids {
-                last_exit_code = std::os::waitpid(pid as u64) as usize;
+            for id in children_pids {
+                // Determine if it was a container (high ID) or native PID
+                if id > 1000 { // Heuristic: containers have high IDs
+                    match std::os::container_harvest(id) {
+                        Ok(res) => last_exit_code = res as usize,
+                        Err(_) => {
+                            // If harvest fails, might still be running or it was a native PID
+                            last_exit_code = std::os::waitpid(id) as usize;
+                        }
+                    }
+                } else {
+                    last_exit_code = std::os::waitpid(id) as usize;
+                }
             }
 
             if last_exit_code != 0 {

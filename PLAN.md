@@ -513,7 +513,7 @@ Format: **what changes -> build -> verify it still runs**.
 
 ---
 
-### Step 26 -- Port `shell` to WASM
+### [DONE] Step 26 -- Port `shell` to WASM
 **Files:** `apps/shell/src/main.rs`, `apps/shell/Cargo.toml`
 **Changes:**
 - Change build target to `wasm32-wasip2`
@@ -527,9 +527,9 @@ Format: **what changes -> build -> verify it still runs**.
 **Verify:** Build + boot. Launch shell.wasm. Type commands, see output.
 
 **Decisions:**
-- Shell uses containers (plant/harvest) or process spawning (separate PID)?
-- Builtins: cd, ls, cat, echo, exit minimum?
-- Tab completion?
+- Shell uses containers (plant/harvest) or process spawning (separate PID)? container, everything should be contained unless spawed by userland directly. 
+- Builtins: cd, ls, cat, echo, exit minimum? yes
+- Tab completion? No, for now
 
 ---
 

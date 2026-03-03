@@ -8,8 +8,9 @@ edition.workspace = true
 crate-type = ["rlib"]
 
 [features]
-default = ["userland"]
+default = ["userland", "global_allocator"]
 userland = []
+global_allocator = []
 
 [dependencies]
 # common = { path = "../common" }

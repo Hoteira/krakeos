@@ -102,11 +102,11 @@ unsafe impl GlobalAlloc for Allocator {
     }
 }
 
-#[cfg(feature = "userland")]
+#[cfg(feature = "global_allocator")]
 #[cfg_attr(not(test), global_allocator)]
 pub static ALLOCATOR: Allocator = Allocator::new();
 
-#[cfg(not(feature = "userland"))]
+#[cfg(not(feature = "global_allocator"))]
 pub static ALLOCATOR: Allocator = Allocator::new();
 
 pub fn init_heap(base: *mut u8, size: usize) {
