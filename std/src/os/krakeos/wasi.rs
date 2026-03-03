@@ -399,6 +399,85 @@ crate::export_method!(
     }
 );
 
+crate::export_method!(
+    "krakeos:system/process@0.2.0", "get-pid",
+    [],
+    vec![], vec![ValType::NumType(NumType::I64)],
+    pub fn get_pid_host<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        Ok(vec![Value::I64(host::process_get_pid())])
+    }
+);
+
+crate::export_method!(
+    "krakeos:system/process@0.2.0", "get-current-user",
+    [],
+    vec![ValType::NumType(NumType::I32)], vec![],
+    pub fn get_current_user_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let ret_ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
+        let user = "root";
+        let ptr = call_cabi_realloc(store, user.len() as u32, 1)?;
+        let _ = write_bytes(store, ptr, user.as_bytes());
+        let _ = write_u32(store, ret_ptr, ptr);
+        let _ = write_u32(store, ret_ptr + 4, user.len() as u32);
+        Ok(vec![])
+    }
+);
+
+crate::export_method!(
+    "krakeos:system/process@0.2.0", "set-nonblock",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn set_nonblock_host<T: Config>(_: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let fd = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+        let nonblock = match args.get(1) { Some(Value::I32(v)) => *v != 0, _ => false };
+        Ok(vec![Value::I32(host::set_nonblock(fd as usize, nonblock) as u32)])
+    }
+);
+
+crate::export_method!(
+    "krakeos:system/terminal@0.1.0", "set-window-size",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![],
+    pub fn terminal_set_window_size<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let fd = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+        let rows = match args.get(1) { Some(Value::I32(v)) => *v as u16, _ => 0 };
+        let cols = match args.get(2) { Some(Value::I32(v)) => *v as u16, _ => 0 };
+        let ret_ptr = match args.get(3) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+
+        let ws = host::WinSize { ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0 };
+        let res = host::ioctl(fd as usize, host::TIOCSWINSZ, &ws as *const _ as u64);
+        
+        let mut buf = [0u8; 4];
+        buf[0] = if res == 0 { 0 } else { 1 };
+        write_bytes(store, ret_ptr, &buf).map_err(|_| HaltExecutionError(1))?;
+        Ok(vec![])
+    }
+);
+
+crate::export_method!(
+    "krakeos:system/terminal@0.1.0", "get-window-size",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![],
+    pub fn terminal_get_window_size<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let fd = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+        let ret_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+
+        let mut ws = host::WinSize { ws_row: 0, ws_col: 0, ws_xpixel: 0, ws_ypixel: 0 };
+        let res = host::ioctl(fd as usize, host::TIOCGWINSZ, &mut ws as *mut _ as u64);
+        
+        let mut buf = [0u8; 12];
+        if res == 0 {
+            buf[0] = 0; // ok
+            buf[4..6].copy_from_slice(&ws.ws_row.to_le_bytes());
+            buf[6..8].copy_from_slice(&ws.ws_col.to_le_bytes());
+        } else {
+            buf[0] = 1; // err
+        }
+        write_bytes(store, ret_ptr, &buf).map_err(|_| HaltExecutionError(1))?;
+        Ok(vec![])
+    }
+);
+
 pub fn register_wasi<T: Config + Clone>(linker: &mut crate::wasm::Linker, store: &mut crate::wasm::Store<'_, T>) {
     get_screen_width_host::register(linker, store);
     get_screen_height_host::register(linker, store);
@@ -419,4 +498,9 @@ pub fn register_wasi<T: Config + Clone>(linker: &mut crate::wasm::Linker, store:
     container_harvest_host::register(linker, store);
     container_list_children_host::register(linker, store);
     container_kill_child_host::register(linker, store);
+    get_pid_host::register(linker, store);
+    get_current_user_host::register(linker, store);
+    set_nonblock_host::register(linker, store);
+    terminal_set_window_size::register(linker, store);
+    terminal_get_window_size::register(linker, store);
 }

@@ -43,6 +43,19 @@ pub fn create_wasi_p2_imports<T: Config + Clone>(linker: &mut Linker, store: &mu
             crate::os::krakeos::wasi::container_kill_child_host);
     }
 
+    // krakeos:system/terminal@0.1.0
+    {
+        let module = "krakeos:system/terminal@0.1.0";
+        define(linker, store, module, "set-window-size", 
+            vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], 
+            vec![], 
+            crate::os::krakeos::wasi::terminal_set_window_size);
+        define(linker, store, module, "get-window-size", 
+            vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], 
+            vec![], 
+            crate::os::krakeos::wasi::terminal_get_window_size);
+    }
+
     // wasi:cli/terminal-input@0.2.0
     {
         let module = "wasi:cli/terminal-input@0.2.0";
@@ -129,8 +142,23 @@ pub fn create_wasi_p2_imports<T: Config + Clone>(linker: &mut Linker, store: &mu
         define(linker, store, module, "[resource-drop]outgoing-datagram-stream", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
         define(linker, store, module, "[method]udp-socket.create", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::create_udp_socket);
         define(linker, store, module, "[method]udp-socket.start-bind", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::udp_start_bind);
-        define(linker, store, module, "[method]outgoing-datagram-stream.send", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::udp_send);
+        define(linker, store, module, "[method]udp-socket.finish-bind", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::udp_finish_bind);
+        define(linker, store, module, "[method]udp-socket.stream", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::udp_stream);
+        define(linker, store, module, "[method]udp-socket.local-address", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::udp_local_address);
+        define(linker, store, module, "[method]udp-socket.remote-address", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::udp_remote_address);
+        define(linker, store, module, "[method]udp-socket.address-family", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], crate::net::wasi::udp_address_family);
+        define(linker, store, module, "[method]udp-socket.unicast-hop-limit", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], crate::net::wasi::udp_get_unicast_hop_limit);
+        define(linker, store, module, "[method]udp-socket.set-unicast-hop-limit", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::udp_set_unicast_hop_limit);
+        define(linker, store, module, "[method]udp-socket.receive-buffer-size", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I64)], crate::net::wasi::udp_get_receive_buffer_size);
+        define(linker, store, module, "[method]udp-socket.set-receive-buffer-size", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::udp_set_receive_buffer_size);
+        define(linker, store, module, "[method]udp-socket.send-buffer-size", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I64)], crate::net::wasi::udp_get_send_buffer_size);
+        define(linker, store, module, "[method]udp-socket.set-send-buffer-size", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::udp_set_send_buffer_size);
+        define(linker, store, module, "[method]udp-socket.subscribe", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], crate::net::wasi::udp_subscribe);
         define(linker, store, module, "[method]incoming-datagram-stream.receive", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::udp_receive);
+        define(linker, store, module, "[method]incoming-datagram-stream.subscribe", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], crate::net::wasi::udp_incoming_subscribe);
+        define(linker, store, module, "[method]outgoing-datagram-stream.check-send", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::udp_check_send);
+        define(linker, store, module, "[method]outgoing-datagram-stream.send", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::udp_send);
+        define(linker, store, module, "[method]outgoing-datagram-stream.subscribe", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], crate::net::wasi::udp_outgoing_subscribe);
     }
     // wasi:sockets/tcp@0.2.0
     {
@@ -144,6 +172,8 @@ pub fn create_wasi_p2_imports<T: Config + Clone>(linker: &mut Linker, store: &mu
         define(linker, store, module, "[method]tcp-socket.start-listen", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::tcp_start_listen);
         define(linker, store, module, "[method]tcp-socket.finish-listen", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::tcp_finish_listen);
         define(linker, store, module, "[method]tcp-socket.accept", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::tcp_accept);
+        define(linker, store, module, "[method]tcp-socket.send", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::tcp_send);
+        define(linker, store, module, "[method]tcp-socket.recv", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::tcp_recv);
         define(linker, store, module, "[method]tcp-socket.local-address", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::tcp_local_address);
         define(linker, store, module, "[method]tcp-socket.remote-address", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::tcp_remote_address);
         define(linker, store, module, "[method]tcp-socket.is-listening", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], crate::net::wasi::tcp_is_listening);
@@ -181,6 +211,8 @@ pub fn create_wasi_p2_imports<T: Config + Clone>(linker: &mut Linker, store: &mu
         let module = "wasi:sockets/ip-name-lookup@0.2.0";
         define(linker, store, module, "[resource-drop]resolve-address-stream", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
         define(linker, store, module, "resolve-addresses", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::resolve_addresses);
+        define(linker, store, module, "[method]resolve-address-stream.resolve-next-address", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::resolve_next_address);
+        define(linker, store, module, "[method]resolve-address-stream.subscribe", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], crate::net::wasi::resolve_subscribe);
     }
     // wasi_snapshot_preview1 (Adapter extras)
     {
@@ -271,6 +303,18 @@ pub fn create_wasi_p2_imports<T: Config + Clone>(linker: &mut Linker, store: &mu
             vec![],
             vec![],
             crate::process::wasi::yield_host);
+        define(linker, store, module, "get-pid",
+            vec![],
+            vec![ValType::NumType(NumType::I64)],
+            crate::os::krakeos::wasi::get_pid_host);
+        define(linker, store, module, "get-current-user",
+            vec![ValType::NumType(NumType::I32)],
+            vec![],
+            crate::os::krakeos::wasi::get_current_user_host);
+        define(linker, store, module, "set-nonblock",
+            vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)],
+            vec![ValType::NumType(NumType::I32)],
+            crate::os::krakeos::wasi::set_nonblock_host);
     }
     // krakeos:system/memory@0.2.0
     {

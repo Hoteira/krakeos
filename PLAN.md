@@ -416,15 +416,15 @@ Format: **what changes -> build -> verify it still runs**.
 **Verify:** Build + boot. Existing apps unaffected. Unit test lifts/lowers basic types.
 
 **Decisions:**
-- Support `realloc` canonical option?
-- Handle table per-component or per-store?
-- String encoding: UTF-8 only or also UTF-16?
+- Support `realloc` canonical option? y
+- Handle table per-component or per-store? 
+- String encoding: UTF-8 only or also UTF-16? utf8
 
 ---
 
 ## Phase 4: KrakeOS WASI Extensions & App Porting (Steps 21-30)
 
-### Step 21 -- Add missing krakeos WASI host wrappers (Tier 1: taskbar)
+### [DONE] Step 21 -- Add missing krakeos WASI host wrappers (Tier 1: taskbar)
 **Files:** `std/src/wasm/wasi/krakeos.rs`, `std/src/os/krakeos/wasi.rs`
 **Changes:**
 - Expose to WASM host (these exist natively but have NO WASI wrapper):
@@ -435,12 +435,12 @@ Format: **what changes -> build -> verify it still runs**.
 **Verify:** Build + boot. Taskbar.wasm can call get-pid and get-current-user.
 
 **Decisions:**
-- Should `get-pid` return the OS PID or the container ID?
-- Should `get-current-user` be a real user system or always return "root"?
-
+- Should `get-pid` return the OS PID or the container ID? container's PID, if nested then the PID ofthe memory slot they all reside in.
+- Should `get-current-user` be a real user system or always return "root"? real user sys
+ 
 ---
 
-### Step 22 -- Add missing krakeos WASI host wrappers (Tier 2: terminal)
+### [DONE] Step 22 -- Add missing krakeos WASI host wrappers (Tier 2: terminal)
 **Files:** `std/src/wasm/wasi/krakeos.rs`, `std/src/os/krakeos/wasi.rs`
 **Changes:**
 - Expose to WASM host:
@@ -455,8 +455,8 @@ Format: **what changes -> build -> verify it still runs**.
 **Verify:** Build + boot. Terminal-related host functions callable from WASM.
 
 **Decisions:**
-- Expose raw `ioctl` or only typed wrappers like `set-window-size`?
-- Should `poll` integrate with `wasi:io/poll` or be separate?
+- Expose raw `ioctl` or only typed wrappers like `set-window-size`? `set-window-size` 
+- Should `poll` integrate with `wasi:io/poll` or be separate? integrate
 
 ---
 
