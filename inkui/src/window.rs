@@ -12,19 +12,20 @@ use std::sync::Mutex;
 static SIDE_QUEUE: Mutex<VecDeque<Event>> = Mutex::new(VecDeque::new());
 
 pub struct FrameBuffer {
-    pub front_address: *mut u32,
-    pub back_address: *mut u32,
+    pub front: Vec<u32>,
+    pub back: Vec<u32>,
     pub size: usize,
     pub flipped: AtomicBool,
 }
 
 impl FrameBuffer {
     pub fn new(size: usize) -> Self {
-        let front_address = std::memory::malloc(size) as *mut u32;
-        let back_address = std::memory::malloc(size) as *mut u32;
+        let u32_len = (size + 3) / 4;
+        let front = alloc::vec![0u32; u32_len];
+        let back = alloc::vec![0u32; u32_len];
         Self {
-            front_address,
-            back_address,
+            front,
+            back,
             size,
             flipped: AtomicBool::new(false),
         }
@@ -32,8 +33,9 @@ impl FrameBuffer {
 
     pub fn resize(&mut self, size: usize) {
         if self.size < size {
-            self.front_address = std::memory::malloc(size) as *mut u32;
-            self.back_address = std::memory::malloc(size) as *mut u32;
+            let u32_len = (size + 3) / 4;
+            self.front = alloc::vec![0u32; u32_len];
+            self.back = alloc::vec![0u32; u32_len];
             self.size = size;
         }
     }
@@ -45,17 +47,17 @@ impl FrameBuffer {
 
     pub fn active_address(&self) -> *mut u32 {
         if self.flipped.load(Ordering::Acquire) {
-            self.back_address
+            self.back.as_ptr() as *mut u32
         } else {
-            self.front_address
+            self.front.as_ptr() as *mut u32
         }
     }
 
     pub fn inactive_address(&self) -> *mut u32 {
         if self.flipped.load(Ordering::Acquire) {
-            self.front_address
+            self.front.as_ptr() as *mut u32
         } else {
-            self.back_address
+            self.back.as_ptr() as *mut u32
         }
     }
 }
@@ -139,8 +141,8 @@ impl Window {
     pub fn show(&mut self) {
         let std_window = graphics::Window {
             id: self.id,
-            buffer: self.buffer.front_address as usize,
-            back_buffer: self.buffer.back_address as usize,
+            buffer: self.buffer.front.as_ptr() as usize,
+            back_buffer: self.buffer.back.as_ptr() as usize,
             flipped: &self.buffer.flipped as *const _ as usize,
             pid: self.pid,
             x: self.x,
@@ -206,8 +208,8 @@ impl Window {
     pub fn update(&mut self) {
         let std_window = graphics::Window {
             id: self.id,
-            buffer: self.buffer.front_address as usize,
-            back_buffer: self.buffer.back_address as usize,
+            buffer: self.buffer.front.as_ptr() as usize,
+            back_buffer: self.buffer.back.as_ptr() as usize,
             flipped: &self.buffer.flipped as *const _ as usize,
             pid: self.pid,
             x: self.x,

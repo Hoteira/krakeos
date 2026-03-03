@@ -54,19 +54,23 @@ pub fn main() {
         std::wasm::run("@0xE0/apps/container_test.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
     });
 
-    /*std::thread::spawn(|| {
-        std::wasm::run("@0xE0/apps/aot_test.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
-    });*/
+    sleep(1000);
 
-    sleep(2000);
+    std::thread::spawn(|| {
+        std::wasm::run("@0xE0/apps/aot_test.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
+    });
+
+    sleep(1000);
 
     std::thread::spawn(|| {
         std::wasm::run("@0xE0/apps/net_test.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
     });
 
-    /*std::thread::spawn(|| {
+    sleep(1000);
+
+    std::thread::spawn(|| {
         std::wasm::run("@0xE0/apps/taskbar.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
-    })*/
+    });
 
     //std::os::spawn("@0xE0/sys/bin/term.elf");
 

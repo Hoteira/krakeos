@@ -477,7 +477,7 @@ Format: **what changes -> build -> verify it still runs**.
 
 ---
 
-### Step 24 -- Ensure inkui compiles for wasm32-wasip2
+### [DONE] Step 24 -- Ensure inkui compiles for wasm32-wasip2
 **Files:** `inkui/src/lib.rs`, `inkui/src/window.rs`, `inkui/Cargo.toml`
 **Changes:**
 - Audit all inkui code for non-WASM-compatible operations:
@@ -492,13 +492,13 @@ Format: **what changes -> build -> verify it still runs**.
 **Verify:** `cargo check --package=inkui --target=wasm32-wasip2` compiles.
 
 **Decisions:**
-- Does titanf (font renderer) work in WASM? If not, what needs porting?
-- Does asvgard (SVG/PNG) work in WASM?
-- Framebuffer sharing: WASM linear memory offsets vs SAS virtual addresses?
+- Does titanf (font renderer) work in WASM? Yes, don't touch
+- Does asvgard (SVG/PNG) work in WASM? Yes, don't touch
+- Framebuffer sharing: WASM linear memory offsets vs SAS virtual addresses? in program's linear memory 
 
 ---
 
-### Step 25 -- Port `taskbar` to use WASI Preview 2 fully
+### [DONE] Step 25 -- Port `taskbar` to use WASI Preview 2 fully (Do nothing basically)
 **Files:** `apps/taskbar/src/main.rs`
 **Changes:**
 - Taskbar already builds as WASM -- audit its WASI usage
@@ -509,7 +509,7 @@ Format: **what changes -> build -> verify it still runs**.
 **Verify:** Build + boot. Taskbar appears, shows time and username.
 
 **Decisions:**
-- AOT or interpreter for taskbar?
+- AOT or interpreter for taskbar? 
 
 ---
 

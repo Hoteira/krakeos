@@ -428,13 +428,17 @@ pub use crate::memory::shm_get;
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct ProcessInfo {
-    pub slot_id: u64,
+    pub pid: u64,
     pub state: u64,
     pub name: [u8; 32],
 }
 
+impl ProcessInfo {
+    pub fn slot_id(&self) -> u64 { self.pid }
+}
+
 pub fn get_process_list() -> crate::alloc::vec::Vec<ProcessInfo> {
-    let mut buf = crate::alloc::vec![ProcessInfo { slot_id: 0, state: 0, name: [0; 32] }; 64];
+    let mut buf = crate::alloc::vec![ProcessInfo { pid: 0, state: 0, name: [0; 32] }; 64];
     let count = process_get_list(buf.as_mut_ptr() as *mut u8, 64);
     if count == u64::MAX { return crate::alloc::vec::Vec::new(); }
     buf.truncate(count as usize);
