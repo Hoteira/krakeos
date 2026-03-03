@@ -166,7 +166,7 @@ Format: **what changes -> build -> verify it still runs**.
 
 ---
 
-### Step 8 -- Wire WASM linear memory to SAS heap region
+### [DONE] Step 8 -- Wire WASM linear memory to SAS heap region
 **Files:** `std/src/wasm/interpreter/store/linear_memory.rs`, `std/src/wasm/runner.rs`
 **Changes:**
 - Currently `LinearMemory` uses `Vec<AtomicU8>` on kernel heap
