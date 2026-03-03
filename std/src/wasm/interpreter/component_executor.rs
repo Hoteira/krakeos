@@ -317,6 +317,24 @@ fn instantiate_component_internal<'a, T: Config>(
                     _ => {}
                 }
             }
+            ComponentItem::Canon(canon) => {
+                use crate::wasm::component::types::ComponentCanon;
+                match canon {
+                    ComponentCanon::Lift { func_idx, options, type_idx } => {
+                        // Lift core function to component function
+                        if let Some(core_func) = core_funcs.get(*func_idx as usize) {
+                            functions.push(*core_func);
+                        }
+                    }
+                    ComponentCanon::Lower { func_idx, options } => {
+                        // Lower component function to core function
+                        if let Some(comp_func) = functions.get(*func_idx as usize) {
+                            core_funcs.push(*comp_func);
+                        }
+                    }
+                    _ => {}
+                }
+            }
             ComponentItem::Instance(inst_def) => {
                 match &inst_def.kind {
                     ComponentInstanceKind::InstantiateModule { module_idx, args } => {

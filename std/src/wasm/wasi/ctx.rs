@@ -57,6 +57,8 @@ pub enum WasiResource {
     },
     TerminalInput(i32),
     TerminalOutput(i32),
+    Socket(i32),
+    ResolveAddressStream(Vec<[u8; 4]>),
 }
 
 #[derive(Clone, Copy, Debug)]

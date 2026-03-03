@@ -334,7 +334,7 @@ Format: **what changes -> build -> verify it still runs**.
 
 ---
 
-### Step 17 -- Complete `wasi:sockets/tcp@0.2.0` (missing 20 functions)
+### [DONE] Step 17 -- Complete `wasi:sockets/tcp@0.2.0` (missing 20 functions)
 **Files:** `std/src/wasm/wasi/preview2/mod.rs`, `std/src/net/wasi.rs`
 **Changes:**
 - Add address introspection:
@@ -359,12 +359,12 @@ Format: **what changes -> build -> verify it still runs**.
 **Verify:** Build + boot. `net_test.wasm` TCP test still works. New functions callable.
 
 **Decisions:**
-- Which options need real kernel TCP stack changes vs just storing a value?
+- Which options need real kernel TCP stack changes vs just storing a value? 
 - Buffer size defaults?
 
 ---
 
-### Step 18 -- Complete `wasi:sockets/udp@0.2.0` (missing 12 functions)
+### [DONE] Step 18 -- Complete `wasi:sockets/udp@0.2.0` (missing 12 functions)
 **Files:** `std/src/wasm/wasi/preview2/mod.rs`, `std/src/net/wasi.rs`
 **Changes:**
 - Add missing:
@@ -382,11 +382,11 @@ Format: **what changes -> build -> verify it still runs**.
 **Verify:** Build + boot. UDP tests work.
 
 **Decisions:**
-- IPv6 support: stub or implement?
+- IPv6 support: stub or implement? stub for now.
 
 ---
 
-### Step 19 -- Complete `wasi:sockets/ip-name-lookup@0.2.0`
+### [DONE] Step 19 -- Complete `wasi:sockets/ip-name-lookup@0.2.0`
 **Files:** `std/src/wasm/wasi/preview2/mod.rs`, `std/src/net/wasi.rs`
 **Changes:**
 - Add missing:
@@ -401,7 +401,7 @@ Format: **what changes -> build -> verify it still runs**.
 
 ---
 
-### Step 20 -- Implement Canonical ABI value lifting/lowering
+### [DONE] Step 20 -- Implement Canonical ABI value lifting/lowering
 **Files:** New: `std/src/wasm/component/canonical.rs`, update `std/src/wasm/component/mod.rs`
 **Changes:**
 - Implement core canonical ABI:

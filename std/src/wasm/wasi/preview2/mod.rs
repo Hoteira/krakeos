@@ -144,6 +144,27 @@ pub fn create_wasi_p2_imports<T: Config + Clone>(linker: &mut Linker, store: &mu
         define(linker, store, module, "[method]tcp-socket.start-listen", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::tcp_start_listen);
         define(linker, store, module, "[method]tcp-socket.finish-listen", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::tcp_finish_listen);
         define(linker, store, module, "[method]tcp-socket.accept", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::tcp_accept);
+        define(linker, store, module, "[method]tcp-socket.local-address", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::tcp_local_address);
+        define(linker, store, module, "[method]tcp-socket.remote-address", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::tcp_remote_address);
+        define(linker, store, module, "[method]tcp-socket.is-listening", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], crate::net::wasi::tcp_is_listening);
+        define(linker, store, module, "[method]tcp-socket.address-family", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], crate::net::wasi::tcp_address_family);
+        define(linker, store, module, "[method]tcp-socket.set-listen-backlog-size", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::tcp_set_listen_backlog_size);
+        define(linker, store, module, "[method]tcp-socket.keep-alive-enabled", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], crate::net::wasi::tcp_get_keep_alive_enabled);
+        define(linker, store, module, "[method]tcp-socket.set-keep-alive-enabled", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::tcp_set_keep_alive_enabled);
+        define(linker, store, module, "[method]tcp-socket.keep-alive-idle-time", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I64)], crate::net::wasi::tcp_get_keep_alive_idle_time);
+        define(linker, store, module, "[method]tcp-socket.set-keep-alive-idle-time", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::tcp_set_keep_alive_idle_time);
+        define(linker, store, module, "[method]tcp-socket.keep-alive-interval", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I64)], crate::net::wasi::tcp_get_keep_alive_interval);
+        define(linker, store, module, "[method]tcp-socket.set-keep-alive-interval", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::tcp_set_keep_alive_interval);
+        define(linker, store, module, "[method]tcp-socket.keep-alive-count", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], crate::net::wasi::tcp_get_keep_alive_count);
+        define(linker, store, module, "[method]tcp-socket.set-keep-alive-count", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::tcp_set_keep_alive_count);
+        define(linker, store, module, "[method]tcp-socket.hop-limit", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], crate::net::wasi::tcp_get_hop_limit);
+        define(linker, store, module, "[method]tcp-socket.set-hop-limit", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::tcp_set_hop_limit);
+        define(linker, store, module, "[method]tcp-socket.receive-buffer-size", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I64)], crate::net::wasi::tcp_get_receive_buffer_size);
+        define(linker, store, module, "[method]tcp-socket.set-receive-buffer-size", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::tcp_set_receive_buffer_size);
+        define(linker, store, module, "[method]tcp-socket.send-buffer-size", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I64)], crate::net::wasi::tcp_get_send_buffer_size);
+        define(linker, store, module, "[method]tcp-socket.set-send-buffer-size", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::tcp_set_send_buffer_size);
+        define(linker, store, module, "[method]tcp-socket.subscribe", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], crate::net::wasi::tcp_subscribe);
+        define(linker, store, module, "[method]tcp-socket.shutdown", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::net::wasi::tcp_shutdown);
     }
     // wasi:sockets/network@0.2.0
     {
@@ -172,6 +193,7 @@ pub fn create_wasi_p2_imports<T: Config + Clone>(linker: &mut Linker, store: &mu
         define(linker, store, module, "now", vec![], vec![ValType::NumType(NumType::I64)], crate::time::wasi::monotonic_clock_now);
         define(linker, store, module, "resolution", vec![], vec![ValType::NumType(NumType::I64)], crate::time::wasi::monotonic_clock_resolution);
         define(linker, store, module, "subscribe-duration", vec![ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I32)], crate::time::wasi::monotonic_clock_subscribe_duration);
+        define(linker, store, module, "subscribe-instant", vec![ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I32)], crate::time::wasi::monotonic_clock_subscribe_instant);
     }
     // wasi:clocks/wall-clock@0.2.0
     {
@@ -189,7 +211,7 @@ pub fn create_wasi_p2_imports<T: Config + Clone>(linker: &mut Linker, store: &mu
     {
         let module = "wasi:random/random@0.2.0";
         define(linker, store, module, "get-random-bytes", vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![], crate::random::wasi::get_random_bytes);
-        define(linker, store, module, "get-random-u64", vec![], vec![ValType::NumType(NumType::I64)], crate::random::wasi::get_insecure_random_u64); // Reused
+        define(linker, store, module, "get-random-u64", vec![], vec![ValType::NumType(NumType::I64)], crate::random::wasi::get_random_u64);
     }
     // wasi:random/insecure@0.2.0
     {

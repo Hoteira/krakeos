@@ -149,6 +149,24 @@ method_export!("krakeos:system/network@0.2.0", "socket-udp-recv",
     }
 );
 
+method_export!("krakeos:system/network@0.2.0", "socket-get-local-addr",
+    pub fn socket_get_local_addr(fd: u64, addr_ptr: *mut u8) -> i32 {
+        crate::sys::syscall(46, fd, addr_ptr as u64, 0) as i32
+    }
+);
+
+method_export!("krakeos:system/network@0.2.0", "socket-get-remote-addr",
+    pub fn socket_get_remote_addr(fd: u64, addr_ptr: *mut u8) -> i32 {
+        crate::sys::syscall(47, fd, addr_ptr as u64, 0) as i32
+    }
+);
+
+method_export!("krakeos:system/network@0.2.0", "socket-shutdown",
+    pub fn socket_shutdown(fd: u64, how: u64) -> i32 {
+        crate::sys::syscall(48, fd, how, 0) as i32
+    }
+);
+
 method_export!("krakeos:system/process@0.2.0", "yield",
     pub fn process_yield() {
         core::arch::asm!("int 0x81");
