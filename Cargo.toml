@@ -17,6 +17,8 @@ members = [
     "apps/shm_test",
     "apps/net_test",
     "apps/container_test",
+    "apps/wasm_loader",
+    "apps/init",
     "userland",
 ]
 

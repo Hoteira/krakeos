@@ -1,7 +1,7 @@
 pub mod serial;
 pub mod async_io;
 pub mod host;
-#[cfg(feature = "userland")]
+#[cfg(any(feature = "userland", target_arch = "x86_64"))]
 pub mod wasi;
 
 pub use async_io::{AsyncRead, AsyncWrite};

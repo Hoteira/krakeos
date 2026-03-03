@@ -1,49 +1,58 @@
-use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use crate::sync::Mutex;
 
-pub const MAX_SLOTS: u32         = 1024;
+pub const MAX_SLOTS: u16 = 4096;
+
+// --- AOT code ---
 pub const CODE_REGION_BASE: u64  = 0x0000_0001_0000_0000; // 4 GiB
-pub const CODE_SLOT_SIZE: u64    = 1 * 1024 * 1024 * 1024; // 1 GiB per slot
-pub const SHM_REGION_BASE: u64   = 0x0000_0040_0000_0000; // 256 GiB
-pub const HEAP_REGION_BASE: u64  = 0x0000_0080_0000_0000; // 512 GiB
-pub const HEAP_SLOT_SIZE: u64    = 4 * 1024 * 1024 * 1024; // 4 GiB per slot
-pub const STACK_REGION_TOP: u64  = 0x0000_7FFF_FFFF_0000; // ~128 TiB
-pub const STACK_SLOT_SIZE: u64   = 16 * 1024 * 1024;       // 16 MiB per slot
+pub const CODE_SLOT_SIZE: u64    = 64 * 1024 * 1024; // 64 MiB
+// Ends at: 260 GiB (0x41_0000_0000)
 
-static NEXT_SLOT_ID: AtomicU32 = AtomicU32::new(0);
+// --- Stack ---
+pub const STACK_REGION_BASE: u64 = 0x0000_0041_0000_0000; // 260 GiB
+pub const STACK_SLOT_SIZE: u64   = 2 * 1024 * 1024; // 2 MiB
+// Ends at: 268 GiB (0x43_0000_0000)
 
-pub fn get_next_slot_id() -> u32 {
-    let id = NEXT_SLOT_ID.fetch_add(1, Ordering::SeqCst);
-    if id >= MAX_SLOTS {
-        panic!("SAS: Out of process slots!");
+// --- Linear memory ---
+pub const LINEAR_MEMORY_BASE: u64      = 0x0000_0043_0000_0000; // 268 GiB
+pub const LINEAR_MEMORY_SLOT_SIZE: u64 = 31 * 1024 * 1024 * 1024; // 31 GiB
+// Ends at: ~124 TiB (fits in 128 TiB canonical)
+
+static SLOT_BITMAP: Mutex<[u64; 64]> = Mutex::new([u64::MAX; 64]);
+
+pub fn allocate_slot() -> Option<u16> {
+    let mut bitmap = SLOT_BITMAP.lock();
+    for i in 0..64 {
+        if bitmap[i] != 0 {
+            let bit = bitmap[i].trailing_zeros() as u16;
+            bitmap[i] &= !(1 << bit);
+            return Some(i as u16 * 64 + bit);
+        }
     }
-    id
+    None
 }
 
-pub fn allocate_code(_size: u64, pid: u64, slot_id: u32) -> u64 {
-    // Slot Layout: [CODE (1GB - 4KB)] [GUARD (4KB)]
+pub fn free_slot(id: u16) {
+    let mut bitmap = SLOT_BITMAP.lock();
+    let idx = (id / 64) as usize;
+    let bit = id % 64;
+    bitmap[idx] |= 1 << bit;
+}
+
+pub fn allocate_code(pid: u64, slot_id: u16) -> u64 {
     let addr = CODE_REGION_BASE + (slot_id as u64) * CODE_SLOT_SIZE;
     crate::memory::vma::GLOBAL_VMA.lock().track(addr, CODE_SLOT_SIZE, pid);
     addr
 }
 
-pub fn allocate_heap(_size: u64, pid: u64, slot_id: u32) -> u64 {
-    // Slot Layout: [HEAP (4GB - 4KB)] [GUARD (4KB)]
-    let addr = HEAP_REGION_BASE + (slot_id as u64) * HEAP_SLOT_SIZE;
-    crate::memory::vma::GLOBAL_VMA.lock().track(addr, HEAP_SLOT_SIZE, pid);
+pub fn allocate_linear_memory(pid: u64, slot_id: u16) -> u64 {
+    let addr = LINEAR_MEMORY_BASE + (slot_id as u64) * LINEAR_MEMORY_SLOT_SIZE;
+    crate::memory::vma::GLOBAL_VMA.lock().track(addr, LINEAR_MEMORY_SLOT_SIZE, pid);
     addr
 }
 
-pub fn allocate_stack(_size: u64, pid: u64, slot_id: u32) -> u64 {
-    // Slot Layout: [GUARD (4KB)] [STACK (16MB - 4KB)]
-    // Grows downward, so the top is at the slot boundary
-    let top = STACK_REGION_TOP - (slot_id as u64) * STACK_SLOT_SIZE;
-    let base = top - STACK_SLOT_SIZE;
+pub fn allocate_stack(pid: u64, slot_id: u16) -> u64 {
+    let base = STACK_REGION_BASE + (slot_id as u64) * STACK_SLOT_SIZE;
+    let top = base + STACK_SLOT_SIZE;
     crate::memory::vma::GLOBAL_VMA.lock().track(base, STACK_SLOT_SIZE, pid);
     top
-}
-
-pub fn allocate_shm(size: u64) -> u64 {
-    static NEXT_SHM_ADDR: AtomicU64 = AtomicU64::new(SHM_REGION_BASE);
-    let aligned_size = (size + 0x1FFFFF) & !0x1FFFFF;
-    NEXT_SHM_ADDR.fetch_add(aligned_size, Ordering::SeqCst)
 }

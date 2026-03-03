@@ -13,7 +13,7 @@ use crate::wasm::{
     },
 };
 
-pub fn create_wasi_p2_imports<T: Config + Clone>(linker: &mut Linker, store: &mut Store<'_, T>) {
+pub fn create_wasi_p2_imports<T: Config + Clone + Send + 'static>(linker: &mut Linker, store: &mut Store<'_, T>) {
     if store.wasi_ctx.is_none() {
         store.wasi_ctx = Some(crate::wasm::wasi::ctx::WasiCtx::default());
     }
@@ -26,7 +26,7 @@ pub fn create_wasi_p2_imports<T: Config + Clone>(linker: &mut Linker, store: &mu
             vec![], 
             crate::os::krakeos::wasi::container_plant_host);
         define(linker, store, module, "plant-from-path", 
-            vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], 
+            vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], 
             vec![], 
             crate::os::krakeos::wasi::container_plant_from_path_host);
         define(linker, store, module, "harvest", 
@@ -336,6 +336,14 @@ pub fn create_wasi_p2_imports<T: Config + Clone>(linker: &mut Linker, store: &mu
             vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)],
             vec![ValType::NumType(NumType::I32)],
             crate::os::krakeos::wasi::set_nonblock_host);
+        define(linker, store, module, "kill",
+            vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)],
+            vec![ValType::NumType(NumType::I32)],
+            crate::os::krakeos::wasi::kill_process_host);
+        define(linker, store, module, "syscall",
+            vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)],
+            vec![ValType::NumType(NumType::I64)],
+            crate::os::krakeos::wasi::syscall_host);
     }
     // krakeos:system/memory@0.2.0
     {
@@ -411,7 +419,7 @@ pub fn create_wasi_p2_imports<T: Config + Clone>(linker: &mut Linker, store: &mu
     }
 }
 
-pub(crate) fn define<T: Config>(
+pub(crate) fn define<T: Config + Clone + Send + 'static>(
     linker: &mut Linker,
     store: &mut Store<'_, T>,
     module: &str,

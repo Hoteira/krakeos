@@ -27,6 +27,10 @@ macro_rules! method_export {
     };
 }
 
+#[cfg(any(feature = "userland", target_arch = "x86_64"))]
+#[macro_use]
+pub mod wasm;
+
 pub mod allocator;
 pub mod env;
 pub mod fs;
@@ -44,10 +48,6 @@ pub mod sys;
 pub mod task;
 pub mod thread;
 pub mod time;
-
-#[cfg(feature = "userland")]
-#[macro_use]
-pub mod wasm;
 
 #[cfg(feature = "userland")]
 #[cfg_attr(not(test), panic_handler)]

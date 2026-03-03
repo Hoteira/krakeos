@@ -22,15 +22,11 @@ impl Allocator {
     }
 
     fn lock(&self) -> u64 {
-        let rflags: u64;
-        #[cfg(not(feature = "userland"))]
+        let mut rflags: u64 = 0;
+        #[cfg(not(target_arch = "wasm32"))]
         unsafe {
             core::arch::asm!("pushfq; pop {}", out(reg) rflags);
             core::arch::asm!("cli");
-        }
-        #[cfg(feature = "userland")]
-        {
-            rflags = 0;
         }
 
         while self
@@ -87,10 +83,25 @@ unsafe fn grow_handler(min_size: usize) -> Option<(usize, usize)> {
 
 unsafe impl GlobalAlloc for Allocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        // crate::os::debug_print("[std] Allocator: alloc called\n");
         let flags = self.lock();
         let heap = &mut *self.heap.get();
-        let ptr = heap.alloc(layout, |min| grow_handler(min));
+        let mut ptr = heap.alloc(layout, |_| None); // Don't grow inside lock
         self.unlock(flags);
+
+        if ptr.is_null() {
+            crate::os::debug_print("[std] Allocator: Growing heap...\n");
+            if let Some((start, end)) = grow_handler(layout.size()) {
+                let flags = self.lock();
+                let heap = &mut *self.heap.get();
+                heap.add_memory(start, end);
+                ptr = heap.alloc(layout, |_| None);
+                self.unlock(flags);
+                crate::os::debug_print("[std] Allocator: Heap grown and allocated.\n");
+            } else {
+                crate::os::debug_print("[std] Allocator: FAILED to grow heap.\n");
+            }
+        }
         ptr
     }
 

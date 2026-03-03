@@ -12,7 +12,7 @@ const STACK_SIZE: u64 = 1024 * 1024;
 #[derive(Debug)]
 pub struct Process {
     pub pid: u64,
-    pub slot_id: u32,
+    pub slot_id: u16,
     pub parent_pid: Option<u64>,
     pub children: Mutex<Vec<u64>>,
     pub fd_table: Mutex<[i16; 16]>,
@@ -21,6 +21,7 @@ pub struct Process {
     pub cwd: Mutex<[u8; 128]>,
     pub terminal_width: Mutex<u16>,
     pub terminal_height: Mutex<u16>,
+    pub linear_memory_base: u64,
     pub heap_start: u64,
     pub heap_limit: u64,
     pub heap_end: Mutex<u64>,
@@ -84,13 +85,21 @@ impl Process {
         let root = b"@0xE0/";
         cwd[..root.len()].copy_from_slice(root);
 
-        let slot_id = crate::memory::address_space::get_next_slot_id();
-        let heap_start = crate::memory::address_space::allocate_heap(0, pid, slot_id);
-        let heap_limit = heap_start + crate::memory::address_space::HEAP_SLOT_SIZE - 4096;
+        let slot_id = crate::memory::address_space::allocate_slot().expect("SAS: Out of process slots!");
+        let linear_memory_base = crate::memory::address_space::allocate_linear_memory(pid, slot_id);
+        let heap_start = linear_memory_base;
+        let heap_limit = heap_start + crate::memory::address_space::LINEAR_MEMORY_SLOT_SIZE - 4096;
 
-        let mut shm = crate::memory::shm::GLOBAL_SHM.lock();
-        let q_name = alloc::format!("events_{}", pid);
-        let shared_event_queue = shm.get_or_create(&q_name, 8192).unwrap();
+        let mut q_name = [0u8; 32];
+        let shared_event_queue = {
+            use core::fmt::Write;
+            let mut writer = crate::debug::ArrayWriter::new(&mut q_name);
+            let _ = write!(writer, "events_{}", pid);
+            let q_name_str = writer.as_str();
+
+            let mut shm = crate::memory::shm::GLOBAL_SHM.lock();
+            shm.get_or_create(q_name_str, 8192).unwrap()
+        };
 
         Arc::new(Self {
             pid,
@@ -103,6 +112,7 @@ impl Process {
             cwd: Mutex::new(cwd),
             terminal_width: Mutex::new(80),
             terminal_height: Mutex::new(25),
+            linear_memory_base,
             heap_start,
             heap_limit,
             heap_end: Mutex::new(heap_start),
@@ -142,7 +152,10 @@ impl Thread {
         t_name[..len].copy_from_slice(&name[..len]);
 
         let mut fpu_state = [0u8; 512];
-        // Initialize MXCSR at offset 24 to 0x1F80 (all exceptions masked)
+        // Initialize x87 FCW at offset 0 to 0x037F (all x87 exceptions masked, double precision)
+        fpu_state[0] = 0x7F;
+        fpu_state[1] = 0x03;
+        // Initialize MXCSR at offset 24 to 0x1F80 (all SSE exceptions masked)
         fpu_state[24] = 0x80;
         fpu_state[25] = 0x1F;
 
@@ -183,7 +196,7 @@ impl TaskManager {
             idle_thread.cpu_state_ptr = state_ptr as u64;
 
             (*state_ptr).rip = idle as u64;
-            (*state_ptr).cs = 0x08;
+            (*state_ptr).cs = 0x28; // 64-bit kernel code segment (GDT index 5)
             (*state_ptr).rflags = 0x202;
             (*state_ptr).rsp = idle_thread.kernel_stack;
             (*state_ptr).ss = 0x10;
@@ -229,6 +242,20 @@ impl TaskManager {
         }
 
         let thread = self.tasks[self.current_task as usize].as_ref().unwrap();
+        let next_state = thread.cpu_state_ptr as *const CPUState;
+        unsafe {
+            let p = next_state;
+            let rip = core::ptr::addr_of!((*p).rip).read_unaligned();
+            let cs = core::ptr::addr_of!((*p).cs).read_unaligned();
+            let rsp = core::ptr::addr_of!((*p).rsp).read_unaligned();
+            let ss = core::ptr::addr_of!((*p).ss).read_unaligned();
+            let rflags = core::ptr::addr_of!((*p).rflags).read_unaligned();
+            if rip == 0 || (rip < 0xFFFF_8000_0000_0000 && cs == 0x08) {
+                crate::debugln!("CRITICAL: Scheduling task {} RIP={:#x} CS={:#x} RSP={:#x} SS={:#x} RFLAGS={:#x} state_ptr={:#x} k_stack={:#x}",
+                    self.current_task, rip, cs, rsp, ss, rflags,
+                    thread.cpu_state_ptr, thread.kernel_stack);
+            }
+        }
 
         (
             thread.cpu_state_ptr as *mut CPUState,
@@ -299,7 +326,7 @@ impl TaskManager {
         let stack_pages = (STACK_SIZE / 4096) as usize;
         let u_frame_phys = pmm::allocate_frames(stack_pages, pid).ok_or(pmm::FrameError::NoMemory)?;
 
-        let u_stack_top = crate::memory::address_space::allocate_stack(STACK_SIZE, pid, slot_id);
+        let u_stack_top = crate::memory::address_space::allocate_stack(pid, slot_id);
         let u_stack_base = u_stack_top - STACK_SIZE;
 
         // Map user stack, but leave the bottom-most page unmapped as a guard
@@ -358,7 +385,7 @@ impl TaskManager {
             (*state_ptr).ss = 0x23;
         }
 
-        thread.state = ThreadState::Ready;
+        thread.state = if entry_point == 0 { ThreadState::Reserved } else { ThreadState::Ready };
         self.tasks[slot] = Some(thread);
         Ok(())
     }
@@ -386,16 +413,36 @@ impl TaskManager {
         let state_ptr = (thread.kernel_stack - state_size as u64) as *mut CPUState;
         thread.cpu_state_ptr = state_ptr as u64;
 
+        crate::debugln!("[spawn_thread] TID {} state_ptr={:#x} stack_top={:#x}", tid, thread.cpu_state_ptr, thread.kernel_stack);
+
         unsafe {
             core::ptr::write_bytes(state_ptr, 0, 1);
             (*state_ptr).rip = entry_point;
-            (*state_ptr).cs = 0x33;
-            (*state_ptr).rflags = 0x202;
-            // System V ABI: rsp must be 16-byte aligned before a call.
-            // On entry to a function, it should be 16n - 8.
-            (*state_ptr).rsp = (user_stack & !15) - 8;
-            (*state_ptr).ss = 0x23;
+            
+            if user_stack == 0 {
+                // Native Kernel Thread (Ring 0)
+                (*state_ptr).cs = 0x28; // 64-bit kernel code segment (GDT index 5)
+                (*state_ptr).ss = 0x10;
+                // System V ABI: RSP must be 16n + 8 upon function entry
+                (*state_ptr).rsp = thread.kernel_stack - state_size as u64 - 8; // Use kernel stack
+                (*state_ptr).rflags = 0x202;
+            } else {
+                // User Thread (Ring 3)
+                (*state_ptr).cs = 0x33;
+                (*state_ptr).ss = 0x23;
+                (*state_ptr).rsp = (user_stack & !15) - 8;
+                (*state_ptr).rflags = 0x202;
+            }
+            
             (*state_ptr).rdi = arg;
+            let p = state_ptr as *const CPUState;
+            crate::debugln!("[spawn_thread] TID {} CPUState @ {:#x}: RIP={:#x} CS={:#x} RSP={:#x} SS={:#x} RFLAGS={:#x}",
+                tid, state_ptr as u64,
+                core::ptr::addr_of!((*p).rip).read_unaligned(),
+                core::ptr::addr_of!((*p).cs).read_unaligned(),
+                core::ptr::addr_of!((*p).rsp).read_unaligned(),
+                core::ptr::addr_of!((*p).ss).read_unaligned(),
+                core::ptr::addr_of!((*p).rflags).read_unaligned());
         }
 
         thread.state = ThreadState::Ready;
@@ -512,15 +559,36 @@ unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
         }
 
         let new_cpu_state_ptr = new_state as u64;
-        if new_cpu_state_ptr == 0 {
-            crate::debugln!("TASK: Switch to NULL state! prev={}, next={}", current_task_idx, new_task_idx);
-        } else {
-            let next_rip = (*(new_cpu_state_ptr as *const CPUState)).rip;
-            if next_rip == 0 {
-                crate::debugln!("TASK: Switch to task with RIP=0! prev={}, next={}", current_task_idx, new_task_idx);
-            }
-        }
 
+        // DEBUG: Always dump state when switching to a new task
+        if new_task_idx != current_task_idx {
+            let p = new_cpu_state_ptr as *const CPUState;
+            let rip = core::ptr::addr_of!((*p).rip).read_unaligned();
+            let cs = core::ptr::addr_of!((*p).cs).read_unaligned();
+            let rsp_val = core::ptr::addr_of!((*p).rsp).read_unaligned();
+            let ss = core::ptr::addr_of!((*p).ss).read_unaligned();
+            let rflags = core::ptr::addr_of!((*p).rflags).read_unaligned();
+            /*crate::debugln!("[SWITCH] {} -> {} state_ptr={:#x} RIP={:#x} CS={:#x} RSP={:#x} SS={:#x} RFLAGS={:#x}",
+                current_task_idx, new_task_idx, new_cpu_state_ptr, rip, cs, rsp_val, ss, rflags);
+
+            // Also dump raw bytes at the CPUState to check for corruption
+            let bytes = core::slice::from_raw_parts(new_cpu_state_ptr as *const u8, 160);
+            crate::debugln!("[SWITCH] First 40 bytes: {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} | {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} | {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} | {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} | {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
+                bytes[16], bytes[17], bytes[18], bytes[19], bytes[20], bytes[21], bytes[22], bytes[23],
+                bytes[24], bytes[25], bytes[26], bytes[27], bytes[28], bytes[29], bytes[30], bytes[31],
+                bytes[32], bytes[33], bytes[34], bytes[35], bytes[36], bytes[37], bytes[38], bytes[39]);
+            // Last 40 bytes (the iret frame: RIP, CS, RFLAGS, RSP, SS)
+            crate::debugln!("[SWITCH] iret frame (offset 120-159): {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} | {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} | {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} | {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} | {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",
+                bytes[120], bytes[121], bytes[122], bytes[123], bytes[124], bytes[125], bytes[126], bytes[127],
+                bytes[128], bytes[129], bytes[130], bytes[131], bytes[132], bytes[133], bytes[134], bytes[135],
+                bytes[136], bytes[137], bytes[138], bytes[139], bytes[140], bytes[141], bytes[142], bytes[143],
+                bytes[144], bytes[145], bytes[146], bytes[147], bytes[148], bytes[149], bytes[150], bytes[151],
+                bytes[152], bytes[153], bytes[154], bytes[155], bytes[156], bytes[157], bytes[158], bytes[159]);
+
+             */
+        }
 
         if k_stack != 0 {
             crate::tss::set_tss(k_stack);

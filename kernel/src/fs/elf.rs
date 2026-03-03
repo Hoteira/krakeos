@@ -31,7 +31,7 @@ pub fn load_elf(data: &[u8], pid: u64) -> Result<u64, String> {
         tm.tasks[pid as usize].as_ref().unwrap().process.as_ref().unwrap().slot_id
     };
 
-    let load_base = crate::memory::address_space::allocate_code(total_size, pid, slot_id);
+    let load_base = crate::memory::address_space::allocate_code(pid, slot_id);
     crate::debugln!("load_elf: Base address: {:#x}", load_base);
 
     let mut max_end: u64 = 0;

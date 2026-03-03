@@ -56,23 +56,22 @@ pub fn main() {
 
     sleep(1000);
 
-    std::thread::spawn(|| {
+    /*std::thread::spawn(|| {
         std::wasm::run("@0xE0/apps/aot_test.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
     });
 
-    sleep(1000);
-
-    std::thread::spawn(|| {
-        std::wasm::run("@0xE0/apps/net_test.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
-    });
-
-    sleep(1000);
+    sleep(500);
 
     std::thread::spawn(|| {
         std::wasm::run("@0xE0/apps/taskbar.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
     });
 
-    //std::os::spawn("@0xE0/sys/bin/term.elf");
+    sleep(500);*/
+
+    std::thread::spawn(|| {
+        std::wasm::run("@0xE0/apps/term.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
+    });
+
 
     loop {
         std::os::yield_task();

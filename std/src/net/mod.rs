@@ -7,7 +7,7 @@ pub mod packet;
 pub mod socket;
 pub mod tcp;
 pub mod udp;
-#[cfg(feature = "userland")]
+#[cfg(any(feature = "userland", target_arch = "x86_64"))]
 pub mod wasi;
 
 pub use tcp::{TcpListener, TcpStream};

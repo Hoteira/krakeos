@@ -7,7 +7,7 @@ pub use user::*;
 pub mod events;
 pub use events::*;
 
-#[cfg(feature = "userland")]
+#[cfg(any(feature = "userland", target_arch = "x86_64"))]
 pub mod wasi;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -52,23 +52,74 @@ method_export!("krakeos:system/process@0.2.0", "pipe",
 
 method_export!("krakeos:system/memory@0.2.0", "shm-get",
     pub fn shm_get_raw(name_ptr: *const u8, name_len: usize, size: usize) -> u64 {
-        crate::sys::syscall(120, name_ptr as u64, name_len as u64, size as u64)
+        let res = crate::sys::syscall(120, name_ptr as u64, name_len as u64, size as u64);
+        crate::debugln!("[std] shm_get_raw: Syscall 120 (GET) returned {:#x}", res);
+        res
+    }
+);
+
+method_export!("krakeos:system/memory@0.2.0", "shm-map",
+    pub fn shm_map_raw(name_ptr: *const u8, name_len: usize, target_addr: u64) -> u64 {
+        let res = crate::sys::syscall(122, name_ptr as u64, name_len as u64, target_addr);
+        crate::debugln!("[std] shm_map_raw: Syscall 122 (MAP) returned {:#x}", res);
+        res
     }
 );
 
 method_export!("wasi:random/random@0.2.0", "get-random-bytes",
     pub fn get_random_bytes(len: u64, result_ptr: *mut u8) {
-        // Pseudo-random for native
+        #[cfg(target_arch = "x86_64")]
+        {
+            let mut i = 0;
+            while i + 8 <= len as usize {
+                let mut val = 0u64;
+                if unsafe { core::arch::x86_64::_rdrand64_step(&mut val) } == 1 {
+                    unsafe { core::ptr::copy_nonoverlapping(val.to_le_bytes().as_ptr(), result_ptr.add(i), 8); }
+                    i += 8;
+                } else {
+                    break;
+                }
+            }
+            while i < len as usize {
+                let mut val = 0u32;
+                if unsafe { core::arch::x86_64::_rdrand32_step(&mut val) } == 1 {
+                    unsafe { *result_ptr.add(i) = val as u8; }
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            if i == len as usize {
+                return;
+            }
+        }
+
+        // Pseudo-random fallback for native
         static mut STATE: u64 = 1574;
-        if STATE == 1574 {
-            STATE = crate::sys::syscall(109, 0, 0, 0).wrapping_add(0xACE1BADE);
+        unsafe {
+            if STATE == 1574 {
+                STATE = crate::sys::syscall(109, 0, 0, 0).wrapping_add(0xACE1BADE);
+            }
+            for i in 0..len as usize {
+                STATE = STATE.wrapping_mul(6364136223846793005).wrapping_add(1);
+                *result_ptr.add(i) = (STATE >> 33) as u8;
+            }
         }
-        for i in 0..len as usize {
-            STATE ^= STATE << 13;
-            STATE ^= STATE >> 17;
-            STATE ^= STATE << 5;
-            *result_ptr.add(i) = (STATE & 0xFF) as u8;
-        }
+    }
+);
+
+#[repr(C)]
+pub struct SlotInfo {
+    pub slot_id: u16,
+    pub linear_memory_base: u64,
+    pub linear_memory_size: u64,
+    pub code_base: u64,
+    pub stack_base: u64,
+}
+
+method_export!("krakeos:system/process@0.2.0", "get-slot-info",
+    pub fn process_get_slot_info(buf_ptr: *mut u8) -> i32 {
+        crate::sys::syscall(137, buf_ptr as u64, 0, 0) as i32
     }
 );
 
@@ -209,6 +260,40 @@ method_export!("krakeos:system/memory@0.2.0", "get-used-mem",
 method_export!("krakeos:system/memory@0.2.0", "get-vma-dump",
     pub fn get_vma_dump(buf_ptr: *mut u8, len: u64) -> u64 {
         crate::sys::syscall(136, buf_ptr as u64, len, 0)
+    }
+);
+
+method_export!("krakeos:system/terminal@0.1.0", "set-window-size",
+    pub fn raw_terminal_set_window_size(fd: u32, rows: u16, cols: u16, ret_ptr: *mut u8) {
+        let ws = WinSize {
+            ws_row: rows,
+            ws_col: cols,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        let res = process_ioctl(fd as u64, TIOCSWINSZ, &ws as *const _ as u64);
+        unsafe { *ret_ptr = if res == 0 { 0 } else { 1 }; }
+    }
+);
+
+method_export!("krakeos:system/terminal@0.1.0", "get-window-size",
+    pub fn raw_terminal_get_window_size(fd: u32, ret_ptr: *mut u8) {
+        let mut ws = WinSize {
+            ws_row: 0,
+            ws_col: 0,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        let res = process_ioctl(fd as u64, TIOCGWINSZ, &mut ws as *mut _ as u64);
+        unsafe {
+            if res == 0 {
+                *ret_ptr = 0;
+                core::ptr::write_unaligned(ret_ptr.add(4) as *mut u16, ws.ws_row);
+                core::ptr::write_unaligned(ret_ptr.add(6) as *mut u16, ws.ws_col);
+            } else {
+                *ret_ptr = 1;
+            }
+        }
     }
 );
 
@@ -462,6 +547,24 @@ pub struct WinSize {
 pub fn ioctl(fd: usize, request: u64, arg: u64) -> i32 {
     let res = process_ioctl(fd as u64, request, arg);
     res
+}
+
+pub fn terminal_set_window_size(fd: u32, rows: u16, cols: u16) -> Result<(), String> {
+    let mut res = 0u8;
+    raw_terminal_set_window_size(fd, rows, cols, &mut res);
+    if res == 0 { Ok(()) } else { Err(String::from("Failed to set window size")) }
+}
+
+pub fn terminal_get_window_size(fd: u32) -> Result<(u16, u16), String> {
+    let mut res_buf = [0u8; 8];
+    raw_terminal_get_window_size(fd, res_buf.as_mut_ptr());
+    if res_buf[0] == 0 {
+        let rows = u16::from_le_bytes(res_buf[4..6].try_into().unwrap());
+        let cols = u16::from_le_bytes(res_buf[6..8].try_into().unwrap());
+        Ok((rows, cols))
+    } else {
+        Err(String::from("Failed to get window size"))
+    }
 }
 
 pub fn container_plant(wasm_bytes: &[u8], offset: u32, size: u32) -> Result<u64, String> {

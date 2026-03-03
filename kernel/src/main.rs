@@ -70,7 +70,7 @@ pub extern "C" fn _start(bootinfo_ptr: u64) -> ! {
 
     debugln!("SIGNPOST: Kernel fully initialized.");
 
-    let heap_size = 0xA0_0000;
+    let heap_size = 0x400_0000; // 64 MiB
     let heap_pages = heap_size / 4096;
     let heap_phys_addr = pmm::allocate_frames(heap_pages as usize, 0).expect("Failed to allocate heap memory from PMM");
     let heap_virt_ptr = phys_to_virt(PhysAddr::new(heap_phys_addr)).as_mut_ptr::<u8>();
@@ -103,8 +103,8 @@ pub extern "C" fn _start(bootinfo_ptr: u64) -> ! {
         }
     }
 
-    crate::debugln!("Spawning init process...");
-    match crate::interrupts::syscalls::spawn_process("@0xE0/user.elf", None, None) {
+    crate::debugln!("Spawning init process (WASM)...");
+    match crate::interrupts::syscalls::spawn_process("@0xE0/sys/bin/init.wasm", None, None) {
         Ok(pid) => crate::debugln!("Init process spawned with PID {}", pid),
         Err(e) => {
             crate::debugln!("Failed to spawn init: {}", e);
@@ -152,7 +152,7 @@ fn init_syscall_msrs() {
         efer |= 1;
         wrmsr(EFER_MSR, efer);
         let sysret_cs_base = 0x20;
-        let syscall_cs_base = 0x08;
+        let syscall_cs_base = 0x08; // TODO: GDT needs reorg - 0x08 is 32-bit code, SYSCALL needs adjacent CS/SS
         let star_value = ((sysret_cs_base as u64) << 48) | ((syscall_cs_base as u64) << 32);
         wrmsr(STAR_MSR, star_value);
         wrmsr(LSTAR_MSR, interrupts::syscalls::syscall_entry as u64);

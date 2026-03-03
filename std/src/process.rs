@@ -2,7 +2,7 @@ pub trait Termination {
     fn report(self) -> i32;
 }
 
-#[cfg(feature = "userland")]
+#[cfg(any(feature = "userland", target_arch = "x86_64"))]
 pub mod wasi;
 
 impl Termination for () {

@@ -1,4 +1,5 @@
 #![no_std]
+
 extern crate alloc;
 
 use alloc::boxed::Box;
@@ -6,18 +7,6 @@ use alloc::format;
 use inkui::{Color, Display, Size, Widget, Window};
 use std::os::{get_screen_height, get_screen_width, Items};
 use std::println;
-
-fn open_start_menu(_win: &mut Window, _id: usize) {
-    std::os::print("Start Menu Clicked\n");
-}
-
-fn power_off(_win: &mut Window, _id: usize) {
-    std::os::print("Power Off Clicked\n");
-}
-
-fn wifi_status(_win: &mut Window, _id: usize) {
-    std::os::print("Wifi Clicked\n");
-}
 
 pub fn main() {
     let screen_w = get_screen_width();
@@ -55,7 +44,7 @@ pub fn main() {
     let font_size = unit * 4.0;
 
     let user_name = std::os::user::get_current_user();
-    let mut l = Widget::label(2, &format!(" \u{E8F0}  {} | ", user_name.trim()))
+    let l = Widget::label(2, &format!(" \u{E8F0}  {} | ", user_name.trim()))
         .y(Size::Absolute((unit) as usize))
         .set_text_color(Color::rgb(255, 255, 255))
         .background_color(Color::rgba(0, 0, 0, 0))

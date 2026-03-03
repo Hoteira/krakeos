@@ -30,7 +30,7 @@ use crate::wasm::interpreter::store::addrs::{
     TableAddr,
 };
 use core::sync::atomic::{AtomicU64, Ordering};
-use instances::{
+pub use instances::{
     DataInst, ElemInst, FuncInst, GlobalInst, HostFuncInst, MemInst, ModuleInst, TableInst,
     WasmFuncInst,
 };
@@ -68,7 +68,11 @@ pub struct Store<'a, T: Config> {
     pub wasi_ctx: Option<crate::wasm::wasi::WasiCtx>,
     pub sas_memory_base: Option<u64>,
     pub container_id: Option<u64>,
+    pub shm_mappings: BTreeMap<String, u32>,
 }
+
+unsafe impl<'a, T: Config + Send> Send for Store<'a, T> {}
+unsafe impl<'a, T: Config + Sync> Sync for Store<'a, T> {}
 
 impl<'a, T: Config> Store<'a, T> {
     pub fn new(user_data: T) -> Self {
@@ -90,6 +94,7 @@ impl<'a, T: Config> Store<'a, T> {
             wasi_ctx: None,
             sas_memory_base: None,
             container_id: None,
+            shm_mappings: BTreeMap::new(),
         }
     }
 
@@ -310,7 +315,7 @@ impl<'a, T: Config> Store<'a, T> {
                 let func_idx = validation_info.imports_length.imported_functions + i;
                 let func_addr = self.modules.get(module_addr).func_addrs[func_idx];
                 if let FuncInst::WasmFunc(wasm_func) = self.functions.get_mut(func_addr) {
-                    wasm_func.aot_ptr = Some(unsafe { aot_module.code_ptr.add(*offset) as usize });
+                    wasm_func.aot_ptr = Some(unsafe { aot_module.code.as_ptr().add(*offset) as usize });
                 }
             }
             self.aot_modules.push(aot_module);
@@ -376,23 +381,30 @@ impl<'a, T: Config> Store<'a, T> {
         })
     }
     fn alloc_mem(&mut self, ty: MemType) -> MemAddr {
-        let mem = if let Some(container_id) = self.container_id {
-            // Check if this container has a parent to determine if it's a view or top-level SAS
-            let is_nested = {
-                let registry = crate::wasm::container::CONTAINER_REGISTRY.lock();
-                registry.get(&container_id).map(|c| c.lock().parent_id.is_some()).unwrap_or(false)
-            };
+        let mem = if let Some(sas_base) = self.sas_memory_base {
+            if let Some(container_id) = self.container_id {
+                // Check if this container has a parent to determine if it's a view or top-level SAS
+                let is_nested = {
+                    let registry = crate::wasm::container::CONTAINER_REGISTRY.lock();
+                    registry.get(&container_id).map(|c| c.lock().parent_id.is_some()).unwrap_or(false)
+                };
 
-            if is_nested {
-                LinearMemory::new_view(
-                    container_id,
-                    self.sas_memory_base.unwrap() as *mut u8,
-                    ty.limits.min.try_into().unwrap_validated(),
-                    ty.limits.max.unwrap_or(ty.limits.min).try_into().unwrap_validated(),
-                )
+                if is_nested {
+                    LinearMemory::new_view(
+                        container_id,
+                        sas_base as *mut u8,
+                        ty.limits.min.try_into().unwrap_validated(),
+                        ty.limits.max.unwrap_or(u32::MAX),
+                    )
+                } else {
+                    LinearMemory::new_sas(
+                        sas_base,
+                        ty.limits.min.try_into().unwrap_validated(),
+                    )
+                }
             } else {
                 LinearMemory::new_sas(
-                    self.sas_memory_base.unwrap(),
+                    sas_base,
                     ty.limits.min.try_into().unwrap_validated(),
                 )
             }
@@ -468,7 +480,7 @@ impl<'a, T: Config> Store<'a, T> {
 
                         if self.aot_enabled && aot_ptr.is_some() {
                             let aot_ptr = aot_ptr.unwrap();
-                            let mut fuel = maybe_fuel.unwrap_or(1_000_000_000);
+                            let mut fuel = maybe_fuel.unwrap_or(u32::MAX);
                             let mem_addr = self.modules.get(module_addr).mem_addrs.get(0).copied();
                             let (memory_base, memory_size) = if let Some(mem_addr) = mem_addr {
                                 let mem = &self.memories.get(mem_addr).mem;

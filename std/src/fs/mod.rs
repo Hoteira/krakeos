@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 pub mod host;
 pub mod async_file;
-#[cfg(feature = "userland")]
+#[cfg(any(feature = "userland", target_arch = "x86_64"))]
 pub mod wasi;
 pub use async_file::AsyncFile;
 
@@ -220,18 +220,23 @@ pub fn mount(disk_id: u8, fs_type: &str) -> Result<()> {
 }
 
 pub fn read(path: &str) -> Result<Vec<u8>> {
+    crate::debugln!("[std::fs::read] Opening '{}'...", path);
     let mut file = File::open(path)?;
     let size = file.size();
+    crate::debugln!("[std::fs::read] File size: {} bytes", size);
     let mut bytes = alloc::vec![0u8; size];
     let mut total_read = 0;
     while total_read < size {
+        crate::debugln!("[std::fs::read] Reading at offset {} (remaining {})...", total_read, size - total_read);
         let n = file.read(&mut bytes[total_read..])?;
         if n == 0 {
+            crate::debugln!("[std::fs::read] EOF reached early at {}", total_read);
             break;
         }
         total_read += n;
     }
     bytes.truncate(total_read);
+    crate::debugln!("[std::fs::read] Finished reading {} bytes", total_read);
     Ok(bytes)
 }
 

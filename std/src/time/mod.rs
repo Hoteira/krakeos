@@ -2,7 +2,7 @@ pub use core::time::Duration;
 
 pub mod host;
 pub mod async_time;
-#[cfg(feature = "userland")]
+#[cfg(any(feature = "userland", target_arch = "x86_64"))]
 pub mod wasi;
 
 use host as clocks;

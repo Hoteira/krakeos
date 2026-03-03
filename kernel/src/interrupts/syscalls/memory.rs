@@ -67,25 +67,44 @@ pub fn handle_mmap(context: &mut CPUState) {
     let _fd = context.r8;
     let _offset = context.r9;
 
-    let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
-    let current_idx = tm.current_task;
+    crate::debugln!("[MMAP] addr={:#x} len={:#x}", addr, len);
 
-    if current_idx < 0 || len == 0 {
+    if len == 0 {
+        crate::debugln!("[MMAP] REJECTED: len=0");
         context.rax = u64::MAX;
         return;
     }
 
-    if let Some(thread) = tm.tasks[current_idx as usize].as_mut() {
-        let proc = thread.process.as_ref().expect("Thread has no process");
-        let pid = proc.pid;
+    let (pid, heap_limit, mem_base) = {
+        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let current_idx = tm.current_task;
+        if current_idx < 0 {
+            crate::debugln!("[MMAP] REJECTED: no current task");
+            context.rax = u64::MAX;
+            return;
+        }
+        if let Some(thread) = tm.tasks[current_idx as usize].as_ref() {
+            let proc = thread.process.as_ref().expect("Thread has no process");
+            (proc.pid, proc.heap_limit, proc.linear_memory_base)
+        } else {
+            crate::debugln!("[MMAP] REJECTED: no thread");
+            context.rax = u64::MAX;
+            return;
+        }
+    };
 
+    crate::debugln!("[MMAP] pid={} mem_base={:#x} heap_limit={:#x}", pid, mem_base, heap_limit);
 
-        let target_addr = if addr == 0 {
+    let target_addr = if addr == 0 {
+        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let current_idx = tm.current_task;
+        if let Some(thread) = tm.tasks[current_idx as usize].as_ref() {
+            let proc = thread.process.as_ref().expect("Thread has no process");
             let mut heap_end = proc.heap_end.lock();
             let old_brk = *heap_end;
             let new_brk = old_brk + len;
 
-            if new_brk > proc.heap_limit {
+            if new_brk > heap_limit {
                 context.rax = u64::MAX;
                 return;
             }
@@ -94,30 +113,42 @@ pub fn handle_mmap(context: &mut CPUState) {
             *heap_end = aligned_new;
             old_brk
         } else {
-            addr
-        };
-
-        let start_page = target_addr & !0xFFF;
-        let end_page = (target_addr + len + 0xFFF) & !0xFFF;
-        let pages = (end_page - start_page) / 4096;
-
-        for i in 0..pages {
-            let virt = start_page + (i * 4096);
-            if let Some(phys) = pmm::allocate_frame(pid) {
-                let flags = paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER;
-                unsafe {
-                    vmm::map_page(virt, PhysAddr::new(phys), flags, None);
-                }
-            } else {
-                context.rax = u64::MAX;
-                return;
-            }
+            context.rax = u64::MAX;
+            return;
         }
-
-        context.rax = target_addr;
     } else {
-        context.rax = u64::MAX;
+        // Check if within SAS slot
+        use crate::memory::address_space::LINEAR_MEMORY_SLOT_SIZE;
+        if addr < mem_base || addr + len > mem_base + LINEAR_MEMORY_SLOT_SIZE {
+            crate::debugln!("[MMAP] REJECTED: out of SAS bounds addr={:#x} mem_base={:#x} slot_size={:#x}", addr, mem_base, LINEAR_MEMORY_SLOT_SIZE);
+            context.rax = u64::MAX;
+            return;
+        }
+        addr
+    };
+
+    let start_page = target_addr & !0xFFF;
+    let end_page = (target_addr + len + 0xFFF) & !0xFFF;
+    let pages = (end_page - start_page) / 4096;
+
+    crate::debugln!("[MMAP] Mapping {} pages at {:#x}..{:#x}", pages, start_page, end_page);
+
+    for i in 0..pages {
+        let virt = start_page + (i * 4096);
+        if let Some(phys) = pmm::allocate_frame(pid) {
+            let flags = paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER;
+            unsafe {
+                vmm::map_page(virt, PhysAddr::new(phys), flags, None);
+            }
+        } else {
+            crate::debugln!("[MMAP] FAILED: OOM at page {}", i);
+            context.rax = u64::MAX;
+            return;
+        }
     }
+
+    crate::debugln!("[MMAP] OK: mapped at {:#x}", target_addr);
+    context.rax = target_addr;
 }
 
 pub fn handle_munmap(context: &mut CPUState) {
@@ -138,10 +169,65 @@ pub fn handle_shm_get(context: &mut CPUState) {
     let size = context.rdx as u64;
 
     let name = crate::interrupts::syscalls::fs::copy_string_from_user(name_ptr, name_len);
+    crate::debugln!("[Syscall] SHM_GET: name='{}', size={}", name, size);
 
     let mut shm = crate::memory::shm::GLOBAL_SHM.lock();
     match shm.get_or_create(&name, size) {
-        Ok(addr) => context.rax = addr,
-        Err(_) => context.rax = u64::MAX,
+        Ok(addr) => {
+            crate::debugln!("[Syscall] SHM_GET: Found/Created '{}' at {:#x}", name, addr);
+            context.rax = addr;
+        }
+        Err(e) => {
+            crate::debugln!("[Syscall] SHM_GET: FAILED for '{}': {}", name, e);
+            context.rax = u64::MAX;
+        }
+    }
+}
+
+pub fn handle_shm_map(context: &mut CPUState) {
+    let name_ptr = context.rdi as *const u8;
+    let name_len = context.rsi as usize;
+    let target_addr = context.rdx as u64;
+
+    let name = crate::interrupts::syscalls::fs::copy_string_from_user(name_ptr, name_len);
+    crate::debugln!("[Syscall] SHM_MAP: name='{}', target_addr={:#x}", name, target_addr);
+
+    // Get current process info first, before taking SHM lock
+    let (pid, mem_base) = {
+        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        if let Some(current) = tm.current_task_idx() {
+            if let Some(thread) = tm.tasks[current].as_ref() {
+                let proc = thread.process.as_ref().expect("Thread has no process");
+                (proc.pid, proc.linear_memory_base)
+            } else {
+                context.rax = u64::MAX;
+                return;
+            }
+        } else {
+            context.rax = u64::MAX;
+            return;
+        }
+    };
+
+    let shm = crate::memory::shm::GLOBAL_SHM.lock();
+    if let Some(seg) = shm.get(&name) {
+        // Bounds check
+        use crate::memory::address_space::LINEAR_MEMORY_SLOT_SIZE;
+        if target_addr < mem_base || target_addr + seg.size > mem_base + LINEAR_MEMORY_SLOT_SIZE {
+            context.rax = u64::MAX;
+            return;
+        }
+
+        let page_count = seg.frames.len();
+        for i in 0..page_count {
+            let phys = seg.frames[i];
+            let flags = paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER;
+            unsafe {
+                vmm::map_page(target_addr + (i as u64 * 4096), PhysAddr::new(phys), flags, None);
+            }
+        }
+        context.rax = 0;
+    } else {
+        context.rax = u64::MAX;
     }
 }

@@ -8,7 +8,7 @@ std = { path = "../../std", default-features = false }
 
 [features]
 default = ["userland"]
-userland = ["std/userland"]
+userland = ["std/userland", "std/global_allocator"]
 
 [lib]
 crate-type = ["staticlib", "rlib"]

@@ -17,6 +17,7 @@ impl<T> RwSpinLock<T> {
     }
     pub fn read(&self) -> ReadLockGuard<'_, T> {
         let mut s = self.state.load(Ordering::Relaxed);
+        let mut count = 0;
         loop {
             if s % 2 == 0 && s < u32::MAX - 2 {
                 match self.state.compare_exchange_weak(
@@ -33,10 +34,15 @@ impl<T> RwSpinLock<T> {
                 hint::spin_loop();
                 s = self.state.load(Ordering::Relaxed);
             }
+            count += 1;
+            if count == 10000000 {
+                crate::os::debug_print("[std] RwSpinLock: Possible DEADLOCK in read()\n");
+            }
         }
     }
     pub fn write(&self) -> WriteLockGuard<'_, T> {
         let mut s = self.state.load(Ordering::Relaxed);
+        let mut count = 0;
         loop {
             if s <= 1 {
                 match self
@@ -55,7 +61,7 @@ impl<T> RwSpinLock<T> {
                     .state
                     .compare_exchange(s, s + 1, Ordering::Relaxed, Ordering::Relaxed)
                 {
-                    Ok(_) => {}
+                    Ok(_) => s += 1,
                     Err(updated_s) => {
                         s = updated_s;
                         continue;
@@ -64,6 +70,10 @@ impl<T> RwSpinLock<T> {
             }
             hint::spin_loop();
             s = self.state.load(Ordering::Relaxed);
+            count += 1;
+            if count == 10000000 {
+                crate::os::debug_print("[std] RwSpinLock: Possible DEADLOCK in write()\n");
+            }
         }
     }
 }

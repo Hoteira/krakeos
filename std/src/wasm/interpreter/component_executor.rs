@@ -229,7 +229,7 @@ fn instantiate_component_internal<'a, T: Config>(
                                     let func_idx = validation_info.imports_length.imported_functions + i;
                                     let func_addr = store.modules.get(outcome.module_addr).func_addrs[func_idx];
                                     if let crate::wasm::interpreter::store::instances::FuncInst::WasmFunc(wasm_func) = store.functions.get_mut(func_addr) {
-                                        wasm_func.aot_ptr = Some(unsafe { aot_module.code_ptr.add(*offset) as usize });
+                                        wasm_func.aot_ptr = Some(unsafe { aot_module.code.as_ptr().add(*offset) as usize });
                                     }
                                 }
                                 store.aot_modules.push(aot_module);
@@ -400,7 +400,7 @@ fn instantiate_component_internal<'a, T: Config>(
                                     let func_idx = validation_info.imports_length.imported_functions + i;
                                     let func_addr = store.modules.get(outcome.module_addr).func_addrs[func_idx];
                                     if let crate::wasm::interpreter::store::instances::FuncInst::WasmFunc(wasm_func) = store.functions.get_mut(func_addr) {
-                                        wasm_func.aot_ptr = Some(unsafe { aot_module.code_ptr.add(*offset) as usize });
+                                        wasm_func.aot_ptr = Some(unsafe { aot_module.code.as_ptr().add(*offset) as usize });
                                     }
                                 }
                                 store.aot_modules.push(aot_module);

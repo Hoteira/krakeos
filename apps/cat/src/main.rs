@@ -1,5 +1,4 @@
 #![no_std]
-#![no_main]
 
 extern crate alloc;
 use std::fs::File;
@@ -13,11 +12,11 @@ fn sanitize_buffer(buf: &mut [u8]) {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn main(argc: i32, argv: *const *const u8) -> i32 {
+pub fn main() {
     let mut buf = [0u8; 4096];
+    let args: alloc::vec::Vec<alloc::string::String> = std::env::args().collect();
 
-    if argc <= 1 {
+    if args.len() <= 1 {
         // No arguments, read from stdin
         loop {
             let n = std::os::file_read(0, &mut buf);
@@ -27,11 +26,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8) -> i32 {
         }
     } else {
         // Read from files
-        for i in 1..argc {
-            let arg_ptr = unsafe { *argv.add(i as usize) };
-            let c_str = unsafe { core::ffi::CStr::from_ptr(arg_ptr as *const i8) };
-            let path = c_str.to_string_lossy();
-
+        for path in &args[1..] {
             // Handle "-" as stdin
             if path == "-" {
                 loop {
@@ -43,7 +38,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8) -> i32 {
                 continue;
             }
 
-            match File::open(&path) {
+            match File::open(path) {
                 Ok(mut file) => {
                     loop {
                         match file.read(&mut buf) {
@@ -63,6 +58,4 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8) -> i32 {
             }
         }
     }
-
-    0
 }

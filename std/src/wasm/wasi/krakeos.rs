@@ -23,7 +23,7 @@ pub struct KrakeosWasiEnv {
     pub env_vars: Vec<(String, String)>,
 }
 
-pub trait WasiFile {
+pub trait WasiFile: Send {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, i32>;
     fn write(&mut self, buf: &[u8]) -> Result<usize, i32>;
     fn seek(&mut self, pos: crate::io::SeekFrom) -> Result<u64, i32>;
@@ -257,11 +257,11 @@ impl KrakeosWasiEnv {
 }
 
 // Helper trait to allow downcasting
-pub trait WasiFileAny: WasiFile + core::any::Any {
+pub trait WasiFileAny: WasiFile + core::any::Any + Send {
     fn as_any(&self) -> &dyn core::any::Any;
     fn as_any_mut(&mut self) -> &mut dyn core::any::Any;
 }
-impl<T: WasiFile + core::any::Any> WasiFileAny for T {
+impl<T: WasiFile + core::any::Any + Send> WasiFileAny for T {
     fn as_any(&self) -> &dyn core::any::Any {
         self
     }
@@ -874,7 +874,33 @@ impl WasiEnv for KrakeosWasiEnv {
     }
 
     fn random_get(&mut self, buf: &mut [u8]) -> Result<(), i32> {
-        // Pseudo-random
+        #[cfg(target_arch = "x86_64")]
+        {
+            let mut i = 0;
+            while i + 8 <= buf.len() {
+                let mut val = 0u64;
+                if unsafe { core::arch::x86_64::_rdrand64_step(&mut val) } == 1 {
+                    buf[i..i + 8].copy_from_slice(&val.to_le_bytes());
+                    i += 8;
+                } else {
+                    break;
+                }
+            }
+            while i < buf.len() {
+                let mut val = 0u32;
+                if unsafe { core::arch::x86_64::_rdrand32_step(&mut val) } == 1 {
+                    buf[i] = val as u8;
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            if i == buf.len() {
+                return Ok(());
+            }
+        }
+
+        // Fallback or wasm32-hosted execution
         for b in buf.iter_mut() {
             self.random_state = self
                 .random_state

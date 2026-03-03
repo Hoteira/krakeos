@@ -6,4 +6,8 @@ edition = "2024"
 [dependencies]
 std = { path = "../std", default-features = false }
 
-elfic = { path = "../elfic" }
+elfic = { path = "../elfic", optional = true }
+
+[features]
+default = ["elf_support"]
+elf_support = ["dep:elfic"]

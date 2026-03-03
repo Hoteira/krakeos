@@ -1,11 +1,11 @@
 #![no_std]
-#![no_main]
 
 extern crate alloc;
+
 use alloc::format;
-use alloc::string::String;
 use alloc::vec::Vec;
 use std::fs;
+use alloc::string::String;
 
 const STDIN_FD: usize = 0;
 const STDOUT_FD: usize = 1;
@@ -108,8 +108,7 @@ impl AppState {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn main() -> i32 {
+pub fn main() {
     let mut app = AppState::new("@0xE0");
     let mut needs_redraw = true;
 

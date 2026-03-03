@@ -31,28 +31,20 @@ fn update_term_size(win: &Window) {
                 let cols = (width / char_width) as u16;
                 let rows = ((height / line_height) as u16).saturating_sub(2);
 
-                let ws = std::os::WinSize {
-                    ws_row: rows,
-                    ws_col: cols,
-                    ws_xpixel: 0,
-                    ws_ypixel: 0,
-                };
-
-                std::os::ioctl(0, std::os::TIOCSWINSZ, &ws as *const _ as u64);
+                // Use the typed WASI wrapper from Step 22
+                let _ = std::os::krakeos::terminal_set_window_size(0, rows, cols);
             }
         }
     }
 }
 
-fn main() {
+pub fn main() {
     let width = 800;
     let height = 400;
-
 
     let font_size = 14.0f32;
     let char_w = (font_size * 0.7) as usize;
     let line_h = (font_size * 1.3) as usize;
-
 
     let avail_w = (width - width * 4 / 100) as f32;
     let avail_h = (height - height * 5 / 100) as f32;
@@ -62,13 +54,8 @@ fn main() {
         let rows = (avail_h / line_h as f32) as u16;
         let rows = rows.saturating_sub(2);
 
-        let ws = std::os::WinSize {
-            ws_row: rows,
-            ws_col: cols,
-            ws_xpixel: 0,
-            ws_ypixel: 0,
-        };
-        std::os::ioctl(0, std::os::TIOCSWINSZ, &ws as *const _ as u64);
+        // Use the typed WASI wrapper from Step 22
+        let _ = std::os::krakeos::terminal_set_window_size(0, rows, cols);
     }
 
     let screen_w = std::os::graphics::get_screen_width();
@@ -82,16 +69,14 @@ fn main() {
 
     {
         if let Ok(mut file) = File::open("@0xE0/sys/fonts/CaskaydiaNerd.ttf") {
-            let size = file.size();
-            let buffer_addr = std::memory::malloc(size);
-            let buffer = unsafe { core::slice::from_raw_parts_mut(buffer_addr as *mut u8, size) };
-            if file.read(buffer).is_ok() {
-                let static_buf = unsafe { core::slice::from_raw_parts(buffer_addr as *const u8, size) };
+            let mut buffer = Vec::new();
+            if file.read_to_end(&mut buffer).is_ok() {
+                // Leak the buffer to get a 'static reference for inkui
+                let static_buf = Vec::leak(buffer);
                 win.load_font(static_buf);
             }
         }
     }
-
 
     let mut fds_out = [0i32; 2];
     std::os::pipe(&mut fds_out);
@@ -101,18 +86,19 @@ fn main() {
     std::os::pipe(&mut fds_in);
     unsafe { TERM_WRITE_FD = fds_in[1] as usize; }
 
-    let fds_map: [(u8, u8); 3] = [
-        (0, fds_in[0] as u8),
-        (1, fds_out[1] as u8),
-        (2, fds_out[1] as u8),
-    ];
-
-    std::os::spawn_with_fds("@0xE0/sys/bin/shell.elf", &[], &fds_map);
-
-
-    // std::os::file_close(fds_in[0] as usize);
-    // std::os::file_close(fds_out[1] as usize);
-
+    // Per Step 27 decision: use containers (plant-from-path)
+    // We plant the shell as a child container.
+    // Note: container_plant_from_path currently doesn't take FD maps in its WASI host signature,
+    // but the system design implies child inherits context or we use the global registry.
+    // In KrakeOS SAS, child linear memory is mapped into parent.
+    match std::os::container_plant_from_path("@0xE0/sys/bin/shell.wasm", 0, 0) {
+        Ok(id) => {
+            std::debugln!("[term] Spawned shell container ID: {}", id);
+        }
+        Err(e) => {
+            std::debugln!("[term] Failed to spawn shell container: {}", e);
+        }
+    }
 
     let mut root = Widget::frame(1)
         .width(Size::Relative(100))
@@ -159,7 +145,6 @@ fn main() {
                             for _ in 0..e.repeat {
                                 let mut buf = [0u8; 4];
                                 let s = c.encode_utf8(&mut buf);
-                                // std::debugln!("[term] Key press: {:?}", c);
                                 std::os::file_write(unsafe { TERM_WRITE_FD }, s.as_bytes());
                             }
                         } else {
@@ -168,9 +153,6 @@ fn main() {
                                 0x110004 => Some("\x1B[B"),
                                 0x110002 => Some("\x1B[C"),
                                 0x110001 => Some("\x1B[D"),
-                                0x110007 => None,
-                                0x110005 => None,
-                                0x110006 => None,
                                 _ => None,
                             };
                             if let Some(s) = seq {
@@ -198,233 +180,226 @@ fn main() {
             }
         }
 
-        // Non-blocking read
-        let n = unsafe {
-            std::os::syscall(0, unsafe { TERM_READ_FD } as u64, pipe_buf.as_mut_ptr() as u64, pipe_buf.len() as u64) as usize
-        };
+        // Use safe wrapper instead of direct syscall
+        let n = std::os::file_read(unsafe { TERM_READ_FD }, &mut pipe_buf);
         
-        if n != usize::MAX && n != usize::MAX - 1 {
-                        if n > 0 {
-                            // std::debugln!("[term] read {} bytes from shell", n);
-                            did_work = true;
-                            term_buffer.input_buffer.extend_from_slice(&pipe_buf[..n]);
-            
-                            let mut consumed = 0;
-                            loop {
-                                let (action, bytes_to_consume) = {
-                                    let bytes = &term_buffer.input_buffer[consumed..];
-                                    if bytes.is_empty() {
-                                        (None, 0)
-                                    } else {
-                                        let b = bytes[0];
-                                        if b == 0x08 {
-                                            (Some(TermAction::Backspace), 1)
-                                        } else if b == b'\r' {
-                                            (Some(TermAction::CarriageReturn), 1)
-                                        } else if b == b'\n' {
-                                            (Some(TermAction::Newline), 1)
-                                        } else if b == 0x1B {
-                                            if bytes.len() < 2 {
-                                                (None, 0)
-                                            } else if bytes[1] == b'[' {
-                                                let mut j = 2;
-                                                let mut end_found = false;
-                                                while j < bytes.len() {
-                                                    let c = bytes[j];
-                                                    if c >= 0x40 && c <= 0x7E {
-                                                        end_found = true;
-                                                        break;
-                                                    }
-                                                    j += 1;
-                                                }
-                                                if end_found {
-                                                    let cmd = bytes[j];
-                                                    let seq = &bytes[2..j];
-                                                    let seq_str = unsafe { core::str::from_utf8_unchecked(seq) }.to_string();
-                                                    (Some(TermAction::Csi(cmd, seq_str)), j + 1)
-                                                } else if bytes.len() > 64 {
-                                                    (None, 1)
-                                                } else {
-                                                    (None, 0)
-                                                }
-                                            } else {
-                                                (None, 1)
-                                            }
-                                        } else {
-                                            let mut len = 1;
-                                            if (b & 0xE0) == 0xC0 { len = 2; } else if (b & 0xF0) == 0xE0 { len = 3; } else if (b & 0xF8) == 0xF0 { len = 4; }
-                                            if bytes.len() >= len {
-                                                if let Ok(s) = core::str::from_utf8(&bytes[..len]) {
-                                                    (Some(TermAction::Text(s.to_string())), len)
-                                                } else {
-                                                    (None, 1)
-                                                }
-                                            } else {
-                                                (None, 0)
-                                            }
-                                        }
+        if n > 0 {
+            did_work = true;
+            term_buffer.input_buffer.extend_from_slice(&pipe_buf[..n]);
+
+            let mut consumed = 0;
+            loop {
+                let (action, bytes_to_consume) = {
+                    let bytes = &term_buffer.input_buffer[consumed..];
+                    if bytes.is_empty() {
+                        (None, 0)
+                    } else {
+                        let b = bytes[0];
+                        if b == 0x08 {
+                            (Some(TermAction::Backspace), 1)
+                        } else if b == b'\r' {
+                            (Some(TermAction::CarriageReturn), 1)
+                        } else if b == b'\n' {
+                            (Some(TermAction::Newline), 1)
+                        } else if b == 0x1B {
+                            if bytes.len() < 2 {
+                                (None, 0)
+                            } else if bytes[1] == b'[' {
+                                let mut j = 2;
+                                let mut end_found = false;
+                                while j < bytes.len() {
+                                    let c = bytes[j];
+                                    if c >= 0x40 && c <= 0x7E {
+                                        end_found = true;
+                                        break;
                                     }
-                                };
-            
-                                if bytes_to_consume == 0 { break; }
-            
-                                match action {
-                                    Some(TermAction::Backspace) => term_buffer.backspace(),
-                                    Some(TermAction::CarriageReturn) => term_buffer.cursor_col = 0,
-                                    Some(TermAction::Newline) => term_buffer.newline(),
-                                    Some(TermAction::Csi(cmd, seq)) => {
-                                        match cmd {
-                                            b'A' => {
-                                                let n = if seq.is_empty() { 1 } else { seq.parse::<usize>().unwrap_or(1) };
-                                                term_buffer.cursor_row = term_buffer.cursor_row.saturating_sub(n);
-                                            }
-                                            b'B' => {
-                                                let n = if seq.is_empty() { 1 } else { seq.parse::<usize>().unwrap_or(1) };
-                                                term_buffer.cursor_row += n;
-                                            }
-                                            b'C' => {
-                                                let n = if seq.is_empty() { 1 } else { seq.parse::<usize>().unwrap_or(1) };
-                                                term_buffer.cursor_col += n;
-                                            }
-                                            b'D' => {
-                                                let n = if seq.is_empty() { 1 } else { seq.parse::<usize>().unwrap_or(1) };
-                                                term_buffer.cursor_col = term_buffer.cursor_col.saturating_sub(n);
-                                            }
-                                            b'G' => {
-                                                let n = if seq.is_empty() { 1 } else { seq.parse::<usize>().unwrap_or(1) };
-                                                term_buffer.cursor_col = n.saturating_sub(1);
-                                            }
-                                            b'J' => {
-                                                if seq == "2" {
-                                                    term_buffer.clear();
-                                                }
-                                            }
-                                            b'H' => {
-                                                if seq.is_empty() {
-                                                    term_buffer.cursor_row = 0;
-                                                    term_buffer.cursor_col = 0;
-                                                } else {
-                                                    let parts: Vec<&str> = seq.split(';').collect();
-                                                    if parts.len() >= 2 {
-                                                        if let Ok(r) = parts[0].parse::<usize>() {
-                                                            term_buffer.cursor_row = r.saturating_sub(1);
-                                                        }
-                                                        if let Ok(c) = parts[1].parse::<usize>() {
-                                                            term_buffer.cursor_col = c.saturating_sub(1);
-                                                        }
-                                                    } else if !parts.is_empty() {
-                                                        if let Ok(r) = parts[0].parse::<usize>() {
-                                                            term_buffer.cursor_row = r.saturating_sub(1);
-                                                        }
-                                                        term_buffer.cursor_col = 0;
-                                                    }
-                                                }
-                                            }
-                                            b'd' => {
-                                                let n = if seq.is_empty() { 1 } else { seq.parse::<usize>().unwrap_or(1) };
-                                                term_buffer.cursor_row = n.saturating_sub(1);
-                                            }
-                                            b'K' => {
-                                                if seq == "1" {
-                                                    let current = if term_buffer.is_alt { &mut term_buffer.alt_lines } else { &mut term_buffer.lines };
-                                                    if term_buffer.cursor_row < current.len() {
-                                                        for i in 0..core::cmp::min(term_buffer.cursor_col + 1, current[term_buffer.cursor_row].len()) {
-                                                            current[term_buffer.cursor_row][i] = Cell::default();
-                                                        }
-                                                    }
-                                                } else if seq == "2" {
-                                                    let current = if term_buffer.is_alt { &mut term_buffer.alt_lines } else { &mut term_buffer.lines };
-                                                    if term_buffer.cursor_row < current.len() {
-                                                        current[term_buffer.cursor_row].clear();
-                                                    }
-                                                } else {
-                                                    term_buffer.clear_line();
-                                                }
-                                            }
-                                            b'm' => {
-                                                term_buffer.handle_sgr(&seq);
-                                            }
-                                            b'h' => {
-                                                if seq.starts_with('?') {
-                                                    let param = &seq[1..];
-                                                    if param == "25" {
-                                                        term_buffer.cursor_visible = true;
-                                                    } else if param == "1049" {
-                                                        term_buffer.switch_screen(true);
-                                                    }
-                                                }
-                                            }
-                                            b'l' => {
-                                                if seq.starts_with('?') {
-                                                    let param = &seq[1..];
-                                                    if param == "25" {
-                                                        term_buffer.cursor_visible = false;
-                                                    } else if param == "1049" {
-                                                        term_buffer.switch_screen(false);
-                                                    }
-                                                }
-                                            }
-                                            b't' => {
-                                                // Disabled to prevent blocking writes if shell is not reading
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-                                    Some(TermAction::Text(s)) => {
-                                        term_buffer.write_str(&s);
-                                    }
-                                    None => {}
+                                    j += 1;
                                 }
-                                consumed += bytes_to_consume;
-                            }
-                            term_buffer.input_buffer.drain(..consumed);
-            
-                            if let Some(widget) = win.find_widget_by_id_mut(2) {
-                                if let inkui::widget::Widget::Label { text, geometry, .. } = widget {
-                                    text.text = term_buffer.render();
-            
-                                    if term_buffer.is_alt {
-                                        geometry.scroll_offset_y = 0;
-                                    } else {
-                                        let padding = 10;
-                                        let width = geometry.width.saturating_sub(padding * 2);
-                                        let height = geometry.height.saturating_sub(padding * 2);
-            
-                                        if width > 0 {
-                                            let char_width = (text.size as f32 * 0.65) as usize;
-                                            if char_width > 0 {
-                                                let chars_per_line = width / char_width;
-                                                let mut visual_lines = 0;
-            
-                                                let current_lines = if term_buffer.is_alt { &term_buffer.alt_lines } else { &term_buffer.lines };
-                                                for line in current_lines {
-                                                    let len = line.len();
-                                                    if len == 0 {
-                                                        visual_lines += 1;
-                                                    } else {
-                                                        visual_lines += (len + chars_per_line - 1) / chars_per_line;
-                                                    }
-                                                }
-            
-                                                let line_height = (text.size as f32 * 1.2) as usize;
-                                                let content_height = (visual_lines * line_height).saturating_add(20);
-                                                
-                                                let max_scroll = content_height.saturating_sub(height);
-                                                let is_at_bottom = geometry.scroll_offset_y >= max_scroll.saturating_sub(100);
-                                                
-                                                if is_at_bottom || (geometry.scroll_offset_y == 0 && content_height > height) {
-                                                    geometry.scroll_offset_y = max_scroll;
-                                                }
-                                                
-                                                geometry.content_height = content_height;
-                                            }
-                                        }
-                                    }
+                                if end_found {
+                                    let cmd = bytes[j];
+                                    let seq = &bytes[2..j];
+                                    let seq_str = unsafe { core::str::from_utf8_unchecked(seq) }.to_string();
+                                    (Some(TermAction::Csi(cmd, seq_str)), j + 1)
+                                } else if bytes.len() > 64 {
+                                    (None, 1)
+                                } else {
+                                    (None, 0)
                                 }
+                            } else {
+                                (None, 1)
                             }
-                            needs_redraw = true;
+                        } else {
+                            let mut len = 1;
+                            if (b & 0xE0) == 0xC0 { len = 2; } else if (b & 0xF0) == 0xE0 { len = 3; } else if (b & 0xF8) == 0xF0 { len = 4; }
+                            if bytes.len() >= len {
+                                if let Ok(s) = core::str::from_utf8(&bytes[..len]) {
+                                    (Some(TermAction::Text(s.to_string())), len)
+                                } else {
+                                    (None, 1)
+                                }
+                            } else {
+                                (None, 0)
+                            }
                         }
                     }
+                };
+
+                if bytes_to_consume == 0 { break; }
+
+                match action {
+                    Some(TermAction::Backspace) => term_buffer.backspace(),
+                    Some(TermAction::CarriageReturn) => term_buffer.cursor_col = 0,
+                    Some(TermAction::Newline) => term_buffer.newline(),
+                    Some(TermAction::Csi(cmd, seq)) => {
+                        match cmd {
+                            b'A' => {
+                                let n = if seq.is_empty() { 1 } else { seq.parse::<usize>().unwrap_or(1) };
+                                term_buffer.cursor_row = term_buffer.cursor_row.saturating_sub(n);
+                            }
+                            b'B' => {
+                                let n = if seq.is_empty() { 1 } else { seq.parse::<usize>().unwrap_or(1) };
+                                term_buffer.cursor_row += n;
+                            }
+                            b'C' => {
+                                let n = if seq.is_empty() { 1 } else { seq.parse::<usize>().unwrap_or(1) };
+                                term_buffer.cursor_col += n;
+                            }
+                            b'D' => {
+                                let n = if seq.is_empty() { 1 } else { seq.parse::<usize>().unwrap_or(1) };
+                                term_buffer.cursor_col = term_buffer.cursor_col.saturating_sub(n);
+                            }
+                            b'G' => {
+                                let n = if seq.is_empty() { 1 } else { seq.parse::<usize>().unwrap_or(1) };
+                                term_buffer.cursor_col = n.saturating_sub(1);
+                            }
+                            b'J' => {
+                                if seq == "2" {
+                                    term_buffer.clear();
+                                }
+                            }
+                            b'H' => {
+                                if seq.is_empty() {
+                                    term_buffer.cursor_row = 0;
+                                    term_buffer.cursor_col = 0;
+                                } else {
+                                    let parts: Vec<&str> = seq.split(';').collect();
+                                    if parts.len() >= 2 {
+                                        if let Ok(r) = parts[0].parse::<usize>() {
+                                            term_buffer.cursor_row = r.saturating_sub(1);
+                                        }
+                                        if let Ok(c) = parts[1].parse::<usize>() {
+                                            term_buffer.cursor_col = c.saturating_sub(1);
+                                        }
+                                    } else if !parts.is_empty() {
+                                        if let Ok(r) = parts[0].parse::<usize>() {
+                                            term_buffer.cursor_row = r.saturating_sub(1);
+                                        }
+                                        term_buffer.cursor_col = 0;
+                                    }
+                                }
+                            }
+                            b'd' => {
+                                let n = if seq.is_empty() { 1 } else { seq.parse::<usize>().unwrap_or(1) };
+                                term_buffer.cursor_row = n.saturating_sub(1);
+                            }
+                            b'K' => {
+                                if seq == "1" {
+                                    let current = if term_buffer.is_alt { &mut term_buffer.alt_lines } else { &mut term_buffer.lines };
+                                    if term_buffer.cursor_row < current.len() {
+                                        for i in 0..core::cmp::min(term_buffer.cursor_col + 1, current[term_buffer.cursor_row].len()) {
+                                            current[term_buffer.cursor_row][i] = Cell::default();
+                                        }
+                                    }
+                                } else if seq == "2" {
+                                    let current = if term_buffer.is_alt { &mut term_buffer.alt_lines } else { &mut term_buffer.lines };
+                                    if term_buffer.cursor_row < current.len() {
+                                        current[term_buffer.cursor_row].clear();
+                                    }
+                                } else {
+                                    term_buffer.clear_line();
+                                }
+                            }
+                            b'm' => {
+                                term_buffer.handle_sgr(&seq);
+                            }
+                            b'h' => {
+                                if seq.starts_with('?') {
+                                    let param = &seq[1..];
+                                    if param == "25" {
+                                        term_buffer.cursor_visible = true;
+                                    } else if param == "1049" {
+                                        term_buffer.switch_screen(true);
+                                    }
+                                }
+                            }
+                            b'l' => {
+                                if seq.starts_with('?') {
+                                    let param = &seq[1..];
+                                    if param == "25" {
+                                        term_buffer.cursor_visible = false;
+                                    } else if param == "1049" {
+                                        term_buffer.switch_screen(false);
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    Some(TermAction::Text(s)) => {
+                        term_buffer.write_str(&s);
+                    }
+                    None => {}
+                }
+                consumed += bytes_to_consume;
+            }
+            term_buffer.input_buffer.drain(..consumed);
+
+            if let Some(widget) = win.find_widget_by_id_mut(2) {
+                if let inkui::widget::Widget::Label { text, geometry, .. } = widget {
+                    text.text = term_buffer.render();
+
+                    if term_buffer.is_alt {
+                        geometry.scroll_offset_y = 0;
+                    } else {
+                        let padding = 10;
+                        let width = geometry.width.saturating_sub(padding * 2);
+                        let height = geometry.height.saturating_sub(padding * 2);
+
+                        if width > 0 {
+                            let char_width = (text.size as f32 * 0.65) as usize;
+                            if char_width > 0 {
+                                let chars_per_line = width / char_width;
+                                let mut visual_lines = 0;
+
+                                let current_lines = if term_buffer.is_alt { &term_buffer.alt_lines } else { &term_buffer.lines };
+                                for line in current_lines {
+                                    let len = line.len();
+                                    if len == 0 {
+                                        visual_lines += 1;
+                                    } else {
+                                        visual_lines += (len + chars_per_line - 1) / chars_per_line;
+                                    }
+                                }
+
+                                let line_height = (text.size as f32 * 1.2) as usize;
+                                let content_height = (visual_lines * line_height).saturating_add(20);
+                                
+                                let max_scroll = content_height.saturating_sub(height);
+                                let is_at_bottom = geometry.scroll_offset_y >= max_scroll.saturating_sub(100);
+                                
+                                if is_at_bottom || (geometry.scroll_offset_y == 0 && content_height > height) {
+                                    geometry.scroll_offset_y = max_scroll;
+                                }
+                                
+                                geometry.content_height = content_height;
+                            }
+                        }
+                    }
+                }
+            }
+            needs_redraw = true;
+        }
+
         if needs_redraw {
             win.draw();
             win.update();

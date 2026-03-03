@@ -71,6 +71,7 @@ pub const SYS_GET_PROCESS_LIST: u64 = 110;
 pub const SYS_GET_PROCESS_MEM: u64 = 111;
 pub const SYS_SHM_GET: u64 = 120;
 pub const SYS_MMAP_FILE: u64 = 121;
+pub const SYS_SHM_MAP: u64 = 122;
 pub const SYS_YIELD: u64 = 129;
 
 pub const SYS_FTRUNCATE: u64 = 77;
@@ -90,6 +91,7 @@ pub const SYS_SET_NONBLOCK: u64 = 133;
 pub const SYS_GET_TOTAL_MEM: u64 = 134;
 pub const SYS_GET_USED_MEM: u64 = 135;
 pub const SYS_GET_VMA_DUMP: u64 = 136;
+pub const SYS_GET_SLOT_INFO: u64 = 137;
 
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
@@ -153,7 +155,33 @@ pub extern "C" fn syscall_entry() {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
+pub extern "C" fn syscall_dispatcher(
+    num: u64,
+    arg1: u64,
+    arg2: u64,
+    arg3: u64,
+    arg4: u64,
+    arg5: u64,
+    arg6: u64,
+) -> u64 {
+    let mut fake_context = CPUState {
+        rax: num,
+        rdi: arg1,
+        rsi: arg2,
+        rdx: arg3,
+        r10: arg4,
+        r8: arg5,
+        r9: arg6,
+        rbp: 0, rbx: 0, r12: 0, r13: 0, r14: 0, r15: 0,
+        rip: 0, cs: 0, rflags: 0, rsp: 0, ss: 0,
+        r11: 0, rcx: 0,
+    };
+
+    dispatch_syscall(&mut fake_context);
+    fake_context.rax
+}
+
+pub fn dispatch_syscall(context: &mut CPUState) {
     let syscall_num = context.rax;
 
     context.rax = 0;
@@ -218,6 +246,7 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
         SYS_GET_PROCESS_MEM => memory::handle_get_process_mem(context),
         SYS_SHM_GET => memory::handle_shm_get(context),
         SYS_MMAP_FILE => fs::handle_mmap_file(context),
+        SYS_SHM_MAP => memory::handle_shm_map(context),
         SYS_FTRUNCATE => fs::handle_ftruncate(context),
 
         SYS_SPAWN_THREAD => process::handle_spawn_thread(context),
@@ -235,6 +264,7 @@ pub extern "C" fn syscall_dispatcher(context: &mut CPUState) {
         SYS_GET_TOTAL_MEM => misc::handle_get_total_mem(context),
         SYS_GET_USED_MEM => misc::handle_get_used_mem(context),
         SYS_GET_VMA_DUMP => misc::handle_get_vma_dump(context),
+        SYS_GET_SLOT_INFO => process::handle_get_slot_info(context),
         SYS_YIELD => {
             // No-op here, the dispatcher will return and the naked_asm will handle iretq.
             // Cooperative yielding is handled by the int 0x81 which actually switches.

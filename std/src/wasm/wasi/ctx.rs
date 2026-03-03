@@ -3,6 +3,7 @@ use crate::alloc::boxed::Box;
 use crate::alloc::collections::BTreeMap;
 use crate::alloc::string::String;
 use crate::alloc::vec::Vec;
+use crate::alloc::sync::Arc;
 
 pub struct WasiCtx {
     pub resource_table: BTreeMap<i32, WasiResource>,
@@ -43,12 +44,12 @@ impl Default for WasiCtx {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum WasiResource {
     InputStream(InputStreamSource),
     OutputStream(OutputStreamSource),
     Pollable(PollableTarget),
-    File(crate::fs::File),
+    File(Arc<crate::fs::File>),
     Directory(String),
     Descriptor(i32),
     DirStream {

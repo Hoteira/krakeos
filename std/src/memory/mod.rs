@@ -38,5 +38,5 @@ pub fn shm_get(name: &str, size: u64) -> Option<u64> {
     let res = unsafe {
         crate::os::krakeos::shm_get_raw(name.as_ptr(), name.len(), size as usize)
     };
-    if res == 0 || res == u64::MAX { None } else { Some(res) }
+    if res == u64::MAX { None } else { Some(res) }
 }

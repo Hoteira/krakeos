@@ -24,6 +24,9 @@ pub enum LinearMemoryStorage {
     }
 }
 
+unsafe impl Send for LinearMemoryStorage {}
+unsafe impl Sync for LinearMemoryStorage {}
+
 pub struct LinearMemory<const PAGE_SIZE: usize = { Limits::MEM_PAGE_SIZE as usize }> {
     storage: RwSpinLock<LinearMemoryStorage>,
 }
@@ -50,6 +53,7 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
 
     pub fn new_sas(base_addr: u64, pages: PageCountTy) -> Self {
         let size_bytes = Self::PAGE_SIZE * pages as usize;
+        crate::debugln!("[std] LinearMemory: new_sas base={:#x} size={} ({} pages)", base_addr, size_bytes, pages);
         // Map the SAS pages immediately
         unsafe {
             // syscall 9 = MMAP(addr, len, prot, flags, fd, offset)
@@ -66,6 +70,7 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
     }
 
     pub fn new_view(container_id: u64, base_ptr: *mut u8, pages: PageCountTy, max_pages: PageCountTy) -> Self {
+        crate::debugln!("[std] LinearMemory: new_view base={:p} pages={} max_pages={}", base_ptr, pages, max_pages);
         Self {
             storage: RwSpinLock::new(LinearMemoryStorage::Nested {
                 container_id,
@@ -95,8 +100,10 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
                 let old_size = *current_pages as usize * Self::PAGE_SIZE;
                 let add_size = pages_to_add as usize * Self::PAGE_SIZE;
                 
+                let target_addr = (unsafe { *base as usize } + old_size) as u64;
+                crate::os::debug_print("[std] LinearMemory: growing SAS memory...\n");
+                
                 unsafe {
-                    let target_addr = (*base as usize + old_size) as u64;
                     crate::sys::syscall6(9, target_addr, add_size as u64, 7, 0, 0, 0);
                 }
                 
@@ -115,7 +122,7 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
                     let registry = crate::wasm::container::CONTAINER_REGISTRY.lock();
                     if let Some(container) = registry.get(container_id) {
                         let mut c = container.lock();
-                        c.memory_size += pages_to_add as u64 * Self::PAGE_SIZE as u64;
+                        c.linear_memory_size += pages_to_add as u64 * Self::PAGE_SIZE as u64;
                     }
                 }
 

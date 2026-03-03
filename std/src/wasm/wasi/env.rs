@@ -21,7 +21,7 @@ pub struct FileStat {
     pub ctime: u64,
 }
 
-pub trait WasiEnv {
+pub trait WasiEnv: Send {
     fn args_get(&self) -> Result<Vec<String>, i32>;
     fn environ_get(&self) -> Result<Vec<(String, String)>, i32>;
     fn clock_res_get(&self, id: u32) -> Result<u64, i32>;

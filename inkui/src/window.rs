@@ -21,8 +21,11 @@ pub struct FrameBuffer {
 impl FrameBuffer {
     pub fn new(size: usize) -> Self {
         let u32_len = (size + 3) / 4;
+        std::os::debug_print("[inkui] FrameBuffer::new: allocating...\n");
         let front = alloc::vec![0u32; u32_len];
+        std::os::debug_print("[inkui] FrameBuffer::new: front done\n");
         let back = alloc::vec![0u32; u32_len];
+        std::os::debug_print("[inkui] FrameBuffer::new: back done\n");
         Self {
             front,
             back,
@@ -63,6 +66,7 @@ impl FrameBuffer {
 }
 
 use titanf::TrueTypeFont;
+use std::println;
 
 pub struct Window {
     pub id: usize,
@@ -97,8 +101,11 @@ impl Window {
         let size = width * height * 4 + 4;
 
         let pid = std::process::get_pid();
+        println!("[inkui] Creating window '{}' with pid {}", title, pid);
         let q_name = alloc::format!("events_{}", pid);
+        println!("DIOBOIAAAAAAAAAAAAAAAAAAAAA");
         let event_queue_ptr = std::memory::shm_get(&q_name, 8192).unwrap_or(0) as usize;
+        println!("[inkui] Event queue: {}", event_queue_ptr);
 
         Window {
             id: 0,

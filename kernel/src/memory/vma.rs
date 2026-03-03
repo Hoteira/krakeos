@@ -84,24 +84,18 @@ impl VmaAllocator {
                     use crate::memory::address_space::*;
                     for r in &self.regions {
                         if r.pid == pid {
-                            if r.start >= 0x7000_0000_0000 {
+                            if r.start >= STACK_REGION_BASE && r.start < LINEAR_MEMORY_BASE {
                                 stack = (r.start, r.start + r.size - 1);
-                            } else if r.start >= HEAP_REGION_BASE {
+                            } else if r.start >= LINEAR_MEMORY_BASE {
                                 heap = (r.start, r.start + r.size - 1);
-                            } else if r.start >= CODE_REGION_BASE && r.start < SHM_REGION_BASE {
+                            } else if r.start >= CODE_REGION_BASE && r.start < STACK_REGION_BASE {
                                 code = (r.start, r.start + r.size - 1);
                             }
                         }
                     }
-                    let _ = writeln!(writer, "Slot {:>3} (PID {}): Code {:#x}..{:#x}  Heap {:#x}..{:#x}  Stack {:#x}..{:#x}", 
+                    let _ = writeln!(writer, "Slot {:>3} (PID {}): Code {:#x}..{:#x}  LinMem {:#x}..{:#x}  Stack {:#x}..{:#x}", 
                         slot, pid, code.0, code.1, heap.0, heap.1, stack.0, stack.1);
                 }
-            }
-        }
-
-        for r in &self.regions {
-            if r.start >= crate::memory::address_space::SHM_REGION_BASE && r.start < crate::memory::address_space::HEAP_REGION_BASE {
-                let _ = writeln!(writer, "Global SHM:  {:#x}..{:#x} ({:>8} KiB)", r.start, r.start + r.size - 1, r.size / 1024);
             }
         }
 

@@ -16,30 +16,23 @@ pub struct AotContext {
 }
 
 pub struct AotModule {
-    pub code_ptr: *mut u8,
-    pub code_size: usize,
+    pub code: Vec<u8>,
     pub func_offsets: Vec<usize>,
 }
 
+unsafe impl Send for AotModule {}
+unsafe impl Sync for AotModule {}
+
 impl AotModule {
     pub fn new(code: &[u8], func_offsets: Vec<usize>) -> Self {
-        let size = (code.len() + 0xFFF) & !0xFFF;
-        let ptr = unsafe { crate::sys::alloc_pages(size) };
-        if ptr.is_null() {
-            panic!("Failed to allocate executable memory for AOT");
-        }
-        unsafe {
-            core::ptr::copy_nonoverlapping(code.as_ptr(), ptr, code.len());
-        }
         Self {
-            code_ptr: ptr,
-            code_size: size,
+            code: code.to_vec(),
             func_offsets,
         }
     }
 
     pub fn get_func_ptr(&self, func_idx: usize) -> *const u8 {
         let offset = self.func_offsets[func_idx];
-        unsafe { self.code_ptr.add(offset) }
+        unsafe { self.code.as_ptr().add(offset) }
     }
 }

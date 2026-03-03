@@ -201,6 +201,8 @@ impl Heap {
         let needed_total = 16 + new_size + 8; // overhead + payload + footer
         let needed_total = if needed_total < MIN_BLOCK_SIZE { MIN_BLOCK_SIZE } else { needed_total };
 
+        // crate::os::debug_print("[std] Heap::alloc: searching bins...\n");
+
         loop {
             let start_idx = get_bin_index(needed_total);
 
@@ -223,11 +225,16 @@ impl Heap {
                 }
             }
 
+            crate::os::debug_print("[std] Heap::alloc: no block found, calling grow_fn...\n");
             match grow_fn(needed_total) {
                 Some((start, end)) => {
+                    crate::os::debug_print("[std] Heap::alloc: grow_fn returned memory.\n");
                     self.add_memory(start, end);
                 }
-                None => break,
+                None => {
+                    crate::os::debug_print("[std] Heap::alloc: grow_fn FAILED.\n");
+                    break;
+                }
             }
         }
 

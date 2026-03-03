@@ -6,7 +6,7 @@ pub mod component;
 pub mod container;
 pub mod interpreter;
 pub mod runner;
-#[cfg(feature = "userland")]
+#[cfg(any(feature = "userland", target_arch = "x86_64"))]
 pub mod wasi;
 
 pub use runner::{run, run_with_args, run_with_env};

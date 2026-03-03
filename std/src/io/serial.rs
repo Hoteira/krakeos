@@ -53,3 +53,31 @@ pub fn _debug_print(args: fmt::Arguments) {
     let mut writer = DebugWriter;
     let _ = writer.write_fmt(args);
 }
+
+pub struct StackWriter<'a> {
+    buf: &'a mut [u8],
+    pos: usize,
+}
+
+impl<'a> StackWriter<'a> {
+    pub fn new(buf: &'a mut [u8]) -> Self {
+        Self { buf, pos: 0 }
+    }
+
+    pub fn as_str(&self) -> &str {
+        core::str::from_utf8(&self.buf[..self.pos]).unwrap_or("")
+    }
+}
+
+impl<'a> fmt::Write for StackWriter<'a> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let bytes = s.as_bytes();
+        let len = bytes.len();
+        if self.pos + len > self.buf.len() {
+            return Err(fmt::Error);
+        }
+        self.buf[self.pos..self.pos + len].copy_from_slice(bytes);
+        self.pos += len;
+        Ok(())
+    }
+}

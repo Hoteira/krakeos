@@ -13,7 +13,7 @@ Format: **what changes -> build -> verify it still runs**.
 - `pml4_phys` on `Process` is dead code -- set to `KERNEL_PML4`, never switched
 - WASI Preview 1 + partial Preview 2 (~30 functions missing, see Appendix B)
 - Component model: parsing only, no canonical ABI
-- Address layout already matches CTX spec (Code@4GB, SHM@256GB, Heap@512GB, Stack@112TB)
+- Address layout needs rework: old model had separate heap/stack/SHM regions, new model uses linear memory + code + stack per slot, SHM mapped into linear memory
 - `method_export!` macro forces all functions to be `pub unsafe fn` -- callers littered with unnecessary `unsafe` blocks
 
 ---
@@ -53,65 +53,83 @@ Format: **what changes -> build -> verify it still runs**.
 
 ---
 
-### [DONE] Step 3 -- Add SAS region constants and 1024-slot layout
+### [DONE] Step 3 -- Add SAS region constants and 4096-slot layout
 **Files:** `kernel/src/memory/address_space.rs`
 **Changes:**
-- Replace magic numbers in `AtomicU64` initializers with named constants (see Appendix A):
+- Replace the old separate heap/stack/code regions with 3-region slot model (see Appendix A):
   ```rust
-  pub const MAX_SLOTS: u32         = 1024;
+  pub const MAX_SLOTS: u16 = 4096;
+
+  // AOT code: 16 MiB per slot × 4096 = 64 GiB. Most WASM < 4 MiB native.
   pub const CODE_REGION_BASE: u64  = 0x0000_0001_0000_0000; // 4 GiB
-  pub const CODE_SLOT_SIZE: u64    = 1 * 1024 * 1024 * 1024; // 1 GiB per slot
-  pub const SHM_REGION_BASE: u64   = 0x0000_0040_0000_0000; // 256 GiB
-  pub const HEAP_REGION_BASE: u64  = 0x0000_0080_0000_0000; // 512 GiB
-  pub const HEAP_SLOT_SIZE: u64    = 4 * 1024 * 1024 * 1024; // 4 GiB per slot
-  pub const STACK_REGION_TOP: u64  = 0x0000_7FFF_FFFF_0000; // ~128 TiB
-  pub const STACK_SLOT_SIZE: u64   = 16 * 1024 * 1024;       // 16 MiB per slot
+  pub const CODE_SLOT_SIZE: u64    = 64 * 1024 * 1024; // 64 MiB
+  // Code ends at: 4 GiB + 64 GiB = 68 GiB (0x11_0000_0000)
+
+  // Stack: 2 MiB per slot × 4096 = 8 GiB. Guard pages on both sides.
+  pub const STACK_REGION_BASE: u64 = 0x0000_0041_0000_0000; // 260 GiB (right after code)
+  pub const STACK_SLOT_SIZE: u64   = 2 * 1024 * 1024; // 2 MiB
+  // Stack ends at: 68 GiB + 8 GiB = 76 GiB (0x13_0000_0000)
+
+  // Linear memory: 31 GiB per slot × 4096 = ~124 TiB. Everything WASM touches.
+  pub const LINEAR_MEMORY_BASE: u64      = 0x0000_0043_0000_0000; // 268 GiB (after stack)
+  pub const LINEAR_MEMORY_SLOT_SIZE: u64 = 31 * 1024 * 1024 * 1024; // 31 GiB
+  // Linear ends at: 76 GiB + 124 TiB ≈ 124.07 TiB (fits in 128 TiB canonical)
   ```
-- Use these constants in `allocate_code()`, `allocate_heap()`, `allocate_stack()`, `allocate_shm()`
-- Add a `slot_id` counter (AtomicU32) -- each `allocate_code()` bumps it and uses it to compute all three region addresses for a process
-- No behavior change -- pure refactor with added structure
+- Remove `HEAP_REGION_BASE`, `HEAP_SLOT_SIZE`, `SHM_REGION_BASE`
+- Replace `allocate_heap()` with `allocate_linear_memory(slot_id) -> u64`
+- Keep `allocate_stack()` (native stack is separate from WASM linear memory)
+- Keep `allocate_code()`
+- Remove `allocate_shm()` — SHM is now mapped into processes' linear memory (see Appendix A)
+- Replace the monotonic `AtomicU32` counter with a bitmap allocator:
+  - `SLOT_BITMAP: Mutex<[u64; 64]>` — 4096 bits = 512 bytes, 1 = free, 0 = used
+  - `allocate_slot() -> Option<u16>` scans for first set bit, clears it
+  - `free_slot(id: u16)` sets the bit back
+  - Returns `None` if all 4096 slots in use
+
+**Why SHM is not a separate region:** Shared memory buffers are physical pages mapped into
+multiple processes' linear memory at different offsets. WASM accesses them via normal
+memory operations. No separate VA region needed.
 
 **Verify:** `cargo check --package=kernel`. Full build + boot.
 
 **Decisions:**
-- Should code slot size be 1 GiB or smaller? Most WASM code sections are < 16 MiB.
-- 1024 slots uses 1 TiB code + 4 TiB heap + 16 GiB stack. All fit without overlap (see Appendix A range validation).
+- 31 GiB per slot linear memory + 64 MiB code + 2 MiB stack. VA is free.
+- 4096 slots: 256 GiB code + 8 GiB stacks + ~124 TiB linear memory. Fits in 128 TiB with ~3.7 TiB headroom.
 
 ---
 
 ### [DONE] Step 4 -- Add guard pages between process slots
 **Files:** `kernel/src/memory/address_space.rs`, `kernel/src/memory/vmm.rs`, `kernel/src/interrupts/exceptions.rs`
 **Changes:**
-- After each slot allocation, leave one unmapped 4 KiB page as a guard between adjacent regions
-- Guard at bottom of each stack (catches stack overflow)
-- Guard at end of each heap slot (catches heap overrun into next slot)
+- After each slot allocation, leave unmapped guard pages between adjacent slots:
+- Guard at end of each linear memory slot (catches WASM OOB access)
+- Guard at both ends of each stack slot (catches stack overflow/underflow)
 - Guard at end of each code slot
 - In page fault handler, add a debug message identifying which slot's guard was hit:
-  `"Guard page fault: slot {id}, region {code|heap|stack}, CR2={addr}"`
+  `"Guard page fault: slot {id}, region {linear_memory|stack|code}, CR2={addr}"`
 
 **Verify:** Build + boot. Existing apps don't touch guard pages, no behavior change.
 
 **Decisions:**
 - Guard page size: 4 KiB (one page) or 64 KiB (one WASM page)?
-- Should guard pages also surround SHM segments?
 
 ---
 
 ### [DONE] Step 5 -- Add `slot_id` and container metadata to Process
 **Files:** `kernel/src/interrupts/task.rs`
 **Changes:**
-- Add `slot_id: u32` field to `Process` (from the counter in Step 3)
+- Add `slot_id: u16` field to `Process` (from the bitmap in Step 3)
 - Add `parent_pid: Option<u64>` field (for future nested containers, `None` for now)
 - Add `children: Vec<u64>` field (empty for now)
-- Derive `heap_start` / `heap_limit` from `slot_id`:
-  `heap_start = HEAP_REGION_BASE + (slot_id as u64) * HEAP_SLOT_SIZE`
+- Derive `linear_memory_base` from `slot_id`:
+  `linear_memory_base = LINEAR_MEMORY_BASE + (slot_id as u64) * LINEAR_MEMORY_SLOT_SIZE`
 - All existing behavior preserved -- just adds metadata
 
 **Verify:** Build + boot. All apps run identically.
 
 **Decisions:**
-- Maximum slot count? (1024 from Step 3, vs current MAX_THREADS = 128)
-- Should slot_id be reusable when a process exits, or monotonically increasing?
+- Maximum slot count? (4096 from Step 3, vs current MAX_THREADS = 128)
+- Slot IDs are reusable — freed on process exit, returned to freelist.
 
 ---
 
@@ -122,9 +140,9 @@ Format: **what changes -> build -> verify it still runs**.
 - When pressed, iterate `GLOBAL_VMA` and print all regions to serial:
   ```
   [SAS DUMP]
-  Slot 0 (PID 1): Code 0x100000000..0x13FFFFFFF  Heap 0x8000000000..0x80FFFFFFFF  Stack 0x7FFFFFFEF000
-  Slot 1 (PID 3): Code 0x140000000..0x17FFFFFFF  Heap 0x8100000000..0x81FFFFFFFF  Stack 0x7FFFFFFDF000
-  SHM "events_1": 0x4000000000..0x40001FFFFF
+  Slot 0 (PID 1): Code 0x100000000..0x103FFFFFF  LinMem 0x1000000000..0x13FFFFFFFF (2 MiB mapped)  Stack 0x7FFFFFFDF000..0x7FFFFFFFFFFF
+  Slot 1 (PID 3): Code 0x104000000..0x107FFFFFF  LinMem 0x1400000000..0x17FFFFFFFF (8 MiB mapped)  Stack 0x7FFFFFFBF000..0x7FFFFFFDFFFF
+    SHM "events_1" @ offset 0x200000 (8 KiB, shared with slot 0)
   Physical: 48 MiB used / 4096 MiB total
   ```
 - Also print total physical memory used (from PMM frame allocator)
@@ -146,10 +164,14 @@ Format: **what changes -> build -> verify it still runs**.
   ```rust
   pub struct WasmContainer {
       pub id: u64,
+      pub slot_id: u16,
       pub parent_id: Option<u64>,
-      pub memory_base: u64,     // VA in SAS where linear memory starts
-      pub memory_size: u64,     // current allocated size
-      pub memory_max: u64,      // maximum allowed
+      pub linear_memory_base: u64,  // = LINEAR_MEMORY_BASE + slot_id * LINEAR_MEMORY_SLOT_SIZE
+      pub linear_memory_size: u64,  // current mapped size (grows via memory.grow)
+      pub linear_memory_max: u64,   // = LINEAR_MEMORY_SLOT_SIZE (31 GiB)
+      pub code_base: u64,           // = CODE_REGION_BASE + slot_id * CODE_SLOT_SIZE
+      pub stack_base: u64,          // = STACK_REGION_BASE + slot_id * STACK_SLOT_SIZE
+      pub shm_mappings: Vec<(u64, u64, String)>, // (offset_in_linear_mem, size, name)
       pub return_value: Option<i32>,
   }
   ```
@@ -166,21 +188,27 @@ Format: **what changes -> build -> verify it still runs**.
 
 ---
 
-### [DONE] Step 8 -- Wire WASM linear memory to SAS heap region
+### [DONE] Step 8 -- Wire WASM linear memory to SAS slot region
 **Files:** `std/src/wasm/interpreter/store/linear_memory.rs`, `std/src/wasm/runner.rs`
 **Changes:**
 - Currently `LinearMemory` uses `Vec<AtomicU8>` on kernel heap
 - Add alternative constructor: `LinearMemory::new_sas(base_addr: u64, initial_pages: u32)`
-  - Backed by SAS-mapped pages at the process's heap slot address
-  - `memory.grow()` extends via `brk()`-style page mapping
-- In `runner.rs`, use `new_sas()` if the process has a valid SAS heap region, else fall back to `Vec`
+  - Backed by SAS-mapped pages at the process's linear memory slot address
+  - `base_addr = LINEAR_MEMORY_BASE + slot_id * LINEAR_MEMORY_SLOT_SIZE`
+  - `memory.grow()` maps additional physical pages into the slot region
+  - Max 31 GiB per slot (4 GiB wasm32 limit + SHM mappings + future memory64)
+  - The WASM guest sees offset 0 = base_addr, offset N = base_addr + N
+- SHM allocations are mapped into the linear memory region at offsets beyond current memory.size
+  - WASM accesses SHM via normal loads/stores at those offsets
+  - Kernel tracks which offset ranges are SHM vs private
+- In `runner.rs`, use `new_sas()` if the process has a valid SAS slot, else fall back to `Vec`
 - The existing `Vec<AtomicU8>` path stays as default -- `new_sas()` is opt-in for now
 
 **Verify:** Build + boot. Default path unchanged. Enable SAS memory for one app, verify it works.
 
 **Decisions:**
 - Should `new_sas()` be the default for all WASM apps, or opt-in?
-- Pre-allocate max heap or grow on demand?
+- Map pages on demand (page fault handler) or eagerly on `memory.grow`?
 - Does AOT's `AotContext.memory_base` need updating for SAS addresses?
 
 ---
@@ -533,7 +561,7 @@ Format: **what changes -> build -> verify it still runs**.
 
 ---
 
-### Step 27 -- Port `term` (terminal emulator) to WASM
+### [DONE] Step 27 -- Port `term` (terminal emulator) to WASM
 **Files:** `apps/term/src/main.rs`, `apps/term/Cargo.toml`
 **Changes:**
 - Change build target to `wasm32-wasip2`
@@ -546,9 +574,9 @@ Format: **what changes -> build -> verify it still runs**.
 **Verify:** Build + boot. `Super+T` spawns terminal with shell inside.
 
 **Decisions:**
-- inkui: statically linked into each WASM app, or shared component?
-- Font loading from WASM? (read via `wasi:filesystem`)
-- ANSI escape code support?
+- inkui: statically linked into each WASM app, or shared component? Static link / import i ncargo.toml
+- Font loading from WASM? (read via `wasi:filesystem`) Yes, use titanf
+- ANSI escape code support? Yes
 
 ---
 
@@ -690,10 +718,10 @@ Format: **what changes -> build -> verify it still runs**.
 **Changes:**
 - On container exit:
   1. Recursively terminate children (via container tree)
-  2. Unmap SAS pages for code/heap/stack
-  3. Free physical frames
+  2. Unmap SAS pages for linear memory, AOT code, and stack regions
+  3. Free physical frames (including SHM pages if last reference)
   4. Close FDs, sockets, destroy windows
-  5. Release SHM segments
+  5. Unmap SHM mappings from linear memory (decrement refcount on shared pages)
   6. Mark slot as free for reuse
 - Add slot freelist to `address_space.rs`
 
@@ -767,8 +795,8 @@ Format: **what changes -> build -> verify it still runs**.
 
 | Phase | Steps | Theme | Key Milestone |
 |-------|-------|-------|---------------|
-| 1 | 1-6 | Cleanup, safety, formalize SAS | Safe API, dead code gone, 1024 slots, Super+P |
-| 2 | 7-13 | WASM container infrastructure | Nested containers with plant/harvest |
+| 1 | 1-6 | Cleanup, safety, formalize SAS | Safe API, dead code gone, 4096 slots (31 GiB linear mem + 64 MiB code + 2 MiB stack), Super+P |
+| 2 | 7-13 | WASM container infrastructure | Nested containers with plant/harvest, SAS-backed linear memory |
 | 3 | 14-20 | WASI Preview 2 compliance | ~30 missing functions added, canonical ABI |
 | 4 | 21-30 | KrakeOS extensions & app porting | All apps WASM, init.wasm, ELF deprecated |
 | 5 | 31-38 | System integration & polish | Keybindings, fuel, IPC, scheduler, WIT |
@@ -785,67 +813,109 @@ Format: **what changes -> build -> verify it still runs**.
 ---
 ---
 
-# APPENDIX A: SAS Slot Layout (1024 Slots)
+# APPENDIX A: SAS Slot Layout (4096 Slots)
 
-The virtual address space is divided into 1024 fixed slots. Each slot has
-three regions: **code**, **heap**, and **stack**.
+The virtual address space is divided into 4096 fixed slots. Each slot has
+three regions: **linear memory**, **AOT code**, and **stack**.
+
+**Everything the WASM guest touches lives in linear memory.** This includes:
+heap allocations (dlmalloc/wee_alloc compiled into the wasm), shadow stack,
+data/bss segments, string literals, AND shared memory buffers. SHM is not a
+separate VA region — it's just physical pages mapped into multiple processes'
+linear memory at different offsets. Both processes access shared data via
+normal WASM memory offsets within their own linear memory.
+
+The native stack is separate because the interpreter/AOT runtime uses real
+x86-64 call frames (function calls, local variables, etc.) that must not
+be inside the WASM-addressable region.
 
 ## Constants
 
 ```rust
-pub const MAX_SLOTS: u32 = 1024;
+pub const MAX_SLOTS: u16 = 4096;
 
-// Code: 1 GiB per slot x 1024 = 1 TiB total (4 GiB to ~1 TiB)
+// --- AOT code --- (bottom of VA, right after kernel low 4 GiB)
+// 16 MiB per slot × 4096 = 64 GiB. Most WASM compiles to < 4 MiB native.
 pub const CODE_REGION_BASE: u64  = 0x0000_0001_0000_0000; // 4 GiB
-pub const CODE_SLOT_SIZE: u64    = 1 * 1024 * 1024 * 1024; // 1 GiB
+pub const CODE_SLOT_SIZE: u64    = 64 * 1024 * 1024; // 64 MiB
+// Ends at: 260 GiB (0x41_0000_0000)
 
-// SHM: shared pool, not per-slot (256 GiB to 512 GiB)
-pub const SHM_REGION_BASE: u64   = 0x0000_0040_0000_0000; // 256 GiB
+// --- Stack --- (right after code)
+// 2 MiB per slot × 4096 = 8 GiB. Guard pages on both sides.
+pub const STACK_REGION_BASE: u64 = 0x0000_0041_0000_0000; // 260 GiB
+pub const STACK_SLOT_SIZE: u64   = 2 * 1024 * 1024; // 2 MiB
+// Ends at: 268 GiB (0x43_0000_0000)
 
-// Heap: 4 GiB per slot x 1024 = 4 TiB total (512 GiB to ~4.5 TiB)
-pub const HEAP_REGION_BASE: u64  = 0x0000_0080_0000_0000; // 512 GiB
-pub const HEAP_SLOT_SIZE: u64    = 4 * 1024 * 1024 * 1024; // 4 GiB
-
-// Stack: 16 MiB per slot x 1024 = 16 GiB total (grows downward)
-pub const STACK_REGION_TOP: u64  = 0x0000_7FFF_FFFF_0000; // ~128 TiB
-pub const STACK_SLOT_SIZE: u64   = 16 * 1024 * 1024;       // 16 MiB
+// --- Linear memory --- (bulk of the address space)
+// 31 GiB per slot × 4096 = ~124 TiB. Everything WASM touches.
+// VA reservation is free; only mapped physical pages cost real RAM.
+pub const LINEAR_MEMORY_BASE: u64      = 0x0000_0043_0000_0000; // 268 GiB
+pub const LINEAR_MEMORY_SLOT_SIZE: u64 = 31 * 1024 * 1024 * 1024; // 31 GiB
+// Ends at: ~124 TiB (fits in 128 TiB lower canonical half with 4 TiB headroom)
 ```
+
+**Layout math:** 4-level paging = 128 TiB lower canonical. Kernel takes 4 GiB,
+code takes 256 GiB, stack takes 8 GiB = 268 GiB overhead. Remaining ~127.7 TiB /
+4096 slots ≈ 31.93 GiB → 31 GiB per slot with ~3.7 TiB headroom.
 
 ## Address calculation per slot
 
 ```
 Slot N:
-  code_base  = CODE_REGION_BASE + N * CODE_SLOT_SIZE
+  code_base  = CODE_REGION_BASE + N * CODE_SLOT_SIZE        // 0x1_0000_0000 + N * 64 MiB
   code_end   = code_base + CODE_SLOT_SIZE - 1
 
-  heap_base  = HEAP_REGION_BASE + N * HEAP_SLOT_SIZE
-  heap_end   = heap_base + HEAP_SLOT_SIZE - 1
+  stack_base = STACK_REGION_BASE + N * STACK_SLOT_SIZE       // 0x41_0000_0000 + N * 2 MiB
+  stack_top  = stack_base + STACK_SLOT_SIZE                  // grows down from top
 
-  stack_top  = STACK_REGION_TOP - N * STACK_SLOT_SIZE
-  stack_base = stack_top - STACK_SLOT_SIZE + 0x1000  (guard page at bottom)
+  linear_memory_base = LINEAR_MEMORY_BASE + N * LINEAR_MEMORY_SLOT_SIZE  // 0x43_0000_0000 + N * 31 GiB
+  linear_memory_end  = linear_memory_base + LINEAR_MEMORY_SLOT_SIZE - 1
+  (this is what the WASM runtime sets as memory_base / R14 for AOT)
+  WASM offset 0     → linear_memory_base
+  WASM offset K     → linear_memory_base + K
+  SHM mapped at     → linear_memory_base + <some offset within slot>
 ```
+
+## SHM = linear memory mappings
+
+Shared memory is **not** a separate VA region. Instead:
+1. Process A calls `shm_create("buffer", 4096)` → kernel allocates physical pages
+2. Kernel maps those pages into A's linear memory at offset X → A sees it at WASM offset X
+3. Process B calls `shm_open("buffer")` → kernel maps SAME physical pages into B's linear
+   memory at offset Y → B sees it at WASM offset Y
+4. Both processes read/write the same physical memory via their own WASM offsets
+
+This means WASM programs access SHM via normal `i32.load`/`i32.store` — no special
+instructions or API needed beyond the initial map/unmap syscalls.
 
 ## Guard pages
 
-- 4 KiB unmapped page at **bottom** of each stack slot (catches stack overflow)
-- 4 KiB unmapped page between adjacent heap slots (catches heap overrun)
-- 4 KiB unmapped page at end of each code slot
+- 4 KiB unmapped guard page at **each end** of each stack slot (catches stack overflow/underflow)
+- 4 KiB unmapped guard page at the **end** of each linear memory slot (catches OOB)
+- 4 KiB unmapped guard page at end of each code slot
 
 ## Range validation (no overlaps)
 
 ```
-1024 code slots:  4 GiB  .. 4 GiB + 1 TiB   = 0x1_0000_0000 .. 0x101_0000_0000   OK (< SHM at 256 GiB)
-SHM pool:         256 GiB .. 512 GiB         = 0x40_0000_0000 .. 0x80_0000_0000    OK
-1024 heap slots:  512 GiB .. 512 GiB + 4 TiB = 0x80_0000_0000 .. 0x480_0000_0000  OK (< stack)
-1024 stack slots: top - 16 GiB .. top        = fits in ~128 TiB region             OK
+Kernel low:          0 .. 4 GiB                  = 0x00_0000_0000 .. 0x01_0000_0000   reserved
+4096 code slots:     4 GiB .. 260 GiB            = 0x01_0000_0000 .. 0x41_0000_0000   256 GiB
+4096 stack slots:    260 GiB .. 268 GiB          = 0x41_0000_0000 .. 0x43_0000_0000   8 GiB
+4096 linear memory:  268 GiB .. ~124 TiB         = 0x43_0000_0000 .. 0x7C83_0000_0000 ~124 TiB
+                                                   (canonical limit: 0x7FFF_FFFF_FFFF = 128 TiB)
+                                                   headroom: ~3.7 TiB
 ```
 
 ## Design notes
 
-- **Code 1 GiB:** Generous for WASM (most code < 16 MiB). Could shrink to 64 MiB for 65536 slots.
-- **Heap 4 GiB:** Matches WASM32 linear memory max (32-bit addresses). Correct default.
-- **Stack 16 MiB:** For interpreter/AOT native call frames. WASM operand stack lives in linear memory (heap).
-- **1024 slots:** More than enough. Current MAX_THREADS = 128. Expandable by shrinking slot sizes.
+- **Linear memory 31 GiB:** ~8× more than wasm32's 4 GiB limit. VA is free — only
+  mapped pages consume physical RAM. Room for SHM mappings + future memory64.
+- **SHM inside linear memory:** Eliminates the old separate SHM VA region. WASM programs
+  access shared buffers via normal memory operations. The kernel just maps the same physical
+  pages into multiple slots.
+- **Code 64 MiB:** AOT-compiled native x86-64. Most WASM modules compile to < 4 MiB native.
+- **Stack 2 MiB:** Native call stack for interpreter loop / AOT trampolines. Separate from
+  linear memory so WASM can't overwrite return addresses. Guard pages on both sides.
+- **4096 slots:** 4× more than old 1024-slot layout. Current MAX_THREADS = 128.
 
 ---
 ---
@@ -1128,7 +1198,7 @@ Status: check = implemented, warn = stub/partial, X = missing
 ### `krakeos:system/memory@0.2.0`
 | Function | WASI Host | Native | Status |
 |----------|-----------|--------|--------|
-| `shm-get` | check | check (syscall 120) | Done |
+| `shm-get` | check | check (syscall 120) | Rework: SHM now maps into linear memory, not separate VA region |
 | `brk` | X | check (syscall 12) | **Need WASI host wrapper** |
 
 ### `krakeos:system/network@0.2.0`
@@ -1202,7 +1272,7 @@ get-process-list() -> list<process-info>
 kill(pid: u64, signal: u32) -> result<_, string>
 dump-vma() -> string
 get-memory-usage() -> (used: u64, total: u64)
-get-slot-info(slot-id: u32) -> option<slot-info>
+get-slot-info(slot-id: u16) -> option<slot-info>
 ```
 
 ---

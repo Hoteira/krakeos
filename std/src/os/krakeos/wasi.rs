@@ -12,7 +12,7 @@ crate::export_method!(
     "krakeos:system/container@0.1.0", "plant",
     [],
     vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![],
-    pub fn container_plant_host<T: Config + Clone>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    pub fn container_plant_host<T: Config + Clone + Send + 'static>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         let bytes_ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => 0 };
         let bytes_len = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => 0 };
         let offset = match args.get(2) { Some(Value::I32(v)) => *v as u32, _ => 0 };
@@ -22,7 +22,7 @@ crate::export_method!(
         let mut wasm_bytes = vec![0u8; bytes_len as usize];
         read_mem(store, bytes_ptr, &mut wasm_bytes).map_err(|_| HaltExecutionError(1))?;
 
-        match crate::wasm::container::plant(store, &wasm_bytes, offset, size) {
+        match crate::wasm::container::plant(store, &wasm_bytes, offset, size, None) {
             Ok(id) => {
                 let _ = write_u32(store, ret_ptr, 0); // ok
                 let _ = write_u64(store, ret_ptr + 8, id);
@@ -42,17 +42,28 @@ crate::export_method!(
 crate::export_method!(
     "krakeos:system/container@0.1.0", "plant-from-path",
     [],
-    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![],
-    pub fn container_plant_from_path_host<T: Config + Clone>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![],
+    pub fn container_plant_from_path_host<T: Config + Clone + Send + 'static>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         let path_ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => 0 };
         let path_len = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => 0 };
         let offset = match args.get(2) { Some(Value::I32(v)) => *v as u32, _ => 0 };
         let size = match args.get(3) { Some(Value::I32(v)) => *v as u32, _ => 0 };
-        let ret_ptr = match args.get(4) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+        let fds_ptr = match args.get(4) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+        let fds_len = match args.get(5) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+        let ret_ptr = match args.get(6) { Some(Value::I32(v)) => *v as u32, _ => 0 };
 
         let mut path_buf = vec![0u8; path_len as usize];
         read_mem(store, path_ptr, &mut path_buf).map_err(|_| HaltExecutionError(1))?;
         let path = crate::alloc::string::String::from_utf8_lossy(&path_buf);
+
+        let mut fds_map = Vec::new();
+        if fds_ptr != 0 && fds_len > 0 {
+            let mut fds_buf = vec![0u8; (fds_len * 2) as usize];
+            read_mem(store, fds_ptr, &mut fds_buf).map_err(|_| HaltExecutionError(1))?;
+            for chunk in fds_buf.chunks_exact(2) {
+                fds_map.push((chunk[0], chunk[1]));
+            }
+        }
 
         let mut wasm_bytes = vec![];
         let read_res = if let Ok(mut file) = crate::fs::File::open(&path) {
@@ -62,7 +73,7 @@ crate::export_method!(
         };
 
         if read_res {
-            match crate::wasm::container::plant(store, &wasm_bytes, offset, size) {
+            match crate::wasm::container::plant(store, &wasm_bytes, offset, size, if fds_map.is_empty() { None } else { Some(&fds_map) }) {
                 Ok(id) => {
                     let _ = write_u32(store, ret_ptr, 0); // ok
                     let _ = write_u64(store, ret_ptr + 8, id);
@@ -182,22 +193,22 @@ crate::export_method!(
         let buffer_off = read_mem_u32(store, ptr + 4)? as u64;
         let back_buffer_off = read_mem_u32(store, ptr + 8)? as u64;
         let flipped_off = read_mem_u32(store, ptr + 12)? as u64;
-        let pid = read_mem_u64(store, ptr + 16)?;
-        let x = read_mem_u32(store, ptr + 24)? as i32 as isize;
-        let y = read_mem_u32(store, ptr + 28)? as i32 as isize;
-        let z = read_mem_u32(store, ptr + 32)? as usize;
-        let width = read_mem_u32(store, ptr + 36)? as usize;
-        let height = read_mem_u32(store, ptr + 40)? as usize;
+        let pid = read_mem_u64(store, ptr + 20)?; // Skip 4-byte padding after flipped
+        let x = read_mem_u32(store, ptr + 28)? as i32 as isize;
+        let y = read_mem_u32(store, ptr + 32)? as i32 as isize;
+        let z = read_mem_u32(store, ptr + 36)? as usize;
+        let width = read_mem_u32(store, ptr + 40)? as usize;
+        let height = read_mem_u32(store, ptr + 44)? as usize;
         let mut bools = [0u8; 4];
-        read_mem(store, ptr + 44, &mut bools).map_err(|_| HaltExecutionError(1))?;
-        let min_width = read_mem_u32(store, ptr + 48)? as usize;
-        let min_height = read_mem_u32(store, ptr + 52)? as usize;
-        let event_handler = read_mem_u32(store, ptr + 56)? as usize;
-        let w_type_val = read_mem_u32(store, ptr + 60)?;
-        let prev_x = read_mem_u32(store, ptr + 64)? as i32 as isize;
-        let prev_y = read_mem_u32(store, ptr + 68)? as i32 as isize;
-        let prev_width = read_mem_u32(store, ptr + 72)? as usize;
-        let prev_height = read_mem_u32(store, ptr + 76)? as usize;
+        read_mem(store, ptr + 48, &mut bools).map_err(|_| HaltExecutionError(1))?;
+        let min_width = read_mem_u32(store, ptr + 52)? as usize;
+        let min_height = read_mem_u32(store, ptr + 56)? as usize;
+        let event_handler = read_mem_u32(store, ptr + 60)? as usize;
+        let w_type_val = read_mem_u32(store, ptr + 64)?;
+        let prev_x = read_mem_u32(store, ptr + 68)? as i32 as isize;
+        let prev_y = read_mem_u32(store, ptr + 72)? as i32 as isize;
+        let prev_width = read_mem_u32(store, ptr + 76)? as usize;
+        let prev_height = read_mem_u32(store, ptr + 80)? as usize;
 
         let wasm_base = store.get_wasm_base_ptr() as u64;
         let host_win = host::Window {
@@ -229,22 +240,22 @@ crate::export_method!(
         let buffer_off = read_mem_u32(store, ptr + 4)? as u64;
         let back_buffer_off = read_mem_u32(store, ptr + 8)? as u64;
         let flipped_off = read_mem_u32(store, ptr + 12)? as u64;
-        let pid = read_mem_u64(store, ptr + 16)?;
-        let x = read_mem_u32(store, ptr + 24)? as i32 as isize;
-        let y = read_mem_u32(store, ptr + 28)? as i32 as isize;
-        let z = read_mem_u32(store, ptr + 32)? as usize;
-        let width = read_mem_u32(store, ptr + 36)? as usize;
-        let height = read_mem_u32(store, ptr + 40)? as usize;
+        let pid = read_mem_u64(store, ptr + 20)?; // Skip 4-byte padding after flipped
+        let x = read_mem_u32(store, ptr + 28)? as i32 as isize;
+        let y = read_mem_u32(store, ptr + 32)? as i32 as isize;
+        let z = read_mem_u32(store, ptr + 36)? as usize;
+        let width = read_mem_u32(store, ptr + 40)? as usize;
+        let height = read_mem_u32(store, ptr + 44)? as usize;
         let mut bools = [0u8; 4];
-        read_mem(store, ptr + 44, &mut bools).map_err(|_| HaltExecutionError(1))?;
-        let min_width = read_mem_u32(store, ptr + 48)? as usize;
-        let min_height = read_mem_u32(store, ptr + 52)? as usize;
-        let event_handler = read_mem_u32(store, ptr + 56)? as usize;
-        let w_type_val = read_mem_u32(store, ptr + 60)?;
-        let prev_x = read_mem_u32(store, ptr + 64)? as i32 as isize;
-        let prev_y = read_mem_u32(store, ptr + 68)? as i32 as isize;
-        let prev_width = read_mem_u32(store, ptr + 72)? as usize;
-        let prev_height = read_mem_u32(store, ptr + 76)? as usize;
+        read_mem(store, ptr + 48, &mut bools).map_err(|_| HaltExecutionError(1))?;
+        let min_width = read_mem_u32(store, ptr + 52)? as usize;
+        let min_height = read_mem_u32(store, ptr + 56)? as usize;
+        let event_handler = read_mem_u32(store, ptr + 60)? as usize;
+        let w_type_val = read_mem_u32(store, ptr + 64)?;
+        let prev_x = read_mem_u32(store, ptr + 68)? as i32 as isize;
+        let prev_y = read_mem_u32(store, ptr + 72)? as i32 as isize;
+        let prev_width = read_mem_u32(store, ptr + 76)? as usize;
+        let prev_height = read_mem_u32(store, ptr + 80)? as usize;
 
         let wasm_base = store.get_wasm_base_ptr() as u64;
         let host_win = host::Window {
@@ -372,12 +383,63 @@ crate::export_method!(
         let name_ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I64(0)]) };
         let name_len = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I64(0)]) };
         let size = match args.get(2) { Some(Value::I32(v)) => *v as usize, _ => return Ok(vec![Value::I64(0)]) };
+        crate::debugln!("[WASI] shm_get_host_impl: name_ptr={:#x}, name_len={}, size={}", name_ptr, name_len, size);
         let mut name_buf = vec![0u8; name_len as usize];
         read_mem(store, name_ptr, &mut name_buf).map_err(|_| HaltExecutionError(1))?;
         let name = crate::alloc::string::String::from_utf8_lossy(&name_buf);
-        
+        crate::debugln!("[WASI] shm_get: Requesting segment '{}' (size {})", name, size);
+
+        if let Some(&offset) = store.shm_mappings.get(name.as_ref()) {
+            crate::debugln!("[WASI] shm_get: Found cached mapping at offset {:#x}", offset);
+            return Ok(vec![Value::I64(offset as u64)]);
+        }
+
         let res = host::shm_get(&name, size as u64).unwrap_or(0);
-        Ok(vec![Value::I64(res)])
+        crate::debugln!("[WASI] shm_get: host::shm_get returned {:#x}", res);
+        if res == 0 { 
+            crate::debugln!("[WASI] shm_get: FAILED to get segment '{}'", name);
+            return Ok(vec![Value::I64(u64::MAX)]); 
+        }
+
+        if let Some(sas_base) = store.sas_memory_base {
+            let caller = store.caller_module.unwrap_or(0);
+            let mem_addrs = &store.modules.get(caller).mem_addrs;
+            if mem_addrs.is_empty() {
+                crate::debugln!("[WASI] shm_get: Caller has no memory!");
+                return Ok(vec![Value::I64(u64::MAX)]);
+            }
+            let mem_addr = mem_addrs[0];
+
+            let current_pages = store.memories.get(mem_addr).size() as u32;
+            let needed_pages = (size as u32 + 65535) / 65536;
+
+            crate::debugln!("[WASI] shm_get: Growing WASM memory (current_pages={}, needed_pages={})", current_pages, needed_pages);
+            if store.memories.get_mut(mem_addr).grow(needed_pages).is_err() {
+                crate::debugln!("[WASI] shm_get: Failed to grow WASM memory for segment '{}'", name);
+                return Ok(vec![Value::I64(u64::MAX)]);
+            }
+
+            // The mapping should start at the offset of the OLD end of memory
+            let offset = current_pages as u64 * 65536;
+            let target_sas_addr = sas_base + offset;
+
+            crate::debugln!("[WASI] shm_get: Mapping SHM segment '{}' to SAS address {:#x} (offset {:#x})", name, target_sas_addr, offset);
+            let map_res = unsafe {
+                host::shm_map_raw(name.as_ptr(), name.len(), target_sas_addr)
+            };
+
+            if map_res == 0 {
+                crate::debugln!("[WASI] shm_get: Mapped segment '{}' into WASM window at offset {:#x}", name, offset);
+                store.shm_mappings.insert(name.into_owned(), offset as u32);
+                Ok(vec![Value::I64(offset)])
+            } else {
+                crate::debugln!("[WASI] shm_get: shm_map_raw FAILED for segment '{}' (res={:#x})", name, map_res);
+                Ok(vec![Value::I64(u64::MAX)])
+            }
+        } else {
+            crate::debugln!("[WASI] shm_get: No SAS memory base, returning raw address {:#x}", res);
+            Ok(vec![Value::I64(res)])
+        }
     }
 );
 
@@ -503,6 +565,31 @@ crate::export_method!(
 );
 
 crate::export_method!(
+    "krakeos:system/process@0.2.0", "syscall",
+    [],
+    vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I64)],
+    pub fn syscall_host<T: Config>(_: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let num = match args.get(0) { Some(Value::I64(v)) => *v, _ => 0 };
+        let arg1 = match args.get(1) { Some(Value::I64(v)) => *v, _ => 0 };
+        let arg2 = match args.get(2) { Some(Value::I64(v)) => *v, _ => 0 };
+        let arg3 = match args.get(3) { Some(Value::I64(v)) => *v, _ => 0 };
+        
+        Ok(vec![Value::I64(unsafe { host::syscall(num, arg1, arg2, arg3) })])
+    }
+);
+
+crate::export_method!(
+    "krakeos:system/process@0.2.0", "kill",
+    [],
+    vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn kill_process_host<T: Config>(_: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let pid = match args.get(0) { Some(Value::I64(v)) => *v, _ => 0 };
+        let sig = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+        Ok(vec![Value::I32(host::process_kill(pid, sig) as u32)])
+    }
+);
+
+crate::export_method!(
     "krakeos:system/debug@0.1.0", "kill",
     [],
     vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![],
@@ -522,10 +609,9 @@ crate::export_method!(
             buf[0] = if res == 0 { 0 } else { 1 };
         } else {
             buf[0] = 1; // err: permission denied
-            // For now just returning generic error, could return string
         }
         
-        write_bytes(store, ret_ptr, &buf).map_err(|_| HaltExecutionError(1))?;
+        let _ = write_bytes(store, ret_ptr, &buf);
         Ok(vec![])
     }
 );
@@ -561,7 +647,7 @@ crate::export_method!(
     }
 );
 
-pub fn register_wasi<T: Config + Clone>(linker: &mut crate::wasm::Linker, store: &mut crate::wasm::Store<'_, T>) {
+pub fn register_wasi<T: Config + Clone + Send + 'static>(linker: &mut crate::wasm::Linker, store: &mut crate::wasm::Store<'_, T>) {
     get_screen_width_host::register(linker, store);
     get_screen_height_host::register(linker, store);
     window_create_host::register(linker, store);
@@ -587,7 +673,9 @@ pub fn register_wasi<T: Config + Clone>(linker: &mut crate::wasm::Linker, store:
     terminal_set_window_size::register(linker, store);
     terminal_get_window_size::register(linker, store);
     get_process_list_host::register(linker, store);
+    kill_process_host::register(linker, store);
     kill_host::register(linker, store);
+    syscall_host::register(linker, store);
     dump_vma_host::register(linker, store);
     get_memory_usage_host::register(linker, store);
 }

@@ -61,6 +61,23 @@ impl CanonicalAbi {
                     results.extend(Self::lower_flat(v));
                 }
             }
+            ComponentValue::Variant { label: _, value } => {
+                // Simplified: tag + value
+                if let Some(v) = value {
+                    results.extend(Self::lower_flat(*v));
+                }
+            }
+            ComponentValue::Enum(_) => {
+                results.push(Value::I32(0)); // Tag only
+            }
+            ComponentValue::Option(opt) => {
+                if let Some(v) = opt {
+                    results.push(Value::I32(1));
+                    results.extend(Self::lower_flat(*v));
+                } else {
+                    results.push(Value::I32(0));
+                }
+            }
             _ => panic!("lower_flat: Unimplemented type"),
         }
         results
@@ -97,7 +114,6 @@ impl CanonicalAbi {
                     let ptr = values[0].to_u128() as u32;
                     let len = values[1].to_u128() as u32;
                     let mut buf = vec![0u8; len as usize];
-                    // Find memory from options
                     let mem_idx = options.iter().find_map(|o| if let CanonOpt::Memory(idx) = o { Some(*idx) } else { None }).unwrap_or(0);
                     let module_addr = store.caller_module.unwrap();
                     let mem_addr = *store.modules.get(module_addr).mem_addrs.get(mem_idx as usize).unwrap();
@@ -129,8 +145,32 @@ impl CanonicalAbi {
                         }
                         (ComponentValue::Tuple(item_vals), consumed)
                     }
-                    DefinedType::List(_elem_ty) => {
-                        (ComponentValue::List(Vec::new()), 2) // Stub
+                    DefinedType::Option(inner_ty) => {
+                        let tag = values[0].to_u128() as u32;
+                        if tag == 0 {
+                            (ComponentValue::Option(None), 1)
+                        } else {
+                            let (v, c) = Self::lift_flat(store, &values[1..], inner_ty, options, types);
+                            (ComponentValue::Option(Some(Box::new(v))), 1 + c)
+                        }
+                    }
+                    DefinedType::Result { ok, err } => {
+                        let tag = values[0].to_u128() as u32;
+                        if tag == 0 {
+                            if let Some(ok_ty) = ok {
+                                let (v, c) = Self::lift_flat(store, &values[1..], ok_ty, options, types);
+                                (ComponentValue::Result(Ok(Some(Box::new(v)))), 1 + c)
+                            } else {
+                                (ComponentValue::Result(Ok(None)), 1)
+                            }
+                        } else {
+                            if let Some(err_ty) = err {
+                                let (v, c) = Self::lift_flat(store, &values[1..], err_ty, options, types);
+                                (ComponentValue::Result(Err(Some(Box::new(v)))), 1 + c)
+                            } else {
+                                (ComponentValue::Result(Err(None)), 1)
+                            }
+                        }
                     }
                     _ => panic!("lift_flat: Unimplemented defined type"),
                 }

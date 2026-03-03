@@ -1,11 +1,9 @@
 #![no_std]
-#![no_main]
 
 extern crate alloc;
 use inkui::{Color, Size, Widget, Window};
 
-#[unsafe(no_mangle)]
-pub extern "C" fn main() -> i32 {
+pub fn main() {
     let width = 640;
     let height = 400;
     let mut win = Window::new("FPS Test", width, height);

@@ -1,3 +1,4 @@
+#[cfg(any(feature = "userland", target_arch = "x86_64"))]
 #[cfg(feature = "userland")]
 pub mod runtime;
 

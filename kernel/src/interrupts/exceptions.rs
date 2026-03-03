@@ -144,35 +144,43 @@ pub extern "x86-interrupt" fn page_fault(info: &mut StackFrame, error_code: u64)
     // Check for guard page hits
     use crate::memory::address_space::*;
     let mut is_guard = false;
-    for slot in 0..MAX_SLOTS {
-        let stack_guard = STACK_REGION_TOP - (slot as u64 + 1) * STACK_SLOT_SIZE;
-        let heap_guard = HEAP_REGION_BASE + (slot as u64 + 1) * HEAP_SLOT_SIZE - 4096;
-        let code_guard = CODE_REGION_BASE + (slot as u64 + 1) * CODE_SLOT_SIZE - 4096;
+    // We only check for guards if CR2 is in the SAS regions
+    if cr2 >= CODE_REGION_BASE && cr2 < LINEAR_MEMORY_BASE + (MAX_SLOTS as u64 * LINEAR_MEMORY_SLOT_SIZE) {
+        let slot_id = if cr2 < STACK_REGION_BASE {
+            ((cr2 - CODE_REGION_BASE) / CODE_SLOT_SIZE) as u16
+        } else if cr2 < LINEAR_MEMORY_BASE {
+            ((cr2 - STACK_REGION_BASE) / STACK_SLOT_SIZE) as u16
+        } else {
+            ((cr2 - LINEAR_MEMORY_BASE) / LINEAR_MEMORY_SLOT_SIZE) as u16
+        };
 
-        if cr2 >= stack_guard && cr2 < stack_guard + 4096 {
-            serial_print("\nGuard page fault: slot ");
-            print_hex(slot as u64);
-            serial_print(", region stack, CR2=");
-            print_hex(cr2);
-            serial_println("");
-            is_guard = true;
-            break;
-        } else if cr2 >= heap_guard && cr2 < heap_guard + 4096 {
-            serial_print("\nGuard page fault: slot ");
-            print_hex(slot as u64);
-            serial_print(", region heap, CR2=");
-            print_hex(cr2);
-            serial_println("");
-            is_guard = true;
-            break;
-        } else if cr2 >= code_guard && cr2 < code_guard + 4096 {
-            serial_print("\nGuard page fault: slot ");
-            print_hex(slot as u64);
-            serial_print(", region code, CR2=");
-            print_hex(cr2);
-            serial_println("");
-            is_guard = true;
-            break;
+        if slot_id < MAX_SLOTS {
+            let code_base = CODE_REGION_BASE + (slot_id as u64) * CODE_SLOT_SIZE;
+            let stack_base = STACK_REGION_BASE + (slot_id as u64) * STACK_SLOT_SIZE;
+            let lin_base = LINEAR_MEMORY_BASE + (slot_id as u64) * LINEAR_MEMORY_SLOT_SIZE;
+
+            if cr2 >= code_base + CODE_SLOT_SIZE - 4096 && cr2 < code_base + CODE_SLOT_SIZE {
+                serial_print("\nGuard page fault: slot ");
+                print_hex(slot_id as u64);
+                serial_print(", region code, CR2=");
+                print_hex(cr2);
+                serial_println("");
+                is_guard = true;
+            } else if (cr2 >= stack_base && cr2 < stack_base + 4096) || (cr2 >= stack_base + STACK_SLOT_SIZE - 4096 && cr2 < stack_base + STACK_SLOT_SIZE) {
+                serial_print("\nGuard page fault: slot ");
+                print_hex(slot_id as u64);
+                serial_print(", region stack, CR2=");
+                print_hex(cr2);
+                serial_println("");
+                is_guard = true;
+            } else if cr2 >= lin_base + LINEAR_MEMORY_SLOT_SIZE - 4096 && cr2 < lin_base + LINEAR_MEMORY_SLOT_SIZE {
+                serial_print("\nGuard page fault: slot ");
+                print_hex(slot_id as u64);
+                serial_print(", region linear_memory, CR2=");
+                print_hex(cr2);
+                serial_println("");
+                is_guard = true;
+            }
         }
     }
 

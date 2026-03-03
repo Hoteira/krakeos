@@ -1,11 +1,9 @@
 #![no_std]
-#![no_main]
 
 extern crate alloc;
 use std::os;
 
-#[unsafe(no_mangle)]
-pub extern "C" fn main() -> i32 {
+pub fn main() {
     os::debug_print("SHM Producer: Starting...\n");
 
     // Request 4KB of shared memory named "test_shm"
@@ -25,6 +23,4 @@ pub extern "C" fn main() -> i32 {
     } else {
         os::debug_print("SHM Producer: Failed to get SHM.\n");
     }
-
-    0
 }

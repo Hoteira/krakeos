@@ -1,6 +1,4 @@
 #![no_std]
-#![no_main]
-
 extern crate alloc;
 use alloc::format;
 use alloc::string::String;
@@ -89,16 +87,13 @@ impl AppState {
     fn kill_selected(&mut self) {
         if self.selected_index < self.processes.len() {
             let pid = self.processes[self.selected_index].pid;
-            unsafe {
-                std::os::syscall(62, pid, 9, 0);
-            }
+            std::os::process_kill(pid, 9);
             self.refresh();
         }
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn main() -> i32 {
+pub fn main() {
     let mut app = AppState::new();
     let mut needs_redraw = true;
 
@@ -133,7 +128,6 @@ pub extern "C" fn main() -> i32 {
                 }
                 'q' | 'Q' => {
                     std::os::file_write(STDOUT_FD, b"\x1B[?1049l\x1B[?25h");
-                    return 0;
                 }
                 _ => {}
             }

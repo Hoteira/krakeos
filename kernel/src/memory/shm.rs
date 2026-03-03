@@ -1,12 +1,13 @@
 use crate::memory::address::PhysAddr;
-use crate::memory::{address_space, pmm, vmm};
+use crate::memory::{pmm, vmm, paging};
 use crate::sync::Mutex;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
+use alloc::vec::Vec;
 
 #[derive(Debug, Clone)]
 pub struct ShmSegment {
-    pub addr: u64,
+    pub frames: Vec<u64>,
     pub size: u64,
 }
 
@@ -20,31 +21,31 @@ pub static GLOBAL_SHM: Mutex<ShmManager> = Mutex::new(ShmManager {
 
 impl ShmManager {
     pub fn get_or_create(&mut self, name: &str, size: u64) -> Result<u64, String> {
-        if let Some(seg) = self.segments.get(name) {
-            return Ok(seg.addr);
+        if let Some(_) = self.segments.get(name) {
+            // Return a pseudo-handle (just a hash or incrementing ID)
+            // For now, let's use the index in the map as a handle, or just return 0 on success
+            // Actually, the syscall expect a u64 that can be passed to shm_map.
+            // We can use the address of the segment in our map if it was stable, but it's not.
+            // Let's just return 1 for now as a "success" handle if name exists.
+            return Ok(1); 
         }
 
-        // Create new
-        let addr = address_space::allocate_shm(size);
-        crate::memory::vma::GLOBAL_VMA.lock().track(addr, size, 0); // PID 0 for global SHM
-
-        // Commiting memory immediately for SHM (easier for now)
         let page_count = (size + 4095) / 4096;
-        for i in 0..page_count {
+        let mut frames = Vec::with_capacity(page_count as usize);
+        for _ in 0..page_count {
             let phys = pmm::allocate_frame(0).ok_or("Out of memory for SHM")?;
-            vmm::map_page(addr + (i * 4096), PhysAddr::new(phys), 0x7, None); // User + Writable + Present
+            frames.push(phys);
         }
 
         self.segments.insert(String::from(name), ShmSegment {
-            addr,
+            frames,
             size,
         });
 
-        crate::debugln!("SHM: Created '{}' at {:#x} ({} bytes)", name, addr, size);
-        Ok(addr)
+        Ok(1)
     }
 
-    pub fn get(&self, name: &str) -> Option<u64> {
-        self.segments.get(name).map(|s| s.addr)
+    pub fn get(&self, name: &str) -> Option<ShmSegment> {
+        self.segments.get(name).cloned()
     }
 }

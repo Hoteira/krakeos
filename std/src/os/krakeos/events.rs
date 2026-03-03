@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 #[repr(C)]
@@ -61,15 +61,15 @@ pub const SHARED_EVENT_QUEUE_SIZE: usize = 128;
 
 #[repr(C)]
 pub struct SharedEventQueue {
-    pub head: AtomicUsize,
-    pub tail: AtomicUsize,
+    pub head: AtomicU32,
+    pub tail: AtomicU32,
     pub events: [Event; SHARED_EVENT_QUEUE_SIZE],
 }
 
 impl SharedEventQueue {
     pub fn push(&self, event: Event) -> bool {
         let head = self.head.load(Ordering::Relaxed);
-        let next_head = (head + 1) % SHARED_EVENT_QUEUE_SIZE;
+        let next_head = (head + 1) % SHARED_EVENT_QUEUE_SIZE as u32;
 
         if next_head == self.tail.load(Ordering::Acquire) {
             return false; // Full
@@ -77,7 +77,7 @@ impl SharedEventQueue {
 
         let events_ptr = self.events.as_ptr() as *mut Event;
         unsafe {
-            events_ptr.add(head).write(event);
+            events_ptr.add(head as usize).write(event);
         }
 
         self.head.store(next_head, Ordering::Release);
@@ -91,8 +91,8 @@ impl SharedEventQueue {
             return None; // Empty
         }
 
-        let event = self.events[tail];
-        self.tail.store((tail + 1) % SHARED_EVENT_QUEUE_SIZE, Ordering::Release);
+        let event = self.events[tail as usize];
+        self.tail.store((tail + 1) % SHARED_EVENT_QUEUE_SIZE as u32, Ordering::Release);
         Some(event)
     }
 }

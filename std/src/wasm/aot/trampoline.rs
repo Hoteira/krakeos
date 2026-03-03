@@ -787,16 +787,8 @@ pub extern "C" fn aot_call_host(ctx: &mut AotContext, func_idx: u32, sp: *mut u1
     let func_addr = store.modules.get(module_addr).func_addrs[func_idx as usize];
     let func_inst = store.functions.get(func_addr);
     let ty = func_inst.ty();
-
-    /*crate::os::debug_print(&format!(
-        "AOT: Calling host func {} (addr {}) with {} params... sp={:p}\n",
-        func_idx,
-        func_addr,
-        ty.params.valtypes.len(),
-        sp
-    ));*/
-
     let n_params = ty.params.valtypes.len();
+
     let mut params = Vec::with_capacity(n_params);
 
     // Safety check: Ensure sp is not null and points to valid stack
@@ -828,9 +820,17 @@ pub extern "C" fn aot_call_host(ctx: &mut AotContext, func_idx: u32, sp: *mut u1
             }
         }
         FuncInst::WasmFunc(_) => {
-            let run_state = store.invoke_unchecked(func_addr, params, None);
+            let fuel = unsafe { *ctx.fuel };
+            let run_state = store.invoke_unchecked(func_addr, params, Some(fuel));
             match run_state {
-                Ok(RunState::Finished { values, .. }) => values,
+                Ok(RunState::Finished { values, maybe_remaining_fuel }) => {
+                    if let Some(rem) = maybe_remaining_fuel {
+                        unsafe {
+                            *ctx.fuel = rem;
+                        }
+                    }
+                    values
+                }
                 Err(RuntimeError::HostFunctionHaltedExecution(code)) => {
                     unsafe {
                         *ctx.trap_code = if code == 0 { -1 } else { code };

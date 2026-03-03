@@ -45,6 +45,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "init"
+version = "0.1.0"
+dependencies = [
+ "inkui",
+ "std",
+]
+
+[[package]]
 name = "inkui"
 version = "0.1.0"
 dependencies = [
@@ -148,5 +156,12 @@ name = "userland"
 version = "0.1.0"
 dependencies = [
  "inkui",
+ "std",
+]
+
+[[package]]
+name = "wasm_loader"
+version = "0.1.0"
+dependencies = [
  "std",
 ]
