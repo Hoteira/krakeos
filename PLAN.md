@@ -185,7 +185,7 @@ Format: **what changes -> build -> verify it still runs**.
 
 ---
 
-### Step 9 -- AOT compiler: support SAS memory base pointers
+### [DONE] Step 9 -- AOT compiler: support SAS memory base pointers
 **Files:** `std/src/wasm/aot/compiler.rs`, `std/src/wasm/aot/runtime.rs`
 **Changes:**
 - `AotContext.memory_base` currently points to Vec's data pointer
@@ -202,7 +202,7 @@ Format: **what changes -> build -> verify it still runs**.
 
 ---
 
-### Step 10 -- Implement nested container planting (memory reservation)
+### [DONE] Step 10 -- Implement nested container planting (memory reservation)
 **Files:** `std/src/wasm/container.rs`, `std/src/wasm/runner.rs`
 **Changes:**
 - Add `plant(parent_store, wasm_bytes, offset_in_parent, size) -> child_container_id`:

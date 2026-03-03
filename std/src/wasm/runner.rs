@@ -4,6 +4,7 @@ use crate::fs::File;
 use crate::io::Read;
 use crate::wasm::wasi::{WasiCtx, create_wasi_imports, create_wasi_p2_imports};
 use crate::wasm::container::{register_container, unregister_container};
+use crate::wasm::common::config::Config;
 use crate::wasm::{Linker, Store, validate};
 use alloc::string::{String, ToString};
 use alloc::vec;
@@ -21,6 +22,64 @@ pub fn run_with_args(
     aot: bool,
 ) -> i32 {
     run_with_env(path, args, root_path, fds, Vec::new(), aot)
+}
+
+pub fn run_in_container<'a, T: Config>(
+    name: &str,
+    buffer: &'a [u8],
+    linker: &mut Linker,
+    store: &mut Store<'a, T>,
+) -> i32 {
+    unsafe {
+        crate::wasm::wasi::ICRNL = true;
+    }
+    match validate(buffer) {
+        Ok(validation_info) => {
+            let res = if let Some(component) = &validation_info.component {
+                crate::wasm::interpreter::component_executor::instantiate_component(
+                    store, linker, component, buffer,
+                )
+                .map(|_| ())
+            } else {
+                linker
+                    .module_instantiate_unchecked(store, &validation_info, None)
+                    .and_then(|instance| {
+                        let entry_point = store
+                            .instance_export_unchecked(instance.module_addr, "run")
+                            .ok()
+                            .and_then(|e| e.as_func())
+                            .or_else(|| {
+                                store
+                                    .instance_export_unchecked(instance.module_addr, "_start")
+                                    .ok()
+                                    .and_then(|e| e.as_func())
+                            });
+
+                        if let Some(func_addr) = entry_point {
+                            store.invoke_unchecked(func_addr, Vec::new(), None).map(|_| ())
+                        } else {
+                            Ok(())
+                        }
+                    })
+            };
+
+            let exit_code = match res {
+                Ok(_) => 0,
+                Err(crate::wasm::RuntimeError::HostFunctionHaltedExecution(code)) => code,
+                Err(_) => 1,
+            };
+            unsafe {
+                crate::wasm::wasi::ICRNL = false;
+            }
+            exit_code
+        }
+        Err(_) => {
+            unsafe {
+                crate::wasm::wasi::ICRNL = false;
+            }
+            1
+        }
+    }
 }
 
 pub fn run_with_env(

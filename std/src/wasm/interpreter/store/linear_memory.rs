@@ -59,6 +59,16 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
         }
     }
 
+    pub fn new_view(base_ptr: *mut u8, pages: PageCountTy) -> Self {
+        Self {
+            storage: RwSpinLock::new(LinearMemoryStorage::Sas {
+                base: base_ptr as *mut AtomicU8,
+                current_pages: pages,
+                max_pages: pages, // Views cannot grow by default
+            }),
+        }
+    }
+
     pub fn grow(&self, pages_to_add: PageCountTy) -> Result<(), ()> {
         let mut lock_guard = self.storage.write();
         match &mut *lock_guard {
