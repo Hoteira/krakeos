@@ -111,6 +111,7 @@ pub fn create_wasi_p2_imports<T: Config + Clone>(linker: &mut Linker, store: &mu
     {
         let module = "wasi:io/poll@0.2.0";
         define(linker, store, module, "poll", vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![], crate::io::wasi::poll_poll);
+        define(linker, store, module, "[method]pollable.ready", vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)], crate::io::wasi::poll_ready);
         define(linker, store, module, "[method]pollable.block", vec![ValType::NumType(NumType::I32)], vec![], crate::io::wasi::poll_block);
         define(linker, store, module, "[resource-drop]pollable", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
     }

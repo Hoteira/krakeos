@@ -507,6 +507,43 @@ crate::export_method!(
 );
 
 crate::export_method!(
+    "wasi:io/poll@0.2.0", "[method]pollable.ready",
+    [],
+    vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn poll_ready<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let handle = match args.get(0) { Some(Value::I32(v)) => *v as i32, _ => return Ok(vec![Value::I32(0)]) };
+        let mut ready = false;
+        {
+            let wasi = store.wasi_ctx.as_ref().ok_or(HaltExecutionError(1))?;
+            if let Some(WasiResource::Pollable(target)) = wasi.resource_table.get(&handle) {
+                let stdio_map = wasi.env.stdio_map();
+                match target {
+                    PollableTarget::Timer(deadline) => {
+                        let now = (crate::os::get_system_ticks() * 1_000_000) as u64;
+                        if now >= *deadline { ready = true; }
+                    }
+                    PollableTarget::Read(h) => {
+                        let host_fd = if *h < 3 { stdio_map[*h as usize] } else { *h };
+                        let mut pfd = [crate::os::PollFd { fd: host_fd, events: crate::os::POLLIN, revents: 0 }];
+                        let _ = crate::os::poll(&mut pfd, 0);
+                        if (pfd[0].revents & crate::os::POLLIN) != 0 { ready = true; }
+                    }
+                    PollableTarget::Write(h) => {
+                        let host_fd = if *h < 3 { stdio_map[*h as usize] } else { *h };
+                        let mut pfd = [crate::os::PollFd { fd: host_fd, events: crate::os::POLLOUT, revents: 0 }];
+                        let _ = crate::os::poll(&mut pfd, 0);
+                        if (pfd[0].revents & crate::os::POLLOUT) != 0 { ready = true; }
+                    }
+                }
+            } else {
+                return Err(HaltExecutionError(1));
+            }
+        }
+        Ok(vec![Value::I32(if ready { 1 } else { 0 })])
+    }
+);
+
+crate::export_method!(
     "wasi:io/poll@0.2.0", "[method]pollable.block",
     [],
     vec![ValType::NumType(NumType::I32)], vec![],
@@ -630,6 +667,7 @@ pub fn register_wasi<T: Config + Clone>(linker: &mut crate::wasm::Linker, store:
     stream_flush::register(linker, store);
     stream_splice::register(linker, store);
     poll_poll::register(linker, store);
+    poll_ready::register(linker, store);
     poll_block::register(linker, store);
     error_to_debug_string::register(linker, store);
     poll_oneoff_p1::register(linker, store);

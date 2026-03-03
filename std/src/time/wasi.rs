@@ -111,10 +111,28 @@ crate::export_method!(
     }
 );
 
+crate::export_method!(
+    "wasi:clocks/monotonic-clock@0.2.0", "subscribe-instant",
+    [],
+    vec![ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I32)],
+    pub fn monotonic_clock_subscribe_instant<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let deadline = match args.get(0) {
+            Some(Value::I64(v)) => *v as u64,
+            _ => return Ok(vec![Value::I32(0)]),
+        };
+        let wasi = store.wasi_ctx.as_mut().ok_or(HaltExecutionError(1))?;
+        let id = wasi.next_resource_id;
+        wasi.next_resource_id += 1;
+        wasi.resource_table.insert(id, WasiResource::Pollable(PollableTarget::Timer(deadline)));
+        Ok(vec![Value::I32(id as u32)])
+    }
+);
+
 pub fn register_wasi<T: Config + Clone>(linker: &mut crate::wasm::Linker, store: &mut crate::wasm::Store<'_, T>) {
     monotonic_clock_now::register(linker, store);
     monotonic_clock_resolution::register(linker, store);
     monotonic_clock_subscribe_duration::register(linker, store);
+    monotonic_clock_subscribe_instant::register(linker, store);
     wall_clock_now::register(linker, store);
     wall_clock_resolution::register(linker, store);
     clock_res_get::register(linker, store);

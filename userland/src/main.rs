@@ -60,11 +60,11 @@ pub fn main() {
 
     std::thread::spawn(|| {
         std::wasm::run("@0xE0/apps/net_test.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
-    });
+    });*/
 
     std::thread::spawn(|| {
         std::wasm::run("@0xE0/apps/taskbar.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
-    });*/
+    });
 
     //std::os::spawn("@0xE0/sys/bin/term.elf");
 

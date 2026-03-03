@@ -264,7 +264,7 @@ Format: **what changes -> build -> verify it still runs**.
 
 ---
 
-### Step 13 -- Add `container_test.wasm` to boot sequence
+### [DONE] Step 13 -- Add `container_test.wasm` to boot sequence
 **Files:** `userland/src/main.rs`, new: `apps/container_test/`
 **Changes:**
 - Create `apps/container_test/src/main.rs` that:
@@ -284,7 +284,7 @@ Format: **what changes -> build -> verify it still runs**.
 
 ---
 
-## Phase 3: WASI Preview 2 Compliance (Steps 14-20)
+## [DONE] Phase 3: WASI Preview 2 Compliance (Steps 14-20)
 
 ### Step 14 -- Fix bugs and add missing `wasi:io/streams@0.2.0` functions
 **Files:** `std/src/wasm/wasi/preview2/mod.rs`, `std/src/io/wasi.rs`
@@ -301,7 +301,7 @@ Format: **what changes -> build -> verify it still runs**.
 
 ---
 
-### Step 15 -- Complete `wasi:io/poll@0.2.0`
+### [DONE]  Step 15 -- Complete `wasi:io/poll@0.2.0`
 **Files:** `std/src/wasm/wasi/preview2/mod.rs`
 **Changes:**
 - Add missing `[method]pollable.ready() -> bool` (non-blocking readiness check)
@@ -320,7 +320,7 @@ Format: **what changes -> build -> verify it still runs**.
 
 ---
 
-### Step 16 -- Add missing `wasi:clocks/monotonic-clock@0.2.0` function
+### [DONE] Step 16 -- Add missing `wasi:clocks/monotonic-clock@0.2.0` function
 **Files:** `std/src/wasm/wasi/preview2/mod.rs`, `std/src/time/wasi.rs`
 **Changes:**
 - Add `subscribe-instant(when: instant) -> pollable` -- creates a timer pollable that fires at an absolute timestamp
