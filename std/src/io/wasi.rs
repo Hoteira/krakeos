@@ -218,6 +218,19 @@ crate::export_method!(
 );
 
 crate::export_method!(
+    "wasi:io/streams@0.2.0", "[method]output-stream.check-write",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![],
+    pub fn stream_check_write<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let ret_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![]) };
+        // Return 64KB capacity for all streams for now
+        let _ = write_u32(store, ret_ptr, 0); // Ok tag
+        let _ = write_u64(store, ret_ptr + 8, 64 * 1024);
+        Ok(vec![])
+    }
+);
+
+crate::export_method!(
     "wasi:io/streams@0.2.0", "[method]output-stream.write",
     [],
     vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![],
@@ -610,6 +623,7 @@ pub fn register_wasi<T: Config + Clone>(linker: &mut crate::wasm::Linker, store:
     output_stream_subscribe::register(linker, store);
     stream_read::register(linker, store);
     stream_skip::register(linker, store);
+    stream_check_write::register(linker, store);
     stream_write::register(linker, store);
     stream_blocking_write_and_flush::register(linker, store);
     stream_write_zeroes::register(linker, store);

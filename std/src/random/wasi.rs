@@ -13,17 +13,9 @@ crate::export_method!(
         let len = match args.get(0) { Some(Value::I64(v)) => *v as u64, _ => return Ok(vec![]) };
         let ret_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![]) };
         let mut buf = vec![0u8; len as usize];
-        unsafe {
-            if crate::wasm::wasi::preview1::RANDOM_STATE == 0 {
-                crate::wasm::wasi::preview1::RANDOM_STATE = crate::os::get_system_ticks().wrapping_add(0xACE1BADE);
-            }
-            for i in 0..len as usize {
-                crate::wasm::wasi::preview1::RANDOM_STATE ^= crate::wasm::wasi::preview1::RANDOM_STATE << 13;
-                crate::wasm::wasi::preview1::RANDOM_STATE ^= crate::wasm::wasi::preview1::RANDOM_STATE >> 17;
-                crate::wasm::wasi::preview1::RANDOM_STATE ^= crate::wasm::wasi::preview1::RANDOM_STATE << 5;
-                buf[i] = (crate::wasm::wasi::preview1::RANDOM_STATE & 0xFF) as u8;
-            }
-        }
+        
+        let _ = store.wasi_ctx.as_mut().ok_or(HaltExecutionError(1))?.env.random_get(&mut buf);
+
         let ptr = match call_cabi_realloc(store, len as u32, 1) {
             Ok(p) => p,
             Err(_) => return Ok(vec![]),
@@ -34,6 +26,17 @@ crate::export_method!(
         let _ = write_u32(store, ret_ptr, ptr);
         let _ = write_u32(store, ret_ptr + 4, len as u32);
         Ok(vec![])
+    }
+);
+
+crate::export_method!(
+    "wasi:random/random@0.2.0", "get-random-u64",
+    [],
+    vec![], vec![ValType::NumType(NumType::I64)],
+    pub fn get_random_u64<T: Config>(store: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let mut buf = [0u8; 8];
+        let _ = store.wasi_ctx.as_mut().ok_or(HaltExecutionError(1))?.env.random_get(&mut buf);
+        Ok(vec![Value::I64(u64::from_le_bytes(buf))])
     }
 );
 
@@ -93,6 +96,7 @@ crate::export_method!(
 
 pub fn register_wasi<T: Config + Clone>(linker: &mut crate::wasm::Linker, store: &mut crate::wasm::Store<'_, T>) {
     get_random_bytes::register(linker, store);
+    get_random_u64::register(linker, store);
     insecure_seed::register(linker, store);
     get_insecure_random_bytes::register(linker, store);
     get_insecure_random_u64::register(linker, store);
