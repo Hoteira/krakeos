@@ -173,6 +173,36 @@ method_export!("krakeos:system/process@0.2.0", "poll",
     }
 );
 
+method_export!("krakeos:system/container@0.1.0", "plant",
+    pub fn raw_container_plant(bytes_ptr: *const u8, bytes_len: usize, offset: u32, size: u32, ret_ptr: *mut u8) {
+        // Native stub: not implemented for native execution
+    }
+);
+
+method_export!("krakeos:system/container@0.1.0", "plant-from-path",
+    pub fn raw_container_plant_from_path(path_ptr: *const u8, path_len: usize, offset: u32, size: u32, ret_ptr: *mut u8) {
+        // Native stub
+    }
+);
+
+method_export!("krakeos:system/container@0.1.0", "harvest",
+    pub fn raw_container_harvest(id: u64, ret_ptr: *mut u8) {
+        // Native stub
+    }
+);
+
+method_export!("krakeos:system/container@0.1.0", "list-children",
+    pub fn raw_container_list_children(ret_ptr: *mut u8) {
+        // Native stub
+    }
+);
+
+method_export!("krakeos:system/container@0.1.0", "kill-child",
+    pub fn raw_container_kill_child(id: u64, ret_ptr: *mut u8) {
+        // Native stub
+    }
+);
+
 // --- Reactor ---
 
 pub struct Reactor {
@@ -383,4 +413,63 @@ pub struct WinSize {
 pub fn ioctl(fd: usize, request: u64, arg: u64) -> i32 {
     let res = process_ioctl(fd as u64, request, arg);
     res
+}
+
+pub fn container_plant(wasm_bytes: &[u8], offset: u32, size: u32) -> Result<u64, String> {
+    let mut ret_buf = [0u8; 16];
+    raw_container_plant(wasm_bytes.as_ptr(), wasm_bytes.len(), offset, size, ret_buf.as_mut_ptr());
+    let tag = u32::from_le_bytes(ret_buf[0..4].try_into().unwrap());
+    if tag == 0 {
+        Ok(u64::from_le_bytes(ret_buf[8..16].try_into().unwrap()))
+    } else {
+        Err(String::from("Plant failed"))
+    }
+}
+
+pub fn container_plant_from_path(path: &str, offset: u32, size: u32) -> Result<u64, String> {
+    let mut ret_buf = [0u8; 16];
+    raw_container_plant_from_path(path.as_ptr(), path.len(), offset, size, ret_buf.as_mut_ptr());
+    let tag = u32::from_le_bytes(ret_buf[0..4].try_into().unwrap());
+    if tag == 0 {
+        Ok(u64::from_le_bytes(ret_buf[8..16].try_into().unwrap()))
+    } else {
+        Err(String::from("Plant from path failed"))
+    }
+}
+
+pub fn container_harvest(id: u64) -> Result<i32, String> {
+    let mut ret_buf = [0u8; 16];
+    raw_container_harvest(id, ret_buf.as_mut_ptr());
+    let tag = u32::from_le_bytes(ret_buf[0..4].try_into().unwrap());
+    if tag == 0 {
+        Ok(i32::from_le_bytes(ret_buf[4..8].try_into().unwrap()))
+    } else {
+        Err(String::from("Harvest failed or still running"))
+    }
+}
+
+pub fn container_list_children() -> Vec<u64> {
+    let mut ret_buf = [0u8; 16];
+    raw_container_list_children(ret_buf.as_mut_ptr());
+    let ptr = u32::from_le_bytes(ret_buf[0..4].try_into().unwrap());
+    let len = u32::from_le_bytes(ret_buf[4..8].try_into().unwrap());
+
+    if ptr == 0 || len == 0 { return Vec::new(); }
+
+    let mut result = Vec::with_capacity(len as usize);
+    let slice = unsafe { core::slice::from_raw_parts(ptr as *const u64, len as usize) };
+    result.extend_from_slice(slice);
+    // Note: In a real system we'd need to free the memory allocated by host
+    result
+}
+
+pub fn container_kill_child(id: u64) -> Result<(), String> {
+    let mut ret_buf = [0u8; 16];
+    raw_container_kill_child(id, ret_buf.as_mut_ptr());
+    let tag = u32::from_le_bytes(ret_buf[0..4].try_into().unwrap());
+    if tag == 0 {
+        Ok(())
+    } else {
+        Err(String::from("Kill failed"))
+    }
 }

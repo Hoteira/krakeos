@@ -223,7 +223,7 @@ Format: **what changes -> build -> verify it still runs**.
 
 ---
 
-### Step 11 -- Memory propagation for nested containers
+### [DONE] Step 11 -- Memory propagation for nested containers
 **Files:** `std/src/wasm/container.rs`, `std/src/wasm/interpreter/store/linear_memory.rs`
 **Changes:**
 - When child calls `memory.grow()` and exceeds its allocation:
@@ -243,7 +243,7 @@ Format: **what changes -> build -> verify it still runs**.
 
 ---
 
-### Step 12 -- Expose container operations as krakeos WASI extensions
+### [DONE] Step 12 -- Expose container operations as krakeos WASI extensions
 **Files:** `std/src/wasm/wasi/krakeos.rs`, `std/src/wasm/wasi/preview2/mod.rs`
 **Changes:**
 - Add WASI host functions for `krakeos:system/container@0.1.0`:
@@ -259,8 +259,8 @@ Format: **what changes -> build -> verify it still runs**.
 
 **Decisions:**
 - `plant()` with raw bytes vs `plant-from-path()` with filesystem path? Support both.
-- Async harvest (poll-based) or sync only?
-- Do containers inherit parent's WASI context (fds, env vars)?
+- Async harvest (poll-based) or sync only? fir now just sync
+- Do containers inherit parent's WASI context (fds, env vars)? No, but the parent can chose the child's context.
 
 ---
 
@@ -279,8 +279,8 @@ Format: **what changes -> build -> verify it still runs**.
 **Verify:** Build + boot. See "Container test: child returned 42" on serial. All other apps work.
 
 **Decisions:**
-- Run with AOT or interpreter?
-- Permanent boot app or just a test?
+- Run with AOT or interpreter? AOT
+- Permanent boot app or just a test? just keep it there
 
 ---
 

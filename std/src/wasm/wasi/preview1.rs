@@ -9,7 +9,7 @@ use crate::wasm::{
 
 pub static mut RANDOM_STATE: u64 = 1574;
 
-pub fn create_wasi_imports<T: Config>(linker: &mut Linker, store: &mut Store<'_, T>) {
+pub fn create_wasi_imports<T: Config + Clone>(linker: &mut Linker, store: &mut Store<'_, T>) {
     if store.wasi_ctx.is_none() {
         store.wasi_ctx = Some(crate::wasm::wasi::ctx::WasiCtx::default());
     }

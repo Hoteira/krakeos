@@ -108,3 +108,26 @@ pub fn harvest(child_id: u64) -> Option<i32> {
     let registry = CONTAINER_REGISTRY.lock();
     registry.get(&child_id).and_then(|c| c.lock().return_value)
 }
+
+/// Lists all child container IDs for a given parent.
+pub fn list_children(parent_id: Option<u64>) -> Vec<u64> {
+    let registry = CONTAINER_REGISTRY.lock();
+    registry
+        .values()
+        .filter(|c| c.lock().parent_id == parent_id)
+        .map(|c| c.lock().id)
+        .collect()
+}
+
+/// Terminates a child container.
+pub fn kill_child(child_id: u64) -> Result<(), String> {
+    let mut registry = CONTAINER_REGISTRY.lock();
+    if registry.contains_key(&child_id) {
+        // In a real implementation, we would signal the interpreter/AOT to stop.
+        // For now, we just remove it from the registry.
+        registry.remove(&child_id);
+        Ok(())
+    } else {
+        Err(String::from("Child container not found"))
+    }
+}

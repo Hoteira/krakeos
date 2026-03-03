@@ -605,7 +605,7 @@ crate::export_method!(
     }
 );
 
-pub fn register_wasi<T: Config>(linker: &mut crate::wasm::Linker, store: &mut crate::wasm::Store<'_, T>) {
+pub fn register_wasi<T: Config + Clone>(linker: &mut crate::wasm::Linker, store: &mut crate::wasm::Store<'_, T>) {
     input_stream_subscribe::register(linker, store);
     output_stream_subscribe::register(linker, store);
     stream_read::register(linker, store);

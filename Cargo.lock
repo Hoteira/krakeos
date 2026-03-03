@@ -26,6 +26,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "container_test"
+version = "0.1.0"
+dependencies = [
+ "std",
+]
+
+[[package]]
 name = "elfic"
 version = "0.1.0"
 

@@ -91,7 +91,7 @@ crate::export_method!(
     }
 );
 
-pub fn register_wasi<T: Config>(linker: &mut crate::wasm::Linker, store: &mut crate::wasm::Store<'_, T>) {
+pub fn register_wasi<T: Config + Clone>(linker: &mut crate::wasm::Linker, store: &mut crate::wasm::Store<'_, T>) {
     get_random_bytes::register(linker, store);
     insecure_seed::register(linker, store);
     get_insecure_random_bytes::register(linker, store);

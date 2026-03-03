@@ -354,7 +354,7 @@ crate::export_method!(
     }
 );
 
-pub fn register_wasi<T: Config>(linker: &mut crate::wasm::Linker, store: &mut crate::wasm::Store<'_, T>) {
+pub fn register_wasi<T: Config + Clone>(linker: &mut crate::wasm::Linker, store: &mut crate::wasm::Store<'_, T>) {
     tcp_create_socket::register(linker, store);
     tcp_start_bind::register(linker, store);
     tcp_finish_bind::register(linker, store);

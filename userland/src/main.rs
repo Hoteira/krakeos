@@ -51,6 +51,10 @@ pub fn main() {
     println!("Starting userland WASM Apps...");
 
     std::thread::spawn(|| {
+        std::wasm::run("@0xE0/apps/container_test.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
+    });
+
+    /*std::thread::spawn(|| {
         std::wasm::run("@0xE0/apps/aot_test.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
     });
 
@@ -60,7 +64,7 @@ pub fn main() {
 
     std::thread::spawn(|| {
         std::wasm::run("@0xE0/apps/taskbar.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
-    });
+    });*/
 
     //std::os::spawn("@0xE0/sys/bin/term.elf");
 

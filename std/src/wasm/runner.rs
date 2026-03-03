@@ -5,7 +5,8 @@ use crate::io::Read;
 use crate::wasm::wasi::{WasiCtx, create_wasi_imports, create_wasi_p2_imports};
 use crate::wasm::container::{register_container, unregister_container};
 use crate::wasm::common::config::Config;
-use crate::wasm::{Linker, Store, validate};
+use crate::wasm::interpreter::resumable::RunState;
+use crate::wasm::{Linker, Store, validate, Value};
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
@@ -35,11 +36,11 @@ pub fn run_in_container<'a, T: Config>(
     }
     match validate(buffer) {
         Ok(validation_info) => {
-            let res = if let Some(component) = &validation_info.component {
+            let res: Result<i32, crate::wasm::RuntimeError> = if let Some(component) = &validation_info.component {
                 crate::wasm::interpreter::component_executor::instantiate_component(
                     store, linker, component, buffer,
                 )
-                .map(|_| ())
+                .map(|_| 0)
             } else {
                 linker
                     .module_instantiate_unchecked(store, &validation_info, None)
@@ -56,15 +57,22 @@ pub fn run_in_container<'a, T: Config>(
                             });
 
                         if let Some(func_addr) = entry_point {
-                            store.invoke_unchecked(func_addr, Vec::new(), None).map(|_| ())
+                            store.invoke_unchecked(func_addr, Vec::new(), None).map(|run_res| {
+                                if let RunState::Finished { values, .. } = run_res {
+                                    if let Some(Value::I32(val)) = values.first() {
+                                        return *val as i32;
+                                    }
+                                }
+                                0
+                            })
                         } else {
-                            Ok(())
+                            Ok(0)
                         }
                     })
             };
 
             let exit_code = match res {
-                Ok(_) => 0,
+                Ok(code) => code,
                 Err(crate::wasm::RuntimeError::HostFunctionHaltedExecution(code)) => code,
                 Err(_) => 1,
             };
@@ -124,12 +132,12 @@ pub fn run_with_env(
                         env_vars,
                     ));
 
-                    let res = if let Some(component) = &validation_info.component {
+                    let res: Result<i32, crate::wasm::RuntimeError> = if let Some(component) = &validation_info.component {
                         debugln!("[wasm-runner] [COMPONENT] Executing...");
                         crate::wasm::interpreter::component_executor::instantiate_component(
                             &mut store, &linker, component, &buffer,
                         )
-                        .map(|_| ())
+                        .map(|_| 0)
                     } else {
                         linker
                             .module_instantiate_unchecked(&mut store, &validation_info, None)
@@ -151,16 +159,23 @@ pub fn run_with_env(
                                 if let Some(func_addr) = entry_point {
                                     store
                                         .invoke_unchecked(func_addr, Vec::new(), None)
-                                        .map(|_| ())
+                                        .map(|run_res| {
+                                            if let RunState::Finished { values, .. } = run_res {
+                                                if let Some(Value::I32(val)) = values.first() {
+                                                    return *val as i32;
+                                                }
+                                            }
+                                            0
+                                        })
                                 } else {
                                     debugln!("[wasm-runner] No entry point found.");
-                                    Ok(())
+                                    Ok(0)
                                 }
                             })
                     };
 
                     let exit_code = match res {
-                        Ok(_) => 0,
+                        Ok(code) => code,
                         Err(crate::wasm::RuntimeError::HostFunctionHaltedExecution(code)) => {
                             if code != 0 {
                                 debugln!("[wasm-runner] Process exited with code {}", code);

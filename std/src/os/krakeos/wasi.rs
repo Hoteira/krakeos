@@ -4,14 +4,162 @@ use crate::wasm::{
     interpreter::store::{HaltExecutionError, Store},
     wasi::ctx::{WasiResource, InputStreamSource, OutputStreamSource},
 };
-use crate::wasm::wasi::preview2::{read_mem, read_mem_u32, read_mem_u64, write_bytes};
+use crate::wasm::wasi::preview2::{read_mem, read_mem_u32, read_mem_u64, write_bytes, write_u32, write_u64, call_cabi_realloc};
 use crate::os::krakeos as host;
+use crate::io::Read;
+
+crate::export_method!(
+    "krakeos:system/container@0.1.0", "plant",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![],
+    pub fn container_plant_host<T: Config + Clone>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let bytes_ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+        let bytes_len = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+        let offset = match args.get(2) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+        let size = match args.get(3) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+        let ret_ptr = match args.get(4) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+
+        let mut wasm_bytes = vec![0u8; bytes_len as usize];
+        read_mem(store, bytes_ptr, &mut wasm_bytes).map_err(|_| HaltExecutionError(1))?;
+
+        match crate::wasm::container::plant(store, &wasm_bytes, offset, size) {
+            Ok(id) => {
+                let _ = write_u32(store, ret_ptr, 0); // ok
+                let _ = write_u64(store, ret_ptr + 8, id);
+            }
+            Err(e) => {
+                let _ = write_u32(store, ret_ptr, 1); // err
+                let ptr = call_cabi_realloc(store, e.len() as u32, 1)?;
+                let _ = write_bytes(store, ptr, e.as_bytes());
+                let _ = write_u32(store, ret_ptr + 8, ptr);
+                let _ = write_u32(store, ret_ptr + 12, e.len() as u32);
+            }
+        }
+        Ok(vec![])
+    }
+);
+
+crate::export_method!(
+    "krakeos:system/container@0.1.0", "plant-from-path",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![],
+    pub fn container_plant_from_path_host<T: Config + Clone>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let path_ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+        let path_len = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+        let offset = match args.get(2) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+        let size = match args.get(3) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+        let ret_ptr = match args.get(4) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+
+        let mut path_buf = vec![0u8; path_len as usize];
+        read_mem(store, path_ptr, &mut path_buf).map_err(|_| HaltExecutionError(1))?;
+        let path = crate::alloc::string::String::from_utf8_lossy(&path_buf);
+
+        let mut wasm_bytes = vec![];
+        let read_res = if let Ok(mut file) = crate::fs::File::open(&path) {
+            file.read_to_end(&mut wasm_bytes).is_ok()
+        } else {
+            false
+        };
+
+        if read_res {
+            match crate::wasm::container::plant(store, &wasm_bytes, offset, size) {
+                Ok(id) => {
+                    let _ = write_u32(store, ret_ptr, 0); // ok
+                    let _ = write_u64(store, ret_ptr + 8, id);
+                }
+                Err(e) => {
+                    let _ = write_u32(store, ret_ptr, 1); // err
+                    let ptr = call_cabi_realloc(store, e.len() as u32, 1)?;
+                    let _ = write_bytes(store, ptr, e.as_bytes());
+                    let _ = write_u32(store, ret_ptr + 8, ptr);
+                    let _ = write_u32(store, ret_ptr + 12, e.len() as u32);
+                }
+            }
+        } else {
+            let _ = write_u32(store, ret_ptr, 1);
+            let msg = "Failed to open or read file";
+            let ptr = call_cabi_realloc(store, msg.len() as u32, 1)?;
+            let _ = write_bytes(store, ptr, msg.as_bytes());
+            let _ = write_u32(store, ret_ptr + 8, ptr);
+            let _ = write_u32(store, ret_ptr + 12, msg.len() as u32);
+        }
+        Ok(vec![])
+    }
+);
+
+crate::export_method!(
+    "krakeos:system/container@0.1.0", "harvest",
+    [],
+    vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![],
+    pub fn container_harvest_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let id = match args.get(0) { Some(Value::I64(v)) => *v as u64, _ => 0 };
+        let ret_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+
+        match crate::wasm::container::harvest(id) {
+            Some(res) => {
+                let _ = write_u32(store, ret_ptr, 0); // ok
+                let _ = write_u32(store, ret_ptr + 4, res as u32);
+            }
+            None => {
+                let _ = write_u32(store, ret_ptr, 1); // err
+                let msg = "Still running or not found";
+                let ptr = call_cabi_realloc(store, msg.len() as u32, 1)?;
+                let _ = write_bytes(store, ptr, msg.as_bytes());
+                let _ = write_u32(store, ret_ptr + 4, ptr);
+                let _ = write_u32(store, ret_ptr + 8, msg.len() as u32);
+            }
+        }
+        Ok(vec![])
+    }
+);
+
+crate::export_method!(
+    "krakeos:system/container@0.1.0", "list-children",
+    [],
+    vec![ValType::NumType(NumType::I32)], vec![],
+    pub fn container_list_children_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let ret_ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+        let children = crate::wasm::container::list_children(store.container_id);
+        
+        let ptr = call_cabi_realloc(store, (children.len() * 8) as u32, 8)?;
+        for (i, &id) in children.iter().enumerate() {
+            let _ = write_u64(store, ptr + (i as u32 * 8), id);
+        }
+        let _ = write_u32(store, ret_ptr, ptr);
+        let _ = write_u32(store, ret_ptr + 4, children.len() as u32);
+        Ok(vec![])
+    }
+);
+
+crate::export_method!(
+    "krakeos:system/container@0.1.0", "kill-child",
+    [],
+    vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![],
+    pub fn container_kill_child_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let id = match args.get(0) { Some(Value::I64(v)) => *v as u64, _ => 0 };
+        let ret_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+
+        match crate::wasm::container::kill_child(id) {
+            Ok(_) => {
+                let _ = write_u32(store, ret_ptr, 0); // ok
+            }
+            Err(e) => {
+                let _ = write_u32(store, ret_ptr, 1); // err
+                let ptr = call_cabi_realloc(store, e.len() as u32, 1)?;
+                let _ = write_bytes(store, ptr, e.as_bytes());
+                let _ = write_u32(store, ret_ptr + 4, ptr);
+                let _ = write_u32(store, ret_ptr + 8, e.len() as u32);
+            }
+        }
+        Ok(vec![])
+    }
+);
 
 crate::export_method!(
     "krakeos:graphics/screen@0.2.0", "get-width",
     [],
     vec![], vec![ValType::NumType(NumType::I32)],
-    pub fn get_screen_width<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    pub fn get_screen_width_host<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         Ok(vec![Value::I32(host::get_screen_width() as u32)])
     }
 );
@@ -20,7 +168,7 @@ crate::export_method!(
     "krakeos:graphics/screen@0.2.0", "get-height",
     [],
     vec![], vec![ValType::NumType(NumType::I32)],
-    pub fn get_screen_height<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    pub fn get_screen_height_host<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         Ok(vec![Value::I32(host::get_screen_height() as u32)])
     }
 );
@@ -29,7 +177,7 @@ crate::export_method!(
     "krakeos:system/window@0.2.0", "create",
     [],
     vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I64)],
-    pub fn window_create<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    pub fn window_create_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         let ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I64(0)]) };
         let buffer_off = read_mem_u32(store, ptr + 4)? as u64;
         let back_buffer_off = read_mem_u32(store, ptr + 8)? as u64;
@@ -75,7 +223,7 @@ crate::export_method!(
     "krakeos:system/window@0.2.0", "update",
     [],
     vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![],
-    pub fn window_update<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    pub fn window_update_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         let ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![]) };
         let id = read_mem_u32(store, ptr)? as usize;
         let buffer_off = read_mem_u32(store, ptr + 4)? as u64;
@@ -120,7 +268,7 @@ crate::export_method!(
     "krakeos:system/window@0.2.0", "get-events",
     [],
     vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
-    pub fn window_get_events<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    pub fn window_get_events_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         let handle = match args.get(0) { Some(Value::I64(v)) => *v, _ => 0 };
         let buf_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I32(0)]) };
         let max = match args.get(2) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I32(0)]) };
@@ -142,7 +290,7 @@ crate::export_method!(
     "wasi:cli/terminal-stdin@0.2.0", "get-terminal-stdin",
     [],
     vec![], vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)],
-    pub fn get_terminal_stdin<T: Config>(store: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    pub fn get_terminal_stdin_host<T: Config>(store: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         let wasi = store.wasi_ctx.as_mut().ok_or(HaltExecutionError(1))?;
         let id = wasi.next_resource_id;
         wasi.next_resource_id += 1;
@@ -155,7 +303,7 @@ crate::export_method!(
     "wasi:cli/terminal-stdout@0.2.0", "get-terminal-stdout",
     [],
     vec![], vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)],
-    pub fn get_terminal_stdout<T: Config>(store: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    pub fn get_terminal_stdout_host<T: Config>(store: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         let wasi = store.wasi_ctx.as_mut().ok_or(HaltExecutionError(1))?;
         let id = wasi.next_resource_id;
         wasi.next_resource_id += 1;
@@ -168,7 +316,7 @@ crate::export_method!(
     "wasi:cli/terminal-stderr@0.2.0", "get-terminal-stderr",
     [],
     vec![], vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)],
-    pub fn get_terminal_stderr<T: Config>(store: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    pub fn get_terminal_stderr_host<T: Config>(store: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         let wasi = store.wasi_ctx.as_mut().ok_or(HaltExecutionError(1))?;
         let id = wasi.next_resource_id;
         wasi.next_resource_id += 1;
@@ -181,7 +329,7 @@ crate::export_method!(
     "wasi:cli/stdout@0.2.0", "get-stdout",
     [],
     vec![], vec![ValType::NumType(NumType::I32)],
-    pub fn get_stdout<T: Config>(store: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    pub fn get_stdout_host<T: Config>(store: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         let wasi = store.wasi_ctx.as_mut().ok_or(HaltExecutionError(1))?;
         let id = wasi.next_resource_id;
         wasi.next_resource_id += 1;
@@ -194,7 +342,7 @@ crate::export_method!(
     "wasi:cli/stdin@0.2.0", "get-stdin",
     [],
     vec![], vec![ValType::NumType(NumType::I32)],
-    pub fn get_stdin<T: Config>(store: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    pub fn get_stdin_host<T: Config>(store: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         let wasi = store.wasi_ctx.as_mut().ok_or(HaltExecutionError(1))?;
         let id = wasi.next_resource_id;
         wasi.next_resource_id += 1;
@@ -207,7 +355,7 @@ crate::export_method!(
     "wasi:cli/stderr@0.2.0", "get-stderr",
     [],
     vec![], vec![ValType::NumType(NumType::I32)],
-    pub fn get_stderr<T: Config>(store: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    pub fn get_stderr_host<T: Config>(store: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         let wasi = store.wasi_ctx.as_mut().ok_or(HaltExecutionError(1))?;
         let id = wasi.next_resource_id;
         wasi.next_resource_id += 1;
@@ -220,7 +368,7 @@ crate::export_method!(
     "krakeos:system/memory@0.2.0", "shm-get",
     [],
     vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I64)],
-    pub fn shm_get_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    pub fn shm_get_host_impl<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         let name_ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I64(0)]) };
         let name_len = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I64(0)]) };
         let size = match args.get(2) { Some(Value::I32(v)) => *v as usize, _ => return Ok(vec![Value::I64(0)]) };
@@ -237,7 +385,7 @@ crate::export_method!(
     "wasi:cli/terminal-input@0.2.0", "[resource-drop]terminal-input",
     [],
     vec![ValType::NumType(NumType::I32)], vec![],
-    pub fn terminal_input_drop<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    pub fn terminal_input_drop_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         crate::wasm::wasi::preview2::resource_drop(store, args)
     }
 );
@@ -246,24 +394,29 @@ crate::export_method!(
     "wasi:cli/terminal-output@0.2.0", "[resource-drop]terminal-output",
     [],
     vec![ValType::NumType(NumType::I32)], vec![],
-    pub fn terminal_output_drop<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+    pub fn terminal_output_drop_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         crate::wasm::wasi::preview2::resource_drop(store, args)
     }
 );
 
-pub fn register_wasi<T: Config>(linker: &mut crate::wasm::Linker, store: &mut crate::wasm::Store<'_, T>) {
-    get_screen_width::register(linker, store);
-    get_screen_height::register(linker, store);
-    window_create::register(linker, store);
-    window_update::register(linker, store);
-    window_get_events::register(linker, store);
-    get_terminal_stdin::register(linker, store);
-    get_terminal_stdout::register(linker, store);
-    get_terminal_stderr::register(linker, store);
-    get_stdout::register(linker, store);
-    get_stdin::register(linker, store);
-    get_stderr::register(linker, store);
-    shm_get_host::register(linker, store);
-    terminal_input_drop::register(linker, store);
-    terminal_output_drop::register(linker, store);
+pub fn register_wasi<T: Config + Clone>(linker: &mut crate::wasm::Linker, store: &mut crate::wasm::Store<'_, T>) {
+    get_screen_width_host::register(linker, store);
+    get_screen_height_host::register(linker, store);
+    window_create_host::register(linker, store);
+    window_update_host::register(linker, store);
+    window_get_events_host::register(linker, store);
+    get_terminal_stdin_host::register(linker, store);
+    get_terminal_stdout_host::register(linker, store);
+    get_terminal_stderr_host::register(linker, store);
+    get_stdout_host::register(linker, store);
+    get_stdin_host::register(linker, store);
+    get_stderr_host::register(linker, store);
+    shm_get_host_impl::register(linker, store);
+    terminal_input_drop_host::register(linker, store);
+    terminal_output_drop_host::register(linker, store);
+    container_plant_host::register(linker, store);
+    container_plant_from_path_host::register(linker, store);
+    container_harvest_host::register(linker, store);
+    container_list_children_host::register(linker, store);
+    container_kill_child_host::register(linker, store);
 }

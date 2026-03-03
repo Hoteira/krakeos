@@ -111,7 +111,7 @@ crate::export_method!(
     }
 );
 
-pub fn register_wasi<T: Config>(linker: &mut crate::wasm::Linker, store: &mut crate::wasm::Store<'_, T>) {
+pub fn register_wasi<T: Config + Clone>(linker: &mut crate::wasm::Linker, store: &mut crate::wasm::Store<'_, T>) {
     monotonic_clock_now::register(linker, store);
     monotonic_clock_resolution::register(linker, store);
     monotonic_clock_subscribe_duration::register(linker, store);
