@@ -40,13 +40,34 @@ impl VmaAllocator {
     }
 
     pub fn dump(&self) {
-        crate::debugln!("\n[SAS DUMP]");
+        let mut buf = [0u8; 4096];
+        let len = self.dump_to_buffer(&mut buf);
+        crate::debugln!("{}", core::str::from_utf8(&buf[..len]).unwrap_or("VMA Dump Error"));
+    }
+
+    pub fn dump_to_buffer(&self, buf: &mut [u8]) -> usize {
+        use core::fmt::Write;
+        struct BufWriter<'a> {
+            buf: &'a mut [u8],
+            pos: usize,
+        }
+        impl Write for BufWriter<'_> {
+            fn write_str(&mut self, s: &str) -> core::fmt::Result {
+                let len = s.len();
+                if self.pos + len > self.buf.len() {
+                    return Err(core::fmt::Error);
+                }
+                self.buf[self.pos..self.pos + len].copy_from_slice(s.as_bytes());
+                self.pos += len;
+                Ok(())
+            }
+        }
+
+        let mut writer = BufWriter { buf, pos: 0 };
+        let _ = writeln!(writer, "\n[SAS DUMP]");
         
         let mut seen_pids = Vec::new();
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
-        
-        // Use a local copy of regions to avoid long lock hold if necessary, 
-        // though regions is likely small enough.
         
         for task_opt in tm.get_tasks() {
             if let Some(task) = task_opt {
@@ -56,14 +77,11 @@ impl VmaAllocator {
                     seen_pids.push(pid);
                     
                     let slot = proc.slot_id;
-                    
-                    // Filter regions for this PID
                     let mut code = (0, 0);
                     let mut heap = (0, 0);
                     let mut stack = (0, 0);
                     
                     use crate::memory::address_space::*;
-                    
                     for r in &self.regions {
                         if r.pid == pid {
                             if r.start >= 0x7000_0000_0000 {
@@ -75,25 +93,23 @@ impl VmaAllocator {
                             }
                         }
                     }
-                    
-                    crate::debugln!("Slot {:>3} (PID {}): Code {:#x}..{:#x}  Heap {:#x}..{:#x}  Stack {:#x}..{:#x}", 
+                    let _ = writeln!(writer, "Slot {:>3} (PID {}): Code {:#x}..{:#x}  Heap {:#x}..{:#x}  Stack {:#x}..{:#x}", 
                         slot, pid, code.0, code.1, heap.0, heap.1, stack.0, stack.1);
                 }
             }
         }
 
-        // Print SHM regions by address range (strictly between SHM base and Heap base)
         for r in &self.regions {
             if r.start >= crate::memory::address_space::SHM_REGION_BASE && r.start < crate::memory::address_space::HEAP_REGION_BASE {
-                // Ensure it's not actually a code region (which are < SHM base)
-                crate::debugln!("Global SHM:  {:#x}..{:#x} ({:>8} KiB)", r.start, r.start + r.size - 1, r.size / 1024);
+                let _ = writeln!(writer, "Global SHM:  {:#x}..{:#x} ({:>8} KiB)", r.start, r.start + r.size - 1, r.size / 1024);
             }
         }
 
         let used = crate::memory::pmm::get_used_memory() / 1024 / 1024;
         let total = crate::memory::pmm::get_total_memory() / 1024 / 1024;
-        crate::debugln!("Physical: {} MiB used / {} MiB total", used, total);
-        crate::debugln!("----------------");
+        let _ = writeln!(writer, "Physical: {} MiB used / {} MiB total", used, total);
+        let _ = writeln!(writer, "----------------");
+        writer.pos
     }
 }
 

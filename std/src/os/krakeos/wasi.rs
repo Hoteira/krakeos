@@ -478,6 +478,89 @@ crate::export_method!(
     }
 );
 
+crate::export_method!(
+    "krakeos:system/debug@0.1.0", "get-process-list",
+    [],
+    vec![ValType::NumType(NumType::I32)], vec![],
+    pub fn get_process_list_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let ret_ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+        let list = host::get_process_list();
+        
+        let struct_size = core::mem::size_of::<host::ProcessInfo>() as u32;
+        let ptr = call_cabi_realloc(store, (list.len() as u32 * struct_size), 8)?;
+        
+        for (i, info) in list.iter().enumerate() {
+            let offset = i as u32 * struct_size;
+            let _ = write_bytes(store, ptr + offset, unsafe {
+                core::slice::from_raw_parts(info as *const _ as *const u8, struct_size as usize)
+            });
+        }
+        
+        let _ = write_u32(store, ret_ptr, ptr);
+        let _ = write_u32(store, ret_ptr + 4, list.len() as u32);
+        Ok(vec![])
+    }
+);
+
+crate::export_method!(
+    "krakeos:system/debug@0.1.0", "kill",
+    [],
+    vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![],
+    pub fn kill_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let pid = match args.get(0) { Some(Value::I64(v)) => *v as u64, _ => 0 };
+        let signal = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+        let ret_ptr = match args.get(2) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+
+        // Restriction: only kill own children or self
+        let self_id = store.container_id.unwrap_or(0);
+        let children = crate::wasm::container::list_children(Some(self_id));
+        let allowed = pid == self_id || children.contains(&pid);
+
+        let mut buf = [0u8; 4];
+        if allowed {
+            let res = host::process_kill(pid, signal);
+            buf[0] = if res == 0 { 0 } else { 1 };
+        } else {
+            buf[0] = 1; // err: permission denied
+            // For now just returning generic error, could return string
+        }
+        
+        write_bytes(store, ret_ptr, &buf).map_err(|_| HaltExecutionError(1))?;
+        Ok(vec![])
+    }
+);
+
+crate::export_method!(
+    "krakeos:system/debug@0.1.0", "dump-vma",
+    [],
+    vec![ValType::NumType(NumType::I32)], vec![],
+    pub fn dump_vma_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let ret_ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+        
+        let mut buf = [0u8; 4096];
+        let len = host::get_vma_dump(buf.as_mut_ptr(), buf.len() as u64) as u32;
+        
+        let ptr = call_cabi_realloc(store, len, 1)?;
+        let _ = write_bytes(store, ptr, &buf[..len as usize]);
+        
+        let _ = write_u32(store, ret_ptr, ptr);
+        let _ = write_u32(store, ret_ptr + 4, len);
+        Ok(vec![])
+    }
+);
+
+crate::export_method!(
+    "krakeos:system/debug@0.1.0", "get-memory-usage",
+    [],
+    vec![], vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)],
+    pub fn get_memory_usage_host<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        Ok(vec![
+            Value::I64(host::get_used_mem()),
+            Value::I64(host::get_total_mem())
+        ])
+    }
+);
+
 pub fn register_wasi<T: Config + Clone>(linker: &mut crate::wasm::Linker, store: &mut crate::wasm::Store<'_, T>) {
     get_screen_width_host::register(linker, store);
     get_screen_height_host::register(linker, store);
@@ -503,4 +586,8 @@ pub fn register_wasi<T: Config + Clone>(linker: &mut crate::wasm::Linker, store:
     set_nonblock_host::register(linker, store);
     terminal_set_window_size::register(linker, store);
     terminal_get_window_size::register(linker, store);
+    get_process_list_host::register(linker, store);
+    kill_host::register(linker, store);
+    dump_vma_host::register(linker, store);
+    get_memory_usage_host::register(linker, store);
 }

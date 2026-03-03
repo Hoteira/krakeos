@@ -56,6 +56,27 @@ pub fn create_wasi_p2_imports<T: Config + Clone>(linker: &mut Linker, store: &mu
             crate::os::krakeos::wasi::terminal_get_window_size);
     }
 
+    // krakeos:system/debug@0.1.0
+    {
+        let module = "krakeos:system/debug@0.1.0";
+        define(linker, store, module, "get-process-list", 
+            vec![ValType::NumType(NumType::I32)], 
+            vec![], 
+            crate::os::krakeos::wasi::get_process_list_host);
+        define(linker, store, module, "kill", 
+            vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], 
+            vec![], 
+            crate::os::krakeos::wasi::kill_host);
+        define(linker, store, module, "dump-vma", 
+            vec![ValType::NumType(NumType::I32)], 
+            vec![], 
+            crate::os::krakeos::wasi::dump_vma_host);
+        define(linker, store, module, "get-memory-usage", 
+            vec![], 
+            vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)], 
+            crate::os::krakeos::wasi::get_memory_usage_host);
+    }
+
     // wasi:cli/terminal-input@0.2.0
     {
         let module = "wasi:cli/terminal-input@0.2.0";

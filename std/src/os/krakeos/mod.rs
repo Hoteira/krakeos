@@ -185,6 +185,30 @@ method_export!("krakeos:system/process@0.2.0", "get-list",
     }
 );
 
+method_export!("krakeos:system/process@0.2.0", "kill",
+    pub fn process_kill(pid: u64, signal: u32) -> i32 {
+        crate::sys::syscall(62, pid, signal as u64, 0) as i32
+    }
+);
+
+method_export!("krakeos:system/memory@0.2.0", "get-total-mem",
+    pub fn get_total_mem() -> u64 {
+        crate::sys::syscall(134, 0, 0, 0)
+    }
+);
+
+method_export!("krakeos:system/memory@0.2.0", "get-used-mem",
+    pub fn get_used_mem() -> u64 {
+        crate::sys::syscall(135, 0, 0, 0)
+    }
+);
+
+method_export!("krakeos:system/memory@0.2.0", "get-vma-dump",
+    pub fn get_vma_dump(buf_ptr: *mut u8, len: u64) -> u64 {
+        crate::sys::syscall(136, buf_ptr as u64, len, 0)
+    }
+);
+
 method_export!("krakeos:system/process@0.2.0", "poll",
     pub fn process_poll(fds_ptr: *mut u8, count: u64, timeout: u64) -> i32 {
         crate::sys::syscall(7, fds_ptr as u64, count, timeout) as i32
@@ -404,13 +428,13 @@ pub use crate::memory::shm_get;
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct ProcessInfo {
-    pub pid: u64,
+    pub slot_id: u64,
     pub state: u64,
     pub name: [u8; 32],
 }
 
 pub fn get_process_list() -> crate::alloc::vec::Vec<ProcessInfo> {
-    let mut buf = crate::alloc::vec![ProcessInfo { pid: 0, state: 0, name: [0; 32] }; 64];
+    let mut buf = crate::alloc::vec![ProcessInfo { slot_id: 0, state: 0, name: [0; 32] }; 64];
     let count = process_get_list(buf.as_mut_ptr() as *mut u8, 64);
     if count == u64::MAX { return crate::alloc::vec::Vec::new(); }
     buf.truncate(count as usize);

@@ -460,7 +460,7 @@ Format: **what changes -> build -> verify it still runs**.
 
 ---
 
-### Step 23 -- Add missing krakeos WASI host wrappers (Tier 3: sysmon)
+### [DONE] Step 23 -- Add missing krakeos WASI host wrappers (Tier 3: sysmon)
 **Files:** `std/src/wasm/wasi/krakeos.rs`, `std/src/os/krakeos/wasi.rs`
 **Changes:**
 - Expose to WASM host under `krakeos:system/debug@0.1.0`:
@@ -472,8 +472,8 @@ Format: **what changes -> build -> verify it still runs**.
 **Verify:** Build + boot. Sysmon can query process list from WASM.
 
 **Decisions:**
-- Should kill be restricted? (only kill own children, or any process?)
-- Should process-info include slot_id?
+- Should kill be restricted? (only kill own children, or any process?) SHould be able to kill own children / itself.
+- Should process-info include slot_id? (for debugging)
 
 ---
 
