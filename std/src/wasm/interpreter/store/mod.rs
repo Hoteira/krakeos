@@ -67,6 +67,7 @@ pub struct Store<'a, T: Config> {
     pub caller_module: Option<ModuleAddr>,
     pub wasi_ctx: Option<crate::wasm::wasi::WasiCtx>,
     pub sas_memory_base: Option<u64>,
+    pub container_id: Option<u64>,
 }
 
 impl<'a, T: Config> Store<'a, T> {
@@ -88,6 +89,7 @@ impl<'a, T: Config> Store<'a, T> {
             caller_module: None,
             wasi_ctx: None,
             sas_memory_base: None,
+            container_id: None,
         }
     }
 
@@ -374,15 +376,30 @@ impl<'a, T: Config> Store<'a, T> {
         })
     }
     fn alloc_mem(&mut self, ty: MemType) -> MemAddr {
-        let mem = if let Some(base) = self.sas_memory_base {
-            LinearMemory::new_sas(base, ty.limits.min.try_into().unwrap_validated())
+        let mem = if let Some(container_id) = self.container_id {
+            // Check if this container has a parent to determine if it's a view or top-level SAS
+            let is_nested = {
+                let registry = crate::wasm::container::CONTAINER_REGISTRY.lock();
+                registry.get(&container_id).map(|c| c.lock().parent_id.is_some()).unwrap_or(false)
+            };
+
+            if is_nested {
+                LinearMemory::new_view(
+                    container_id,
+                    self.sas_memory_base.unwrap() as *mut u8,
+                    ty.limits.min.try_into().unwrap_validated(),
+                    ty.limits.max.unwrap_or(ty.limits.min).try_into().unwrap_validated(),
+                )
+            } else {
+                LinearMemory::new_sas(
+                    self.sas_memory_base.unwrap(),
+                    ty.limits.min.try_into().unwrap_validated(),
+                )
+            }
         } else {
             LinearMemory::new_with_initial_pages(ty.limits.min.try_into().unwrap_validated())
         };
-        self.memories.insert(MemInst {
-            ty,
-            mem,
-        })
+        self.memories.insert(MemInst { ty, mem })
     }
     fn alloc_global(&mut self, ty: GlobalType, value: Value) -> GlobalAddr {
         self.globals.insert(GlobalInst { ty, value })

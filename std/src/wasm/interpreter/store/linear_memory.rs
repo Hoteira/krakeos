@@ -16,6 +16,12 @@ pub enum LinearMemoryStorage {
         current_pages: u32,
         max_pages: u32,
     },
+    Nested {
+        container_id: u64,
+        base: *mut AtomicU8,
+        current_pages: u32,
+        max_pages: u32,
+    }
 }
 
 pub struct LinearMemory<const PAGE_SIZE: usize = { Limits::MEM_PAGE_SIZE as usize }> {
@@ -59,12 +65,13 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
         }
     }
 
-    pub fn new_view(base_ptr: *mut u8, pages: PageCountTy) -> Self {
+    pub fn new_view(container_id: u64, base_ptr: *mut u8, pages: PageCountTy, max_pages: PageCountTy) -> Self {
         Self {
-            storage: RwSpinLock::new(LinearMemoryStorage::Sas {
+            storage: RwSpinLock::new(LinearMemoryStorage::Nested {
+                container_id,
                 base: base_ptr as *mut AtomicU8,
                 current_pages: pages,
-                max_pages: pages, // Views cannot grow by default
+                max_pages,
             }),
         }
     }
@@ -96,6 +103,25 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
                 *current_pages += pages_to_add;
                 Ok(())
             }
+            LinearMemoryStorage::Nested { container_id, current_pages, max_pages, .. } => {
+                if *current_pages + pages_to_add > *max_pages {
+                    // In a more advanced implementation, we would request the parent to grow here.
+                    // For now, if the requested growth is within the container's max_pages, we allow it.
+                    return Err(());
+                }
+                
+                // Update container registry metadata
+                {
+                    let registry = crate::wasm::container::CONTAINER_REGISTRY.lock();
+                    if let Some(container) = registry.get(container_id) {
+                        let mut c = container.lock();
+                        c.memory_size += pages_to_add as u64 * Self::PAGE_SIZE as u64;
+                    }
+                }
+
+                *current_pages += pages_to_add;
+                Ok(())
+            }
         }
     }
 
@@ -104,6 +130,7 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
         match &*lock_guard {
             LinearMemoryStorage::Managed(data) => PageCountTy::try_from(data.len() / PAGE_SIZE).unwrap(),
             LinearMemoryStorage::Sas { current_pages, .. } => *current_pages,
+            LinearMemoryStorage::Nested { current_pages, .. } => *current_pages,
         }
     }
 
@@ -112,6 +139,7 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
         match &*lock_guard {
             LinearMemoryStorage::Managed(data) => data.len(),
             LinearMemoryStorage::Sas { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
+            LinearMemoryStorage::Nested { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
         }
     }
 
@@ -120,6 +148,7 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
         match &*lock_guard {
             LinearMemoryStorage::Managed(data) => data.as_ptr() as *mut u8,
             LinearMemoryStorage::Sas { base, .. } => *base as *mut u8,
+            LinearMemoryStorage::Nested { base, .. } => *base as *mut u8,
         }
     }
 
@@ -140,6 +169,7 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
         let len = match &*lock_guard {
             LinearMemoryStorage::Managed(data) => data.len(),
             LinearMemoryStorage::Sas { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
+            LinearMemoryStorage::Nested { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
         };
 
         if N > len || index > len - N {
@@ -154,6 +184,12 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
                 }
             }
             LinearMemoryStorage::Sas { base, .. } => {
+                for (i, byte) in bytes.into_iter().enumerate() {
+                    let dst = unsafe { &*base.add(i + index) };
+                    dst.store(byte, Ordering::Relaxed);
+                }
+            }
+            LinearMemoryStorage::Nested { base, .. } => {
                 for (i, byte) in bytes.into_iter().enumerate() {
                     let dst = unsafe { &*base.add(i + index) };
                     dst.store(byte, Ordering::Relaxed);
@@ -175,6 +211,7 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
         let len = match &*lock_guard {
             LinearMemoryStorage::Managed(data) => data.len(),
             LinearMemoryStorage::Sas { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
+            LinearMemoryStorage::Nested { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
         };
 
         if N > len || index > len - N {
@@ -195,6 +232,12 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
                     *byte = src.load(Ordering::Relaxed);
                 }
             }
+            LinearMemoryStorage::Nested { base, .. } => {
+                for (i, byte) in bytes.iter_mut().enumerate() {
+                    let src = unsafe { &*base.add(i + index) };
+                    *byte = src.load(Ordering::Relaxed);
+                }
+            }
         }
         Ok(bytes)
     }
@@ -204,6 +247,7 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
         let len = match &*lock_guard {
             LinearMemoryStorage::Managed(data) => data.len(),
             LinearMemoryStorage::Sas { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
+            LinearMemoryStorage::Nested { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
         };
 
         let buf_len = buf.len();
@@ -224,6 +268,12 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
                     *byte = src.load(Ordering::Relaxed);
                 }
             }
+            LinearMemoryStorage::Nested { base, .. } => {
+                for (i, byte) in buf.iter_mut().enumerate() {
+                    let src = unsafe { &*base.add(i + index) };
+                    *byte = src.load(Ordering::Relaxed);
+                }
+            }
         }
         Ok(())
     }
@@ -233,6 +283,7 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
         let len = match &*lock_guard {
             LinearMemoryStorage::Managed(data) => data.len(),
             LinearMemoryStorage::Sas { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
+            LinearMemoryStorage::Nested { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
         };
 
         if count > len || index > len - count {
@@ -255,6 +306,12 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
                     lin_mem_byte.store(data_byte, Ordering::Relaxed);
                 }
             }
+            LinearMemoryStorage::Nested { base, .. } => {
+                for i in index..(index + count) {
+                    let lin_mem_byte = unsafe { &*base.add(i) };
+                    lin_mem_byte.store(data_byte, Ordering::Relaxed);
+                }
+            }
         }
         Ok(())
     }
@@ -272,10 +329,12 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
         let len_self = match &*lock_guard_self {
             LinearMemoryStorage::Managed(data) => data.len(),
             LinearMemoryStorage::Sas { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
+            LinearMemoryStorage::Nested { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
         };
         let len_other = match &*lock_guard_other {
             LinearMemoryStorage::Managed(data) => data.len(),
             LinearMemoryStorage::Sas { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
+            LinearMemoryStorage::Nested { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
         };
 
         if count > len_other || source_index > len_other - count {
@@ -291,11 +350,13 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
         let get_src = |i| match &*lock_guard_other {
             LinearMemoryStorage::Managed(data) => unsafe { data.get_unchecked(i + source_index) },
             LinearMemoryStorage::Sas { base, .. } => unsafe { &*base.add(i + source_index) },
+            LinearMemoryStorage::Nested { base, .. } => unsafe { &*base.add(i + source_index) },
         };
 
         let get_dst = |i| match &*lock_guard_self {
             LinearMemoryStorage::Managed(data) => unsafe { data.get_unchecked(i + destination_index) },
             LinearMemoryStorage::Sas { base, .. } => unsafe { &*base.add(i + destination_index) },
+            LinearMemoryStorage::Nested { base, .. } => unsafe { &*base.add(i + destination_index) },
         };
 
         if destination_index <= source_index {
@@ -323,6 +384,7 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
         let len_self = match &*lock_guard_self {
             LinearMemoryStorage::Managed(data) => data.len(),
             LinearMemoryStorage::Sas { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
+            LinearMemoryStorage::Nested { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
         };
 
         let data_len = source_data.len();
@@ -345,6 +407,13 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
                 }
             }
             LinearMemoryStorage::Sas { base, .. } => {
+                for i in 0..count {
+                    let src_byte = unsafe { source_data.get_unchecked(i + source_index) };
+                    let dst_byte = unsafe { &*base.add(i + destination_index) };
+                    dst_byte.store(*src_byte, Ordering::Relaxed);
+                }
+            }
+            LinearMemoryStorage::Nested { base, .. } => {
                 for i in 0..count {
                     let src_byte = unsafe { source_data.get_unchecked(i + source_index) };
                     let dst_byte = unsafe { &*base.add(i + destination_index) };

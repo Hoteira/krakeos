@@ -11,6 +11,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 pub struct WasmContainer {
     pub id: u64,
     pub parent_id: Option<u64>,
+    pub offset_in_parent: u64,
     pub memory_base: u64, // VA in SAS where linear memory starts
     pub memory_size: u64, // current allocated size
     pub memory_max: u64,  // maximum allowed
@@ -23,6 +24,7 @@ static NEXT_CONTAINER_ID: AtomicU64 = AtomicU64::new(1);
 
 pub fn register_container(
     parent_id: Option<u64>,
+    offset_in_parent: u64,
     memory_base: u64,
     memory_size: u64,
     memory_max: u64,
@@ -31,6 +33,7 @@ pub fn register_container(
     let container = Arc::new(Mutex::new(WasmContainer {
         id,
         parent_id,
+        offset_in_parent,
         memory_base,
         memory_size,
         memory_max,
@@ -70,9 +73,10 @@ pub fn plant<T: Config + Clone>(
     let child_mem_base = parent_mem_addr + offset_in_parent as u64;
 
     // 2. Create child container entry
-    let parent_id = None; // TODO: Track current container ID in thread-local
+    let parent_id = parent_store.container_id;
     let child_id = register_container(
         parent_id,
+        offset_in_parent as u64,
         child_mem_base,
         size_bytes as u64,
         size_bytes as u64,
@@ -81,6 +85,7 @@ pub fn plant<T: Config + Clone>(
     // 3. Prepare child Store with the memory view
     let mut child_store = Store::new(parent_store.user_data.clone());
     child_store.sas_memory_base = Some(child_mem_base);
+    child_store.container_id = Some(child_id);
 
     let mut linker = crate::wasm::common::interop::Linker::new();
     create_wasi_imports(&mut linker, &mut child_store);

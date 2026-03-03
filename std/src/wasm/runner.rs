@@ -109,7 +109,8 @@ pub fn run_with_env(
                     store.sas_memory_base = sas_base;
 
                     // Register container
-                    let container_id = register_container(None, sas_base.unwrap_or(0), 0, 0);
+                    let container_id = register_container(None, 0, sas_base.unwrap_or(0), 0, 0);
+                    store.container_id = Some(container_id);
 
                     let mut linker = Linker::new();
 
