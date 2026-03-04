@@ -52,7 +52,10 @@ pub mod time;
 #[cfg(feature = "userland")]
 #[cfg_attr(not(test), panic_handler)]
 fn panic(info: &core::panic::PanicInfo) -> ! {
-    crate::debugln!("[USER PANIC] {}", info);
+    crate::println!("[USER PANIC] {}", info);
+    #[cfg(target_arch = "wasm32")]
+    core::arch::wasm32::unreachable();
+    #[cfg(not(target_arch = "wasm32"))]
     crate::os::exit(1);
 }
 

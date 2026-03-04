@@ -685,7 +685,9 @@ pub extern "C" fn aot_memory_grow(ctx: &mut AotContext, n: u32) -> u32 {
             ctx.memory_size = mem.len();
             old_size
         }
-        Err(_) => u32::MAX,
+        Err(_) => {
+            u32::MAX
+        }
     }
 }
 

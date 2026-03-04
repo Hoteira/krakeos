@@ -1,24 +1,30 @@
 #![no_std]
 
 extern crate alloc;
+
+use alloc::vec;
 use inkui::Window;
 use std::os::{sleep, Items};
 use std::io::Read;
 use std::println;
 
 pub fn main() {
+    std::allocator::debug_allocator();
     println!("[Init] Starting WASM Userland...");
+
+    let v = vec![0,2,4,8];
+    println!("[Init] v: {:?}", v);
 
     // Setup wallpaper
     println!("[Init] Calling Window::new...");
-    let mut win = Window::new("Wallpaper", 1024, 576);
+    /*let mut win = Window::new("Wallpaper", 1024, 576);
     println!("[Init] Window::new returned.");
     win.w_type = Items::Wallpaper;
     win.x = 0;
     win.y = 0;
 
     println!("[Init] Loading wallpaper...");
-    /*match std::fs::read("@0xE0/apps/wallpaper.png") {
+    match std::fs::read("@0xE0/apps/wallpaper.png") {
         Ok(bytes) => {
             println!("[Init] Wallpaper loaded ({} bytes).", bytes.len());
             // In a real implementation we would decode PNG here.

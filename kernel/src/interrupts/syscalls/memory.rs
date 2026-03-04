@@ -139,6 +139,8 @@ pub fn handle_mmap(context: &mut CPUState) {
             let flags = paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER;
             unsafe {
                 vmm::map_page(virt, PhysAddr::new(phys), flags, None);
+                // Zero the page - WASM linear memory must be zero-initialized
+                core::ptr::write_bytes(virt as *mut u8, 0, 4096);
             }
         } else {
             crate::debugln!("[MMAP] FAILED: OOM at page {}", i);

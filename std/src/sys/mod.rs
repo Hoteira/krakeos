@@ -175,17 +175,16 @@ pub unsafe fn alloc_pages(size: usize) -> *mut u8 {
     #[cfg(target_arch = "wasm32")]
     {
         let pages = (size + 65535) / 65536;
-        crate::os::debug_print("[std] alloc_pages: calling memory_grow...\n");
+        // crate::os::debug_print("[std] alloc_pages: calling memory_grow...\n");
         let prev = core::arch::wasm32::memory_grow(0, pages);
-        if prev == usize::MAX { 
-            crate::os::debug_print("[std] alloc_pages: memory_grow FAILED\n");
-            core::ptr::null_mut() 
-        } else { 
-            crate::os::debug_print("[std] alloc_pages: memory_grow success\n");
-            (prev * 65536) as *mut u8 
+        if prev == usize::MAX {
+            // crate::os::debug_print("[std] alloc_pages: memory_grow FAILED\n");
+            core::ptr::null_mut()
+        } else {
+            // crate::os::debug_print("[std] alloc_pages: memory_grow success\n");
+            (prev * 65536) as *mut u8
         }
-    }
-    #[cfg(not(target_arch = "wasm32"))]
+    }    #[cfg(not(target_arch = "wasm32"))]
     {
         let current_brk = host_brk(0) as usize;
         if current_brk == 0 || current_brk == usize::MAX { return core::ptr::null_mut(); }

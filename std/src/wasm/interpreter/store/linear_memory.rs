@@ -101,7 +101,6 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
                 let add_size = pages_to_add as usize * Self::PAGE_SIZE;
                 
                 let target_addr = (unsafe { *base as usize } + old_size) as u64;
-                crate::os::debug_print("[std] LinearMemory: growing SAS memory...\n");
                 
                 unsafe {
                     crate::sys::syscall6(9, target_addr, add_size as u64, 7, 0, 0, 0);

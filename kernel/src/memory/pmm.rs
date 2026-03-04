@@ -245,6 +245,11 @@ pub fn allocate_frames(count: usize, pid: u64) -> Option<u64> {
     allocate_memory(count * PAGE_SIZE as usize, pid)
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn pmm_allocate_frames(count: usize, owner: u64) -> u64 {
+    allocate_frames(count, owner).unwrap_or(0)
+}
+
 pub fn allocate_memory(bytes: usize, pid: u64) -> Option<u64> {
     let pages = (bytes + PAGE_SIZE as usize - 1) / PAGE_SIZE as usize;
     if pages == 0 { return None; }

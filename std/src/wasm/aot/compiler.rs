@@ -147,11 +147,6 @@ impl<'a> AotCompiler<'a> {
             let offset = self.emitter.code.len();
             func_offsets.push(offset);
             
-            // Log entry point info
-            if i == 0 {
-                crate::debugln!("[AOT] Compiling local func {} at offset {:#x}", i, offset);
-            }
-            
             self.compile_function_body(i);
         }
 
@@ -364,38 +359,44 @@ impl<'a> AotCompiler<'a> {
             }
 
             Instruction::GlobalGet(idx) => {
-                self.emitter.sub_reg_imm32(Reg::RSP, 16); // Temp buffer
+                self.emitter.sub_reg_imm32(Reg::RSP, 16); // Buffer for result
                 self.emitter.push_reg(Reg::RDI);
                 self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
+                
                 self.emitter.mov_reg_reg(Reg::RDX, Reg::RSP);
-                self.emitter.add_reg_imm32(Reg::RDX, 16); // sp points to buffer
+                self.emitter.add_reg_imm32(Reg::RDX, 16); // Pointer to 16-byte buffer
                 self.emitter.mov_reg_imm64(Reg::RSI, idx as u64);
                 self.emitter.mov_reg_imm64(
                     Reg::RAX,
                     crate::wasm::aot::trampoline::aot_global_get as usize as u64,
                 );
                 self.emitter.call_reg(Reg::RAX);
+                
                 self.emitter.add_reg_imm32(Reg::RSP, 8);
                 self.emitter.pop_reg(Reg::RDI);
+                // Now RDI is restored, and Global is at [RSP]
                 self.emitter.movups_xmm_mem(XmmReg::XMM0, Reg::RSP, 0);
-                self.emitter.add_reg_imm32(Reg::RSP, 16); // Pop buffer
+                self.emitter.add_reg_imm32(Reg::RSP, 16);
                 self.emitter.push_v128(XmmReg::XMM0);
                 self.stack_depth += 1;
             }
             Instruction::GlobalSet(idx) => {
                 self.emitter.pop_v128(XmmReg::XMM0);
-                self.emitter.sub_reg_imm32(Reg::RSP, 16); // Temp buffer
+                self.emitter.sub_reg_imm32(Reg::RSP, 16); // Buffer for value
                 self.emitter.movups_mem_xmm(Reg::RSP, 0, XmmReg::XMM0);
+                
                 self.emitter.push_reg(Reg::RDI);
                 self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
+                
                 self.emitter.mov_reg_reg(Reg::RDX, Reg::RSP);
-                self.emitter.add_reg_imm32(Reg::RDX, 16); // sp points to buffer
+                self.emitter.add_reg_imm32(Reg::RDX, 16); // Pointer to 16-byte buffer
                 self.emitter.mov_reg_imm64(Reg::RSI, idx as u64);
                 self.emitter.mov_reg_imm64(
                     Reg::RAX,
                     crate::wasm::aot::trampoline::aot_global_set as usize as u64,
                 );
                 self.emitter.call_reg(Reg::RAX);
+                
                 self.emitter.add_reg_imm32(Reg::RSP, 8);
                 self.emitter.pop_reg(Reg::RDI);
                 self.emitter.add_reg_imm32(Reg::RSP, 16); // Pop buffer

@@ -1,5 +1,5 @@
 pub mod heap;
-use self::heap::{align_up, Heap};
+use self::heap::{align_up, Heap, MAX_HEAP_REGIONS};
 use core::{
     alloc::{GlobalAlloc, Layout},
     cell::UnsafeCell,
@@ -29,11 +29,26 @@ impl Allocator {
             core::arch::asm!("cli");
         }
 
+        #[cfg(target_arch = "wasm32")]
+        {
+            let heap = unsafe { &*self.heap.get() };
+            if heap.magic != heap::HEAP_MAGIC {
+                self.lock.store(false, Ordering::Release);
+            }
+        }
+
         while self
             .lock
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_err()
         {
+            #[cfg(target_arch = "wasm32")]
+            {
+                // In single-threaded WASM, if we are spinning, it's a re-entrant deadlock (e.g. from debug_print).
+                // We force-unlock to break the deadlock.
+                self.lock.store(false, Ordering::Release);
+                continue;
+            }
             core::hint::spin_loop();
         }
         rflags
@@ -62,44 +77,52 @@ impl Allocator {
 unsafe fn grow_handler(min_size: usize) -> Option<(usize, usize)> {
     #[cfg(not(feature = "userland"))]
     {
-        return None;
+        // Kernel mode: allocate physical frames from PMM and use HHDM mapping
+        let pages = (min_size + 4095) / 4096;
+        unsafe extern "C" {
+            fn pmm_allocate_frames(count: usize, owner: u64) -> u64;
+        }
+        let phys = unsafe { pmm_allocate_frames(pages, 0) };
+        if phys == 0 || phys == u64::MAX {
+            return None;
+        }
+        const HHDM_OFFSET: usize = 0xFFFF_8000_0000_0000;
+        let start = phys as usize + HHDM_OFFSET;
+        let end = start + pages * 4096;
+        return Some((start, end));
     }
 
-    // Unified growth using sys::alloc_pages
-    let ptr = crate::sys::alloc_pages(min_size);
-    if ptr.is_null() { return None; }
-    
-    let start = ptr as usize;
-    // We assume alloc_pages returns exactly the size requested (or aligned up)
-    // To be safe, we calculate the end based on min_size aligned to page boundaries
-    let actual_size = if cfg!(target_arch = "wasm32") {
-        (min_size + 65535) & !65535
-    } else {
-        (min_size + 4095) & !4095
-    };
-    
-    Some((start, start + actual_size))
+    // Userland: grow using sys::alloc_pages (brk/mmap)
+    #[cfg(feature = "userland")]
+    {
+        let ptr = crate::sys::alloc_pages(min_size);
+        if ptr.is_null() { return None; }
+
+        let start = ptr as usize;
+        let actual_size = if cfg!(target_arch = "wasm32") {
+            (min_size + 65535) & !65535
+        } else {
+            (min_size + 4095) & !4095
+        };
+
+        Some((start, start + actual_size))
+    }
 }
 
 unsafe impl GlobalAlloc for Allocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        // crate::os::debug_print("[std] Allocator: alloc called\n");
         let flags = self.lock();
         let heap = &mut *self.heap.get();
         let mut ptr = heap.alloc(layout, |_| None); // Don't grow inside lock
         self.unlock(flags);
 
         if ptr.is_null() {
-            crate::os::debug_print("[std] Allocator: Growing heap...\n");
             if let Some((start, end)) = grow_handler(layout.size()) {
                 let flags = self.lock();
                 let heap = &mut *self.heap.get();
                 heap.add_memory(start, end);
                 ptr = heap.alloc(layout, |_| None);
                 self.unlock(flags);
-                crate::os::debug_print("[std] Allocator: Heap grown and allocated.\n");
-            } else {
-                crate::os::debug_print("[std] Allocator: FAILED to grow heap.\n");
             }
         }
         ptr
@@ -129,6 +152,10 @@ pub fn init_heap(base: *mut u8, size: usize) {
     ALLOCATOR.unlock(flags);
 }
 
+pub fn debug_allocator() {
+    // Stubs to prevent deadlock-prone debug prints
+}
+
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cabi_realloc(ptr: *mut u8, old_size: usize, align: usize, new_size: usize) -> *mut u8 {
@@ -150,3 +177,4 @@ pub unsafe extern "C" fn cabi_realloc(ptr: *mut u8, old_size: usize, align: usiz
         new_ptr
     }
 }
+

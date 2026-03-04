@@ -3,7 +3,8 @@ use core::ptr::{self, write_bytes, NonNull};
 
 pub const BIN_COUNT: usize = 32;
 pub const MIN_BLOCK_SIZE: usize = 32;
-const MAX_HEAP_REGIONS: usize = 64;
+pub const MAX_HEAP_REGIONS: usize = 64;
+pub const HEAP_MAGIC: u64 = 0x5452_41_4B_45_4F_53; // "KRAKEOS"
 const MAGIC_SEQUENCE: u32 = 0x1574_4751;
 const FLAG_FREE: usize = 1;
 
@@ -77,10 +78,11 @@ struct HeapRegion {
 }
 
 pub struct Heap {
-    bins: [*mut Free; BIN_COUNT],
-    bin_mask: u32,
-    regions: [HeapRegion; MAX_HEAP_REGIONS],
-    region_count: usize,
+    pub magic: u64,
+    pub bins: [*mut Free; BIN_COUNT],
+    pub bin_mask: u32,
+    pub regions: [HeapRegion; MAX_HEAP_REGIONS],
+    pub region_count: usize,
 }
 
 unsafe impl Send for Heap {}
@@ -88,10 +90,20 @@ unsafe impl Send for Heap {}
 impl Heap {
     pub const fn new() -> Self {
         Self {
+            magic: 0,
             bins: [ptr::null_mut(); BIN_COUNT],
             bin_mask: 0,
             regions: [HeapRegion { start: 0, end: 0 }; MAX_HEAP_REGIONS],
             region_count: 0,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.magic = HEAP_MAGIC;
+        self.bin_mask = 0;
+        self.region_count = 0;
+        for i in 0..BIN_COUNT {
+            self.bins[i] = ptr::null_mut();
         }
     }
 
@@ -153,6 +165,7 @@ impl Heap {
     }
 
     pub fn init(&mut self, base: *mut u8, size: usize) {
+        self.reset();
         let base_usize = base as usize;
         let aligned_base = align_up(base_usize, 8);
         let adjustment = aligned_base - base_usize;
@@ -174,6 +187,10 @@ impl Heap {
     pub unsafe fn add_memory(&mut self, start: usize, end: usize) {
         let size = end - start;
         if size < MIN_BLOCK_SIZE { return; }
+
+        if self.magic != HEAP_MAGIC {
+            self.reset();
+        }
 
         if self.region_count > 0 && self.regions[self.region_count - 1].end == start {
             self.regions[self.region_count - 1].end = end;
@@ -197,11 +214,13 @@ impl Heap {
             return NonNull::<u8>::dangling().as_ptr();
         }
 
+        if self.magic != HEAP_MAGIC {
+            self.reset();
+        }
+
         let new_size = align_up(layout.size(), 8);
         let needed_total = 16 + new_size + 8; // overhead + payload + footer
         let needed_total = if needed_total < MIN_BLOCK_SIZE { MIN_BLOCK_SIZE } else { needed_total };
-
-        // crate::os::debug_print("[std] Heap::alloc: searching bins...\n");
 
         loop {
             let start_idx = get_bin_index(needed_total);
@@ -225,14 +244,11 @@ impl Heap {
                 }
             }
 
-            crate::os::debug_print("[std] Heap::alloc: no block found, calling grow_fn...\n");
             match grow_fn(needed_total) {
                 Some((start, end)) => {
-                    crate::os::debug_print("[std] Heap::alloc: grow_fn returned memory.\n");
                     self.add_memory(start, end);
                 }
                 None => {
-                    crate::os::debug_print("[std] Heap::alloc: grow_fn FAILED.\n");
                     break;
                 }
             }
