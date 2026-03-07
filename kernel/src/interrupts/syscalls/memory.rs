@@ -129,21 +129,43 @@ pub fn handle_mmap(context: &mut CPUState) {
 
     let start_page = target_addr & !0xFFF;
     let end_page = (target_addr + len + 0xFFF) & !0xFFF;
-    let pages = (end_page - start_page) / 4096;
 
-    crate::debugln!("[MMAP] Mapping {} pages at {:#x}..{:#x}", pages, start_page, end_page);
+    let mut current_virt = start_page;
+    let mut remaining_bytes = (end_page - start_page) as usize;
 
-    for i in 0..pages {
-        let virt = start_page + (i * 4096);
+    crate::debugln!("[MMAP] Mapping {} bytes at {:#x}..{:#x}", remaining_bytes, start_page, end_page);
+
+    while remaining_bytes > 0 {
+        let is_2mb_aligned = (current_virt % 0x200000 == 0) && (remaining_bytes >= 0x200000);
+        
+        if is_2mb_aligned {
+            // Attempt 2MB huge page allocation
+            if let Some(phys) = pmm::allocate_aligned_memory(0x200000, pid, 0x200000) {
+                let flags = paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER;
+                vmm::map_huge_page(current_virt, PhysAddr::new(phys), flags, None);
+                
+                // Zeroing 2MB is faster in one go
+                unsafe {
+                    core::ptr::write_bytes((current_virt) as *mut u8, 0, 0x200000);
+                }
+                
+                current_virt += 0x200000;
+                remaining_bytes -= 0x200000;
+                continue;
+            }
+        }
+
+        // Fallback to 4KB page
         if let Some(phys) = pmm::allocate_frame(pid) {
             let flags = paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER;
             unsafe {
-                vmm::map_page(virt, PhysAddr::new(phys), flags, None);
-                // Zero the page - WASM linear memory must be zero-initialized
-                core::ptr::write_bytes(virt as *mut u8, 0, 4096);
+                vmm::map_page(current_virt, PhysAddr::new(phys), flags, None);
+                core::ptr::write_bytes(current_virt as *mut u8, 0, 4096);
             }
+            current_virt += 4096;
+            remaining_bytes -= 4096;
         } else {
-            crate::debugln!("[MMAP] FAILED: OOM at page {}", i);
+            crate::debugln!("[MMAP] FAILED: OOM during allocation");
             context.rax = u64::MAX;
             return;
         }
@@ -176,6 +198,9 @@ pub fn handle_shm_get(context: &mut CPUState) {
     let mut shm = crate::memory::shm::GLOBAL_SHM.lock();
     match shm.get_or_create(&name, size) {
         Ok(addr) => {
+            if addr == 1 {
+                panic!("Syscall SHM_GET returned 1 for segment '{}'!", name);
+            }
             crate::debugln!("[Syscall] SHM_GET: Found/Created '{}' at {:#x}", name, addr);
             context.rax = addr;
         }

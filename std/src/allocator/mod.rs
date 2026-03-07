@@ -95,14 +95,16 @@ unsafe fn grow_handler(min_size: usize) -> Option<(usize, usize)> {
     // Userland: grow using sys::alloc_pages (brk/mmap)
     #[cfg(feature = "userland")]
     {
-        let ptr = crate::sys::alloc_pages(min_size);
+        // Grow in 1MB chunks to reduce syscall overhead
+        let growth_size = if min_size < 1024 * 1024 { 1024 * 1024 } else { min_size };
+        let ptr = crate::sys::alloc_pages(growth_size);
         if ptr.is_null() { return None; }
 
         let start = ptr as usize;
         let actual_size = if cfg!(target_arch = "wasm32") {
-            (min_size + 65535) & !65535
+            (growth_size + 65535) & !65535
         } else {
-            (min_size + 4095) & !4095
+            (growth_size + 4095) & !4095
         };
 
         Some((start, start + actual_size))

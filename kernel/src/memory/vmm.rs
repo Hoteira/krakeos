@@ -47,6 +47,95 @@ pub fn init() {
     }
 }
 
+pub fn map_huge_page(virt: u64, phys: PhysAddr, flags_raw: u64, target_pml4_phys: Option<u64>) {
+    unsafe {
+        let flags = flags_raw | paging::PAGE_HUGE;
+        let pml4_table = if let Some(pml4_addr) = target_pml4_phys {
+            paging::get_table_from_phys(pml4_addr).expect("VMM: Invalid target PML4")
+        } else {
+            paging::active_level_4_table()
+        };
+
+        let p4_idx = (virt >> 39) & 0x1FF;
+        let p3_idx = (virt >> 30) & 0x1FF;
+        let p2_idx = (virt >> 21) & 0x1FF;
+
+        let is_user = (flags & paging::PAGE_USER) != 0;
+
+        // Level 4 -> Level 3
+        let mut p3_entry = pml4_table[p4_idx as usize];
+        if p3_entry.is_unused() {
+            let frame = pmm::allocate_frame(0).expect("VMM: OOM for PDPT");
+            let mut new_entry = paging::PageTableEntry::new();
+            let table_flags = paging::PageTableFlags::from_bits_truncate(paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER);
+            new_entry.set_addr(PhysAddr::new(frame), table_flags);
+            pml4_table[p4_idx as usize] = new_entry;
+            paging::get_table_from_phys(frame).unwrap().zero();
+            p3_entry = new_entry;
+        } else {
+            let mut f = p3_entry.flags();
+            let mut changed = false;
+            if is_user && !f.contains(PageTableFlags::USER_ACCESSIBLE) {
+                f |= PageTableFlags::USER_ACCESSIBLE;
+                changed = true;
+            }
+            if (flags_raw & paging::PAGE_WRITABLE) != 0 && !f.contains(PageTableFlags::WRITABLE) {
+                f |= PageTableFlags::WRITABLE;
+                changed = true;
+            }
+            if changed {
+                p3_entry.set_flags(f);
+                pml4_table[p4_idx as usize] = p3_entry;
+            }
+        }
+
+        let p3 = paging::get_table_from_phys(p3_entry.addr().as_u64()).expect("VMM: Failed to get L3 table");
+
+        // Level 3 -> Level 2
+        let mut p2_table_entry = p3[p3_idx as usize];
+        if p2_table_entry.is_unused() {
+            let frame = pmm::allocate_frame(0).expect("VMM: OOM for PD");
+            let mut new_entry = paging::PageTableEntry::new();
+            let table_flags = paging::PageTableFlags::from_bits_truncate(paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER);
+            new_entry.set_addr(PhysAddr::new(frame), table_flags);
+            p3[p3_idx as usize] = new_entry;
+            paging::get_table_from_phys(frame).unwrap().zero();
+            p2_table_entry = new_entry;
+        } else {
+            // Ensure PD has enough permissions
+            let mut f = p2_table_entry.flags();
+            let mut changed = false;
+            if is_user && !f.contains(PageTableFlags::USER_ACCESSIBLE) {
+                f |= PageTableFlags::USER_ACCESSIBLE;
+                changed = true;
+            }
+            if (flags_raw & paging::PAGE_WRITABLE) != 0 && !f.contains(PageTableFlags::WRITABLE) {
+                f |= PageTableFlags::WRITABLE;
+                changed = true;
+            }
+            if changed {
+                p2_table_entry.set_flags(f);
+                p3[p3_idx as usize] = p2_table_entry;
+            }
+        }
+
+        let p2 = paging::get_table_from_phys(p2_table_entry.addr().as_u64()).expect("VMM: Failed to get L2 table");
+
+        // Set Level 2 entry as HUGE page
+        let mut p2_entry = paging::PageTableEntry::new();
+        *(&mut p2_entry as *mut _ as *mut u64) = phys.as_u64() | flags;
+        p2[p2_idx as usize] = p2_entry;
+
+        let current_cr3: u64;
+        asm!("mov {}, cr3", out(reg) current_cr3);
+        let current_pml4 = current_cr3 & 0x000F_FFFF_FFFF_F000;
+
+        if target_pml4_phys.is_none() || target_pml4_phys == Some(current_pml4) {
+            asm!("invlpg [{}]", in(reg) virt);
+        }
+    }
+}
+
 pub fn map_page(virt: u64, phys: PhysAddr, flags_raw: u64, target_pml4_phys: Option<u64>) {
     unsafe {
         let flags = flags_raw;

@@ -87,7 +87,10 @@ pub fn run_in_container<'a, T: Config>(
             let exit_code = match res {
                 Ok(code) => code,
                 Err(crate::wasm::RuntimeError::HostFunctionHaltedExecution(code)) => code,
-                Err(_) => 1,
+                Err(e) => {
+                    crate::debugln!("[wasm-runner] Execution error in {}: {:?}", name, e);
+                    1
+                }
             };
             unsafe {
                 crate::wasm::wasi::ICRNL = false;

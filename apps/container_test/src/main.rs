@@ -15,7 +15,11 @@ pub fn main() {
     ];
 
     println!("[Container Test] Planting child container at offset 0x10000...");
-    match std::os::container_plant(&wasm_bytes, 0x10000, 65536) {
+    
+    #[cfg(target_arch = "wasm32")]
+    core::arch::wasm32::memory_grow(0, 2); // Ensure we have enough memory (at least 128KB)
+
+    match std::os::container_plant(&wasm_bytes, 0x10000, 65536, None) {
         Ok(id) => {
             println!("[Container Test] Child planted with ID: {}. Harvesting...", id);
             // In a real scenario we might need to wait or poll.

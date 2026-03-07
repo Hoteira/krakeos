@@ -286,8 +286,19 @@ impl Heap {
 
     pub unsafe fn dealloc(&mut self, ptr: *mut u8, _layout: Layout) {
         if ptr.is_null() { return; }
+        
+        // Safety check: ptr must be at least 16 bytes into a region to have a header
+        let p_addr = ptr as usize;
+        let mut valid = false;
+        for i in 0..self.region_count {
+            if p_addr >= self.regions[i].start + 16 && p_addr < self.regions[i].end {
+                valid = true;
+                break;
+            }
+        }
+        if !valid { return; }
+
         let used = (ptr as *mut u8).offset(-16) as *mut Used;
-        if !self.is_in_region(used as *const u8) { return; }
         if (*used).magic != MAGIC_SEQUENCE { return; }
 
         (*used).magic = 0;

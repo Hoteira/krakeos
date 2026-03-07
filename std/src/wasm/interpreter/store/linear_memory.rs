@@ -113,10 +113,21 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
                 Ok(())
             }
             LinearMemoryStorage::Nested { container_id, current_pages, max_pages, .. } => {
+                // Check against WASM limits
                 if *current_pages + pages_to_add > *max_pages {
-                    // In a more advanced implementation, we would request the parent to grow here.
-                    // For now, if the requested growth is within the container's max_pages, we allow it.
                     return Err(());
+                }
+                
+                // Check against physical reservation in container registry
+                {
+                    let registry = crate::wasm::container::CONTAINER_REGISTRY.lock();
+                    if let Some(container) = registry.get(container_id) {
+                        let c = container.lock();
+                        let requested_size = (*current_pages + pages_to_add) as u64 * Self::PAGE_SIZE as u64;
+                        if requested_size > c.linear_memory_max {
+                            return Err(());
+                        }
+                    }
                 }
                 
                 // Update container registry metadata

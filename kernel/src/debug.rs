@@ -15,10 +15,17 @@ impl SerialDebug {
         }
     }
 
+    fn wait_for_ready(&self) {
+        let status_port = Port::new(COM1 + 5);
+        while (status_port.inb() & 0x20) == 0 {}
+    }
+
     pub fn write_byte(&self, byte: u8) {
+        self.wait_for_ready();
         match byte {
             b'\n' => {
                 self.port.outb(b'\r');
+                self.wait_for_ready();
                 self.port.outb(b'\n');
             }
             byte => {

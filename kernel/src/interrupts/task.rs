@@ -80,7 +80,7 @@ pub struct CPUState {
 }
 
 impl Process {
-    pub fn new(pid: u64) -> Arc<Self> {
+    pub fn new(pid: u64, parent_pid: Option<u64>) -> Arc<Self> {
         let mut cwd = [0; 128];
         let root = b"@0xE0/";
         cwd[..root.len()].copy_from_slice(root);
@@ -98,13 +98,16 @@ impl Process {
             let q_name_str = writer.as_str();
 
             let mut shm = crate::memory::shm::GLOBAL_SHM.lock();
-            shm.get_or_create(q_name_str, 8192).unwrap()
+            let phys = shm.get_or_create(q_name_str, 8192).unwrap();
+            let q = phys + crate::memory::paging::HHDM_OFFSET;
+            crate::debugln!("[Task] PID {} event queue at {:#x}", pid, q);
+            q
         };
 
         Arc::new(Self {
             pid,
             slot_id,
-            parent_pid: None,
+            parent_pid,
             children: Mutex::new(Vec::new()),
             fd_table: Mutex::new([-1; 16]),
             socket_table: Mutex::new([None; 16]),
@@ -184,7 +187,7 @@ impl TaskManager {
         idle_thread.state = ThreadState::Ready;
 
         unsafe {
-            let kernel_proc = Process::new(0);
+            let kernel_proc = Process::new(0, None);
             idle_thread.process = Some(kernel_proc);
 
             let stack_pages = (STACK_SIZE / 4096) as usize;
@@ -305,11 +308,11 @@ impl TaskManager {
         }
     }
 
-    pub fn init_user_task(&mut self, slot: usize, entry_point: u64, _pml4: u64, args: Option<&[&str]>, fd_table: Option<[i16; 16]>, name: &[u8], terminal_size: (u16, u16)) -> Result<(), pmm::FrameError> {
+    pub fn init_user_task(&mut self, slot: usize, entry_point: u64, _pml4: u64, args: Option<&[&str]>, fd_table: Option<[i16; 16]>, name: &[u8], terminal_size: (u16, u16), parent_pid: Option<u64>) -> Result<(), pmm::FrameError> {
         let pid = slot as u64;
         let mut thread = Thread::new(name);
 
-        let proc = Process::new(pid);
+        let proc = Process::new(pid, parent_pid);
         let slot_id = proc.slot_id;
 
         if let Some(fds) = fd_table {
@@ -406,8 +409,8 @@ impl TaskManager {
         let mut thread = Thread::new(b"thread");
         thread.process = Some(parent_process.clone());
 
-        let k_frame = pmm::allocate_frames(16, tid as u64).ok_or(pmm::FrameError::NoMemory)?;
-        thread.kernel_stack = k_frame + 4096 * 16 + paging::HHDM_OFFSET;
+        let k_frame = pmm::allocate_frames(64, tid as u64).ok_or(pmm::FrameError::NoMemory)?;
+        thread.kernel_stack = k_frame + 4096 * 64 + paging::HHDM_OFFSET;
 
         let state_size = core::mem::size_of::<CPUState>();
         let state_ptr = (thread.kernel_stack - state_size as u64) as *mut CPUState;

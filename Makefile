@@ -24,7 +24,7 @@ UNSTABLE_FLAGS := -Z json-target-spec
 
 # QEMU Options
 QEMU_OPTS := -drive file=$(BUILD_DIR)/disk.img,format=raw,if=virtio \
-             -serial stdio --no-reboot \
+             -serial mon:stdio --no-reboot \
              -device virtio-gpu-pci,xres=1024,yres=576 \
              -display sdl -vga none -m 4G
 

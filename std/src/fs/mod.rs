@@ -97,27 +97,33 @@ impl File {
 
 impl Read for File {
     fn read(&mut self, buffer: &mut [u8]) -> Result<usize> {
-        #[repr(C)]
-        struct ReadResult {
-            tag: u32,
-            ptr: *mut u8,
-            len: usize,
-        }
-        let mut result = [0u8; 24];
-
+        let mut result = [0u8; 32];
         crate::io::host::input_stream_read(self.fd as i32, buffer.len() as u64, result.as_mut_ptr());
 
-        let r = unsafe { &*(result.as_ptr() as *const ReadResult) };
+        let tag = unsafe { core::ptr::read_unaligned(result.as_ptr() as *const u32) };
 
-        if r.tag == 0 {
-            let copy_len = core::cmp::min(buffer.len(), r.len);
-            if copy_len > 0 {
+        if tag == 0 {
+            #[cfg(target_arch = "wasm32")]
+            let (ptr, len) = {
+                let p = unsafe { core::ptr::read_unaligned(result.as_ptr().add(4) as *const u32) } as *mut u8;
+                let l = unsafe { core::ptr::read_unaligned(result.as_ptr().add(8) as *const u32) } as usize;
+                (p, l)
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            let (ptr, len) = {
+                let p = unsafe { core::ptr::read_unaligned(result.as_ptr().add(8) as *const u64) } as *mut u8;
+                let l = unsafe { core::ptr::read_unaligned(result.as_ptr().add(16) as *const u64) } as usize;
+                (p, l)
+            };
+
+            let copy_len = core::cmp::min(buffer.len(), len);
+            if copy_len > 0 && !ptr.is_null() {
                 unsafe {
-                    core::ptr::copy_nonoverlapping(r.ptr, buffer.as_mut_ptr(), copy_len);
+                    core::ptr::copy_nonoverlapping(ptr, buffer.as_mut_ptr(), copy_len);
                 }
             }
-            if !r.ptr.is_null() {
-                crate::memory::free(r.ptr as usize, buffer.len());
+            if !ptr.is_null() {
+                crate::memory::free(ptr as usize, len);
             }
             Ok(copy_len)
         } else {

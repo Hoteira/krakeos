@@ -39,11 +39,25 @@ pub fn main() {
         }
     }
 
+    std::os::user::set_current_user("racap");
+
     // Spawn system apps
     println!("[Init] Spawning Taskbar...");
-    std::thread::spawn(|| {
+    // Plant at 1GB offset to avoid collisions with init's heap
+    let offset = 0x40000000; // 1GB offset
+    let size = 0x4000000;   // 64MB size
+    
+    #[cfg(target_arch = "wasm32")]
+    core::arch::wasm32::memory_grow(0, 32768); // Grow to 2GB to accommodate child at 1GB offset
+
+    match std::os::container_plant_from_path("@0xE0/apps/taskbar.wasm", offset, size, Some(&[(0, 0), (1, 1), (2, 2)])) {
+        Ok(id) => println!("[Init] Taskbar planted as container ID {}", id),
+        Err(e) => println!("[Init] Failed to plant taskbar: {}", e),
+    }
+
+    /*std::thread::spawn(|| {
         std::wasm::run("@0xE0/apps/taskbar.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
-    });
+    });*/
 
     sleep(500);
 

@@ -251,6 +251,10 @@ pub extern "C" fn pmm_allocate_frames(count: usize, owner: u64) -> u64 {
 }
 
 pub fn allocate_memory(bytes: usize, pid: u64) -> Option<u64> {
+    allocate_aligned_memory(bytes, pid, PAGE_SIZE as usize)
+}
+
+pub fn allocate_aligned_memory(bytes: usize, pid: u64, alignment: usize) -> Option<u64> {
     let pages = (bytes + PAGE_SIZE as usize - 1) / PAGE_SIZE as usize;
     if pages == 0 { return None; }
 
@@ -281,6 +285,10 @@ pub fn allocate_memory(bytes: usize, pid: u64) -> Option<u64> {
         if prev_end.as_u64() < 0xA00000 {
             prev_end = PhysAddr::new(0xA00000);
         }
+        
+        if !prev_end.is_aligned(alignment as u64) {
+            prev_end = prev_end.align_up(alignment as u64);
+        }
 
         for i in 0..count_used {
             let current = (*pmm_ptr).allocations[i];
@@ -297,8 +305,14 @@ pub fn allocate_memory(bytes: usize, pid: u64) -> Option<u64> {
             }
 
             let current_end = current.start + (current.count as u64 * PAGE_SIZE);
-            if current_end > prev_end {
-                prev_end = current_end;
+            let aligned_end = if current_end.is_aligned(alignment as u64) {
+                current_end
+            } else {
+                current_end.align_up(alignment as u64)
+            };
+            
+            if aligned_end > prev_end {
+                prev_end = aligned_end;
             }
         }
 
@@ -319,8 +333,8 @@ pub fn allocate_memory(bytes: usize, pid: u64) -> Option<u64> {
                     let mut candidate_start = if entry_base > prev_end { entry_base } else { prev_end };
 
 
-                    if !candidate_start.is_aligned(PAGE_SIZE) {
-                        candidate_start = candidate_start.align_up(PAGE_SIZE);
+                    if !candidate_start.is_aligned(alignment as u64) {
+                        candidate_start = candidate_start.align_up(alignment as u64);
                     }
 
                     if candidate_start < entry_end {

@@ -27,6 +27,13 @@ pub fn malloc(size: usize) -> usize {
     }
 }
 
+pub fn realloc(ptr: usize, old_size: usize, new_size: usize, align: usize) -> usize {
+    unsafe {
+        let layout = core::alloc::Layout::from_size_align(old_size, align).unwrap();
+        crate::alloc::alloc::realloc(ptr as *mut u8, layout, new_size) as usize
+    }
+}
+
 pub fn free(ptr: usize, _size: usize) {
     unsafe {
         let layout = core::alloc::Layout::from_size_align(_size, 8).unwrap();

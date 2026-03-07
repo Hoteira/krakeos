@@ -11,18 +11,29 @@ use crate::io::Read;
 crate::export_method!(
     "krakeos:system/container@0.1.0", "plant",
     [],
-    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![],
     pub fn container_plant_host<T: Config + Clone + Send + 'static>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         let bytes_ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => 0 };
         let bytes_len = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => 0 };
         let offset = match args.get(2) { Some(Value::I32(v)) => *v as u32, _ => 0 };
         let size = match args.get(3) { Some(Value::I32(v)) => *v as u32, _ => 0 };
-        let ret_ptr = match args.get(4) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+        let fds_ptr = match args.get(4) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+        let fds_len = match args.get(5) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+        let ret_ptr = match args.get(6) { Some(Value::I32(v)) => *v as u32, _ => 0 };
 
         let mut wasm_bytes = vec![0u8; bytes_len as usize];
         read_mem(store, bytes_ptr, &mut wasm_bytes).map_err(|_| HaltExecutionError(1))?;
 
-        match crate::wasm::container::plant(store, &wasm_bytes, offset, size, None) {
+        let mut fds_map = Vec::new();
+        if fds_ptr != 0 && fds_len > 0 {
+            let mut fds_buf = vec![0u8; (fds_len * 2) as usize];
+            read_mem(store, fds_ptr, &mut fds_buf).map_err(|_| HaltExecutionError(1))?;
+            for chunk in fds_buf.chunks_exact(2) {
+                fds_map.push((chunk[0], chunk[1]));
+            }
+        }
+
+        match crate::wasm::container::plant(store, &wasm_bytes, offset, size, if fds_map.is_empty() { None } else { Some(&fds_map) }) {
             Ok(id) => {
                 let _ = write_u32(store, ret_ptr, 0); // ok
                 let _ = write_u64(store, ret_ptr + 8, id);
@@ -477,7 +488,7 @@ crate::export_method!(
     vec![ValType::NumType(NumType::I32)], vec![],
     pub fn get_current_user_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         let ret_ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
-        let user = "root";
+        let user = host::user::get_current_user();
         let ptr = call_cabi_realloc(store, user.len() as u32, 1)?;
         let _ = write_bytes(store, ptr, user.as_bytes());
         let _ = write_u32(store, ret_ptr, ptr);

@@ -104,7 +104,7 @@ pub extern "C" fn _start(bootinfo_ptr: u64) -> ! {
     }
 
     crate::debugln!("Spawning init process (WASM)...");
-    match crate::interrupts::syscalls::spawn_process("@0xE0/sys/bin/init.wasm", None, None) {
+    match crate::interrupts::syscalls::spawn_process("@0xE0/sys/bin/init.wasm", None, None, None) {
         Ok(pid) => crate::debugln!("Init process spawned with PID {}", pid),
         Err(e) => {
             crate::debugln!("Failed to spawn init: {}", e);

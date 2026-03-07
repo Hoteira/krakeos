@@ -223,9 +223,14 @@ where
         loop {} // Safety
     }
 
-    let stack_size = 1024 * 1024; // 1MB
-    let stack_base = unsafe { alloc_pages(stack_size) } as u64;
-    let stack_top = stack_base + stack_size as u64;
+    let stack_top = if cfg!(feature = "userland") {
+        let stack_size = 1024 * 1024; // 1MB
+        let stack_base = unsafe { alloc_pages(stack_size) } as u64;
+        stack_base + stack_size as u64
+    } else {
+        // In kernel, use kernel-allocated stacks (handled by SYS_SPAWN_THREAD when stack=0)
+        0
+    };
 
     host_spawn_thread(thread_entry::<F> as u64, stack_top, main_ptr as u64)
 }

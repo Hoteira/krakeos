@@ -21,11 +21,10 @@ pub fn create_wasi_p2_imports<T: Config + Clone + Send + 'static>(linker: &mut L
     // krakeos:system/container@0.1.0
     {
         let module = "krakeos:system/container@0.1.0";
-        define(linker, store, module, "plant", 
-            vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], 
-            vec![], 
-            crate::os::krakeos::wasi::container_plant_host);
-        define(linker, store, module, "plant-from-path", 
+        define(linker, store, module, "plant",
+            vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)],
+            vec![],
+            crate::os::krakeos::wasi::container_plant_host);        define(linker, store, module, "plant-from-path", 
             vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], 
             vec![], 
             crate::os::krakeos::wasi::container_plant_from_path_host);

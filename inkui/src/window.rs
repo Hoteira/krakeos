@@ -103,7 +103,6 @@ impl Window {
         let pid = std::process::get_pid();
         println!("[inkui] Creating window '{}' with pid {}", title, pid);
         let q_name = alloc::format!("events_{}", pid);
-        println!("DIOBOIAAAAAAAAAAAAAAAAAAAAA");
         let event_queue_ptr = std::memory::shm_get(&q_name, 8192).unwrap_or(0) as usize;
         println!("[inkui] Event queue: {}", event_queue_ptr);
 

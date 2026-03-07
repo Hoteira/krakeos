@@ -304,13 +304,13 @@ method_export!("krakeos:system/process@0.2.0", "poll",
 );
 
 method_export!("krakeos:system/container@0.1.0", "plant",
-    pub fn raw_container_plant(bytes_ptr: *const u8, bytes_len: usize, offset: u32, size: u32, ret_ptr: *mut u8) {
+    pub fn raw_container_plant(bytes_ptr: *const u8, bytes_len: usize, offset: u32, size: u32, fds_ptr: *const u8, fds_len: usize, ret_ptr: *mut u8) {
         // Native stub: not implemented for native execution
     }
 );
 
 method_export!("krakeos:system/container@0.1.0", "plant-from-path",
-    pub fn raw_container_plant_from_path(path_ptr: *const u8, path_len: usize, offset: u32, size: u32, ret_ptr: *mut u8) {
+    pub fn raw_container_plant_from_path(path_ptr: *const u8, path_len: usize, offset: u32, size: u32, fds_ptr: *const u8, fds_len: usize, ret_ptr: *mut u8) {
         // Native stub
     }
 );
@@ -567,9 +567,14 @@ pub fn terminal_get_window_size(fd: u32) -> Result<(u16, u16), String> {
     }
 }
 
-pub fn container_plant(wasm_bytes: &[u8], offset: u32, size: u32) -> Result<u64, String> {
+pub fn container_plant(wasm_bytes: &[u8], offset: u32, size: u32, fds: Option<&[(u8, u8)]>) -> Result<u64, String> {
     let mut ret_buf = [0u8; 16];
-    raw_container_plant(wasm_bytes.as_ptr(), wasm_bytes.len(), offset, size, ret_buf.as_mut_ptr());
+    let (fds_ptr, fds_len) = if let Some(fds) = fds {
+        (fds.as_ptr() as *const u8, fds.len())
+    } else {
+        (core::ptr::null(), 0)
+    };
+    raw_container_plant(wasm_bytes.as_ptr(), wasm_bytes.len(), offset, size, fds_ptr, fds_len, ret_buf.as_mut_ptr());
     let tag = u32::from_le_bytes(ret_buf[0..4].try_into().unwrap());
     if tag == 0 {
         Ok(u64::from_le_bytes(ret_buf[8..16].try_into().unwrap()))
@@ -578,9 +583,14 @@ pub fn container_plant(wasm_bytes: &[u8], offset: u32, size: u32) -> Result<u64,
     }
 }
 
-pub fn container_plant_from_path(path: &str, offset: u32, size: u32) -> Result<u64, String> {
+pub fn container_plant_from_path(path: &str, offset: u32, size: u32, fds: Option<&[(u8, u8)]>) -> Result<u64, String> {
     let mut ret_buf = [0u8; 16];
-    raw_container_plant_from_path(path.as_ptr(), path.len(), offset, size, ret_buf.as_mut_ptr());
+    let (fds_ptr, fds_len) = if let Some(fds) = fds {
+        (fds.as_ptr() as *const u8, fds.len())
+    } else {
+        (core::ptr::null(), 0)
+    };
+    raw_container_plant_from_path(path.as_ptr(), path.len(), offset, size, fds_ptr, fds_len, ret_buf.as_mut_ptr());
     let tag = u32::from_le_bytes(ret_buf[0..4].try_into().unwrap());
     if tag == 0 {
         Ok(u64::from_le_bytes(ret_buf[8..16].try_into().unwrap()))

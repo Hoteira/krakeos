@@ -88,10 +88,9 @@ pub fn main() {
 
     // Per Step 27 decision: use containers (plant-from-path)
     // We plant the shell as a child container.
-    // Note: container_plant_from_path currently doesn't take FD maps in its WASI host signature,
-    // but the system design implies child inherits context or we use the global registry.
+    // Note: container_plant_from_path now supports FD mappings.
     // In KrakeOS SAS, child linear memory is mapped into parent.
-    match std::os::container_plant_from_path("@0xE0/sys/bin/shell.wasm", 0, 0) {
+    match std::os::container_plant_from_path("@0xE0/sys/bin/shell.wasm", 0, 0, Some(&[(0, 0), (1, 1), (2, 2)])) {
         Ok(id) => {
             std::debugln!("[term] Spawned shell container ID: {}", id);
         }

@@ -234,7 +234,7 @@ pub fn main() {
                             let root = root_path.unwrap_or_else(|| String::from("@0xE0"));
                             
                             // Per Step 26 decision: use containers (plant/harvest)
-                            match std::os::container_plant_from_path(&prog_path, 0, 0) {
+                            match std::os::container_plant_from_path(&prog_path, 0, 0, None) {
                                 Ok(id) => {
                                     children_pids.push(id);
                                 }
