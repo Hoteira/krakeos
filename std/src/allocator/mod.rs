@@ -117,7 +117,8 @@ unsafe impl GlobalAlloc for Allocator {
         self.unlock(flags);
 
         if ptr.is_null() {
-            if let Some((start, end)) = grow_handler(layout.size()) {
+            // Request enough for layout + overhead (16 byte header + 8 byte footer + alignment)
+            if let Some((start, end)) = grow_handler(layout.size() + 64) {
                 let flags = self.lock();
                 let heap = &mut *self.heap.get();
                 heap.add_memory(start, end);

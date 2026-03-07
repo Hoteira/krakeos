@@ -17,7 +17,7 @@ pub fn main() {
 
     // Setup wallpaper
     println!("[Init] Calling Window::new...");
-    /*let mut win = Window::new("Wallpaper", 1024, 576);
+    let mut win = Window::new("Wallpaper", 1024, 576);
     println!("[Init] Window::new returned.");
     win.w_type = Items::Wallpaper;
     win.x = 0;
@@ -57,7 +57,7 @@ pub fn main() {
         std::wasm::run("@0xE0/apps/term.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
     });
 
-    println!("[Init] System ready.");*/
+    println!("[Init] System ready.");
 
     loop {
         std::os::yield_task();

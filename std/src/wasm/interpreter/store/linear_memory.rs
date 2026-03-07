@@ -101,11 +101,14 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
                 let add_size = pages_to_add as usize * Self::PAGE_SIZE;
                 
                 let target_addr = (unsafe { *base as usize } + old_size) as u64;
-                
-                unsafe {
-                    crate::sys::syscall6(9, target_addr, add_size as u64, 7, 0, 0, 0);
+
+                let result = unsafe {
+                    crate::sys::syscall6(9, target_addr, add_size as u64, 7, 0, 0, 0)
+                };
+                if result == u64::MAX {
+                    return Err(());
                 }
-                
+
                 *current_pages += pages_to_add;
                 Ok(())
             }

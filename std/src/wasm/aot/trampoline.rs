@@ -757,13 +757,24 @@ pub extern "C" fn aot_call_indirect(
         .unwrap_or_else(|| unsafe { aot_trap_oob() });
     let func_addr = match r {
         Ref::Func(addr) => *addr,
-        _ => unsafe { aot_trap_indirect() },
+        _ => unsafe { 
+            crate::os::debug_print(
+                &crate::alloc::format!("AOT Trap: Table element {} is not a Ref::Func\n", i)
+            );
+            aot_trap_indirect() 
+        },
     };
 
     let func_inst = store.functions.get(func_addr);
     let expected_ty = &store.modules.get(module_addr).types[type_idx as usize];
     if func_inst.ty() != *expected_ty {
         unsafe {
+            crate::os::debug_print(
+                &crate::alloc::format!(
+                    "AOT Trap: Signature Mismatch. Expected {:?}, Got {:?}\n",
+                    expected_ty, func_inst.ty()
+                )
+            );
             aot_trap_indirect();
         }
     }
@@ -772,8 +783,14 @@ pub extern "C" fn aot_call_indirect(
         FuncInst::WasmFunc(wasm_func) => wasm_func
             .aot_ptr
             .map(|p| p as *const u8)
-            .unwrap_or(core::ptr::null()),
-        _ => unsafe { aot_trap_indirect() },
+            .unwrap_or_else(|| unsafe { 
+                crate::os::debug_print("AOT Trap: aot_ptr is null\n");
+                aot_trap_indirect() 
+            }),
+        _ => unsafe { 
+            crate::os::debug_print("AOT Trap: not a WasmFunc\n");
+            aot_trap_indirect() 
+        },
     }
 }
 

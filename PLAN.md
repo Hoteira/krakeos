@@ -816,18 +816,19 @@ memory operations. No separate VA region needed.
 # APPENDIX A: SAS Slot Layout (4096 Slots)
 
 The virtual address space is divided into 4096 fixed slots. Each slot has
-three regions: **linear memory**, **AOT code**, and **stack**.
+four regions: **AOT code**, **user stack**, **kernel stack**, and **linear memory**.
 
 **Everything the WASM guest touches lives in linear memory.** This includes:
 heap allocations (dlmalloc/wee_alloc compiled into the wasm), shadow stack,
-data/bss segments, string literals, AND shared memory buffers. SHM is not a
-separate VA region — it's just physical pages mapped into multiple processes'
-linear memory at different offsets. Both processes access shared data via
-normal WASM memory offsets within their own linear memory.
+data/bss segments, string literals, AND shared memory buffers. There is no
+separate heap region — the WASM heap is dlmalloc inside linear memory.
+SHM is not a separate VA region — it's just physical pages mapped into
+multiple processes' linear memory at different offsets.
 
-The native stack is separate because the interpreter/AOT runtime uses real
-x86-64 call frames (function calls, local variables, etc.) that must not
-be inside the WASM-addressable region.
+The user (WASM shadow) stack lives inside linear memory. The **kernel stack**
+is a separate region used by the kernel thread while executing WASM on behalf
+of the process. The **user stack** region holds the x86-64 native stack for
+the AOT runtime / interpreter call frames.
 
 ## Constants
 
@@ -835,44 +836,57 @@ be inside the WASM-addressable region.
 pub const MAX_SLOTS: u16 = 4096;
 
 // --- AOT code --- (bottom of VA, right after kernel low 4 GiB)
-// 16 MiB per slot × 4096 = 64 GiB. Most WASM compiles to < 4 MiB native.
+// 64 MiB per slot × 4096 = 256 GiB. Most WASM compiles to < 4 MiB native.
 pub const CODE_REGION_BASE: u64  = 0x0000_0001_0000_0000; // 4 GiB
 pub const CODE_SLOT_SIZE: u64    = 64 * 1024 * 1024; // 64 MiB
 // Ends at: 260 GiB (0x41_0000_0000)
 
-// --- Stack --- (right after code)
-// 2 MiB per slot × 4096 = 8 GiB. Guard pages on both sides.
+// --- User stack --- (interpreter/AOT native x86-64 stack)
+// 2 MiB per slot × 4096 = 8 GiB. Guard pages on both ends.
 pub const STACK_REGION_BASE: u64 = 0x0000_0041_0000_0000; // 260 GiB
 pub const STACK_SLOT_SIZE: u64   = 2 * 1024 * 1024; // 2 MiB
 // Ends at: 268 GiB (0x43_0000_0000)
 
+// --- Kernel stack --- (kernel thread stack per WASM process)
+// 128 KiB per slot × 4096 = 512 MiB.
+pub const KERNEL_STACK_REGION_BASE: u64 = 0x0000_0043_0000_0000; // 268 GiB
+pub const KERNEL_STACK_SLOT_SIZE: u64   = 128 * 1024; // 128 KiB
+// Ends at: 268.5 GiB (0x43_2000_0000)
+
 // --- Linear memory --- (bulk of the address space)
 // 31 GiB per slot × 4096 = ~124 TiB. Everything WASM touches.
 // VA reservation is free; only mapped physical pages cost real RAM.
-pub const LINEAR_MEMORY_BASE: u64      = 0x0000_0043_0000_0000; // 268 GiB
+// The heap lives inside linear memory (no separate heap region).
+pub const LINEAR_MEMORY_BASE: u64      = 0x0000_0043_2000_0000; // 268.5 GiB
 pub const LINEAR_MEMORY_SLOT_SIZE: u64 = 31 * 1024 * 1024 * 1024; // 31 GiB
-// Ends at: ~124 TiB (fits in 128 TiB lower canonical half with 4 TiB headroom)
+// Ends at: ~124 TiB (fits in 128 TiB lower canonical half with ~3.7 TiB headroom)
 ```
 
 **Layout math:** 4-level paging = 128 TiB lower canonical. Kernel takes 4 GiB,
-code takes 256 GiB, stack takes 8 GiB = 268 GiB overhead. Remaining ~127.7 TiB /
-4096 slots ≈ 31.93 GiB → 31 GiB per slot with ~3.7 TiB headroom.
+code takes 256 GiB, user stack takes 8 GiB, kernel stack takes 0.5 GiB =
+268.5 GiB overhead. Remaining ~127.7 TiB / 4096 slots ≈ 31.93 GiB →
+31 GiB per slot with ~3.7 TiB headroom.
 
 ## Address calculation per slot
 
 ```
 Slot N:
-  code_base  = CODE_REGION_BASE + N * CODE_SLOT_SIZE        // 0x1_0000_0000 + N * 64 MiB
-  code_end   = code_base + CODE_SLOT_SIZE - 1
+  code_base         = CODE_REGION_BASE + N * CODE_SLOT_SIZE
+                    = 0x1_0000_0000 + N * 64 MiB
 
-  stack_base = STACK_REGION_BASE + N * STACK_SLOT_SIZE       // 0x41_0000_0000 + N * 2 MiB
-  stack_top  = stack_base + STACK_SLOT_SIZE                  // grows down from top
+  stack_base        = STACK_REGION_BASE + N * STACK_SLOT_SIZE
+                    = 0x41_0000_0000 + N * 2 MiB
+  stack_top         = stack_base + STACK_SLOT_SIZE         // grows down from top
 
-  linear_memory_base = LINEAR_MEMORY_BASE + N * LINEAR_MEMORY_SLOT_SIZE  // 0x43_0000_0000 + N * 31 GiB
-  linear_memory_end  = linear_memory_base + LINEAR_MEMORY_SLOT_SIZE - 1
+  kernel_stack_base = KERNEL_STACK_REGION_BASE + N * KERNEL_STACK_SLOT_SIZE
+                    = 0x43_0000_0000 + N * 128 KiB
+
+  linear_memory_base = LINEAR_MEMORY_BASE + N * LINEAR_MEMORY_SLOT_SIZE
+                     = 0x43_2000_0000 + N * 31 GiB
   (this is what the WASM runtime sets as memory_base / R14 for AOT)
   WASM offset 0     → linear_memory_base
   WASM offset K     → linear_memory_base + K
+  WASM heap         → linear_memory_base + <dlmalloc managed region>
   SHM mapped at     → linear_memory_base + <some offset within slot>
 ```
 

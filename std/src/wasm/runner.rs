@@ -141,7 +141,9 @@ pub fn run_with_buffer(
                 const CODE_SLOT_SIZE: u64    = 64 * 1024 * 1024;     // 64 MiB
                 const STACK_REGION_BASE: u64 = 0x0000_0041_0000_0000; // 260 GiB
                 const STACK_SLOT_SIZE: u64   = 2 * 1024 * 1024;      // 2 MiB
-                const LINEAR_MEMORY_REGION_BASE: u64 = 0x0000_0043_0000_0000; // 268 GiB
+                const KERNEL_STACK_REGION_BASE: u64 = 0x0000_0043_0000_0000; // 268 GiB
+                const KERNEL_STACK_SLOT_SIZE: u64   = 128 * 1024;    // 128 KiB
+                const LINEAR_MEMORY_REGION_BASE: u64 = 0x0000_0043_2000_0000; // 268.5 GiB
                 const LINEAR_MEMORY_SLOT_SIZE: u64   = 31 * 1024 * 1024 * 1024; // 31 GiB
 
                 slot_info.linear_memory_base = LINEAR_MEMORY_REGION_BASE + (slot_id as u64) * LINEAR_MEMORY_SLOT_SIZE;
@@ -296,8 +298,8 @@ pub fn run_with_env(
                     };
                     crate::os::process_get_slot_info(&mut slot_info as *mut _ as *mut u8);
 
-                    // Allocate SAS memory base (1GB chunk within the process slot)
-                    let sas_base = crate::memory::allocate_sas_region(1024 * 1024 * 1024);
+                    // Use the slot's linear memory base directly
+                    let sas_base = Some(slot_info.linear_memory_base);
                     store.sas_memory_base = sas_base;
 
                     // Register container

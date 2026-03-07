@@ -7,13 +7,19 @@ pub const CODE_REGION_BASE: u64  = 0x0000_0001_0000_0000; // 4 GiB
 pub const CODE_SLOT_SIZE: u64    = 64 * 1024 * 1024; // 64 MiB
 // Ends at: 260 GiB (0x41_0000_0000)
 
-// --- Stack ---
+// --- User stack ---
 pub const STACK_REGION_BASE: u64 = 0x0000_0041_0000_0000; // 260 GiB
 pub const STACK_SLOT_SIZE: u64   = 2 * 1024 * 1024; // 2 MiB
 // Ends at: 268 GiB (0x43_0000_0000)
 
+// --- Kernel stack ---
+pub const KERNEL_STACK_REGION_BASE: u64 = 0x0000_0043_0000_0000; // 268 GiB
+pub const KERNEL_STACK_SLOT_SIZE: u64   = 128 * 1024; // 128 KiB
+// 128 KiB × 4096 slots = 512 MiB
+// Ends at: 268.5 GiB (0x43_2000_0000)
+
 // --- Linear memory ---
-pub const LINEAR_MEMORY_BASE: u64      = 0x0000_0043_0000_0000; // 268 GiB
+pub const LINEAR_MEMORY_BASE: u64      = 0x0000_0043_2000_0000; // 268.5 GiB
 pub const LINEAR_MEMORY_SLOT_SIZE: u64 = 31 * 1024 * 1024 * 1024; // 31 GiB
 // Ends at: ~124 TiB (fits in 128 TiB canonical)
 
