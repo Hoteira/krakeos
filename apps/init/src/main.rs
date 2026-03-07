@@ -12,12 +12,13 @@ pub fn main() {
     std::allocator::debug_allocator();
     println!("[Init] Starting WASM Userland...");
 
-    let v = vec![0,2,4,8];
-    println!("[Init] v: {:?}", v);
+    let sw = std::os::graphics::get_screen_width();
+    let sh = std::os::graphics::get_screen_height();
+    println!("[Init] Detected Screen Size: {}x{}", sw, sh);
 
     // Setup wallpaper
     println!("[Init] Calling Window::new...");
-    let mut win = Window::new("Wallpaper", 1024, 576);
+    let mut win = Window::new("Wallpaper", sw, sh);
     println!("[Init] Window::new returned.");
     win.w_type = Items::Wallpaper;
     win.x = 0;

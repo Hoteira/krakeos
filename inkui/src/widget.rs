@@ -735,32 +735,33 @@ impl Widget {
         if buffer_width == 0 { return; }
 
         match self {
-            Widget::Image { geometry, rasterized_buffer, .. } => {
-                std::println!("Image Draw: x={}, y={}, w={}, h={}, fb_width={}", geometry.x, geometry.y, geometry.width, geometry.height, buffer_width);
+            Widget::Image { geometry, rasterized_buffer, last_raster_size, .. } => {
                 if !rasterized_buffer.is_empty() {
-                    let img_w = geometry.width;
-                    let img_h = geometry.height;
+                    let src_w = last_raster_size.0;
+                    let src_h = last_raster_size.1;
+                    let dst_w = geometry.width;
+                    let dst_h = geometry.height;
+                    
                     let fb_len = framebuffer.len();
                     let fb_height = fb_len / buffer_width;
 
-                    for row in 0..img_h {
+                    // Simple blit with clipping, using src_w as the data stride
+                    let copy_h = src_h.min(dst_h);
+                    let copy_w = src_w.min(dst_w);
+
+                    for row in 0..copy_h {
                         let dest_y = geometry.y + row;
                         if dest_y >= fb_height {
                             break;
                         }
 
                         let dest_start = dest_y * buffer_width + geometry.x;
-                        let src_start = row * img_w;
+                        let src_start = row * src_w;
 
-                        let max_x = geometry.x + img_w;
-                        let copy_width = if max_x > buffer_width {
-                            buffer_width.saturating_sub(geometry.x)
-                        } else {
-                            img_w
-                        };
+                        let actual_copy_w = copy_w.min(buffer_width.saturating_sub(geometry.x));
 
-                        if copy_width > 0 && dest_start + copy_width <= fb_len && src_start + copy_width <= rasterized_buffer.len() {
-                            for i in 0..copy_width {
+                        if actual_copy_w > 0 && dest_start + actual_copy_w <= fb_len && src_start + actual_copy_w <= rasterized_buffer.len() {
+                            for i in 0..actual_copy_w {
                                 let pixel = rasterized_buffer[src_start + i];
                                 framebuffer[dest_start + i] = pixel;
                             }
