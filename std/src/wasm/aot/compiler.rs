@@ -970,8 +970,13 @@ impl<'a> AotCompiler<'a> {
                 self.emitter.emit_u8(0xF3);
                 self.emitter.emit_u8(0x0F);
                 self.emitter.emit_u8(0x10);
-                self.emitter.modrm(1, XmmReg::XMM0 as u8, Reg::RCX as u8);
-                self.emitter.emit_u8(memarg.offset as u8);
+                if memarg.offset <= 127 {
+            self.emitter.modrm(1, XmmReg::XMM0 as u8, Reg::RCX as u8);
+            self.emitter.emit_u8(memarg.offset as u8);
+        } else {
+            self.emitter.modrm(2, XmmReg::XMM0 as u8, Reg::RCX as u8);
+            self.emitter.emit_u32(memarg.offset);
+        }
                 self.emitter.push_v128(XmmReg::XMM0);
             }
             Instruction::F64Load(memarg) => {
@@ -982,8 +987,13 @@ impl<'a> AotCompiler<'a> {
                 self.emitter.emit_u8(0xF2);
                 self.emitter.emit_u8(0x0F);
                 self.emitter.emit_u8(0x10);
-                self.emitter.modrm(1, XmmReg::XMM0 as u8, Reg::RCX as u8);
-                self.emitter.emit_u8(memarg.offset as u8);
+                if memarg.offset <= 127 {
+            self.emitter.modrm(1, XmmReg::XMM0 as u8, Reg::RCX as u8);
+            self.emitter.emit_u8(memarg.offset as u8);
+        } else {
+            self.emitter.modrm(2, XmmReg::XMM0 as u8, Reg::RCX as u8);
+            self.emitter.emit_u32(memarg.offset);
+        }
                 self.emitter.push_v128(XmmReg::XMM0);
             }
             Instruction::F32Store(memarg) => {
@@ -995,8 +1005,13 @@ impl<'a> AotCompiler<'a> {
                 self.emitter.emit_u8(0xF3);
                 self.emitter.emit_u8(0x0F);
                 self.emitter.emit_u8(0x11);
-                self.emitter.modrm(1, XmmReg::XMM0 as u8, Reg::RCX as u8);
-                self.emitter.emit_u8(memarg.offset as u8);
+                if memarg.offset <= 127 {
+            self.emitter.modrm(1, XmmReg::XMM0 as u8, Reg::RCX as u8);
+            self.emitter.emit_u8(memarg.offset as u8);
+        } else {
+            self.emitter.modrm(2, XmmReg::XMM0 as u8, Reg::RCX as u8);
+            self.emitter.emit_u32(memarg.offset);
+        }
                 self.stack_depth -= 2;
             }
             Instruction::F64Store(memarg) => {
@@ -1008,8 +1023,13 @@ impl<'a> AotCompiler<'a> {
                 self.emitter.emit_u8(0xF2);
                 self.emitter.emit_u8(0x0F);
                 self.emitter.emit_u8(0x11);
-                self.emitter.modrm(1, XmmReg::XMM0 as u8, Reg::RCX as u8);
-                self.emitter.emit_u8(memarg.offset as u8);
+                if memarg.offset <= 127 {
+            self.emitter.modrm(1, XmmReg::XMM0 as u8, Reg::RCX as u8);
+            self.emitter.emit_u8(memarg.offset as u8);
+        } else {
+            self.emitter.modrm(2, XmmReg::XMM0 as u8, Reg::RCX as u8);
+            self.emitter.emit_u32(memarg.offset);
+        }
                 self.stack_depth -= 2;
             }
 
@@ -1589,8 +1609,13 @@ impl<'a> AotCompiler<'a> {
         self.emitter.mov_reg_mem64(Reg::RCX, Reg::RDI, 16);
         self.emitter.add_reg_reg(Reg::RCX, Reg::RAX);
         self.emitter.emit_u8(0x8B);
-        self.emitter.modrm(1, Reg::RAX as u8, Reg::RCX as u8);
-        self.emitter.emit_u8(memarg.offset as u8);
+        if memarg.offset <= 127 {
+            self.emitter.modrm(1, Reg::RAX as u8, Reg::RCX as u8);
+            self.emitter.emit_u8(memarg.offset as u8);
+        } else {
+            self.emitter.modrm(2, Reg::RAX as u8, Reg::RCX as u8);
+            self.emitter.emit_u32(memarg.offset);
+        }
         self.emitter.push_wasm_stack(Reg::RAX);
     }
 
@@ -1601,8 +1626,13 @@ impl<'a> AotCompiler<'a> {
         self.emitter.add_reg_reg(Reg::RCX, Reg::RAX);
         self.emitter.emit_u8(0x48);
         self.emitter.emit_u8(0x8B);
-        self.emitter.modrm(1, Reg::RAX as u8, Reg::RCX as u8);
-        self.emitter.emit_u8(memarg.offset as u8);
+        if memarg.offset <= 127 {
+            self.emitter.modrm(1, Reg::RAX as u8, Reg::RCX as u8);
+            self.emitter.emit_u8(memarg.offset as u8);
+        } else {
+            self.emitter.modrm(2, Reg::RAX as u8, Reg::RCX as u8);
+            self.emitter.emit_u32(memarg.offset);
+        }
         self.emitter.push_wasm_stack(Reg::RAX);
     }
 
@@ -1633,8 +1663,13 @@ impl<'a> AotCompiler<'a> {
         } else {
             self.emitter.emit_u8(opcode as u8);
         }
-        self.emitter.modrm(1, Reg::RAX as u8, Reg::RCX as u8);
-        self.emitter.emit_u8(memarg.offset as u8);
+        if memarg.offset <= 127 {
+            self.emitter.modrm(1, Reg::RAX as u8, Reg::RCX as u8);
+            self.emitter.emit_u8(memarg.offset as u8);
+        } else {
+            self.emitter.modrm(2, Reg::RAX as u8, Reg::RCX as u8);
+            self.emitter.emit_u32(memarg.offset);
+        }
         self.emitter.push_wasm_stack(Reg::RAX);
     }
 
@@ -1645,8 +1680,13 @@ impl<'a> AotCompiler<'a> {
         self.emitter.mov_reg_mem64(Reg::RCX, Reg::RDI, 16);
         self.emitter.add_reg_reg(Reg::RCX, Reg::RAX);
         self.emitter.emit_u8(0x89);
-        self.emitter.modrm(1, Reg::RBX as u8, Reg::RCX as u8);
-        self.emitter.emit_u8(memarg.offset as u8);
+        if memarg.offset <= 127 {
+            self.emitter.modrm(1, Reg::RBX as u8, Reg::RCX as u8);
+            self.emitter.emit_u8(memarg.offset as u8);
+        } else {
+            self.emitter.modrm(2, Reg::RBX as u8, Reg::RCX as u8);
+            self.emitter.emit_u32(memarg.offset);
+        }
         self.stack_depth -= 2;
     }
 
@@ -1658,8 +1698,13 @@ impl<'a> AotCompiler<'a> {
         self.emitter.add_reg_reg(Reg::RCX, Reg::RAX);
         self.emitter.emit_u8(0x48);
         self.emitter.emit_u8(0x89);
-        self.emitter.modrm(1, Reg::RBX as u8, Reg::RCX as u8);
-        self.emitter.emit_u8(memarg.offset as u8);
+        if memarg.offset <= 127 {
+            self.emitter.modrm(1, Reg::RBX as u8, Reg::RCX as u8);
+            self.emitter.emit_u8(memarg.offset as u8);
+        } else {
+            self.emitter.modrm(2, Reg::RBX as u8, Reg::RCX as u8);
+            self.emitter.emit_u32(memarg.offset);
+        }
         self.stack_depth -= 2;
     }
 
@@ -1684,8 +1729,13 @@ impl<'a> AotCompiler<'a> {
                 self.emitter.emit_u8(0x89);
             }
         }
-        self.emitter.modrm(1, Reg::RBX as u8, Reg::RCX as u8);
-        self.emitter.emit_u8(memarg.offset as u8);
+        if memarg.offset <= 127 {
+            self.emitter.modrm(1, Reg::RBX as u8, Reg::RCX as u8);
+            self.emitter.emit_u8(memarg.offset as u8);
+        } else {
+            self.emitter.modrm(2, Reg::RBX as u8, Reg::RCX as u8);
+            self.emitter.emit_u32(memarg.offset);
+        }
         self.stack_depth -= 2;
     }
 

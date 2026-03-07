@@ -1,27 +1,35 @@
-﻿import sys
-with open('kernel/src/interrupts/syscalls/process.rs', 'rb') as f:
-    content = f.read().decode('utf-8', 'ignore')
+import re
 
-parts = content.split('pub fn handle_thread_exit')
-new_content = parts[0] + '''pub fn handle_thread_exit(context: &mut CPUState) {
-    let exit_code = context.rdi;
-    debugln!("[Syscall] Thread exited");
-    {
-        let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
-        let current = tm.current_task;
-        if current >= 0 {
-            if let Some(task) = tm.tasks[current as usize].as_mut() {
-                task.state = crate::interrupts::task::ThreadState::Zombie;
-                task.exit_code = 0;
-            }
-        }
-    }
+with open("std/src/wasm/aot/compiler.rs", "r") as f:
+    code = f.read()
 
-    unsafe {
-        core::arch::asm!("sti");
-        loop { core::arch::asm!("hlt"); }
-    }
-}
-'''
-with open('kernel/src/interrupts/syscalls/process.rs', 'w', encoding='utf-8') as f:
-    f.write(new_content)
+# Pattern to find the sequence:
+# self.emitter.modrm(1, Reg/XmmReg as u8, Reg::RCX as u8);
+# self.emitter.emit_u8(memarg.offset as u8);
+# And replace with:
+# if memarg.offset <= 127 {
+#     self.emitter.modrm(1, ..., Reg::RCX as u8);
+#     self.emitter.emit_u8(memarg.offset as u8);
+# } else {
+#     self.emitter.modrm(2, ..., Reg::RCX as u8);
+#     self.emitter.emit_u32(memarg.offset);
+# }
+
+def repl(m):
+    reg = m.group(1)
+    return f"""if memarg.offset <= 127 {{
+            self.emitter.modrm(1, {reg}, Reg::RCX as u8);
+            self.emitter.emit_u8(memarg.offset as u8);
+        }} else {{
+            self.emitter.modrm(2, {reg}, Reg::RCX as u8);
+            self.emitter.emit_u32(memarg.offset);
+        }}"""
+
+new_code = re.sub(
+    r"self\.emitter\.modrm\(1,\s*(.+?),\s*Reg::RCX as u8\);\s*self\.emitter\.emit_u8\(memarg\.offset as u8\);",
+    repl,
+    code
+)
+
+with open("std/src/wasm/aot/compiler.rs", "w") as f:
+    f.write(new_code)
