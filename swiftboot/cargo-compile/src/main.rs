@@ -22,10 +22,10 @@ fn main() {
     let bits32_path = root.join("bits32.json");
     let bits64_path = root.join("bits64.json");
 
-    obj_copy("bootloader", &bits16_path, &build_dir.join("bootloader.bin"), &root);
-    obj_copy("stage2", &bits16_path, &build_dir.join("stage2.bin"), &root);
-    obj_copy("stage3", &bits32_path, &build_dir.join("stage3.bin"), &root);
-    obj_copy("stage4", &bits64_path, &build_dir.join("stage4.bin"), &root);
+    obj_copy("bootloader", &bits16_path, &build_dir.join("bootloader.bin"), &root, "bits16");
+    obj_copy("stage2", &bits16_path, &build_dir.join("stage2.bin"), &root, "bits16");
+    obj_copy("stage3", &bits32_path, &build_dir.join("stage3.bin"), &root, "bits32");
+    obj_copy("stage4", &bits64_path, &build_dir.join("stage4.bin"), &root, "bits64");
 
     let mut disk = File::create(build_dir.join("disk.img")).unwrap();
     copy(&mut disk, "bootloader", 0, &build_dir);
@@ -41,23 +41,40 @@ fn copy(disk: &mut File, package: &str, lba: u64, build_dir: &Path) {
     disk.write_all(&bin_data).unwrap();
 }
 
-fn obj_copy(package: &str, target: &Path, output: &Path, root: &Path) {
-    let arg0 = format!("-p={}", package);
-    let arg1 = format!("--bin={}", package);
-    let arg2 = format!("--target={}", target.display());
-    Command::new("cargo")
+fn obj_copy(package: &str, target_file: &Path, output: &Path, root: &Path, target_name: &str) {
+    // 1. Build the package
+    let status = Command::new("cargo")
         .current_dir(root)
-        .args(["objcopy", &arg0, &arg1, &arg2, "--", "-O", "binary", output.to_str().unwrap()])
+        .args([
+            "build",
+            "-Z", "build-std=core,alloc,compiler_builtins",
+            "-Z", "build-std-features=compiler-builtins-mem",
+            "-Z", "json-target-spec",
+            &format!("--package={}", package),
+            &format!("--target={}", target_file.display()),
+        ])
         .status()
-        .unwrap();
-}
+        .expect("Failed to run cargo build");
+    
+    if !status.success() {
+        panic!("Cargo build failed for package {}", package);
+    }
 
-fn cargo_build(package: &str, target: &Path, root: &Path) {
-    let arg1 = format!("--target={}", target.display());
-    let arg2 = format!("--package={}", package);
-    Command::new("cargo")
-        .current_dir(root)
-        .args(["build", &arg1, &arg2])
+    // 2. Locate the elf
+    let elf_path = root.join("target").join(target_name).join("debug").join(package);
+
+    // 3. Run system objcopy
+    let status = Command::new("objcopy")
+        .args([
+            "-O",
+            "binary",
+            elf_path.to_str().expect("Invalid ELF path"),
+            output.to_str().expect("Invalid output path"),
+        ])
         .status()
-        .unwrap();
+        .expect("Failed to run system objcopy");
+
+    if !status.success() {
+        panic!("objcopy failed for package {}", package);
+    }
 }

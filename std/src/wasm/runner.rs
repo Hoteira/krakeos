@@ -47,9 +47,21 @@ pub fn run_in_container<'a, T: Config>(
                     .module_instantiate_unchecked(store, &validation_info, None)
                     .and_then(|instance| {
                         let entry_point = store
-                            .instance_export_unchecked(instance.module_addr, "run")
+                            .instance_export_unchecked(instance.module_addr, "wasi:cli/run@0.2.0#run")
                             .ok()
                             .and_then(|e| e.as_func())
+                            .or_else(|| {
+                                store
+                                    .instance_export_unchecked(instance.module_addr, "__main_void")
+                                    .ok()
+                                    .and_then(|e| e.as_func())
+                            })
+                            .or_else(|| {
+                                store
+                                    .instance_export_unchecked(instance.module_addr, "run")
+                                    .ok()
+                                    .and_then(|e| e.as_func())
+                            })
                             .or_else(|| {
                                 store
                                     .instance_export_unchecked(instance.module_addr, "_start")
@@ -180,9 +192,21 @@ pub fn run_with_buffer(
                     .module_instantiate_unchecked(&mut store, &validation_info, None)
                     .and_then(|instance| {
                         let entry_point = store
-                            .instance_export_unchecked(instance.module_addr, "run")
+                            .instance_export_unchecked(instance.module_addr, "wasi:cli/run@0.2.0#run")
                             .ok()
                             .and_then(|e| e.as_func())
+                            .or_else(|| {
+                                store
+                                    .instance_export_unchecked(instance.module_addr, "__main_void")
+                                    .ok()
+                                    .and_then(|e| e.as_func())
+                            })
+                            .or_else(|| {
+                                store
+                                    .instance_export_unchecked(instance.module_addr, "run")
+                                    .ok()
+                                    .and_then(|e| e.as_func())
+                            })
                             .or_else(|| {
                                 store
                                     .instance_export_unchecked(
@@ -314,9 +338,21 @@ pub fn run_with_env(
                             .module_instantiate_unchecked(&mut store, &validation_info, None)
                             .and_then(|instance| {
                                 let entry_point = store
-                                    .instance_export_unchecked(instance.module_addr, "run")
+                                    .instance_export_unchecked(instance.module_addr, "wasi:cli/run@0.2.0#run")
                                     .ok()
                                     .and_then(|e| e.as_func())
+                                    .or_else(|| {
+                                        store
+                                            .instance_export_unchecked(instance.module_addr, "__main_void")
+                                            .ok()
+                                            .and_then(|e| e.as_func())
+                                    })
+                                    .or_else(|| {
+                                        store
+                                            .instance_export_unchecked(instance.module_addr, "run")
+                                            .ok()
+                                            .and_then(|e| e.as_func())
+                                    })
                                     .or_else(|| {
                                         store
                                             .instance_export_unchecked(

@@ -408,10 +408,13 @@ pub fn create_wasi_p2_imports<T: Config + Clone + Send + 'static>(linker: &mut L
         define(linker, store, module, "[resource-drop]descriptor", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
         define(linker, store, module, "[resource-drop]directory-entry-stream", vec![ValType::NumType(NumType::I32)], vec![], resource_drop);
 
-        // Also add __wasm_call_dtors and __wasi_proc_exit to env for compatibility
+        // Also add __wasm_call_dtors, __wasi_proc_exit, and __wasi_init_tp to env for compatibility
         let func_type = FuncType { params: ResultType { valtypes: vec![] }, returns: ResultType { valtypes: vec![] } };
-        let func_addr = store.func_alloc_unchecked(func_type, |_, _| Ok(vec![]));
+        let func_addr = store.func_alloc_unchecked(func_type.clone(), |_, _| Ok(vec![]));
         let _ = linker.define_unchecked(String::from("env"), String::from("__wasm_call_dtors"), ExternVal::Func(func_addr));
+
+        let func_addr = store.func_alloc_unchecked(func_type, |_, _| Ok(vec![]));
+        let _ = linker.define_unchecked(String::from("env"), String::from("__wasi_init_tp"), ExternVal::Func(func_addr));
 
         let exit_type = FuncType { params: ResultType { valtypes: vec![ValType::NumType(NumType::I32)] }, returns: ResultType { valtypes: vec![] } };
         let exit_addr = store.func_alloc_unchecked(exit_type, crate::process::wasi::exit);
