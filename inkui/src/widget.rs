@@ -188,6 +188,20 @@ impl Widget {
         }
     }
 
+    pub fn raw_image(id: WidgetId, data: &[u8], width: usize, height: usize) -> Self {
+        let mut rasterized_buffer = Vec::with_capacity(width * height);
+        if data.len() >= width * height * 4 {
+            let u32_slice = unsafe { core::slice::from_raw_parts(data.as_ptr() as *const u32, width * height) };
+            rasterized_buffer.extend_from_slice(u32_slice);
+        }
+        Widget::Image {
+            geometry: WidgetGeometry::new(id),
+            source_data: Vec::new(),
+            rasterized_buffer,
+            last_raster_size: (width, height),
+        }
+    }
+
     pub fn image(id: WidgetId, data: &[u8]) -> Self {
         Widget::Image {
             geometry: WidgetGeometry::new(id),
@@ -689,6 +703,10 @@ impl Widget {
                         match load_image(source_data, geometry.width, geometry.height) {
                             Ok(buffer) => {
                                 std::println!("Image: Rasterization successful. Buffer len: {}", buffer.len());
+                                if buffer.len() > 0 {
+                                    std::println!("First pixel: {:#010X}", buffer[0]);
+                                    std::println!("Middle pixel: {:#010X}", buffer[buffer.len() / 2]);
+                                }
                                 if buffer.len() != geometry.width * geometry.height {
                                     std::println!("WARNING: Buffer len {} does not match expected {}x{} = {}", buffer.len(), geometry.width, geometry.height, geometry.width * geometry.height);
                                 }
@@ -722,23 +740,29 @@ impl Widget {
                 if !rasterized_buffer.is_empty() {
                     let img_w = geometry.width;
                     let img_h = geometry.height;
+                    let fb_len = framebuffer.len();
+                    let fb_height = fb_len / buffer_width;
 
                     for row in 0..img_h {
                         let dest_y = geometry.y + row;
-                        if dest_y >= framebuffer.len() / buffer_width {
-                            std::println!("Image Draw: Clipped at bottom y={}", dest_y);
+                        if dest_y >= fb_height {
                             break;
                         }
 
                         let dest_start = dest_y * buffer_width + geometry.x;
                         let src_start = row * img_w;
 
-                        let copy_width = img_w.min(buffer_width.saturating_sub(geometry.x));
+                        let max_x = geometry.x + img_w;
+                        let copy_width = if max_x > buffer_width {
+                            buffer_width.saturating_sub(geometry.x)
+                        } else {
+                            img_w
+                        };
 
-                        if dest_start + copy_width <= framebuffer.len() && src_start + copy_width <= rasterized_buffer.len() {
+                        if copy_width > 0 && dest_start + copy_width <= fb_len && src_start + copy_width <= rasterized_buffer.len() {
                             for i in 0..copy_width {
                                 let pixel = rasterized_buffer[src_start + i];
-                                framebuffer[dest_start + i] = pixel | 0xFF000000;
+                                framebuffer[dest_start + i] = pixel;
                             }
                         }
                     }

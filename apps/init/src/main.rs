@@ -24,13 +24,14 @@ pub fn main() {
     win.y = 0;
 
     println!("[Init] Loading wallpaper...");
-    match std::fs::read("@0xE0/apps/wallpaper.png") {
+    match std::fs::read("@0xE0/sys/img/wallpaper2.raw") {
         Ok(bytes) => {
             println!("[Init] Wallpaper loaded ({} bytes).", bytes.len());
-            // In a real implementation we would decode PNG here.
-            // For now just fill with a background color.
-            win.draw();
-            win.update();
+            let img = inkui::Widget::raw_image(1, &bytes, 1024, 576)
+                .width(inkui::Size::Relative(100))
+                .height(inkui::Size::Relative(100));
+            win.children.push(img);
+            win.show();
         }
         Err(_) => {
             println!("[Init] Failed to load wallpaper.");
@@ -39,7 +40,7 @@ pub fn main() {
 
     // Spawn system apps
     println!("[Init] Spawning Taskbar...");
-    std::thread::spawn(|| {
+    /*std::thread::spawn(|| {
         std::wasm::run("@0xE0/apps/taskbar.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
     });
 
@@ -55,7 +56,7 @@ pub fn main() {
     println!("[Init] Spawning Terminal...");
     std::thread::spawn(|| {
         std::wasm::run("@0xE0/apps/term.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
-    });
+    });*/
 
     println!("[Init] System ready.");
 
