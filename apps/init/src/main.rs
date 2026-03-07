@@ -41,13 +41,13 @@ pub fn main() {
 
     // Spawn system apps
     println!("[Init] Spawning Taskbar...");
-    /*std::thread::spawn(|| {
+    std::thread::spawn(|| {
         std::wasm::run("@0xE0/apps/taskbar.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
     });
 
     sleep(500);
 
-    println!("[Init] Spawning AOT Test...");
+    /*println!("[Init] Spawning AOT Test...");
     std::thread::spawn(|| {
         std::wasm::run("@0xE0/apps/aot_test.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
     });
