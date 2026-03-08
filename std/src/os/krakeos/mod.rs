@@ -352,9 +352,18 @@ pub fn print(s: &str) {
 }
 
 pub fn debug_print(s: &str) {
-    let stderr = crate::io::host::get_stderr();
-    let mut res = [0u8; 8];
-    crate::io::host::output_stream_blocking_write_and_flush(stderr, s.as_ptr(), s.len(), res.as_mut_ptr());
+    #[cfg(target_arch = "wasm32")]
+    {
+        let stderr = crate::io::host::get_stderr();
+        let mut res = [0u8; 8];
+        crate::io::host::output_stream_blocking_write_and_flush(stderr, s.as_ptr(), s.len(), res.as_mut_ptr());
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        unsafe {
+            crate::sys::syscall(999, s.as_ptr() as u64, s.len() as u64, 0);
+        }
+    }
 }
 
 pub fn sleep(ms: u64) {

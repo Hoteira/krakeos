@@ -113,7 +113,10 @@ fn instantiate_component_internal<'a, T: Config>(
                     }
                     instances.push(export_map);
                 } else {
-                    panic!("Component Executor: missing component import '{}'", import.name);
+                    return Err(RuntimeError::UnableToResolveExternLookup {
+                        module: String::from("component"),
+                        name: import.name.clone(),
+                    });
                 }
             }
             ComponentItem::CoreInstance(core_inst_def) => {
@@ -214,7 +217,10 @@ fn instantiate_component_internal<'a, T: Config>(
                             }
 
                             if !resolved {
-                                panic!("Component Executor: missing core module import {}::{}", import.module_name, import.name);    
+                                return Err(RuntimeError::UnableToResolveExternLookup {
+                                    module: import.module_name.clone(),
+                                    name: import.name.clone(),
+                                });
                             }
                         }
 
@@ -383,7 +389,10 @@ fn instantiate_component_internal<'a, T: Config>(
                             }
 
                             if !resolved {
-                                panic!("Component Executor: missing module import {}::{}", import.module_name, import.name);
+                                return Err(RuntimeError::UnableToResolveExternLookup {
+                                    module: import.module_name.clone(),
+                                    name: import.name.clone(),
+                                });
                             }
                         }
 
@@ -478,7 +487,10 @@ fn instantiate_component_internal<'a, T: Config>(
                         for export in values {
                             let val = match export.kind {
                                 0x03 => functions.get(export.idx as usize).copied(),
-                                0x02 => panic!("Component Executor: FromExports instance"),
+                                0x02 => {
+                                    crate::debugln!("Component Executor: FromExports instance (unimplemented)");
+                                    return Err(RuntimeError::ValidationError);
+                                }
                                 _ => None,
                             };
                             if let Some(v) = val {

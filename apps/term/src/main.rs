@@ -11,7 +11,7 @@ use std::io::Read;
 use inkui::{Color, Size, Widget, Window};
 use std::fs::File;
 use std::io::Write;
-
+use std::{debug, debugln, println};
 use crate::buffer::TerminalBuffer;
 use crate::types::{Cell, TermAction};
 
@@ -39,6 +39,10 @@ fn update_term_size(win: &Window) {
 }
 
 pub fn main() {
+
+
+    debugln!("WAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+
     let width = 800;
     let height = 400;
 
@@ -58,10 +62,37 @@ pub fn main() {
         let _ = std::os::krakeos::terminal_set_window_size(0, rows, cols);
     }
 
+    debugln!("OCDOSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS");
+
     let screen_w = std::os::graphics::get_screen_width();
     let screen_h = std::os::graphics::get_screen_height();
     let x = (screen_w / 2).saturating_sub(width / 2);
     let y = (screen_h / 2).saturating_sub(height / 2);
+
+    debugln!("OCDOSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS");
+
+    let mut fds_out = [0i32; 2];
+    std::os::pipe(&mut fds_out);
+    unsafe { TERM_READ_FD = fds_out[0] as usize; }
+
+    let mut fds_in = [0i32; 2];
+    std::os::pipe(&mut fds_in);
+    unsafe { TERM_WRITE_FD = fds_in[1] as usize; }
+
+    let map = [
+        (0, fds_in[0] as u8),
+        (1, fds_out[1] as u8),
+        (2, fds_out[1] as u8),
+    ];
+
+    match std::os::spawn_with_fds("@0xE0/apps/shell.wasm", &[], &map) {
+        pid if pid != usize::MAX => debugln!("[term] SHell spawned into its own slot with PID {}", pid),
+        _ => debugln!("[Init] Failed to spawn shell"),
+    }
+
+    // Close the ends of the pipes that the shell is using
+    std::os::file_close(fds_in[0] as usize);
+    std::os::file_close(fds_out[1] as usize);
 
     let mut win = Window::new("krakeOS Term", width, height);
     win.x = x as isize;
@@ -75,27 +106,6 @@ pub fn main() {
                 let static_buf = Vec::leak(buffer);
                 win.load_font(static_buf);
             }
-        }
-    }
-
-    let mut fds_out = [0i32; 2];
-    std::os::pipe(&mut fds_out);
-    unsafe { TERM_READ_FD = fds_out[0] as usize; }
-
-    let mut fds_in = [0i32; 2];
-    std::os::pipe(&mut fds_in);
-    unsafe { TERM_WRITE_FD = fds_in[1] as usize; }
-
-    // Per Step 27 decision: use containers (plant-from-path)
-    // We plant the shell as a child container.
-    // Note: container_plant_from_path now supports FD mappings.
-    // In KrakeOS SAS, child linear memory is mapped into parent.
-    match std::os::container_plant_from_path("@0xE0/sys/bin/shell.wasm", 0, 0, Some(&[(0, 0), (1, 1), (2, 2)])) {
-        Ok(id) => {
-            std::debugln!("[term] Spawned shell container ID: {}", id);
-        }
-        Err(e) => {
-            std::debugln!("[term] Failed to spawn shell container: {}", e);
         }
     }
 

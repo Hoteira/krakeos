@@ -230,19 +230,16 @@ pub fn main() {
                             let mut final_args = Vec::new();
                             final_args.push(parsed.cmd.clone());
                             final_args.extend(wasm_args);
-
-                            let root = root_path.unwrap_or_else(|| String::from("@0xE0"));
                             
-                            // Per Step 26 decision: use containers (plant/harvest)
-                            match std::os::container_plant_from_path(&prog_path, 0, 0, None) {
-                                Ok(id) => {
-                                    children_pids.push(id);
-                                }
-                                Err(e) => {
-                                    let err = format!("Failed to plant container: {}\n", e);
-                                    std::os::file_write(STDOUT_FD, err.as_bytes());
-                                    last_exit_code = 1;
-                                }
+                            let final_args_refs: Vec<&str> = final_args.iter().map(|s| s.as_str()).collect();
+
+                            let pid = std::os::spawn_with_fds(&prog_path, &final_args_refs, &map);
+                            if pid != usize::MAX {
+                                children_pids.push(pid as u64);
+                            } else {
+                                let err = format!("Failed to spawn: {}\n", prog_path);
+                                std::os::file_write(STDOUT_FD, err.as_bytes());
+                                last_exit_code = 1;
                             }
                         } else {
                             let pid = std::os::spawn_with_fds(&prog_path, &args_refs, &map);
@@ -272,18 +269,7 @@ pub fn main() {
             }
 
             for id in children_pids {
-                // Determine if it was a container (high ID) or native PID
-                if id > 1000 { // Heuristic: containers have high IDs
-                    match std::os::container_harvest(id) {
-                        Ok(res) => last_exit_code = res as usize,
-                        Err(_) => {
-                            // If harvest fails, might still be running or it was a native PID
-                            last_exit_code = std::os::waitpid(id) as usize;
-                        }
-                    }
-                } else {
-                    last_exit_code = std::os::waitpid(id) as usize;
-                }
+                last_exit_code = std::os::waitpid(id) as usize;
             }
 
             if last_exit_code != 0 {

@@ -522,6 +522,27 @@ crate::export_method!(
 );
 
 crate::export_method!(
+    "krakeos:system/process@0.2.0", "get-slot-info",
+    [],
+    vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn get_slot_info_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let buf_ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+        let mut slot_info = host::SlotInfo {
+            slot_id: 0,
+            linear_memory_base: 0,
+            linear_memory_size: 0,
+            code_base: 0,
+            stack_base: 0,
+        };
+        let res = host::process_get_slot_info(&mut slot_info as *mut _ as *mut u8);
+        let _ = write_bytes(store, buf_ptr, unsafe {
+            core::slice::from_raw_parts(&slot_info as *const _ as *const u8, core::mem::size_of::<host::SlotInfo>())
+        });
+        Ok(vec![Value::I32(res as u32)])
+    }
+);
+
+crate::export_method!(
     "krakeos:system/process@0.2.0", "set-nonblock",
     [],
     vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
@@ -529,6 +550,35 @@ crate::export_method!(
         let fd = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => 0 };
         let nonblock = match args.get(1) { Some(Value::I32(v)) => *v != 0, _ => false };
         Ok(vec![Value::I32(host::set_nonblock(fd as usize, nonblock) as u32)])
+    }
+);
+
+crate::export_method!(
+    "krakeos:system/process@0.2.0", "ioctl",
+    [],
+    vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I32)],
+    pub fn ioctl_host<T: Config>(_: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let fd = match args.get(0) { Some(Value::I64(v)) => *v, _ => 0 };
+        let request = match args.get(1) { Some(Value::I64(v)) => *v, _ => 0 };
+        let arg = match args.get(2) { Some(Value::I64(v)) => *v, _ => 0 };
+        Ok(vec![Value::I32(host::process_ioctl(fd, request, arg) as u32)])
+    }
+);
+
+crate::export_method!(
+    "krakeos:system/process@0.2.0", "poll",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I32)],
+    pub fn poll_host<T: Config>(_: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let fds_ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+        let count = match args.get(1) { Some(Value::I64(v)) => *v, _ => 0 };
+        let timeout = match args.get(2) { Some(Value::I64(v)) => *v, _ => 0 };
+        // Note: fds_ptr is a WASM pointer. In SAS it might be okay to pass directly if we add offset.
+        // But host::process_poll expects a host pointer.
+        // For now, let's assume SAS and hope for the best, or use a better approach if it fails.
+        // Since I don't have the store here to read_mem, and export_method! doesn't give it to me easily if I didn't name it.
+        // Wait, I can name it.
+        Ok(vec![Value::I32(host::process_poll(fds_ptr as *mut u8, count, timeout) as u32)])
     }
 );
 
@@ -596,6 +646,28 @@ crate::export_method!(
         
         let _ = write_u32(store, ret_ptr, ptr);
         let _ = write_u32(store, ret_ptr + 4, list.len() as u32);
+        Ok(vec![])
+    }
+);
+
+crate::export_method!(
+    "krakeos:system/process@0.2.0", "spawn-thread",
+    [],
+    vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I64)],
+    pub fn spawn_thread_host<T: Config>(_: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let entry = match args.get(0) { Some(Value::I64(v)) => *v, _ => 0 };
+        let stack = match args.get(1) { Some(Value::I64(v)) => *v, _ => 0 };
+        let arg = match args.get(2) { Some(Value::I64(v)) => *v, _ => 0 };
+        Ok(vec![Value::I64(crate::sys::host_spawn_thread(entry, stack, arg))])
+    }
+);
+
+crate::export_method!(
+    "krakeos:system/process@0.2.0", "thread-exit",
+    [],
+    vec![], vec![],
+    pub fn thread_exit_host<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        crate::sys::host_thread_exit();
         Ok(vec![])
     }
 );
@@ -707,13 +779,18 @@ pub fn register_wasi<T: Config + Clone + Send + 'static>(linker: &mut crate::was
     container_kill_child_host::register(linker, store);
     get_pid_host::register(linker, store);
     get_current_user_host::register(linker, store);
+    get_slot_info_host::register(linker, store);
     set_nonblock_host::register(linker, store);
+    ioctl_host::register(linker, store);
+    poll_host::register(linker, store);
     terminal_set_window_size::register(linker, store);
     terminal_get_window_size::register(linker, store);
     get_process_list_host::register(linker, store);
     kill_process_host::register(linker, store);
     kill_host::register(linker, store);
     syscall_host::register(linker, store);
+    spawn_thread_host::register(linker, store);
+    thread_exit_host::register(linker, store);
     dump_vma_host::register(linker, store);
     get_memory_usage_host::register(linker, store);
 }

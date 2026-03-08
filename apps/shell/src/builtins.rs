@@ -115,15 +115,22 @@ WASM:
                 }
             }
 
-            let root = root_path.unwrap_or_else(|| String::from("@0xE0"));
-            std::wasm::run_with_env(
-                &prog_path,
-                actual_args,
-                &root,
-                &[(0, 0), (1, 1), (2, 2)],
-                env_vars,
-                use_aot,
-            );
+            // The kernel handles AOT/interpreting WASM natively.
+            // We just need to spawn it and wait for it.
+            let mut final_args = Vec::new();
+            final_args.push(prog_name.clone());
+            final_args.extend(actual_args.into_iter().skip(1));
+            
+            let args_refs: Vec<&str> = final_args.iter().map(|s| s.as_str()).collect();
+            let pid = std::os::spawn_with_fds(&prog_path, &args_refs, &[(0, in_fd as u8), (1, out_fd as u8), (2, 2)]);
+            
+            if pid != usize::MAX {
+                return std::os::waitpid(pid as u64) as i32;
+            } else {
+                let err = format!("wasm: failed to spawn {}\n", prog_path);
+                std::os::file_write(out_fd, err.as_bytes());
+                return 1;
+            }
         } else {
             std::os::file_write(
                 out_fd,

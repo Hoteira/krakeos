@@ -49,20 +49,19 @@ pub fn main() {
         _ => println!("[Init] Failed to spawn taskbar"),
     }*/
 
-    sleep(500);
+    /*sleep(500);
 
     match std::os::spawn_with_fds("@0xE0/apps/aot_test.wasm", &[], &[(0, 0), (1, 1), (2, 2)]) {
         pid if pid != usize::MAX => println!("[Init] TAOT test into its own slot with PID {}", pid),
         _ => println!("[Init] Failed to spawn tests"),
-    }
+    }*/
 
     sleep(500);
 
-    /*
-    println!("[Init] Spawning Terminal...");
-    std::thread::spawn(|| {
-        std::wasm::run("@0xE0/apps/term.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
-    });*/
+    match std::os::spawn_with_fds("@0xE0/apps/term.wasm", &[], &[(0, 0), (1, 1), (2, 2)]) {
+        pid if pid != usize::MAX => println!("[Init] Term test into its own slot with PID {}", pid),
+        _ => println!("[Init] Failed to spawn term"),
+    }
 
     println!("[Init] System ready.");
 

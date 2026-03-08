@@ -12,62 +12,74 @@ use crate::wasm::interpreter::store::instances::FuncInst;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_trap() -> ! {
-    panic!("AOT Trap: Generic");
+    crate::os::debug_print("AOT Trap: Generic\n");
+    crate::os::exit(1);
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_trap_oob() -> ! {
-    panic!("AOT Trap: Memory Out of Bounds");
+    crate::os::debug_print("AOT Trap: Memory Out of Bounds\n");
+    crate::os::exit(1);
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_trap_fuel() -> ! {
-    panic!("AOT Trap: Fuel Exhausted");
+    crate::os::debug_print("AOT Trap: Fuel Exhausted\n");
+    crate::os::exit(1);
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_trap_div_zero() -> ! {
-    panic!("AOT Trap: Integer Divide by Zero");
+    crate::os::debug_print("AOT Trap: Integer Divide by Zero\n");
+    crate::os::exit(1);
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_trap_int_overflow() -> ! {
-    panic!("AOT Trap: Integer Overflow");
+    crate::os::debug_print("AOT Trap: Integer Overflow\n");
+    crate::os::exit(1);
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_trap_indirect() -> ! {
-    panic!("AOT Trap: Indirect Call Signature Mismatch or Null");
+    crate::os::debug_print("AOT Trap: Indirect Call Signature Mismatch or Null\n");
+    crate::os::exit(1);
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_trap_unreachable() -> ! {
-    panic!("AOT Trap: Unreachable Statement Reached");
+    crate::os::debug_print("AOT Trap: WASM Reached Unreachable Instruction. (Check for earlier [USER PANIC] messages!)\n");
+    crate::os::exit(1);
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_trap_stack_overflow() -> ! {
-    panic!("AOT Trap: Stack Overflow");
+    crate::os::debug_print("AOT Trap: Stack Overflow\n");
+    crate::os::exit(1);
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_trap_host() -> ! {
-    panic!("AOT Trap: Host Function Error");
+    crate::os::debug_print("AOT Trap: Host Function Error\n");
+    crate::os::exit(1);
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_trap_unimplemented_fc() -> ! {
-    panic!("AOT Trap: Unimplemented FC Extension Instruction");
+    crate::os::debug_print("AOT Trap: Unimplemented FC Extension Instruction\n");
+    crate::os::exit(1);
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_trap_unimplemented_simd() -> ! {
-    panic!("AOT Trap: Unimplemented SIMD Instruction");
+    crate::os::debug_print("AOT Trap: Unimplemented SIMD Instruction\n");
+    crate::os::exit(1);
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_trap_unimplemented_atomic() -> ! {
-    panic!("AOT Trap: Unimplemented Atomic Instruction");
+    crate::os::debug_print("AOT Trap: Unimplemented Atomic Instruction\n");
+    crate::os::exit(1);
 }
 
 #[unsafe(no_mangle)]

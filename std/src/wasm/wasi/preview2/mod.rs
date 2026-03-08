@@ -331,10 +331,22 @@ pub fn create_wasi_p2_imports<T: Config + Clone + Send + 'static>(linker: &mut L
             vec![ValType::NumType(NumType::I32)],
             vec![],
             crate::os::krakeos::wasi::get_current_user_host);
+        define(linker, store, module, "get-slot-info",
+            vec![ValType::NumType(NumType::I32)],
+            vec![ValType::NumType(NumType::I32)],
+            crate::os::krakeos::wasi::get_slot_info_host);
         define(linker, store, module, "set-nonblock",
             vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)],
             vec![ValType::NumType(NumType::I32)],
             crate::os::krakeos::wasi::set_nonblock_host);
+        define(linker, store, module, "ioctl",
+            vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)],
+            vec![ValType::NumType(NumType::I32)],
+            crate::os::krakeos::wasi::ioctl_host);
+        define(linker, store, module, "poll",
+            vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)],
+            vec![ValType::NumType(NumType::I32)],
+            crate::os::krakeos::wasi::poll_host);
         define(linker, store, module, "kill",
             vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)],
             vec![ValType::NumType(NumType::I32)],
@@ -343,6 +355,14 @@ pub fn create_wasi_p2_imports<T: Config + Clone + Send + 'static>(linker: &mut L
             vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)],
             vec![ValType::NumType(NumType::I64)],
             crate::os::krakeos::wasi::syscall_host);
+        define(linker, store, module, "spawn-thread",
+            vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)],
+            vec![ValType::NumType(NumType::I64)],
+            crate::os::krakeos::wasi::spawn_thread_host);
+        define(linker, store, module, "thread-exit",
+            vec![],
+            vec![],
+            crate::os::krakeos::wasi::thread_exit_host);
     }
     // krakeos:system/memory@0.2.0
     {
