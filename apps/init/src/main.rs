@@ -43,7 +43,13 @@ pub fn main() {
 
     // Spawn system apps
     println!("[Init] Spawning Taskbar...");
-    // Plant at 1GB offset to avoid collisions with init's heap
+    
+    match std::os::spawn_with_fds("@0xE0/apps/taskbar.wasm", &[], &[(0, 0), (1, 1), (2, 2)]) {
+        pid if pid != usize::MAX => println!("[Init] Taskbar spawned into its own slot with PID {}", pid),
+        _ => println!("[Init] Failed to spawn taskbar"),
+    }
+
+    /*// Per Step 29 decision: spawn as container
     let offset = 0x40000000; // 1GB offset
     let size = 0x4000000;   // 64MB size
     
@@ -55,7 +61,7 @@ pub fn main() {
         Err(e) => println!("[Init] Failed to plant taskbar: {}", e),
     }
 
-    /*std::thread::spawn(|| {
+    std::thread::spawn(|| {
         std::wasm::run("@0xE0/apps/taskbar.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
     });*/
 

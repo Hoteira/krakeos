@@ -341,10 +341,45 @@ pub fn handle_spawn(context: &mut CPUState) {
 }
 
 pub fn handle_kill(context: &mut CPUState) {
-    let pid = context.rdi as u64;
+    let target_pid = context.rdi as u64;
     let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
-    tm.kill_process(pid);
-    context.rax = 0;
+    
+    let current_idx = tm.current_task;
+    let mut can_kill = false;
+
+    if current_idx < 0 { // Kernel
+        can_kill = true;
+    } else {
+        if let Some(current_thread) = tm.tasks[current_idx as usize].as_ref() {
+            let current_proc = current_thread.process.as_ref().unwrap();
+            
+            // Allow if killing self
+            if current_proc.pid == target_pid {
+                can_kill = true;
+            } else if current_proc.pid == 0 {
+                can_kill = true;
+            } else {
+                // Allow if current is parent of target
+                for i in 0..crate::interrupts::task::MAX_THREADS {
+                    if let Some(t) = tm.tasks[i].as_ref() {
+                        if let Some(p) = t.process.as_ref() {
+                            if p.pid == target_pid && p.parent_pid == Some(current_proc.pid) {
+                                can_kill = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if can_kill {
+        tm.kill_process(target_pid);
+        context.rax = 0;
+    } else {
+        context.rax = u64::MAX;
+    }
 }
 
 pub fn handle_getpid(context: &mut CPUState) {
