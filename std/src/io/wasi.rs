@@ -147,9 +147,9 @@ crate::export_method!(
         // Result<list<u8>, stream-error>
         // Tag 0 (OK)
         let _ = write_u32(store, ret_ptr, 0);
-        // Payload (ptr, len) - wasm32 guest expects offsets 4 and 8
-        let _ = write_u32(store, ret_ptr + 4, ptr);
-        let _ = write_u32(store, ret_ptr + 8, buffer.len() as u32);
+        // Payload (ptr, len) - using offsets 8 and 16 to match host shim
+        let _ = write_u64(store, ret_ptr + 8, ptr as u64);
+        let _ = write_u64(store, ret_ptr + 16, buffer.len() as u64);
         Ok(vec![])
     }
 );

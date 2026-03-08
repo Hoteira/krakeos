@@ -113,6 +113,43 @@ crate::export_method!(
 );
 
 crate::export_method!(
+    "krakeos:system/process@0.2.0", "native-file-open",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I64)],
+    pub fn native_file_open<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I64(-1i64 as u64)]) };
+        let len = match args.get(1) { Some(Value::I64(v)) => *v, _ => return Ok(vec![Value::I64(-1i64 as u64)]) };
+        let flags = match args.get(2) { Some(Value::I64(v)) => *v, _ => return Ok(vec![Value::I64(-1i64 as u64)]) };
+
+        let mut buf = crate::alloc::vec![0u8; len as usize];
+        if let Err(_) = read_mem(store, ptr, &mut buf) {
+            return Ok(vec![Value::I64(-1i64 as u64)]);
+        }
+        let res = host::native_file_open(buf.as_ptr(), len, flags);
+        Ok(vec![Value::I64(res as u64)])
+    }
+);
+
+crate::export_method!(
+    "krakeos:system/process@0.2.0", "native-file-stat",
+    [],
+    vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn native_file_stat<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let fd = match args.get(0) { Some(Value::I64(v)) => *v, _ => return Ok(vec![Value::I32(-1i32 as u32)]) };
+        let ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I32(-1i32 as u32)]) };
+
+        let mut s = unsafe { core::mem::zeroed::<crate::fs::Stat>() };
+        let res = host::native_file_stat(fd, &mut s as *mut _ as *mut u8);
+        if res == 0 {
+            if let Err(_) = write_bytes(store, ptr, unsafe { core::slice::from_raw_parts(&s as *const _ as *const u8, core::mem::size_of::<crate::fs::Stat>()) }) {
+                return Ok(vec![Value::I32(-1i32 as u32)]);
+            }
+        }
+        Ok(vec![Value::I32(res as u32)])
+    }
+);
+
+crate::export_method!(
     "krakeos:system/process@0.2.0", "file-read",
     [],
     vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32), ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I64)],
@@ -155,6 +192,8 @@ pub fn register_wasi<T: Config + Clone>(linker: &mut crate::wasm::Linker, store:
     spawn::register(linker, store);
     waitpid::register(linker, store);
     pipe::register(linker, store);
+    native_file_open::register(linker, store);
+    native_file_stat::register(linker, store);
     file_read::register(linker, store);
     file_write::register(linker, store);
     yield_host::register(linker, store);

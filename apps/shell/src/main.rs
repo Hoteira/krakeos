@@ -22,7 +22,9 @@ const STDOUT_FD: usize = 1;
 pub fn main() {
     let welcome_icon = core::char::from_u32(0xE8F0).unwrap_or(' ');
     let welcome_msg = format!("\nWelcome to KrakeOS Shell {} \n", welcome_icon);
+    debugln!("[shell] Writing welcome message...");
     std::os::file_write(STDOUT_FD, welcome_msg.as_bytes());
+    debugln!("[shell] Welcome message written.");
 
     let mut cwd = String::from("@0xE0");
     let mut path_env = String::from("/sys/bin;/apps");

@@ -132,6 +132,7 @@ pub fn main() {
     win.update();
 
     std::os::set_nonblock(unsafe { TERM_READ_FD }, true);
+    debugln!("[term] Loop starting. Read FD: {}", unsafe { TERM_READ_FD });
 
     let mut term_buffer = TerminalBuffer::new();
     let mut pipe_buf = [0u8; 4096];
@@ -193,9 +194,16 @@ pub fn main() {
         let n = std::os::file_read(unsafe { TERM_READ_FD }, &mut pipe_buf);
         
         if n > 0 && n < usize::MAX - 1 {
+            debugln!("[term] Read {} bytes", n);
             did_work = true;
             term_buffer.input_buffer.extend_from_slice(&pipe_buf[..n]);
+        } else if n == usize::MAX {
+            debugln!("[term] Read ERROR!");
+        } else if n != usize::MAX - 1 && n != 0 {
+             debugln!("[term] Read unknown code: {}", n);
+        }
 
+        if n > 0 && n < usize::MAX - 1 {
             let mut consumed = 0;
             loop {
                 let (action, bytes_to_consume) = {

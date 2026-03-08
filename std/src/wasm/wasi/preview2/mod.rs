@@ -319,6 +319,14 @@ pub fn create_wasi_p2_imports<T: Config + Clone + Send + 'static>(linker: &mut L
             vec![ValType::NumType(NumType::I32)],
             vec![ValType::NumType(NumType::I32)],
             crate::process::wasi::pipe);
+        define(linker, store, module, "native-file-open",
+            vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)],
+            vec![ValType::NumType(NumType::I64)],
+            crate::process::wasi::native_file_open);
+        define(linker, store, module, "native-file-stat",
+            vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)],
+            vec![ValType::NumType(NumType::I32)],
+            crate::process::wasi::native_file_stat);
         define(linker, store, module, "file-read",
             vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32), ValType::NumType(NumType::I64)],
             vec![ValType::NumType(NumType::I64)],

@@ -35,25 +35,51 @@ pub struct File {
 
 impl File {
     pub fn open(path: &str) -> Result<Self> {
-        let mut result = [0u8; 8];
-        open_at(3, 0, path.as_ptr(), path.len(), 0, 0, result.as_mut_ptr());
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut result = [0u8; 8];
+            open_at(3, 0, path.as_ptr(), path.len(), 0, 0, result.as_mut_ptr());
 
-        if result[0] != 0 {
-            Err(Error::from_raw_os_error(2)) // ENOENT
-        } else {
-            let fd = unsafe { core::ptr::read_unaligned(result.as_ptr().add(4) as *const i32) };
-            Ok(File { fd: fd as usize })
+            if result[0] != 0 {
+                Err(Error::from_raw_os_error(2)) // ENOENT
+            } else {
+                let fd = unsafe { core::ptr::read_unaligned(result.as_ptr().add(4) as *const i32) };
+                Ok(File { fd: fd as usize })
+            }
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            let res = crate::os::native_file_open(path.as_ptr(), path.len() as u64, 0);
+            if res < 0 {
+                Err(Error::from_raw_os_error(2))
+            } else {
+                Ok(File { fd: res as usize })
+            }
         }
     }
 
     pub fn create(path: &str) -> Result<Self> {
-        let mut result = [0u8; 8];
-        open_at(3, 0, path.as_ptr(), path.len(), 1, 0, result.as_mut_ptr());
-        if result[0] != 0 {
-            Err(Error::from_raw_os_error(1))
-        } else {
-            let fd = unsafe { core::ptr::read_unaligned(result.as_ptr().add(4) as *const i32) };
-            Ok(File { fd: fd as usize })
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut result = [0u8; 8];
+            open_at(3, 0, path.as_ptr(), path.len(), 1, 0, result.as_mut_ptr());
+            if result[0] != 0 {
+                Err(Error::from_raw_os_error(1))
+            } else {
+                let fd = unsafe { core::ptr::read_unaligned(result.as_ptr().add(4) as *const i32) };
+                Ok(File { fd: fd as usize })
+            }
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            let res = crate::os::native_file_open(path.as_ptr(), path.len() as u64, 1);
+            if res < 0 {
+                Err(Error::from_raw_os_error(5))
+            } else {
+                Ok(File { fd: res as usize })
+            }
         }
     }
 
@@ -62,13 +88,27 @@ impl File {
     }
 
     pub fn stat(&self) -> Result<Stat> {
-        let mut result = [0u8; 128];
-        stat(self.fd as i32, result.as_mut_ptr());
-        if result[0] != 0 {
-            Err(Error::from_raw_os_error(5))
-        } else {
-            let s = unsafe { core::ptr::read_unaligned(result.as_ptr().add(8) as *const Stat) };
-            Ok(s)
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut result = [0u8; 128];
+            stat(self.fd as i32, result.as_mut_ptr());
+            if result[0] != 0 {
+                Err(Error::from_raw_os_error(5))
+            } else {
+                let s = unsafe { core::ptr::read_unaligned(result.as_ptr().add(8) as *const Stat) };
+                Ok(s)
+            }
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            let mut s = unsafe { core::mem::zeroed::<Stat>() };
+            let res = crate::os::native_file_stat(self.fd as u64, &mut s as *mut _ as *mut u8);
+            if res != 0 {
+                Err(Error::from_raw_os_error(5))
+            } else {
+                Ok(s)
+            }
         }
     }
 
@@ -97,54 +137,50 @@ impl File {
 
 impl Read for File {
     fn read(&mut self, buffer: &mut [u8]) -> Result<usize> {
-        let mut result = [0u8; 32];
-        crate::io::host::input_stream_read(self.fd as i32, buffer.len() as u64, result.as_mut_ptr());
-
-        let tag = unsafe { core::ptr::read_unaligned(result.as_ptr() as *const u32) };
-
-        if tag == 0 {
-            #[cfg(target_arch = "wasm32")]
-            let (ptr, len) = {
-                let p = unsafe { core::ptr::read_unaligned(result.as_ptr().add(4) as *const u32) } as *mut u8;
-                let l = unsafe { core::ptr::read_unaligned(result.as_ptr().add(8) as *const u32) } as usize;
-                (p, l)
-            };
-            #[cfg(not(target_arch = "wasm32"))]
-            let (ptr, len) = {
-                let p = unsafe { core::ptr::read_unaligned(result.as_ptr().add(8) as *const u64) } as *mut u8;
-                let l = unsafe { core::ptr::read_unaligned(result.as_ptr().add(16) as *const u64) } as usize;
-                (p, l)
-            };
-
-            let copy_len = core::cmp::min(buffer.len(), len);
-            if copy_len > 0 && !ptr.is_null() {
-                unsafe {
-                    core::ptr::copy_nonoverlapping(ptr, buffer.as_mut_ptr(), copy_len);
-                }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let res = unsafe { crate::sys::syscall(0, self.fd as u64, buffer.as_mut_ptr() as u64, buffer.len() as u64) };
+            if res == u64::MAX {
+                return Err(Error::from_raw_os_error(5));
             }
-            if !ptr.is_null() {
-                crate::memory::free(ptr as usize, len);
+            if res == u64::MAX - 1 {
+                return Ok(0);
             }
-            Ok(copy_len)
-        } else {
-            Err(Error::from_raw_os_error(5))
+            return Ok(res as usize);
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            let n = crate::os::file_read(self.fd, buffer);
+            if n == usize::MAX {
+                return Err(Error::from_raw_os_error(5));
+            }
+            if n == usize::MAX - 1 {
+                return Ok(0);
+            }
+            Ok(n)
         }
     }
 }
 
 impl Write for File {
     fn write(&mut self, buffer: &[u8]) -> Result<usize> {
-        let mut result = [0u8; 8];
-        crate::io::host::output_stream_blocking_write_and_flush(
-            self.fd as i32,
-            buffer.as_ptr(),
-            buffer.len(),
-            result.as_mut_ptr(),
-        );
-        if result[0] == 0 {
-            Ok(buffer.len())
-        } else {
-            Err(Error::from_raw_os_error(5))
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let res = unsafe { crate::sys::syscall(1, self.fd as u64, buffer.as_ptr() as u64, buffer.len() as u64) };
+            if res == u64::MAX {
+                return Err(Error::from_raw_os_error(5));
+            }
+            return Ok(res as usize);
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            let n = crate::os::file_write(self.fd, buffer);
+            if n == usize::MAX {
+                return Err(Error::from_raw_os_error(5));
+            }
+            Ok(n)
         }
     }
 

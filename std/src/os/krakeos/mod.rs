@@ -374,14 +374,41 @@ pub fn yield_task() {
     process_yield();
 }
 
+method_export!("krakeos:system/process@0.2.0", "native-file-open",
+    pub fn native_file_open(path_ptr: *const u8, path_len: u64, flags: u64) -> i64 {
+        let res = crate::sys::syscall(2, path_ptr as u64, path_len, flags);
+        if res == u64::MAX {
+            -1
+        } else {
+            res as i64
+        }
+    }
+);
+
+method_export!("krakeos:system/process@0.2.0", "native-file-stat",
+    pub fn native_file_stat(fd: u64, stat_ptr: *mut u8) -> i32 {
+        let res = crate::sys::syscall(5, fd, 0, stat_ptr as u64);
+        if res == u64::MAX {
+            -1
+        } else {
+            0
+        }
+    }
+);
+
 method_export!("krakeos:system/process@0.2.0", "file-read",
     pub fn process_file_read(fd: u64, buf_ptr: *mut u8, len: u64) -> i64 {
         let res = crate::sys::syscall(0, fd, buf_ptr as u64, len);
+        let pid = crate::os::process_get_pid();
         if res == u64::MAX - 1 {
             -2
         } else if res == u64::MAX {
+            crate::debugln!("[std host] PID {} file-read fd={} len={} FAILED", pid, fd, len);
             -1
         } else {
+            if res > 0 {
+                crate::debugln!("[std host] PID {} file-read fd={} len={} -> {}", pid, fd, len, res);
+            }
             res as i64
         }
     }
@@ -390,11 +417,14 @@ method_export!("krakeos:system/process@0.2.0", "file-read",
 method_export!("krakeos:system/process@0.2.0", "file-write",
     pub fn process_file_write(fd: u64, buf_ptr: *const u8, len: u64) -> i64 {
         let res = crate::sys::syscall(1, fd, buf_ptr as u64, len);
+        let pid = crate::os::process_get_pid();
         if res == u64::MAX - 1 {
             -2
         } else if res == u64::MAX {
+            crate::debugln!("[std host] PID {} file-write fd={} len={} FAILED", pid, fd, len);
             -1
         } else {
+            crate::debugln!("[std host] PID {} file-write fd={} len={} -> {}", pid, fd, len, res);
             res as i64
         }
     }

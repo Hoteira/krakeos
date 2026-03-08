@@ -476,21 +476,34 @@ pub fn handle_read_file(context: &mut CPUState) {
                     }
                 }
                 FileHandle::Pipe { pipe } => {
-                    if is_nonblock && pipe.available() == 0 {
+                    if pipe.available() == 0 {
                         Some(Err(String::from("EWOULDBLOCK")))
                     } else {
-                        Some(Ok(pipe.read(buf)))
+                        let n = pipe.read(buf);
+                        crate::debugln!("[kernel] Pipe Read fd={} global={} -> {} bytes", local_fd, fd, n);
+                        Some(Ok(n))
                     }
                 }
             }
-        } else { None };
+        } else {
+            crate::debugln!("[kernel] handle_read_file: FAILED to find global FD for local {}", local_fd);
+            Some(Err(String::from("EBADF")))
+        };
         release_fs_lock();
 
         match res {
-            Some(Ok(n)) => context.rax = n as u64,
-            Some(Err(e)) if e == "EWOULDBLOCK" => context.rax = u64::MAX - 1,
-            Some(Err(_)) => context.rax = u64::MAX,
-            None => context.rax = u64::MAX,
+            Some(Ok(n)) => {
+                context.rax = n as u64;
+            }
+            Some(Err(e)) if e == "EWOULDBLOCK" => {
+                context.rax = u64::MAX - 1;
+            }
+            Some(Err(_)) => {
+                context.rax = u64::MAX;
+            }
+            None => {
+                context.rax = u64::MAX;
+            }
         }
         return;
     }
