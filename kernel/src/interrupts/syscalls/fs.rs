@@ -619,8 +619,8 @@ pub fn handle_read_dir(context: &mut CPUState) {
     } else { context.rax = u64::MAX; }
 }
 
-pub fn handle_stat(context: &mut CPUState) {
-    let stat = if context.rax == 4 { // SYS_STAT
+pub fn handle_stat(context: &mut CPUState, is_fstat: bool) {
+    let stat = if !is_fstat { // SYS_STAT
         let ptr = context.rdi as *const u8;
         let len = context.rsi as usize;
 

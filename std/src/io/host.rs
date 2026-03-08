@@ -24,7 +24,12 @@ method_export!("wasi:io/streams@0.2.0", "[method]input-stream.read",
         }
 
         let res = crate::sys::syscall(0, handle as u64, buf as u64, len);
-        if res != u64::MAX {
+        if res == u64::MAX - 1 {
+            crate::memory::free(buf as usize, len as usize);
+            core::ptr::write_unaligned(result_ptr as *mut u32, 0);
+            core::ptr::write_unaligned(result_ptr.add(8) as *mut u64, 0);
+            core::ptr::write_unaligned(result_ptr.add(16) as *mut u64, res);
+        } else if res != u64::MAX {
             // Reallocate to match the actual number of bytes read.
             // If res is 0, this might return a non-null but dangling pointer, which is fine as len will be 0.
             let actual_buf = crate::memory::realloc(buf as usize, len as usize, res as usize, 8);

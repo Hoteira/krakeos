@@ -112,11 +112,51 @@ crate::export_method!(
     }
 );
 
+crate::export_method!(
+    "krakeos:system/process@0.2.0", "file-read",
+    [],
+    vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32), ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I64)],
+    pub fn file_read<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let fd = match args.get(0) { Some(Value::I64(v)) => *v, _ => return Ok(vec![Value::I64(-1i64 as u64)]) };
+        let ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I64(-1i64 as u64)]) };
+        let len = match args.get(2) { Some(Value::I64(v)) => *v, _ => return Ok(vec![Value::I64(-1i64 as u64)]) };
+
+        let mut buf = crate::alloc::vec![0u8; len as usize];
+        let res = host::process_file_read(fd, buf.as_mut_ptr(), len);
+        if res >= 0 {
+            if let Err(_) = write_bytes(store, ptr, &buf[..res as usize]) {
+                return Ok(vec![Value::I64(-1i64 as u64)]);
+            }
+        }
+        Ok(vec![Value::I64(res as u64)])
+    }
+);
+
+crate::export_method!(
+    "krakeos:system/process@0.2.0", "file-write",
+    [],
+    vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32), ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I64)],
+    pub fn file_write<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let fd = match args.get(0) { Some(Value::I64(v)) => *v, _ => return Ok(vec![Value::I64(-1i64 as u64)]) };
+        let ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I64(-1i64 as u64)]) };
+        let len = match args.get(2) { Some(Value::I64(v)) => *v, _ => return Ok(vec![Value::I64(-1i64 as u64)]) };
+
+        let mut buf = crate::alloc::vec![0u8; len as usize];
+        if let Err(_) = read_mem(store, ptr, &mut buf) {
+            return Ok(vec![Value::I64(-1i64 as u64)]);
+        }
+        let res = host::process_file_write(fd, buf.as_ptr(), len);
+        Ok(vec![Value::I64(res as u64)])
+    }
+);
+
 pub fn register_wasi<T: Config + Clone>(linker: &mut crate::wasm::Linker, store: &mut crate::wasm::Store<'_, T>) {
     exit::register(linker, store);
     spawn::register(linker, store);
     waitpid::register(linker, store);
     pipe::register(linker, store);
+    file_read::register(linker, store);
+    file_write::register(linker, store);
     yield_host::register(linker, store);
     proc_exit_p1::register(linker, store);
     sched_yield_p1::register(linker, store);

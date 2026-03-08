@@ -66,8 +66,8 @@ crate::export_method!(
                     InputStreamSource::GuestFd(fd) => Some((None, Some(*fd))),
                     _ => None,
                 },
-                Some(WasiResource::Descriptor(fd)) => Some((Some(*fd as usize), None)),
-                Some(WasiResource::File(f)) => Some((None, Some(f.as_raw_fd() as i32))),
+                Some(WasiResource::Descriptor(fd)) => Some((None, Some(*fd))),
+                Some(WasiResource::File(f)) => Some((Some(f.as_raw_fd() as usize), None)),
                 _ => None,
             }
         };
@@ -172,8 +172,8 @@ crate::export_method!(
                     InputStreamSource::GuestFd(fd) => Some((None, Some(*fd))),
                     _ => None,
                 },
-                Some(WasiResource::Descriptor(fd)) => Some((Some(*fd as usize), None)),
-                Some(WasiResource::File(f)) => Some((None, Some(f.as_raw_fd() as i32))),
+                Some(WasiResource::Descriptor(fd)) => Some((None, Some(*fd))),
+                Some(WasiResource::File(f)) => Some((Some(f.as_raw_fd() as usize), None)),
                 _ => None,
             }
         };
@@ -256,8 +256,8 @@ crate::export_method!(
             let wasi = store.wasi_ctx.as_ref().ok_or(HaltExecutionError(1))?;
             match wasi.resource_table.get(&handle) {
                 Some(WasiResource::OutputStream(source)) => Some(source.clone()),
-                Some(WasiResource::Descriptor(fd)) => Some(OutputStreamSource::File(*fd as usize)),
-                Some(WasiResource::File(f)) => Some(OutputStreamSource::GuestFd(f.as_raw_fd() as i32)),
+                Some(WasiResource::Descriptor(fd)) => Some(OutputStreamSource::GuestFd(*fd)),
+                Some(WasiResource::File(f)) => Some(OutputStreamSource::File(f.as_raw_fd() as usize)),
                 _ => None,
             }
         };
@@ -346,8 +346,8 @@ crate::export_method!(
             let wasi = store.wasi_ctx.as_ref().ok_or(HaltExecutionError(1))?;
             match wasi.resource_table.get(&handle) {
                 Some(WasiResource::OutputStream(source)) => Some(source.clone()),
-                Some(WasiResource::Descriptor(fd)) => Some(OutputStreamSource::File(*fd as usize)),
-                Some(WasiResource::File(f)) => Some(OutputStreamSource::GuestFd(f.as_raw_fd() as i32)),
+                Some(WasiResource::Descriptor(fd)) => Some(OutputStreamSource::GuestFd(*fd)),
+                Some(WasiResource::File(f)) => Some(OutputStreamSource::File(f.as_raw_fd() as usize)),
                 _ => None,
             }
         };

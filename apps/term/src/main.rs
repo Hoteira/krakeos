@@ -192,7 +192,7 @@ pub fn main() {
         // Use safe wrapper instead of direct syscall
         let n = std::os::file_read(unsafe { TERM_READ_FD }, &mut pipe_buf);
         
-        if n > 0 {
+        if n > 0 && n < usize::MAX - 1 {
             did_work = true;
             term_buffer.input_buffer.extend_from_slice(&pipe_buf[..n]);
 

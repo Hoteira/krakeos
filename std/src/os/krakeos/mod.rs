@@ -374,24 +374,50 @@ pub fn yield_task() {
     process_yield();
 }
 
+method_export!("krakeos:system/process@0.2.0", "file-read",
+    pub fn process_file_read(fd: u64, buf_ptr: *mut u8, len: u64) -> i64 {
+        let res = crate::sys::syscall(0, fd, buf_ptr as u64, len);
+        if res == u64::MAX - 1 {
+            -2
+        } else if res == u64::MAX {
+            -1
+        } else {
+            res as i64
+        }
+    }
+);
+
+method_export!("krakeos:system/process@0.2.0", "file-write",
+    pub fn process_file_write(fd: u64, buf_ptr: *const u8, len: u64) -> i64 {
+        let res = crate::sys::syscall(1, fd, buf_ptr as u64, len);
+        if res == u64::MAX - 1 {
+            -2
+        } else if res == u64::MAX {
+            -1
+        } else {
+            res as i64
+        }
+    }
+);
+
 pub fn file_read(fd: usize, buffer: &mut [u8]) -> usize {
-    let mut file = crate::fs::File::from_raw_fd(fd);
-    let res = match crate::io::Read::read(&mut file, buffer) {
-        Ok(n) => n,
-        Err(_) => 0,
-    };
-    core::mem::forget(file);
-    res
+    let res = process_file_read(fd as u64, buffer.as_mut_ptr(), buffer.len() as u64);
+    if res == -2 {
+        return usize::MAX - 1;
+    } else if res == -1 {
+        return 0;
+    }
+    res as usize
 }
 
 pub fn file_write(fd: usize, buffer: &[u8]) -> usize {
-    let mut file = crate::fs::File::from_raw_fd(fd);
-    let res = match crate::io::Write::write(&mut file, buffer) {
-        Ok(n) => n,
-        Err(_) => 0,
-    };
-    core::mem::forget(file);
-    res
+    let res = process_file_write(fd as u64, buffer.as_ptr(), buffer.len() as u64);
+    if res == -2 {
+        return usize::MAX - 1;
+    } else if res == -1 {
+        return 0;
+    }
+    res as usize
 }
 
 pub fn file_close(fd: usize) -> i32 {

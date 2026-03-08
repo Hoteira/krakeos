@@ -523,7 +523,7 @@ impl WasiEnv for KrakeosWasiEnv {
     }
 
     fn fd_write(&mut self, fd: i32, iovs: &[&[u8]]) -> Result<usize, i32> {
-        if fd == 1 || fd == 2 {
+        if fd >= 0 && fd <= 2 {
             let host_fd = self.stdio_map[fd as usize] as usize;
             // Batch all iovecs into one system call to avoid per-iov overhead
             let total_len: usize = iovs.iter().map(|b| b.len()).sum();
