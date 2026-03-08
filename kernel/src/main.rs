@@ -91,6 +91,7 @@ pub extern "C" fn _start(bootinfo_ptr: u64) -> ! {
 
     debugln!("SIGNPOST: Drivers initialized.");
 
+    drivers::periferics::keyboard::init();
     drivers::periferics::mouse::init_mouse();
     drivers::periferics::timer::init_pit(100);
 

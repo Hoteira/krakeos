@@ -286,6 +286,8 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
                     if let Some(w_pid) = target_info {
                         use crate::window_manager::events::{Event, KeyboardEvent, GLOBAL_EVENT_QUEUE};
 
+                        crate::debugln!("[kernel] Dispatching keyboard event key={:#x} pressed={} to PID {}", key, pressed, w_pid);
+
                         let tm_ref = &*tm;
                         let event = Event::Keyboard(KeyboardEvent {
                             wid: active_window_id as u32,

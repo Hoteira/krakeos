@@ -150,6 +150,7 @@ pub fn main() {
         for event in events.iter() {
             match event {
                 inkui::Event::Keyboard(e) => {
+                    debugln!("[term] Keyboard Event: key={:#x} pressed={}", e.key, e.pressed);
                     if e.pressed {
                         if let Some(c) = core::char::from_u32(e.key) {
                             for _ in 0..e.repeat {

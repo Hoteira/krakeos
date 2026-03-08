@@ -352,17 +352,8 @@ pub fn print(s: &str) {
 }
 
 pub fn debug_print(s: &str) {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let stderr = crate::io::host::get_stderr();
-        let mut res = [0u8; 8];
-        crate::io::host::output_stream_blocking_write_and_flush(stderr, s.as_ptr(), s.len(), res.as_mut_ptr());
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        unsafe {
-            crate::sys::syscall(999, s.as_ptr() as u64, s.len() as u64, 0);
-        }
+    unsafe {
+        crate::sys::syscall(999, s.as_ptr() as u64, s.len() as u64, 0);
     }
 }
 
@@ -399,16 +390,11 @@ method_export!("krakeos:system/process@0.2.0", "native-file-stat",
 method_export!("krakeos:system/process@0.2.0", "file-read",
     pub fn process_file_read(fd: u64, buf_ptr: *mut u8, len: u64) -> i64 {
         let res = crate::sys::syscall(0, fd, buf_ptr as u64, len);
-        let pid = crate::os::process_get_pid();
         if res == u64::MAX - 1 {
             -2
         } else if res == u64::MAX {
-            crate::debugln!("[std host] PID {} file-read fd={} len={} FAILED", pid, fd, len);
             -1
         } else {
-            if res > 0 {
-                crate::debugln!("[std host] PID {} file-read fd={} len={} -> {}", pid, fd, len, res);
-            }
             res as i64
         }
     }
@@ -417,14 +403,11 @@ method_export!("krakeos:system/process@0.2.0", "file-read",
 method_export!("krakeos:system/process@0.2.0", "file-write",
     pub fn process_file_write(fd: u64, buf_ptr: *const u8, len: u64) -> i64 {
         let res = crate::sys::syscall(1, fd, buf_ptr as u64, len);
-        let pid = crate::os::process_get_pid();
         if res == u64::MAX - 1 {
             -2
         } else if res == u64::MAX {
-            crate::debugln!("[std host] PID {} file-write fd={} len={} FAILED", pid, fd, len);
             -1
         } else {
-            crate::debugln!("[std host] PID {} file-write fd={} len={} -> {}", pid, fd, len, res);
             res as i64
         }
     }

@@ -5,13 +5,13 @@ use crate::window_manager::input::MOUSE;
 use crate::window_manager::window::Window;
 
 pub fn handle_add_window(context: &mut CPUState) {
-    let window_ptr = context.rdi as *const Window;
     unsafe {
-        let mut w = *window_ptr;
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         if let Some(current) = tm.current_task_idx() {
             if let Some(thread) = tm.tasks[current].as_ref() {
                 let proc = thread.process.as_ref().expect("Thread has no process");
+                
+                let mut w = *(context.rdi as *const Window);
                 w.pid = proc.pid;
 
                 drop(tm);
@@ -27,16 +27,16 @@ pub fn handle_add_window(context: &mut CPUState) {
 }
 
 pub fn handle_update_window(context: &mut CPUState) {
-    let window_ptr = context.rdi as *const Window;
     unsafe {
-        let w = *window_ptr;
         let composer = &mut *(&raw mut COMPOSER);
 
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         if let Some(current) = tm.current_task_idx() {
-            if let Some(existing_win) = composer.find_window_id(w.id) {
-                if let Some(thread) = tm.tasks[current].as_ref() {
-                    let proc = thread.process.as_ref().expect("Thread has no process");
+            if let Some(thread) = tm.tasks[current].as_ref() {
+                let proc = thread.process.as_ref().expect("Thread has no process");
+                let w = *(context.rdi as *const Window);
+
+                if let Some(existing_win) = composer.find_window_id(w.id) {
                     if existing_win.pid == proc.pid {
                         drop(tm);
                         composer.resize_window(w);
@@ -80,7 +80,6 @@ pub fn handle_get_events(context: &mut CPUState) {
     use crate::interrupts::task::TASK_MANAGER;
 
     let wid = context.rdi as u32;
-    let buf_ptr = context.rsi as *mut Event;
     let max_events = context.rdx as usize;
 
     // If the process has a registered queue, drain from it directly.
@@ -89,6 +88,8 @@ pub fn handle_get_events(context: &mut CPUState) {
         if let Some(idx) = tm.current_task_idx() {
             if let Some(thread) = tm.tasks[idx].as_ref() {
                 if let Some(proc) = thread.process.as_ref() {
+                    let buf_ptr = context.rsi as *mut Event;
+
                     let (header_ptr, buf_virt, capacity) = *proc.event_queue.lock();
                     if header_ptr != 0 {
                         let header = unsafe { &*(header_ptr as *const EventQueueHeader) };
@@ -115,6 +116,8 @@ pub fn handle_get_events(context: &mut CPUState) {
 
     // Fallback: processes without a registered queue use the global queue.
     unsafe {
+        let buf_ptr = context.rsi as *mut Event;
+
         let events = GLOBAL_EVENT_QUEUE.int_lock().get_and_remove_events(wid, max_events);
         let user_slice = core::slice::from_raw_parts_mut(buf_ptr, max_events);
         let mut count = 0;
@@ -129,14 +132,15 @@ pub fn handle_get_events(context: &mut CPUState) {
 }
 
 pub fn handle_register_event_queue(context: &mut CPUState) {
-    let header_ptr = context.rdi;
-    let buf_ptr    = context.rsi;
     let capacity   = context.rdx as u32;
 
-    let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
     if let Some(idx) = tm.current_task_idx() {
         if let Some(thread) = tm.tasks[idx].as_ref() {
             if let Some(proc) = thread.process.as_ref() {
+                let header_ptr = context.rdi;
+                let buf_ptr    = context.rsi;
+                
                 *proc.event_queue.lock() = (header_ptr, buf_ptr, capacity);
                 crate::debugln!(
                     "[EventQueue] PID {} registered queue: header={:#x} buf={:#x} cap={}",

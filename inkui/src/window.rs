@@ -101,7 +101,7 @@ impl Window {
         let size = width * height * 4 + 4;
 
         let pid = std::process::get_pid();
-        println!("[inkui] Creating window '{}' with pid {}", title, pid);
+        std::debugln!("[inkui] Creating window '{}' with pid {}", title, pid);
         let event_queue = std::os::EventQueue::new(128);
         event_queue.register();
 

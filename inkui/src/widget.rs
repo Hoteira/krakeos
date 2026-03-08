@@ -697,29 +697,29 @@ impl Widget {
             Widget::Image { geometry, source_data, rasterized_buffer, last_raster_size } => {
                 if geometry.width > 0 && geometry.height > 0 {
                     if geometry.width != last_raster_size.0 || geometry.height != last_raster_size.1 {
-                        std::println!("Image Layout: geometry {}x{}, last {}x{}", geometry.width, geometry.height, last_raster_size.0, last_raster_size.1);
-                        std::println!("Image: Rasterizing {}x{}...", geometry.width, geometry.height);
+                        std::debugln!("Image Layout: geometry {}x{}, last {}x{}", geometry.width, geometry.height, last_raster_size.0, last_raster_size.1);
+                        std::debugln!("Image: Rasterizing {}x{}...", geometry.width, geometry.height);
 
                         match load_image(source_data, geometry.width, geometry.height) {
                             Ok(buffer) => {
-                                std::println!("Image: Rasterization successful. Buffer len: {}", buffer.len());
+                                std::debugln!("Image: Rasterization successful. Buffer len: {}", buffer.len());
                                 if buffer.len() > 0 {
-                                    std::println!("First pixel: {:#010X}", buffer[0]);
-                                    std::println!("Middle pixel: {:#010X}", buffer[buffer.len() / 2]);
+                                    std::debugln!("First pixel: {:#010X}", buffer[0]);
+                                    std::debugln!("Middle pixel: {:#010X}", buffer[buffer.len() / 2]);
                                 }
                                 if buffer.len() != geometry.width * geometry.height {
-                                    std::println!("WARNING: Buffer len {} does not match expected {}x{} = {}", buffer.len(), geometry.width, geometry.height, geometry.width * geometry.height);
+                                    std::debugln!("WARNING: Buffer len {} does not match expected {}x{} = {}", buffer.len(), geometry.width, geometry.height, geometry.width * geometry.height);
                                 }
                                 *rasterized_buffer = buffer;
                                 *last_raster_size = (geometry.width, geometry.height);
                             }
                             Err(e) => {
-                                std::println!("Image: Rasterization FAILED. \n{}", e);
+                                std::debugln!("Image: Rasterization FAILED. \n{}", e);
                             }
                         }
                     }
                 } else {
-                    std::println!("Image Layout: geometry dimensions are ZERO! w={} h={}", geometry.width, geometry.height);
+                    std::debugln!("Image Layout: geometry dimensions are ZERO! w={} h={}", geometry.width, geometry.height);
                 }
             }
             _ => {}

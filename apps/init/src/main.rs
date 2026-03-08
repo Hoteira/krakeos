@@ -6,28 +6,28 @@ use alloc::vec;
 use inkui::Window;
 use std::os::{sleep, Items};
 use std::io::Read;
-use std::println;
+use std::debugln;
 
 pub fn main() {
     std::allocator::debug_allocator();
-    println!("[Init] Starting WASM Userland...");
+    debugln!("[Init] Starting WASM Userland...");
 
     let sw = std::os::graphics::get_screen_width();
     let sh = std::os::graphics::get_screen_height();
-    println!("[Init] Detected Screen Size: {}x{}", sw, sh);
+    debugln!("[Init] Detected Screen Size: {}x{}", sw, sh);
 
     // Setup wallpaper
-    println!("[Init] Calling Window::new...");
+    debugln!("[Init] Calling Window::new...");
     let mut win = Window::new("Wallpaper", sw, sh);
-    println!("[Init] Window::new returned.");
+    debugln!("[Init] Window::new returned.");
     win.w_type = Items::Wallpaper;
     win.x = 0;
     win.y = 0;
 
-    println!("[Init] Loading wallpaper...");
+    debugln!("[Init] Loading wallpaper...");
     match std::fs::read("@0xE0/sys/img/wallpaper2.raw") {
         Ok(bytes) => {
-            println!("[Init] Wallpaper loaded ({} bytes).", bytes.len());
+            debugln!("[Init] Wallpaper loaded ({} bytes).", bytes.len());
             let img = inkui::Widget::raw_image(1, &bytes, 1024, 576)
                 .width(inkui::Size::Relative(100))
                 .height(inkui::Size::Relative(100));
@@ -35,35 +35,35 @@ pub fn main() {
             win.show();
         }
         Err(_) => {
-            println!("[Init] Failed to load wallpaper.");
+            debugln!("[Init] Failed to load wallpaper.");
         }
     }
 
     std::os::user::set_current_user("racap");
 
     // Spawn system apps
-    /*println!("[Init] Spawning Taskbar...");
+    /*debugln!("[Init] Spawning Taskbar...");
     
     match std::os::spawn_with_fds("@0xE0/apps/taskbar.wasm", &[], &[(0, 0), (1, 1), (2, 2)]) {
-        pid if pid != usize::MAX => println!("[Init] Taskbar spawned into its own slot with PID {}", pid),
-        _ => println!("[Init] Failed to spawn taskbar"),
+        pid if pid != usize::MAX => debugln!("[Init] Taskbar spawned into its own slot with PID {}", pid),
+        _ => debugln!("[Init] Failed to spawn taskbar"),
     }*/
 
     /*sleep(500);
 
     match std::os::spawn_with_fds("@0xE0/apps/aot_test.wasm", &[], &[(0, 0), (1, 1), (2, 2)]) {
-        pid if pid != usize::MAX => println!("[Init] TAOT test into its own slot with PID {}", pid),
-        _ => println!("[Init] Failed to spawn tests"),
+        pid if pid != usize::MAX => debugln!("[Init] TAOT test into its own slot with PID {}", pid),
+        _ => debugln!("[Init] Failed to spawn tests"),
     }*/
 
     sleep(500);
 
     match std::os::spawn_with_fds("@0xE0/apps/term.wasm", &[], &[(0, 0), (1, 1), (2, 2)]) {
-        pid if pid != usize::MAX => println!("[Init] Term test into its own slot with PID {}", pid),
-        _ => println!("[Init] Failed to spawn term"),
+        pid if pid != usize::MAX => debugln!("[Init] Term test into its own slot with PID {}", pid),
+        _ => debugln!("[Init] Failed to spawn term"),
     }
 
-    println!("[Init] System ready.");
+    debugln!("[Init] System ready.");
 
     loop {
         std::os::yield_task();
