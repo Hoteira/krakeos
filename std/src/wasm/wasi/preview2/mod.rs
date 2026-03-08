@@ -367,6 +367,14 @@ pub fn create_wasi_p2_imports<T: Config + Clone + Send + 'static>(linker: &mut L
             vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)],
             vec![ValType::NumType(NumType::I32)],
             crate::os::krakeos::wasi::window_get_events_host);
+        define(linker, store, module, "register-event-queue",
+            vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)],
+            vec![],
+            crate::os::krakeos::wasi::register_event_queue_host);
+        define(linker, store, module, "deregister-event-queue",
+            vec![],
+            vec![],
+            crate::os::krakeos::wasi::deregister_event_queue_host);
     }
         // wasi:filesystem/types@0.2.0
         {

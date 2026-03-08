@@ -75,16 +75,47 @@ pub fn handle_update_window_area(context: &mut CPUState) {
 }
 
 pub fn handle_get_events(context: &mut CPUState) {
+    use core::sync::atomic::Ordering;
+    use crate::window_manager::events::{Event, EventQueueHeader, GLOBAL_EVENT_QUEUE};
+    use crate::interrupts::task::TASK_MANAGER;
+
     let wid = context.rdi as u32;
-    let buf_ptr = context.rsi as *mut crate::window_manager::events::Event;
+    let buf_ptr = context.rsi as *mut Event;
     let max_events = context.rdx as usize;
 
+    // If the process has a registered queue, drain from it directly.
+    {
+        let tm = TASK_MANAGER.int_lock();
+        if let Some(idx) = tm.current_task_idx() {
+            if let Some(thread) = tm.tasks[idx].as_ref() {
+                if let Some(proc) = thread.process.as_ref() {
+                    let (header_ptr, buf_virt, capacity) = *proc.event_queue.lock();
+                    if header_ptr != 0 {
+                        let header = unsafe { &*(header_ptr as *const EventQueueHeader) };
+                        let mut count = 0usize;
+                        while count < max_events {
+                            let tail = header.tail.load(Ordering::Relaxed);
+                            if tail == header.head.load(Ordering::Acquire) {
+                                break;
+                            }
+                            let event = unsafe { (buf_virt as *const Event).add(tail as usize).read() };
+                            header.tail.store((tail + 1) % capacity, Ordering::Release);
+                            if event.get_window_id() == wid || wid == 0 {
+                                unsafe { buf_ptr.add(count).write(event); }
+                                count += 1;
+                            }
+                        }
+                        context.rax = count as u64;
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback: processes without a registered queue use the global queue.
     unsafe {
-        use crate::window_manager::events::GLOBAL_EVENT_QUEUE;
         let events = GLOBAL_EVENT_QUEUE.int_lock().get_and_remove_events(wid, max_events);
-
-        if !events.is_empty() {}
-
         let user_slice = core::slice::from_raw_parts_mut(buf_ptr, max_events);
         let mut count = 0;
         for (i, evt) in events.into_iter().enumerate() {
@@ -95,6 +126,41 @@ pub fn handle_get_events(context: &mut CPUState) {
         }
         context.rax = count as u64;
     }
+}
+
+pub fn handle_register_event_queue(context: &mut CPUState) {
+    let header_ptr = context.rdi;
+    let buf_ptr    = context.rsi;
+    let capacity   = context.rdx as u32;
+
+    let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    if let Some(idx) = tm.current_task_idx() {
+        if let Some(thread) = tm.tasks[idx].as_ref() {
+            if let Some(proc) = thread.process.as_ref() {
+                *proc.event_queue.lock() = (header_ptr, buf_ptr, capacity);
+                crate::debugln!(
+                    "[EventQueue] PID {} registered queue: header={:#x} buf={:#x} cap={}",
+                    proc.pid, header_ptr, buf_ptr, capacity
+                );
+                context.rax = 0;
+                return;
+            }
+        }
+    }
+    context.rax = u64::MAX;
+}
+
+pub fn handle_deregister_event_queue(context: &mut CPUState) {
+    let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    if let Some(idx) = tm.current_task_idx() {
+        if let Some(thread) = tm.tasks[idx].as_ref() {
+            if let Some(proc) = thread.process.as_ref() {
+                *proc.event_queue.lock() = (0, 0, 0);
+                crate::debugln!("[EventQueue] PID {} deregistered queue", proc.pid);
+            }
+        }
+    }
+    context.rax = 0;
 }
 
 pub fn handle_get_width(context: &mut CPUState) {

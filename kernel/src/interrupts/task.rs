@@ -25,7 +25,10 @@ pub struct Process {
     pub heap_start: u64,
     pub heap_limit: u64,
     pub heap_end: Mutex<u64>,
-    pub shared_event_queue: u64,
+    /// (header_ptr, buf_ptr, capacity) — all zero when no queue is registered.
+    /// Set by SYS_REGISTER_EVENT_QUEUE (138), cleared by SYS_DEREGISTER_EVENT_QUEUE (139)
+    /// and on process kill. Pointers are real virtual addresses in the SAS.
+    pub event_queue: Mutex<(u64, u64, u32)>,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -90,20 +93,6 @@ impl Process {
         let heap_start = linear_memory_base;
         let heap_limit = heap_start + crate::memory::address_space::LINEAR_MEMORY_SLOT_SIZE - 4096;
 
-        let mut q_name = [0u8; 32];
-        let shared_event_queue = {
-            use core::fmt::Write;
-            let mut writer = crate::debug::ArrayWriter::new(&mut q_name);
-            let _ = write!(writer, "events_{}", pid);
-            let q_name_str = writer.as_str();
-
-            let mut shm = crate::memory::shm::GLOBAL_SHM.lock();
-            let phys = shm.get_or_create(q_name_str, 8192).unwrap();
-            let q = phys + crate::memory::paging::HHDM_OFFSET;
-            crate::debugln!("[Task] PID {} event queue at {:#x}", pid, q);
-            q
-        };
-
         Arc::new(Self {
             pid,
             slot_id,
@@ -119,7 +108,7 @@ impl Process {
             heap_start,
             heap_limit,
             heap_end: Mutex::new(heap_start),
-            shared_event_queue,
+            event_queue: Mutex::new((0, 0, 0)),
         })
     }
 }
@@ -299,6 +288,9 @@ impl TaskManager {
                 if let Some(proc) = &thread.process {
                     if proc.pid == pid {
                         thread.state = ThreadState::Zombie;
+                        // Clear the event queue registration before the WASM heap is freed
+                        // so the kernel never writes to a dangling pointer.
+                        *proc.event_queue.lock() = (0, 0, 0);
                         unsafe {
                             (*(&raw mut crate::window_manager::composer::COMPOSER)).remove_windows_by_pid(pid);
                         }

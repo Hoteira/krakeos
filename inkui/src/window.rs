@@ -93,7 +93,7 @@ pub struct Window {
     pub focus: WidgetId,
 
     pub font: Option<TrueTypeFont>,
-    pub event_queue_ptr: usize,
+    pub event_queue: std::os::EventQueue,
 }
 
 impl Window {
@@ -102,9 +102,8 @@ impl Window {
 
         let pid = std::process::get_pid();
         println!("[inkui] Creating window '{}' with pid {}", title, pid);
-        let q_name = alloc::format!("events_{}", pid);
-        let event_queue_ptr = std::memory::shm_get(&q_name, 8192).unwrap_or(0) as usize;
-        println!("[inkui] Event queue: {}", event_queue_ptr);
+        let event_queue = std::os::EventQueue::new(128);
+        event_queue.register();
 
         Window {
             id: 0,
@@ -126,7 +125,7 @@ impl Window {
             w_type: Items::Window,
             focus: 0,
             font: None,
-            event_queue_ptr,
+            event_queue,
         }
     }
 
@@ -274,17 +273,14 @@ impl Window {
             }
         }
 
-        // 2. Drain shared queue
-        if self.event_queue_ptr != 0 && self.event_queue_ptr != usize::MAX {
-            let q = unsafe { &*(self.event_queue_ptr as *const std::os::SharedEventQueue) };
-            while let Some(e) = q.pop() {
-                if e.get_window_id() == self.id as u32 || e.get_window_id() == 0 {
-                    vec.push(e);
-                } else {
-                    SIDE_QUEUE.lock().push_back(e);
-                }
-                if vec.len() >= 64 { break; }
+        // 2. Drain registered queue
+        while let Some(e) = self.event_queue.pop() {
+            if e.get_window_id() == self.id as u32 || e.get_window_id() == 0 {
+                vec.push(e);
+            } else {
+                SIDE_QUEUE.lock().push_back(e);
             }
+            if vec.len() >= 64 { break; }
         }
 
         // 3. Fallback to legacy syscall if still empty

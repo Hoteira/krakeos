@@ -1,6 +1,6 @@
 use crate::sync::Mutex;
 use alloc::vec::Vec;
-pub use std::os::krakeos::events::{Event, KeyboardEvent, MouseEvent, ResizeEvent};
+pub use std::os::krakeos::events::{Event, EventQueueHeader, KeyboardEvent, MouseEvent, ResizeEvent};
 
 pub const QUEUE_SIZE: usize = 256;
 
@@ -37,13 +37,27 @@ impl EventQueue {
     }
 
     pub fn push_to_process(&self, tm: &crate::interrupts::task::TaskManager, pid: u64, event: Event) -> bool {
-        if let Some(thread) = tm.tasks.iter().flatten().find(|t| t.process.as_ref().map_or(false, |p| p.pid == pid)) {
+        use core::sync::atomic::Ordering;
+
+        let thread = tm.tasks.iter().flatten().find(|t| {
+            t.state != crate::interrupts::task::ThreadState::Zombie
+                && t.process.as_ref().map_or(false, |p| p.pid == pid)
+        });
+        if let Some(thread) = thread {
             let proc = thread.process.as_ref().unwrap();
-            let q_virt = proc.shared_event_queue;
-            if q_virt != 0 {
-                let q = unsafe { &*(q_virt as *const std::os::krakeos::events::SharedEventQueue) };
-                return q.push(event);
+            let (header_ptr, buf_ptr, capacity) = *proc.event_queue.lock();
+            if header_ptr == 0 {
+                return false;
             }
+            let header = unsafe { &*(header_ptr as *const EventQueueHeader) };
+            let head = header.head.load(Ordering::Relaxed);
+            let next_head = (head + 1) % capacity;
+            if next_head == header.tail.load(Ordering::Acquire) {
+                return true; // queue full — swallow silently (process is registered)
+            }
+            unsafe { (buf_ptr as *mut Event).add(head as usize).write(event); }
+            header.head.store(next_head, Ordering::Release);
+            return true;
         }
         false
     }

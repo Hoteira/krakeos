@@ -310,6 +310,30 @@ crate::export_method!(
 );
 
 crate::export_method!(
+    "krakeos:system/window@0.2.0", "register-event-queue",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![],
+    pub fn register_event_queue_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let header_off = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![]) };
+        let buf_off    = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![]) };
+        let capacity   = match args.get(2) { Some(Value::I32(v)) => *v as u64, _ => return Ok(vec![]) };
+        let wasm_base  = store.get_wasm_base_ptr() as u64;
+        host::register_event_queue(wasm_base + header_off as u64, wasm_base + buf_off as u64, capacity);
+        Ok(vec![])
+    }
+);
+
+crate::export_method!(
+    "krakeos:system/window@0.2.0", "deregister-event-queue",
+    [],
+    vec![], vec![],
+    pub fn deregister_event_queue_host<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        host::deregister_event_queue();
+        Ok(vec![])
+    }
+);
+
+crate::export_method!(
     "wasi:cli/terminal-stdin@0.2.0", "get-terminal-stdin",
     [],
     vec![], vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)],
@@ -665,6 +689,8 @@ pub fn register_wasi<T: Config + Clone + Send + 'static>(linker: &mut crate::was
     window_create_host::register(linker, store);
     window_update_host::register(linker, store);
     window_get_events_host::register(linker, store);
+    register_event_queue_host::register(linker, store);
+    deregister_event_queue_host::register(linker, store);
     get_terminal_stdin_host::register(linker, store);
     get_terminal_stdout_host::register(linker, store);
     get_terminal_stderr_host::register(linker, store);

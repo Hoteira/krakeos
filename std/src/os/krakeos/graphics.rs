@@ -24,6 +24,18 @@ method_export!("krakeos:system/window@0.2.0", "get-events",
     }
 );
 
+method_export!("krakeos:system/window@0.2.0", "register-event-queue",
+    pub fn register_event_queue(header_ptr: u64, buf_ptr: u64, capacity: u64) {
+        crate::sys::syscall(138, header_ptr, buf_ptr, capacity);
+    }
+);
+
+method_export!("krakeos:system/window@0.2.0", "deregister-event-queue",
+    pub fn deregister_event_queue() {
+        crate::sys::syscall(139, 0, 0, 0);
+    }
+);
+
 method_export!("krakeos:graphics/screen@0.2.0", "get-width",
     pub fn screen_get_width() -> u32 {
         crate::sys::syscall(106, 0, 0, 0) as u32

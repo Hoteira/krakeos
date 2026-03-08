@@ -87,6 +87,8 @@ pub const SYS_MOUNT: u64 = 165;
 pub const SYS_WAIT_FOR_EVENT: u64 = 130;
 pub const SYS_REGISTER_EVENT: u64 = 131;
 pub const SYS_SIGNAL_EVENT: u64 = 132;
+pub const SYS_REGISTER_EVENT_QUEUE: u64 = 138;
+pub const SYS_DEREGISTER_EVENT_QUEUE: u64 = 139;
 pub const SYS_SET_NONBLOCK: u64 = 133;
 pub const SYS_GET_TOTAL_MEM: u64 = 134;
 pub const SYS_GET_USED_MEM: u64 = 135;
@@ -265,6 +267,8 @@ pub fn dispatch_syscall(context: &mut CPUState) {
         SYS_GET_USED_MEM => misc::handle_get_used_mem(context),
         SYS_GET_VMA_DUMP => misc::handle_get_vma_dump(context),
         SYS_GET_SLOT_INFO => process::handle_get_slot_info(context),
+        SYS_REGISTER_EVENT_QUEUE => window::handle_register_event_queue(context),
+        SYS_DEREGISTER_EVENT_QUEUE => window::handle_deregister_event_queue(context),
         SYS_YIELD => {
             // No-op here, the dispatcher will return and the naked_asm will handle iretq.
             // Cooperative yielding is handled by the int 0x81 which actually switches.

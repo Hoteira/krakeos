@@ -1,5 +1,7 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 
+extern crate alloc;
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 #[repr(C)]
 pub struct MouseEvent {
@@ -57,42 +59,69 @@ impl Event {
     }
 }
 
-pub const SHARED_EVENT_QUEUE_SIZE: usize = 128;
-
+/// Control block for the event queue. Lives in the WASM heap alongside the
+/// backing buffer. The kernel holds a pointer to this and uses head/tail to
+/// push events directly into the buffer without any kernel-side allocation.
 #[repr(C)]
-pub struct SharedEventQueue {
+pub struct EventQueueHeader {
     pub head: AtomicU32,
     pub tail: AtomicU32,
-    pub events: [Event; SHARED_EVENT_QUEUE_SIZE],
+    pub capacity: u32,
+    pub _pad: u32,
 }
 
-impl SharedEventQueue {
-    pub fn push(&self, event: Event) -> bool {
-        let head = self.head.load(Ordering::Relaxed);
-        let next_head = (head + 1) % SHARED_EVENT_QUEUE_SIZE as u32;
+/// A userland-owned event queue backed by a `Vec<Event>` in the WASM heap.
+/// Allocate one, call `register()` so the kernel knows where to push events,
+/// then drive your event loop with `pop()`. `deregister()` is called
+/// automatically on drop.
+pub struct EventQueue {
+    header: alloc::boxed::Box<EventQueueHeader>,
+    buf: alloc::vec::Vec<Event>,
+}
 
-        if next_head == self.tail.load(Ordering::Acquire) {
-            return false; // Full
+impl EventQueue {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            header: alloc::boxed::Box::new(EventQueueHeader {
+                head: AtomicU32::new(0),
+                tail: AtomicU32::new(0),
+                capacity: capacity as u32,
+                _pad: 0,
+            }),
+            buf: alloc::vec![Event::None; capacity],
         }
-
-        let events_ptr = self.events.as_ptr() as *mut Event;
-        unsafe {
-            events_ptr.add(head as usize).write(event);
-        }
-
-        self.head.store(next_head, Ordering::Release);
-        true
     }
 
+    /// Tell the kernel where this queue lives so it can push events here directly.
+    pub fn register(&self) {
+        let header_ptr = &*self.header as *const EventQueueHeader as u64;
+        let buf_ptr = self.buf.as_ptr() as u64;
+        super::register_event_queue(header_ptr, buf_ptr, self.header.capacity as u64);
+    }
+
+    /// Tell the kernel to stop writing to this queue. Called automatically on drop.
+    pub fn deregister(&self) {
+        super::deregister_event_queue();
+    }
+
+    /// Pop the next event. Returns `None` if the queue is empty.
     pub fn pop(&self) -> Option<Event> {
-        let tail = self.tail.load(Ordering::Relaxed);
-
-        if tail == self.head.load(Ordering::Acquire) {
-            return None; // Empty
+        let tail = self.header.tail.load(Ordering::Relaxed);
+        if tail == self.header.head.load(Ordering::Acquire) {
+            return None;
         }
-
-        let event = self.events[tail as usize];
-        self.tail.store((tail + 1) % SHARED_EVENT_QUEUE_SIZE as u32, Ordering::Release);
+        // Safety: kernel wrote this slot with Release before advancing head;
+        // we observed head != tail so the slot is initialised.
+        let event = unsafe { self.buf.as_ptr().add(tail as usize).read() };
+        self.header
+            .tail
+            .store((tail + 1) % self.header.capacity, Ordering::Release);
         Some(event)
+    }
+}
+
+impl Drop for EventQueue {
+    fn drop(&mut self) {
+        self.deregister();
     }
 }
