@@ -2458,19 +2458,19 @@ impl<'a> AotCompiler<'a> {
         self.emitter.pop_v128(XmmReg::XMM0);
         self.emitter.sub_reg_imm32(Reg::RSP, 16);
         self.emitter.movups_mem_xmm(Reg::RSP, 0, XmmReg::XMM0);
-        
+
         self.emitter.push_reg(Reg::RDI); // Save Context
         self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
-        
+
         self.emitter.mov_reg_reg(Reg::RDI, Reg::RSP);
-        self.emitter.add_reg_imm32(Reg::RDI, 8); // Points to v128 on stack
-        
+        self.emitter.add_reg_imm32(Reg::RDI, 16); // Points to v128 on stack
+
         self.emitter.mov_reg_imm64(Reg::RAX, func_ptr as u64);
         self.emitter.call_reg(Reg::RAX);
-        
+
         self.emitter.add_reg_imm32(Reg::RSP, 8);
         self.emitter.pop_reg(Reg::RDI); // Restore Context
-        
+
         self.emitter.movups_xmm_mem(XmmReg::XMM0, Reg::RSP, 0);
         self.emitter.add_reg_imm32(Reg::RSP, 16);
         self.emitter.push_v128(XmmReg::XMM0);
@@ -2483,21 +2483,21 @@ impl<'a> AotCompiler<'a> {
         self.emitter.movups_mem_xmm(Reg::RSP, 0, XmmReg::XMM0);
         self.emitter.sub_reg_imm32(Reg::RSP, 16);
         self.emitter.movups_mem_xmm(Reg::RSP, 0, XmmReg::XMM1);
-        
+
         self.emitter.push_reg(Reg::RDI); // Save Context
         self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
-        
+
         self.emitter.mov_reg_reg(Reg::RDI, Reg::RSP);
-        self.emitter.add_reg_imm32(Reg::RDI, 24); // Points to XMM0
+        self.emitter.add_reg_imm32(Reg::RDI, 32); // Points to XMM0
         self.emitter.mov_reg_reg(Reg::RSI, Reg::RSP);
-        self.emitter.add_reg_imm32(Reg::RSI, 8); // Points to XMM1
-        
+        self.emitter.add_reg_imm32(Reg::RSI, 16); // Points to XMM1
+
         self.emitter.mov_reg_imm64(Reg::RAX, func_ptr as u64);
         self.emitter.call_reg(Reg::RAX);
-        
+
         self.emitter.add_reg_imm32(Reg::RSP, 8);
         self.emitter.pop_reg(Reg::RDI); // Restore Context
-        
+
         self.emitter.add_reg_imm32(Reg::RSP, 32); // remove XMM1 and XMM0 copy
         self.emitter.movups_xmm_mem(XmmReg::XMM0, Reg::RSP, -16); // Load from XMM0 slot
         self.emitter.push_v128(XmmReg::XMM0);
@@ -2514,23 +2514,23 @@ impl<'a> AotCompiler<'a> {
         self.emitter.movups_mem_xmm(Reg::RSP, 0, XmmReg::XMM1);
         self.emitter.sub_reg_imm32(Reg::RSP, 16);
         self.emitter.movups_mem_xmm(Reg::RSP, 0, XmmReg::XMM2);
-        
+
         self.emitter.push_reg(Reg::RDI); // Save Context
         self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
-        
+
         self.emitter.mov_reg_reg(Reg::RDI, Reg::RSP);
-        self.emitter.add_reg_imm32(Reg::RDI, 40); // XMM0
+        self.emitter.add_reg_imm32(Reg::RDI, 48); // XMM0
         self.emitter.mov_reg_reg(Reg::RSI, Reg::RSP);
-        self.emitter.add_reg_imm32(Reg::RSI, 24); // XMM1
+        self.emitter.add_reg_imm32(Reg::RSI, 32); // XMM1
         self.emitter.mov_reg_reg(Reg::RDX, Reg::RSP);
-        self.emitter.add_reg_imm32(Reg::RDX, 8); // XMM2
-        
+        self.emitter.add_reg_imm32(Reg::RDX, 16); // XMM2
+
         self.emitter.mov_reg_imm64(Reg::RAX, func_ptr as u64);
         self.emitter.call_reg(Reg::RAX);
-        
+
         self.emitter.add_reg_imm32(Reg::RSP, 8);
         self.emitter.pop_reg(Reg::RDI); // Restore Context
-        
+
         self.emitter.add_reg_imm32(Reg::RSP, 48); // remove XMM2, XMM1, XMM0 copy
         self.emitter.movups_xmm_mem(XmmReg::XMM0, Reg::RSP, -16); // Load from XMM0 slot
         self.emitter.push_v128(XmmReg::XMM0);
@@ -2541,23 +2541,22 @@ impl<'a> AotCompiler<'a> {
         self.emitter.pop_v128(XmmReg::XMM0);
         self.emitter.sub_reg_imm32(Reg::RSP, 16);
         self.emitter.movups_mem_xmm(Reg::RSP, 0, XmmReg::XMM0);
-        
+
         self.emitter.push_reg(Reg::RDI); // Save Context
         self.emitter.sub_reg_imm32(Reg::RSP, 8); // Align
-        
+
         self.emitter.mov_reg_reg(Reg::RDI, Reg::RSP);
-        self.emitter.add_reg_imm32(Reg::RDI, 8); // Points to XMM0
-        
+        self.emitter.add_reg_imm32(Reg::RDI, 16); // Points to XMM0
+
         self.emitter.mov_reg_imm64(Reg::RAX, func_ptr as u64);
         self.emitter.call_reg(Reg::RAX);
-        
+
         self.emitter.add_reg_imm32(Reg::RSP, 8);
         self.emitter.pop_reg(Reg::RDI); // Restore Context
-        
+
         self.emitter.add_reg_imm32(Reg::RSP, 16);
         self.emitter.push_wasm_stack(Reg::RAX);
     }
-
     fn emit_simd_padd(&mut self, opcode: u8) {
         self.emitter.pop_v128(XmmReg::XMM1);
         self.emitter.pop_v128(XmmReg::XMM0);

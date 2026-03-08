@@ -42,38 +42,23 @@ pub fn main() {
     std::os::user::set_current_user("racap");
 
     // Spawn system apps
-    println!("[Init] Spawning Taskbar...");
+    /*println!("[Init] Spawning Taskbar...");
     
     match std::os::spawn_with_fds("@0xE0/apps/taskbar.wasm", &[], &[(0, 0), (1, 1), (2, 2)]) {
         pid if pid != usize::MAX => println!("[Init] Taskbar spawned into its own slot with PID {}", pid),
         _ => println!("[Init] Failed to spawn taskbar"),
-    }
-
-    /*// Per Step 29 decision: spawn as container
-    let offset = 0x40000000; // 1GB offset
-    let size = 0x4000000;   // 64MB size
-    
-    #[cfg(target_arch = "wasm32")]
-    core::arch::wasm32::memory_grow(0, 32768); // Grow to 2GB to accommodate child at 1GB offset
-
-    match std::os::container_plant_from_path("@0xE0/apps/taskbar.wasm", offset, size, Some(&[(0, 0), (1, 1), (2, 2)])) {
-        Ok(id) => println!("[Init] Taskbar planted as container ID {}", id),
-        Err(e) => println!("[Init] Failed to plant taskbar: {}", e),
-    }
-
-    std::thread::spawn(|| {
-        std::wasm::run("@0xE0/apps/taskbar.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
-    });*/
+    }*/
 
     sleep(500);
 
-    /*println!("[Init] Spawning AOT Test...");
-    std::thread::spawn(|| {
-        std::wasm::run("@0xE0/apps/aot_test.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
-    });
+    match std::os::spawn_with_fds("@0xE0/apps/aot_test.wasm", &[], &[(0, 0), (1, 1), (2, 2)]) {
+        pid if pid != usize::MAX => println!("[Init] TAOT test into its own slot with PID {}", pid),
+        _ => println!("[Init] Failed to spawn tests"),
+    }
 
     sleep(500);
 
+    /*
     println!("[Init] Spawning Terminal...");
     std::thread::spawn(|| {
         std::wasm::run("@0xE0/apps/term.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
