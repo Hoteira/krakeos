@@ -186,7 +186,9 @@ impl Mouse {
 
                     display_server.copy_to_fb(win_x as i32, win_y as i32, win_width as u32, win_height as u32);
 
-                    display_server.draw_mouse(self.x, self.y, false);
+                    if !HARDWARE_CURSOR_ACTIVE {
+                        display_server.draw_mouse(self.x, self.y, false);
+                    }
 
                     DRAGGING_WINDOW.store(0, Ordering::Relaxed);
                     RESIZING_WINDOW.store(0, Ordering::Relaxed);
@@ -263,7 +265,9 @@ impl Mouse {
                 ds.present_rect(w_x as i32, w_y as i32, dirty_w as u32, dirty_h as u32);
 
                 // 4. Draw Mouse directly to Front Buffer (on top of everything)
-                ds.draw_mouse(self.x, self.y, false);
+                if !HARDWARE_CURSOR_ACTIVE {
+                    ds.draw_mouse(self.x, self.y, false);
+                }
 
                 // 5. Final flush for mouse cursor (VirtIO)
                 if VIRTIO_ACTIVE {
@@ -374,7 +378,9 @@ impl Mouse {
             let flush_h = max_y.saturating_sub(min_y);
 
             unsafe {
-                display_server.draw_mouse(self.x, self.y, true);
+                if !HARDWARE_CURSOR_ACTIVE {
+                    display_server.draw_mouse(self.x, self.y, true);
+                }
             }
 
             unsafe {
@@ -387,9 +393,10 @@ impl Mouse {
 
         unsafe {
             let display_server = &mut *(&raw mut DISPLAY_SERVER);
-            display_server.copy_to_fb(old_x as i32, old_y as i32, 32, 32);
-
-            display_server.draw_mouse(self.x, self.y, false);
+            if !HARDWARE_CURSOR_ACTIVE {
+                display_server.copy_to_fb(old_x as i32, old_y as i32, 32, 32);
+                display_server.draw_mouse(self.x, self.y, false);
+            }
 
             if VIRTIO_ACTIVE {
                 let u_old_x = old_x as u32;
@@ -410,7 +417,7 @@ impl Mouse {
                 let flush_w = (max_x.min(screen_w)).saturating_sub(flush_x);
                 let flush_h = (max_y.min(screen_h)).saturating_sub(flush_y);
 
-                if flush_w > 0 && flush_h > 0 {
+                if !HARDWARE_CURSOR_ACTIVE && flush_w > 0 && flush_h > 0 {
                     virtio::flush(flush_x, flush_y, flush_w, flush_h, screen_w, display_server.active_resource_id);
                 }
             }

@@ -128,16 +128,22 @@ impl DisplayServer {
 
 
                 use crate::drivers::periferics::mouse::{CURSOR_BUFFER, CURSOR_HEIGHT, CURSOR_WIDTH};
-                let cursor_size_bytes = (CURSOR_WIDTH * CURSOR_HEIGHT * 4) as usize;
+                // VirtIO GPU requires 64x64 cursor resources
+                let cursor_size_bytes = 64 * 64 * 4;
                 let cursor_pages = (cursor_size_bytes + 4095) / 4096;
                 if let Some(cursor_phys) = crate::memory::pmm::allocate_frames(cursor_pages, 0) {
                     let cursor_ptr = (cursor_phys + crate::memory::paging::HHDM_OFFSET) as *mut u32;
+                    unsafe {
+                        core::ptr::write_bytes(cursor_ptr as *mut u8, 0, cursor_size_bytes);
 
-                    for i in 0..CURSOR_BUFFER.len() {
-                        *cursor_ptr.add(i) = CURSOR_BUFFER[i];
+                        for row in 0..CURSOR_HEIGHT {
+                            for col in 0..CURSOR_WIDTH {
+                                *cursor_ptr.add(row * 64 + col) = CURSOR_BUFFER[row * CURSOR_WIDTH + col];
+                            }
+                        }
                     }
 
-                    virtio::cursor::setup_cursor(cursor_phys, CURSOR_WIDTH as u32, CURSOR_HEIGHT as u32, 0, 0);
+                    virtio::cursor::setup_cursor(cursor_phys, 64, 64, 0, 0);
                     HARDWARE_CURSOR_ACTIVE = true;
                 } else {
                     println!("DisplayServer: Failed to allocate hardware cursor buffer!");

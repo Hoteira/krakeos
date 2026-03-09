@@ -4,9 +4,12 @@ use super::consts::*;
 use super::queue::send_command_queue;
 use super::structs::*;
 
-pub fn setup_cursor(phys_ptr: u64, width: u32, height: u32, x: u32, y: u32) {
-    let cursor_id = 3;
+pub const CURSOR_ID: u32 = 3;
 
+static mut MOVE_REQ: VirtioGpuUpdateCursor = unsafe { core::mem::zeroed() };
+
+pub fn setup_cursor(phys_ptr: u64, width: u32, height: u32, x: u32, y: u32) {
+    let cursor_id = CURSOR_ID;
 
     let req_create = VirtioGpuResourceCreate2d {
         hdr: VirtioGpuCtrlHeader {
@@ -141,35 +144,37 @@ pub fn setup_cursor(phys_ptr: u64, width: u32, height: u32, x: u32, y: u32) {
 }
 
 pub fn move_cursor(x: u32, y: u32) {
-    let req_move = VirtioGpuUpdateCursor {
-        hdr: VirtioGpuCtrlHeader {
-            type_: VIRTIO_GPU_CMD_MOVE_CURSOR,
-            flags: 0,
-            fence_id: 0,
-            ctx_id: 0,
-            ring_idx: 0,
-            padding: [0; 3],
-        },
-        pos: VirtioGpuCursorPos {
-            scanout_id: 0,
-            x,
-            y,
+    unsafe {
+        MOVE_REQ = VirtioGpuUpdateCursor {
+            hdr: VirtioGpuCtrlHeader {
+                type_: VIRTIO_GPU_CMD_MOVE_CURSOR,
+                flags: 0,
+                fence_id: 0,
+                ctx_id: 0,
+                ring_idx: 0,
+                padding: [0; 3],
+            },
+            pos: VirtioGpuCursorPos {
+                scanout_id: 0,
+                x,
+                y,
+                padding: 0,
+            },
+            resource_id: CURSOR_ID,
+            hot_x: 0,
+            hot_y: 0,
             padding: 0,
-        },
-        resource_id: 0,
-        hot_x: 0,
-        hot_y: 0,
-        padding: 0,
-    };
+        };
 
-    let req_move_phys = crate::memory::paging::virt_to_phys(&req_move as *const _ as u64);
+        let req_move_phys = crate::memory::paging::virt_to_phys(&raw const MOVE_REQ as u64);
 
-    send_command_queue(
-        1,
-        &[req_move_phys],
-        &[core::mem::size_of_val(&req_move) as u32],
-        &[],
-        &[],
-        false,
-    );
+        send_command_queue(
+            1,
+            &[req_move_phys],
+            &[core::mem::size_of::<VirtioGpuUpdateCursor>() as u32],
+            &[],
+            &[],
+            false,
+        );
+    }
 }
