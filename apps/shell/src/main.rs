@@ -58,12 +58,13 @@ pub fn main() {
 
                 let mut stdin_fd = 0;
                 let mut close_stdin = false;
+                let mut _f_in = None;
 
                 if let Some(infile) = parsed.input_file {
                     let path = resolve_path(&cwd, &infile);
                     if let Ok(f) = std::fs::File::open(&path) {
                         stdin_fd = f.as_raw_fd();
-                        core::mem::forget(f);
+                        _f_in = Some(f);
                         close_stdin = true;
                     } else {
                         let err = format!("Failed to open input: {}\n", path);
@@ -78,6 +79,7 @@ pub fn main() {
 
                 let mut stdout_fd = 1;
                 let mut close_stdout = false;
+                let mut _f_out = None;
                 let mut next_pipe_read = None;
 
                 if let Some(outfile) = parsed.output_file {
@@ -93,7 +95,7 @@ pub fn main() {
                             if parsed.append_mode {
                                 std::os::file_seek(stdout_fd, 0, 2);
                             }
-                            core::mem::forget(f);
+                            _f_out = Some(f);
                             close_stdout = true;
                         }
                         Err(_) => {
@@ -258,10 +260,10 @@ pub fn main() {
                     }
                 }
 
-                if close_stdin && stdin_fd > 2 {
+                if close_stdin && stdin_fd > 2 && _f_in.is_none() {
                     std::os::file_close(stdin_fd);
                 }
-                if close_stdout && stdout_fd > 2 {
+                if close_stdout && stdout_fd > 2 && _f_out.is_none() {
                     std::os::file_close(stdout_fd);
                 }
 

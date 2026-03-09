@@ -341,6 +341,7 @@ pub fn assign_local_fd(global_fd: usize) -> u64 {
                     return i as u64;
                 }
             }
+            crate::debugln!("[Kernel] Process {} reached the maximum number of open file descriptors (16)!", proc.pid);
         }
     }
     u64::MAX

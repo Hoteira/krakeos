@@ -6,7 +6,18 @@
       "Bash(grep:*)",
       "Bash(RUSTUP_HOME=/home/hotei/.rustup CARGO_HOME=/home/hotei/.cargo /home/hotei/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo check:*)",
       "Bash(git merge:*)",
-      "Bash(make:*)"
+      "Bash(make:*)",
+      "Bash(cargo build:*)",
+      "Bash(rustup run:*)",
+      "Bash(cargo:*)",
+      "Bash(ls:*)",
+      "Bash(/home/hotei/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo build:*)",
+      "Bash(RUSTC=/home/hotei/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/rustc CARGO_HOME=/home/hotei/.cargo /home/hotei/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo build:*)",
+      "Bash(RUSTC=/home/hotei/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/rustc CARGO_HOME=/home/hotei/.cargo /home/hotei/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo check:*)",
+      "Bash(RUSTC=/home/hotei/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/rustc CARGO_HOME=/home/hotei/.cargo make fs:*)",
+      "Bash(RUSTC=/home/hotei/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/rustc CARGO=/home/hotei/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo CARGO_HOME=/home/hotei/.cargo make kernel:*)",
+      "Bash(PATH=/home/hotei/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin:$PATH RUSTUP_TOOLCHAIN=nightly make kernel:*)",
+      "Bash(export:*)"
     ]
   }
 }

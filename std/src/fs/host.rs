@@ -16,6 +16,7 @@ method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.open-at",
             core::ptr::write_unaligned(result_ptr as *mut u32, 1); // Err
         } else {
             core::ptr::write_unaligned(result_ptr as *mut u32, 0); // Ok
+            // Write handle at offset 4, matching File::open in mod.rs
             core::ptr::write_unaligned(result_ptr.add(4) as *mut i32, res as i32);
         }
     }
@@ -124,27 +125,90 @@ method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.rename-at",
     }
 );
 
+// DirStream used by read_directory native impl
+#[cfg(not(target_arch = "wasm32"))]
+struct DirStream {
+    fd: i32,
+    buffer: [u8; 1024],
+    buf_size: usize,
+    offset: usize,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+static mut DIR_STREAM_TABLE: [Option<*mut DirStream>; 128] = [None; 128];
+
+#[cfg(not(target_arch = "wasm32"))]
+fn alloc_stream(s: *mut DirStream) -> i32 {
+    unsafe {
+        for i in 0..128 {
+            if DIR_STREAM_TABLE[i].is_none() {
+                DIR_STREAM_TABLE[i] = Some(s);
+                return i as i32;
+            }
+        }
+        -1
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn get_stream(handle: i32) -> *mut DirStream {
+    unsafe {
+        if handle >= 0 && (handle as usize) < 128 {
+            DIR_STREAM_TABLE[handle as usize].unwrap_or(core::ptr::null_mut())
+        } else {
+            core::ptr::null_mut()
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn free_stream(handle: i32) -> *mut DirStream {
+    unsafe {
+        if handle >= 0 && (handle as usize) < 128 {
+            let s = DIR_STREAM_TABLE[handle as usize];
+            DIR_STREAM_TABLE[handle as usize] = None;
+            s.unwrap_or(core::ptr::null_mut())
+        } else {
+            core::ptr::null_mut()
+        }
+    }
+}
+
 method_export!("wasi:filesystem/types@0.2.0", "[method]descriptor.read-directory",
     pub fn read_directory(handle: i32, result_ptr: *mut u8) {
         use crate::alloc::alloc::{alloc, Layout};
         let layout = Layout::new::<DirStream>();
-        let ptr = alloc(layout) as *mut DirStream;
+        let ptr = unsafe { alloc(layout) as *mut DirStream };
         if ptr.is_null() {
             *result_ptr = 1; // Err
             return;
         }
-        (*ptr).fd = handle;
-        (*ptr).buf_size = 0;
-        (*ptr).offset = 0;
+        unsafe {
+            (*ptr).fd = handle;
+            (*ptr).buf_size = 0;
+            (*ptr).offset = 0;
+        }
+
+        let handle = alloc_stream(ptr);
+        if handle == -1 {
+            unsafe { crate::alloc::alloc::dealloc(ptr as *mut u8, layout) };
+            *result_ptr = 1;
+            return;
+        }
 
         *result_ptr = 0; // Ok
-        core::ptr::write_unaligned(result_ptr.add(4) as *mut i32, ptr as i32);
+        core::ptr::write_unaligned(result_ptr.add(4) as *mut i32, handle);
     }
 );
 
 method_export!("wasi:filesystem/types@0.2.0", "[method]directory-entry-stream.read-directory-entry",
     pub fn read_directory_entry(stream: i32, result_ptr: *mut u8) {
-        let state = &mut *(stream as *mut DirStream);
+        let state_ptr = get_stream(stream);
+        if state_ptr.is_null() {
+            *result_ptr = 1;
+            return;
+        }
+        let state = unsafe { &mut *state_ptr };
 
         loop {
             if state.offset < state.buf_size {
@@ -160,11 +224,13 @@ method_export!("wasi:filesystem/types@0.2.0", "[method]directory-entry-stream.re
                 }
 
                 let name_ptr = crate::memory::malloc(name_len);
-                core::ptr::copy_nonoverlapping(
-                    state.buffer.as_ptr().add(state.offset + 2),
-                    name_ptr as *mut u8,
-                    name_len
-                );
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        state.buffer.as_ptr().add(state.offset + 2),
+                        name_ptr as *mut u8,
+                        name_len
+                    );
+                }
 
                 state.offset += 2 + name_len;
 
@@ -177,11 +243,21 @@ method_export!("wasi:filesystem/types@0.2.0", "[method]directory-entry-stream.re
                     _ => 0,
                 };
 
+                // WASI Result layout:
+                // [0..4]   = 0 (Result::Ok)
+                // [4..8]   = 1 (Option::Some)
+                // [8..9]   = type
+                // [12..20] = name_ptr (8 bytes)
+                // [20..24] = name_len (4 bytes)
+                // [24..32] = inode (8 bytes)
+
                 *result_ptr = 0; // Ok
                 core::ptr::write_unaligned(result_ptr.add(4) as *mut u32, 1); // Some
                 core::ptr::write_unaligned(result_ptr.add(8) as *mut u8, wasi_type);
-                core::ptr::write_unaligned(result_ptr.add(12) as *mut u32, name_ptr as u32);
-                core::ptr::write_unaligned(result_ptr.add(16) as *mut u32, name_len as u32);
+                
+                core::ptr::write_unaligned(result_ptr.add(12) as *mut usize, name_ptr);
+                core::ptr::write_unaligned(result_ptr.add(20) as *mut u32, name_len as u32);
+                core::ptr::write_unaligned(result_ptr.add(24) as *mut u64, 0); // inode stub
 
                 return;
             }
@@ -201,9 +277,15 @@ method_export!("wasi:filesystem/types@0.2.0", "[method]directory-entry-stream.re
 
 method_export!("wasi:filesystem/types@0.2.0", "[resource-drop]directory-entry-stream",
     pub fn drop_directory_entry_stream(stream: i32) {
-        use crate::alloc::alloc::{dealloc, Layout};
-        let layout = Layout::new::<DirStream>();
-        dealloc(stream as *mut u8, layout);
+        let ptr = free_stream(stream);
+        if !ptr.is_null() {
+            unsafe {
+                crate::sys::syscall(3, (*ptr).fd as u64, 0, 0);
+            }
+            use crate::alloc::alloc::{dealloc, Layout};
+            let layout = Layout::new::<DirStream>();
+            unsafe { dealloc(ptr as *mut u8, layout) };
+        }
     }
 );
 
@@ -212,15 +294,6 @@ method_export!("krakeos:system/filesystem@0.2.0", "mount",
         crate::sys::syscall(165, disk_id, fs_type_ptr as u64, fs_type_len as u64)
     }
 );
-
-// DirStream used by read_directory native impl
-#[cfg(not(target_arch = "wasm32"))]
-struct DirStream {
-    fd: i32,
-    buffer: [u8; 1024],
-    buf_size: usize,
-    offset: usize,
-}
 
 // --- Helper functions that call the above bindings ---
 

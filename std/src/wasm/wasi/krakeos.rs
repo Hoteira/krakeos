@@ -848,7 +848,7 @@ impl WasiEnv for KrakeosWasiEnv {
                 let mut entries = Vec::new();
                 for (i, e) in re.iter().enumerate() {
                     let wt = match e.file_type {
-                        crate::fs::FileType::File => 4,
+                        crate::fs::FileType::File => 6,
                         crate::fs::FileType::Directory => 3,
                         crate::fs::FileType::Device => 2,
                         _ => 0,

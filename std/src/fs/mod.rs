@@ -33,6 +33,14 @@ pub struct File {
     fd: usize,
 }
 
+impl Drop for File {
+    fn drop(&mut self) {
+        if self.fd > 2 {
+            descriptor_drop(self.fd as i32);
+        }
+    }
+}
+
 impl File {
     pub fn open(path: &str) -> Result<Self> {
         #[cfg(not(target_arch = "wasm32"))]
@@ -208,12 +216,6 @@ impl Seek for File {
     }
 }
 
-impl Drop for File {
-    fn drop(&mut self) {
-        descriptor_drop(self.fd as i32);
-    }
-}
-
 pub fn create_dir(path: &str) -> Result<()> {
     let res = host::create_dir(path);
     if res == 0 {
@@ -298,49 +300,113 @@ pub struct DirEntry {
 
 pub fn read_dir(path: &str) -> Result<Vec<DirEntry>> {
     crate::debugln!("CALLING TCP FN read_dir WITH ARGS: path={}", path);
-    let file = File::open(path)?;
-    let mut entries = Vec::new();
 
-    let mut result_buf = [0u8; 8];
-    host::read_directory(file.fd as i32, result_buf.as_mut_ptr());
-    
-    if result_buf[0] != 0 {
-        return Err(Error::from_raw_os_error(5));
+    // On wasm32, native_file_open returns kernel fd=3 which collides with the
+    // WASI preopen Directory at resource_id=3. Use open_at (proper WASI path)
+    // so the opened handle is registered in the resource table correctly.
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mut open_buf = [0u8; 8];
+        host::open_at(3, 0, path.as_ptr(), path.len(), 0, 0, open_buf.as_mut_ptr());
+        if open_buf[0] != 0 {
+            return Err(Error::from_raw_os_error(2));
+        }
+        let dir_handle = unsafe { core::ptr::read_unaligned(open_buf.as_ptr().add(4) as *const i32) };
+
+        let mut result_buf = [0u8; 8];
+        host::read_directory(dir_handle, result_buf.as_mut_ptr());
+        if result_buf[0] != 0 {
+            host::descriptor_drop(dir_handle);
+            return Err(Error::from_raw_os_error(5));
+        }
+        let stream_handle = unsafe { core::ptr::read_unaligned(result_buf.as_ptr().add(4) as *const i32) };
+
+        let mut entries = Vec::new();
+        loop {
+            let mut entry_buf = [0u8; 32];
+            host::read_directory_entry(stream_handle, entry_buf.as_mut_ptr());
+            if entry_buf[0] != 0 { break; }
+            let has_value = unsafe { core::ptr::read_unaligned(entry_buf.as_ptr().add(4) as *const u32) };
+            if has_value == 0 { break; }
+
+            let type_byte = entry_buf[8];
+            // On wasm32: name_ptr is 4 bytes at offset 12, name_len at offset 20
+            let name_ptr = unsafe { core::ptr::read_unaligned(entry_buf.as_ptr().add(12) as *const u32) } as *const u8;
+            let name_len = unsafe { core::ptr::read_unaligned(entry_buf.as_ptr().add(20) as *const u32) } as usize;
+
+            let name = unsafe {
+                let slice = core::slice::from_raw_parts(name_ptr, name_len);
+                String::from_utf8_lossy(slice).into_owned()
+            };
+
+            let file_type = match type_byte {
+                6 => FileType::File,
+                3 => FileType::Directory,
+                2 => FileType::Device,
+                _ => FileType::Unknown,
+            };
+
+            crate::debugln!("[std::fs::read_dir] Entry: '{}' type={}", name, type_byte);
+            entries.push(DirEntry { name, file_type });
+        }
+
+        host::drop_directory_entry_stream(stream_handle);
+        host::descriptor_drop(dir_handle);
+
+        crate::debugln!("TCP RESULT: read_dir RESULT: {} entries", entries.len());
+        return Ok(entries);
     }
-    
-    let stream_handle = unsafe { core::ptr::read_unaligned(result_buf.as_ptr().add(4) as *const i32) };
-    
-    loop {
-        let mut entry_buf = [0u8; 32];
-        host::read_directory_entry(stream_handle, entry_buf.as_mut_ptr());
-        
-        if entry_buf[0] != 0 { break; } // Err or end
-        let has_value = unsafe { core::ptr::read_unaligned(entry_buf.as_ptr().add(4) as *const u32) };
-        if has_value == 0 { break; } // None
-        
-        let type_byte = entry_buf[8];
-        let name_ptr = unsafe { core::ptr::read_unaligned(entry_buf.as_ptr().add(12) as *const *mut u8) };
-        let name_len = unsafe { core::ptr::read_unaligned(entry_buf.as_ptr().add(16) as *const u32) } as usize;
-        
-        let name = unsafe {
-            let slice = core::slice::from_raw_parts(name_ptr, name_len);
-            let s = String::from_utf8_lossy(slice).into_owned();
-            crate::memory::free(name_ptr as usize, name_len);
-            s
-        };
-        
-        let file_type = match type_byte {
-            6 => FileType::File,
-            3 => FileType::Directory,
-            2 => FileType::Device,
-            _ => FileType::Unknown,
-        };
-        
-        entries.push(DirEntry { name, file_type });
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        // ManuallyDrop prevents double-close: drop_directory_entry_stream closes the fd,
+        // so we must not let File::drop also close it.
+        let file = core::mem::ManuallyDrop::new(File::open(path)?);
+        let mut entries = Vec::new();
+
+        let mut result_buf = [0u8; 8];
+        host::read_directory(file.fd as i32, result_buf.as_mut_ptr());
+
+        if result_buf[0] != 0 {
+            return Err(Error::from_raw_os_error(5));
+        }
+
+        let stream_handle = unsafe { core::ptr::read_unaligned(result_buf.as_ptr().add(4) as *const i32) };
+
+        loop {
+            let mut entry_buf = [0u8; 32];
+            host::read_directory_entry(stream_handle, entry_buf.as_mut_ptr());
+
+            if entry_buf[0] != 0 { break; }
+            let has_value = unsafe { core::ptr::read_unaligned(entry_buf.as_ptr().add(4) as *const u32) };
+            if has_value == 0 { break; }
+
+            let type_byte = entry_buf[8];
+            // On x86_64: name_ptr is 8 bytes at offset 12, name_len at offset 20
+            let name_ptr = unsafe { core::ptr::read_unaligned(entry_buf.as_ptr().add(12) as *const *mut u8) };
+            let name_len = unsafe { core::ptr::read_unaligned(entry_buf.as_ptr().add(20) as *const u32) } as usize;
+
+            let name = unsafe {
+                let slice = core::slice::from_raw_parts(name_ptr, name_len);
+                let s = String::from_utf8_lossy(slice).into_owned();
+                crate::memory::free(name_ptr as usize, name_len);
+                s
+            };
+
+            let file_type = match type_byte {
+                6 => FileType::File,
+                3 => FileType::Directory,
+                2 => FileType::Device,
+                _ => FileType::Unknown,
+            };
+
+            crate::debugln!("[std::fs::read_dir] Entry: '{}' type={}", name, type_byte);
+            entries.push(DirEntry { name, file_type });
+        }
+
+        host::drop_directory_entry_stream(stream_handle);
+
+        crate::debugln!("TCP RESULT: read_dir RESULT: {} entries", entries.len());
+        Ok(entries)
     }
-    
-    host::drop_directory_entry_stream(stream_handle);
-    
-    crate::debugln!("TCP RESULT: read_dir RESULT: {} entries", entries.len());
-    Ok(entries)
 }

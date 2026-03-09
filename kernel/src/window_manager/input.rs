@@ -86,17 +86,33 @@ impl Mouse {
         self.x = self.clamp_mx(scaled_dx as i16);
         self.y = self.clamp_my(scaled_dy as i16);
 
-        unsafe {
-            if VIRTIO_ACTIVE && HARDWARE_CURSOR_ACTIVE {
-                virtio::cursor::move_cursor(self.x as u32, self.y as u32);
-            }
-        }
-
         let prev_left = self.left;
+        let prev_right = self.right;
+        let prev_center = self.center;
 
         self.left = (data[0] & 0b00000001) != 0;
         self.right = (data[0] & 0b00000010) != 0;
         self.center = (data[0] & 0b00000100) != 0;
+
+        // Scroll value is a 4-bit signed value in Explorer IntelliMouse mode (ID 4)
+        // Bit 3 is the sign bit.
+        let mut scroll_val = (data[3] & 0x0F) as i8;
+        if (scroll_val & 0x08) != 0 {
+            scroll_val |= !0x0F; // Sign extend to 8-bit
+        }
+
+        let moved = old_x != self.x || old_y != self.y;
+        let btns_changed = prev_left != self.left || prev_right != self.right || prev_center != self.center;
+
+        if !moved && !btns_changed && scroll_val == 0 {
+            return; // Ignore empty packets to prevent constant flickering
+        }
+
+        unsafe {
+            if VIRTIO_ACTIVE && HARDWARE_CURSOR_ACTIVE && moved {
+                virtio::cursor::move_cursor(self.x as u32, self.y as u32);
+            }
+        }
 
         // Check for resize termination via Left Click
         let resizing_id = RESIZING_WINDOW.load(Ordering::Relaxed);
@@ -131,13 +147,6 @@ impl Mouse {
 
         unsafe {
             LAST_INPUT = data[0];
-        }
-
-        // Scroll value is a 4-bit signed value in Explorer IntelliMouse mode (ID 4)
-        // Bit 3 is the sign bit.
-        let mut scroll_val = (data[3] & 0x0F) as i8;
-        if (scroll_val & 0x08) != 0 {
-            scroll_val |= !0x0F; // Sign extend to 8-bit
         }
 
         if scroll_val != 0 {
