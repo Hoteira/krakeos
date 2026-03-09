@@ -288,7 +288,7 @@ crate::export_method!(
 crate::export_method!(
     "wasi:filesystem/types@0.2.0", "[method]directory-entry-stream.read-directory-entry",
     [],
-    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![],
     pub fn directory_entry_stream_read_directory_entry<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         let handle = match args.get(0) { Some(Value::I32(v)) => *v as i32, _ => return Err(HaltExecutionError(1)) };
         let ret_ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Err(HaltExecutionError(1)) };
@@ -319,12 +319,14 @@ crate::export_method!(
                     let _ = write_u32(store, ret_ptr, 0); // Ok Result
                     let _ = write_u32(store, ret_ptr + 4, 1); // Some Option
                     let payload_ptr = ret_ptr + 8;
-                    let _ = write_bytes(store, payload_ptr, &[ty]); 
-                    let _ = write_u32(store, payload_ptr + 4, name_ptr);
-                    let _ = write_u32(store, payload_ptr + 12, name_bytes.len() as u32);
+                    let _ = write_bytes(store, payload_ptr, &[ty]);
+
+                    // write_u64 for 64-bit pointers and sizes?
+                    // Actually, let's just write them carefully:
+                    let _ = write_u32(store, payload_ptr + 4, name_ptr); // The pointer (32-bit WASM view)
+                    let _ = write_u32(store, payload_ptr + 12, name_bytes.len() as u32); // The len
                     let _ = write_u64(store, payload_ptr + 16, inode);
-                } else {
-                    let _ = write_u32(store, ret_ptr, 0); // Ok Result
+                    } else {                    let _ = write_u32(store, ret_ptr, 0); // Ok Result
                     let _ = write_u32(store, ret_ptr + 4, 0); // None Option
                 }
             }

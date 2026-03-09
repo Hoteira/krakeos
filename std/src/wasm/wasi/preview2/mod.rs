@@ -488,7 +488,11 @@ pub(crate) fn resource_drop<T: Config>(store: &mut Store<'_, T>, args: Vec<Value
         _ => return Ok(vec![]),
     };
     let wasi = store.wasi_ctx.as_mut().ok_or(HaltExecutionError(1))?;
-    wasi.resource_table.remove(&handle);
+    if let Some(resource) = wasi.resource_table.remove(&handle) {
+        if let crate::wasm::wasi::ctx::WasiResource::Descriptor(fd) = resource {
+            crate::os::file_close(fd as usize);
+        }
+    }
     Ok(vec![])
 }
 
