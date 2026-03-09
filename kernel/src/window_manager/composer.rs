@@ -1,6 +1,6 @@
 use super::window::{Items, Window, NULL_WINDOW};
 use crate::debugln;
-use crate::window_manager::display::DISPLAY_SERVER;
+use crate::window_manager::display::{DISPLAY_SERVER, VIRTIO_ACTIVE};
 use crate::window_manager::input::CLICKED_WINDOW_ID;
 
 #[derive(Debug, Clone)]
@@ -221,8 +221,12 @@ impl Composer {
             w.z = 255;
             w.transparent = false;
             w.treat_as_transparent = false;
+            w.can_move = false;
+            w.can_resize = false;
         } else if wtype == Items::Bar || wtype == Items::Popup {
             w.z = 0;
+            w.can_move = false;
+            w.can_resize = false;
         } else {
             w.z = 1;
         }
@@ -344,7 +348,12 @@ impl Composer {
     pub fn update_window_area_rect(&mut self, dirty_x: i32, dirty_y: i32, dirty_w: u32, dirty_h: u32) {
         self.recompose_area(dirty_x, dirty_y, dirty_w, dirty_h);
         unsafe {
-            (*(&raw mut DISPLAY_SERVER)).present_rect(dirty_x, dirty_y, dirty_w, dirty_h);
+            let ds = &mut *(&raw mut DISPLAY_SERVER);
+            if VIRTIO_ACTIVE {
+                ds.copy();
+            } else {
+                ds.present_rect(dirty_x, dirty_y, dirty_w, dirty_h);
+            }
         }
     }
 

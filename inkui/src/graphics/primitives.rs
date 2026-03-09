@@ -446,6 +446,7 @@ pub fn draw_text_formatted(
 
     let chars: Vec<char> = clean_text.chars().collect();
     let mut i = 0;
+    let mut seg_idx = 0;
 
     let limit_y = clip_y + max_height;
     let mut max_line_height_row = (default_size * 1.2) as usize;
@@ -453,16 +454,21 @@ pub fn draw_text_formatted(
     while i < chars.len() {
         let c = chars[i];
 
-        let segment = segments.iter()
-            .find(|s| i >= s.start && i < s.end)
-            .copied()
-            .unwrap_or(TextSegment {
+        // Advance segment index sequentially instead of linear search each char
+        while seg_idx + 1 < segments.len() && i >= segments[seg_idx].end {
+            seg_idx += 1;
+        }
+        let segment = if !segments.is_empty() && i >= segments[seg_idx].start && i < segments[seg_idx].end {
+            segments[seg_idx]
+        } else {
+            TextSegment {
                 start: 0,
                 end: clean_text.len(),
                 color: default_color,
                 bg_color: Color::rgba(0, 0, 0, 0),
                 size: default_size,
-            });
+            }
+        };
 
         let current_line_height = (segment.size * 1.2) as usize;
         if current_line_height > max_line_height_row {

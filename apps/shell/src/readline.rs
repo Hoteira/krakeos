@@ -162,23 +162,22 @@ impl LineReader {
     }
 
     fn redraw_line(&self, prompt: &str, buffer: &[char], cursor: usize) {
-        // Move to start of line
-        file_write(STDOUT, b"\r");
-        file_write(STDOUT, prompt.as_bytes());
-        let s: String = buffer.iter().collect();
-        file_write(STDOUT, s.as_bytes());
-        // Clear to end of line
-        file_write(STDOUT, b"\x1B[K");
-        
-        // Restore cursor
+        // Build a single output string: CR + prompt + buffer + clear-to-EOL + cursor moves
         let total_len = buffer.len();
-        if cursor < total_len {
-            let diff = total_len - cursor;
-            let mut moves = String::new();
-            for _ in 0..diff {
-                moves.push_str("\x1B[D");
-            }
-            file_write(STDOUT, moves.as_bytes());
+        let diff = if cursor < total_len { total_len - cursor } else { 0 };
+
+        let mut out = String::with_capacity(1 + prompt.len() + total_len + 4 + diff * 3);
+        out.push('\r');
+        out.push_str(prompt);
+        for &ch in buffer {
+            out.push(ch);
         }
+        // Clear to end of line
+        out.push_str("\x1B[K");
+        // Restore cursor position
+        for _ in 0..diff {
+            out.push_str("\x1B[D");
+        }
+        file_write(STDOUT, out.as_bytes());
     }
 }

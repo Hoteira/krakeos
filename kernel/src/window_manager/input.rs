@@ -13,6 +13,8 @@ pub static mut MOUSE: Mouse = Mouse {
     center: false,
     right: false,
     state: State::Point,
+    dx_accum: 0,
+    dy_accum: 0,
 };
 
 pub struct Mouse {
@@ -22,7 +24,14 @@ pub struct Mouse {
     pub center: bool,
     pub right: bool,
     pub state: State,
+    dx_accum: i32,
+    dy_accum: i32,
 }
+
+// Mouse sensitivity divisor: raw PS/2 movement is divided by this.
+// Needed because QEMU SDL captures raw DPI-scaled host mouse movement,
+// which can be 10-20x larger than the actual on-screen pixel delta.
+const MOUSE_SENSITIVITY_DIV: i32 = 3;
 
 
 pub static mut LAST_INPUT: u8 = 0;
@@ -64,8 +73,18 @@ impl Mouse {
             y_rel |= 0xFF00u16 as i16;
         }
 
-        self.x = self.clamp_mx(x_rel);
-        self.y = self.clamp_my(-y_rel);
+        // Accumulate raw movement and apply sensitivity divisor.
+        // This prevents small movements from being lost to integer truncation
+        // while still capping the large per-packet deltas from QEMU SDL.
+        self.dx_accum += x_rel as i32;
+        self.dy_accum += -(y_rel as i32);
+        let scaled_dx = self.dx_accum / MOUSE_SENSITIVITY_DIV;
+        let scaled_dy = self.dy_accum / MOUSE_SENSITIVITY_DIV;
+        self.dx_accum %= MOUSE_SENSITIVITY_DIV;
+        self.dy_accum %= MOUSE_SENSITIVITY_DIV;
+
+        self.x = self.clamp_mx(scaled_dx as i16);
+        self.y = self.clamp_my(scaled_dy as i16);
 
         unsafe {
             if VIRTIO_ACTIVE && HARDWARE_CURSOR_ACTIVE {
@@ -288,49 +307,69 @@ impl Mouse {
             let display_server = unsafe { &mut *(&raw mut DISPLAY_SERVER) };
             let wid = DRAGGING_WINDOW.load(Ordering::Relaxed) as usize;
 
-            let window_opt = composer.find_window_id(wid);
-            let w = match window_opt {
-                Some(w) => w,
-                None => return,
+            // Collect all needed data from the window while we have a mutable borrow.
+            let (old_win_x, old_win_y, width, height, buffer, treat_as_transparent, new_x, new_y) = {
+                let window_opt = composer.find_window_id(wid);
+                let w = match window_opt {
+                    Some(w) => w,
+                    None => return,
+                };
+
+                let old_win_x = w.x;
+                let old_win_y = w.y;
+                let width = w.width;
+                let height = w.height;
+                let buffer = w.get_active_buffer();
+                let treat_as_transparent = w.treat_as_transparent;
+
+                let mouse_dx = self.x as i32 - old_x as i32;
+                let mouse_dy = self.y as i32 - old_y as i32;
+
+                crate::debugln!("Drag delta: dx={} dy={} | mouse ({},{})→({},{}) | win ({},{})",
+                    mouse_dx, mouse_dy, old_x, old_y, self.x, self.y, old_win_x, old_win_y);
+
+                let target_win_x = old_win_x as i32 + mouse_dx;
+                let target_win_y = old_win_y as i32 + mouse_dy;
+
+                let screen_w = display_server.width as i32;
+                let screen_h = display_server.height as i32;
+
+                let margin = 3;
+
+                let min_visible_x = -(width as i32) + margin;
+                let max_visible_x = screen_w - margin;
+                let min_visible_y = -(height as i32) + margin;
+                let max_visible_y = screen_h - margin;
+
+                let clamped_win_x = target_win_x.max(min_visible_x).min(max_visible_x);
+                let clamped_win_y = target_win_y.max(min_visible_y).min(max_visible_y);
+
+                let new_x = clamped_win_x as isize;
+                let new_y = clamped_win_y as isize;
+
+                // Update position while we still hold the mutable borrow.
+                w.x = new_x;
+                w.y = new_y;
+
+                (old_win_x, old_win_y, width, height, buffer, treat_as_transparent, new_x, new_y)
             };
-
-            let old_win_x = w.x;
-            let old_win_y = w.y;
-            let width = w.width;
-            let height = w.height;
-            let buffer = w.get_active_buffer();
-
-            let mouse_dx = self.x as i32 - old_x as i32;
-            let mouse_dy = self.y as i32 - old_y as i32;
-
-            let target_win_x = old_win_x as i32 + mouse_dx;
-            let target_win_y = old_win_y as i32 + mouse_dy;
+            // The mutable borrow on `w` is released here.
 
             let screen_w = display_server.width as i32;
             let screen_h = display_server.height as i32;
 
-            let margin = 3;
-
-            let min_visible_x = -(width as i32) + margin;
-            let max_visible_x = screen_w - margin;
-            let min_visible_y = -(height as i32) + margin;
-            let max_visible_y = screen_h - margin;
-
-            let clamped_win_x = target_win_x.max(min_visible_x).min(max_visible_x);
-            let clamped_win_y = target_win_y.max(min_visible_y).min(max_visible_y);
-
-            let new_x = clamped_win_x as isize;
-            let new_y = clamped_win_y as isize;
-
-            w.x = new_x;
-            w.y = new_y;
-
+            // Erase old window position: recompose background (all windows except dragged)
+            // into the double buffer at the old rect, then copy to front buffer.
+            composer.recompose_area_except(
+                old_win_x as i32, old_win_y as i32, width as u32, height as u32,
+                wid,
+            );
             display_server.copy_to_fb(old_win_x as i32, old_win_y as i32, width as u32, height as u32);
 
+            // Draw window at new position directly to front buffer.
+            display_server.copy_to_fb_a(width as u32, height as u32, buffer, new_x as i32, new_y as i32, Some(0xFFFFFFFF), treat_as_transparent);
 
-            display_server.copy_to_fb_a(width as u32, height as u32, buffer, new_x as i32, new_y as i32, Some(0xFFFFFFFF), w.treat_as_transparent);
-
-
+            // Re-draw bars/popups over new window position.
             for i in 0..composer.windows.len() {
                 let w = &composer.windows[i];
                 match w.w_type {

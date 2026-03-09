@@ -205,6 +205,8 @@ pub fn main() {
         }
 
         if n > 0 && n < usize::MAX - 1 {
+            // Reset dirty before processing so we can detect changes
+            term_buffer.dirty = false;
             let mut consumed = 0;
             loop {
                 let (action, bytes_to_consume) = {
@@ -372,50 +374,42 @@ pub fn main() {
             }
             term_buffer.input_buffer.drain(..consumed);
 
-            if let Some(widget) = win.find_widget_by_id_mut(2) {
-                if let inkui::widget::Widget::Label { text, geometry, .. } = widget {
-                    text.text = term_buffer.render();
+            if term_buffer.dirty {
+                if let Some(widget) = win.find_widget_by_id_mut(2) {
+                    if let inkui::widget::Widget::Label { text, geometry, .. } = widget {
+                        text.text = term_buffer.render();
 
-                    if term_buffer.is_alt {
-                        geometry.scroll_offset_y = 0;
-                    } else {
-                        let padding = 10;
-                        let width = geometry.width.saturating_sub(padding * 2);
-                        let height = geometry.height.saturating_sub(padding * 2);
+                        if term_buffer.is_alt {
+                            geometry.scroll_offset_y = 0;
+                        } else {
+                            let padding = 10;
+                            let width = geometry.width.saturating_sub(padding * 2);
+                            let height = geometry.height.saturating_sub(padding * 2);
 
-                        if width > 0 {
-                            let char_width = (text.size as f32 * 0.65) as usize;
-                            if char_width > 0 {
-                                let chars_per_line = width / char_width;
-                                let mut visual_lines = 0;
+                            if width > 0 {
+                                let char_width = (text.size as f32 * 0.65) as usize;
+                                if char_width > 0 {
+                                    let chars_per_line = width / char_width;
+                                    let visual_lines = term_buffer.get_visual_lines(chars_per_line);
 
-                                let current_lines = if term_buffer.is_alt { &term_buffer.alt_lines } else { &term_buffer.lines };
-                                for line in current_lines {
-                                    let len = line.len();
-                                    if len == 0 {
-                                        visual_lines += 1;
-                                    } else {
-                                        visual_lines += (len + chars_per_line - 1) / chars_per_line;
+                                    let line_height = (text.size as f32 * 1.2) as usize;
+                                    let content_height = (visual_lines * line_height).saturating_add(20);
+
+                                    let max_scroll = content_height.saturating_sub(height);
+                                    let is_at_bottom = geometry.scroll_offset_y >= max_scroll.saturating_sub(100);
+
+                                    if is_at_bottom || (geometry.scroll_offset_y == 0 && content_height > height) {
+                                        geometry.scroll_offset_y = max_scroll;
                                     }
-                                }
 
-                                let line_height = (text.size as f32 * 1.2) as usize;
-                                let content_height = (visual_lines * line_height).saturating_add(20);
-                                
-                                let max_scroll = content_height.saturating_sub(height);
-                                let is_at_bottom = geometry.scroll_offset_y >= max_scroll.saturating_sub(100);
-                                
-                                if is_at_bottom || (geometry.scroll_offset_y == 0 && content_height > height) {
-                                    geometry.scroll_offset_y = max_scroll;
+                                    geometry.content_height = content_height;
                                 }
-                                
-                                geometry.content_height = content_height;
                             }
                         }
                     }
                 }
+                needs_redraw = true;
             }
-            needs_redraw = true;
         }
 
         if needs_redraw {

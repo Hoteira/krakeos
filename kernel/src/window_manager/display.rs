@@ -160,6 +160,10 @@ impl DisplayServer {
         }
 
         println!("DisplayServer: Using VBE fallback");
+        if vbe.width == 0 || vbe.height == 0 {
+            println!("DisplayServer: VBE reports 0x0 resolution. Graphics unavailable.");
+            return;
+        }
         self.width = vbe.width as u64;
         self.pitch = vbe.pitch as u64;
         self.height = vbe.height as u64;
@@ -197,13 +201,18 @@ impl DisplayServer {
                     let sh = (self.dirty_max_y as u32).saturating_sub(sy).min(self.height as u32);
 
                     if sw > 0 && sh > 0 {
-                        virtio::transfer_and_flush(next_resource, self.width as u32, self.height as u32);
+                        // Transfer only the dirty rect of the BACK buffer to the host resource
+                        virtio::flush(sx, sy, sw, sh, self.width as u32, next_resource);
+                        
+                        // Switch scanout to the newly updated resource
                         virtio::set_scanout(next_resource, self.width as u32, self.height as u32);
 
+                        // Swap our internal pointers
                         self.active_resource_id = next_resource;
                         self.framebuffer = next_buffer_virt;
                         self.double_buffer = current_buffer_virt;
 
+                        // Synchronize the dirty area back to the now-hidden buffer
                         let pitch = self.pitch as usize;
                         for row in 0..sh {
                             let offset = (sy + row) as usize * pitch + (sx as usize * 4);
@@ -215,11 +224,6 @@ impl DisplayServer {
                         }
                     }
                     self.reset_dirty();
-                } else {
-                    virtio::set_scanout(next_resource, self.width as u32, self.height as u32);
-                    self.active_resource_id = next_resource;
-                    self.framebuffer = next_buffer_virt;
-                    self.double_buffer = current_buffer_virt;
                 }
             } else {
                 let buffer_size = self.pitch as u64 * self.height as u64;
@@ -233,7 +237,6 @@ impl DisplayServer {
     }
 
     pub fn copy_to_fb(&mut self, x: i32, y: i32, width: u32, height: u32) {
-        let bytes_per_pixel = 4;
         let screen_w = self.width as i32;
         let screen_h = self.height as i32;
 
@@ -248,13 +251,6 @@ impl DisplayServer {
         let copy_height = (end_y - dst_y) as usize;
 
         self.mark_dirty(dst_x, dst_y, copy_width as u32, copy_height as u32);
-
-        let _src_off_x = (dst_x - x) as usize;
-        let _src_off_y = (dst_y - y) as usize;
-
-        let src = self.double_buffer as *const u8;
-        let dst = self.framebuffer as *mut u8;
-        let pitch = self.pitch as usize;
 
         unsafe {
             let src_base = self.double_buffer as *const u32;
@@ -273,8 +269,6 @@ impl DisplayServer {
     }
 
     pub fn copy_to_db(&mut self, width: u32, height: u32, buffer: usize, x: i32, y: i32, border_color: Option<u32>, treat_as_transparent: bool) {
-        let dst_pitch = self.pitch as usize / 4;
-        let src_pitch = width as usize;
         let screen_w = self.width as i32;
         let screen_h = self.height as i32;
 
@@ -516,8 +510,6 @@ impl DisplayServer {
 
 
     pub fn copy_to_db_clipped(&mut self, width: u32, height: u32, buffer: usize, x: i32, y: i32, clip_x: i32, clip_y: i32, clip_w: u32, clip_h: u32, border_color: Option<u32>, treat_as_transparent: bool) {
-        let dst_pitch = self.pitch as usize / 4;
-        let src_pitch = width as usize;
         let screen_w = self.width as i32;
         let screen_h = self.height as i32;
 
@@ -775,8 +767,6 @@ impl DisplayServer {
     }
 
     pub fn copy_to_fb_clipped(&mut self, width: u32, height: u32, buffer: usize, x: i32, y: i32, clip_x: i32, clip_y: i32, clip_w: u32, clip_h: u32, border_color: Option<u32>, treat_as_transparent: bool) {
-        let dst_pitch = self.pitch as usize / 4;
-        let src_pitch = width as usize;
         let screen_w = self.width as i32;
         let screen_h = self.height as i32;
 
@@ -901,8 +891,6 @@ impl DisplayServer {
     }
 
     pub fn copy_to_fb_a(&mut self, width: u32, height: u32, buffer: usize, x: i32, y: i32, border_color: Option<u32>, treat_as_transparent: bool) {
-        let dst_pitch = self.pitch as usize / 4;
-        let src_pitch = width as usize;
         let screen_w = self.width as i32;
         let screen_h = self.height as i32;
 
@@ -926,6 +914,8 @@ impl DisplayServer {
         unsafe {
             let src_base = buffer as *const u32;
             let dst_base = self.framebuffer as *mut u32;
+            let dst_pitch = self.pitch as usize / 4;
+            let src_pitch = width as usize;
 
             for row in 0..copy_height {
                 let src_row_ptr = src_base.add((src_off_y + row) * src_pitch + src_off_x);
@@ -1039,6 +1029,10 @@ impl DisplayServer {
 
         unsafe {
             if VIRTIO_ACTIVE {
+                // If the hardware cursor is inactive, we must draw the software cursor into the double buffer
+                // BEFORE the sync happens, otherwise we'll see trailing or flickering.
+                // But for now, present_rect is only called by recompose logic.
+                
                 let bpp = 4;
                 let pitch = self.pitch as usize;
                 let src = self.double_buffer as *const u8;
@@ -1062,30 +1056,11 @@ impl DisplayServer {
                     }
                 }
 
-                let mx = crate::window_manager::input::MOUSE.x;
-                let my = crate::window_manager::input::MOUSE.y;
-                use crate::drivers::periferics::mouse::{CURSOR_HEIGHT, CURSOR_WIDTH};
-
-                let mw = CURSOR_WIDTH as u32;
-                let mh = CURSOR_HEIGHT as u32;
-
-                let overlap_x = (mx as u32) < (sx + sw) && (mx as u32 + mw) > sx;
-                let overlap_y = (my as u32) < (sy + sh) && (my as u32 + mh) > sy;
-
-                if !HARDWARE_CURSOR_ACTIVE && overlap_x && overlap_y {
-                    self.draw_mouse(mx, my, false);
-                }
+                // If hardware cursor is active, we don't need to do anything else.
+                // If not, we'd draw it here, but that causes flicker.
+                // The correct flicker-free way is Resource Swapping (copy() method).
 
                 virtio::flush(sx, sy, sw, sh, self.width as u32, self.active_resource_id);
-
-                if overlap_x && overlap_y {
-                    let mouse_inside = (mx as u32) >= sx && (mx as u32 + mw) <= (sx + sw) &&
-                        (my as u32) >= sy && (my as u32 + mh) <= (sy + sh);
-
-                    if !HARDWARE_CURSOR_ACTIVE && !mouse_inside {
-                        virtio::flush(mx as u32, my as u32, mw, mh, self.width as u32, self.active_resource_id);
-                    }
-                }
             } else {
                 self.copy_to_fb(x, y, w, h);
 

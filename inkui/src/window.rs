@@ -94,6 +94,8 @@ pub struct Window {
 
     pub font: Option<TrueTypeFont>,
     pub event_queue: std::os::EventQueue,
+
+    dirty: bool,
 }
 
 impl Window {
@@ -126,7 +128,12 @@ impl Window {
             focus: 0,
             font: None,
             event_queue,
+            dirty: true,
         }
+    }
+
+    pub fn mark_dirty(&mut self) {
+        self.dirty = true;
     }
 
     pub fn load_font(&mut self, data: &'static [u8]) {
@@ -175,7 +182,7 @@ impl Window {
             graphics::update_window(&std_window);
         }
 
-        self.draw();
+        self.mark_dirty();
         self.update();
     }
 
@@ -204,6 +211,7 @@ impl Window {
         }
 
         self.buffer.flip();
+        self.dirty = false;
     }
 
     pub fn draw_widget(&mut self, _id: WidgetId) {
@@ -211,6 +219,9 @@ impl Window {
     }
 
     pub fn update(&mut self) {
+        if self.dirty {
+            self.draw();
+        }
         let std_window = graphics::Window {
             id: self.id,
             buffer: self.buffer.front.as_ptr() as usize,
@@ -252,7 +263,7 @@ impl Window {
         let new_size = width * height * 4 + 4;
         self.buffer.resize(new_size);
 
-        self.draw();
+        self.mark_dirty();
         self.update();
     }
 
@@ -454,7 +465,7 @@ impl Window {
         }
 
         if any_redraw {
-            self.draw();
+            self.mark_dirty();
             self.update();
         }
     }

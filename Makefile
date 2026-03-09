@@ -26,7 +26,8 @@ UNSTABLE_FLAGS := -Z json-target-spec
 QEMU_OPTS := -drive file=$(BUILD_DIR)/disk.img,format=raw,if=virtio \
              -serial mon:stdio --no-reboot \
              -device virtio-gpu-pci,xres=1024,yres=576 \
-             -display sdl -vga none -m 4G
+             -display sdl -vga none -m 4G \
+             -accel kvm
 
 .PHONY: all clean run swiftboot kernel wasm_loader userland fs
 

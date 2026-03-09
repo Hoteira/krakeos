@@ -160,9 +160,9 @@ pub fn init() {
         let mut bar_base_opt = virtio.get_bar(bar);
 
 
-        if bar_base_opt.is_none() || bar_base_opt.unwrap() < 0x100000 {
+        if bar_base_opt.is_none() || bar_base_opt.unwrap() < 0xC0000000 {
             let raw_bar = virtio.read_bar_raw(bar);
-            if (raw_bar & 0xFFFFFFF0) < 0x100000 {
+            if (raw_bar & 0xFFFFFFF0) < 0xC0000000 {
                 debugln!("VirtIO Block: BAR {} is unmapped or low ({:#x}). Remapping to {:#x}", bar, raw_bar, next_bar_addr);
                 virtio.write_bar(bar, next_bar_addr);
                 next_bar_addr += 0x100000;

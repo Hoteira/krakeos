@@ -17,6 +17,12 @@ pub struct TerminalBuffer {
     pub current_bold: bool,
 
     pub input_buffer: Vec<u8>,
+
+    /// Set when content changes; cleared after render
+    pub dirty: bool,
+    /// Cached total visual line count (recomputed only when lines change)
+    pub cached_visual_lines: usize,
+    pub visual_lines_dirty: bool,
 }
 
 impl TerminalBuffer {
@@ -32,6 +38,9 @@ impl TerminalBuffer {
             current_bg: 255,
             current_bold: false,
             input_buffer: Vec::new(),
+            dirty: true,
+            cached_visual_lines: 0,
+            visual_lines_dirty: true,
         }
     }
 
@@ -43,6 +52,8 @@ impl TerminalBuffer {
         }
         self.cursor_row = 0;
         self.cursor_col = 0;
+        self.dirty = true;
+        self.visual_lines_dirty = true;
     }
 
     pub fn ensure_row(&mut self) {
@@ -74,6 +85,7 @@ impl TerminalBuffer {
             line.push(cell);
         }
         self.cursor_col += 1;
+        self.dirty = true;
     }
 
     pub fn write_str(&mut self, s: &str) {
@@ -86,11 +98,14 @@ impl TerminalBuffer {
     pub fn newline(&mut self) {
         self.cursor_row += 1;
         self.cursor_col = 0;
+        self.dirty = true;
+        self.visual_lines_dirty = true;
     }
 
     pub fn backspace(&mut self) {
         if self.cursor_col > 0 {
             self.cursor_col -= 1;
+            self.dirty = true;
         }
     }
 
@@ -99,6 +114,7 @@ impl TerminalBuffer {
         if self.cursor_row < current.len() {
             current[self.cursor_row].truncate(self.cursor_col);
         }
+        self.dirty = true;
     }
 
     pub fn handle_sgr(&mut self, params: &str) {
@@ -217,6 +233,26 @@ impl TerminalBuffer {
         s
     }
 
+    /// Returns cached visual line count; recomputes only if lines changed since last call.
+    pub fn get_visual_lines(&mut self, chars_per_line: usize) -> usize {
+        if !self.visual_lines_dirty {
+            return self.cached_visual_lines;
+        }
+        let current = if self.is_alt { &self.alt_lines } else { &self.lines };
+        let mut count = 0usize;
+        for line in current {
+            let len = line.len();
+            if len == 0 {
+                count += 1;
+            } else {
+                count += (len + chars_per_line - 1) / chars_per_line;
+            }
+        }
+        self.cached_visual_lines = count;
+        self.visual_lines_dirty = false;
+        count
+    }
+
     pub fn switch_screen(&mut self, alt: bool) {
         if self.is_alt != alt {
             std::debugln!("[term] Switching to {} screen", if alt { "alternate" } else { "main" });
@@ -229,6 +265,8 @@ impl TerminalBuffer {
                 self.cursor_row = self.lines.len().saturating_sub(1);
                 self.cursor_col = 0;
             }
+            self.dirty = true;
+            self.visual_lines_dirty = true;
         }
     }
 }

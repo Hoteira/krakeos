@@ -76,10 +76,11 @@ pub fn init() {
     for cap in virtio_caps {
         if cap.cfg_type == VIRTIO_CAP_COMMON {
             let mut bar_base_opt = virtio.get_bar(cap.bar);
-            if bar_base_opt.is_none() || bar_base_opt == Some(0) {
+            if bar_base_opt.is_none() || bar_base_opt.unwrap() < 0xC0000000 {
                 let raw_bar = virtio.read_bar_raw(cap.bar);
-                if (raw_bar & 0xFFFFFFF0) == 0 {
+                if (raw_bar & 0xFFFFFFF0) < 0xC0000000 {
                     virtio.write_bar(cap.bar, next_bar_addr);
+                    debugln!("VirtIO GPU: Remapped BAR {} from {:#x} to {:#x}", cap.bar, raw_bar, next_bar_addr);
                     next_bar_addr += 0x100000;
                     bar_base_opt = virtio.get_bar(cap.bar);
                 }
@@ -93,10 +94,11 @@ pub fn init() {
             }
         } else if cap.cfg_type == VIRTIO_CAP_NOTIFY {
             let mut bar_base_opt = virtio.get_bar(cap.bar);
-            if bar_base_opt.is_none() || bar_base_opt == Some(0) {
+            if bar_base_opt.is_none() || bar_base_opt.unwrap() < 0xC0000000 {
                 let raw_bar = virtio.read_bar_raw(cap.bar);
-                if (raw_bar & 0xFFFFFFF0) == 0 {
+                if (raw_bar & 0xFFFFFFF0) < 0xC0000000 {
                     virtio.write_bar(cap.bar, next_bar_addr);
+                    debugln!("VirtIO GPU: Remapped BAR {} from {:#x} to {:#x}", cap.bar, raw_bar, next_bar_addr);
                     next_bar_addr += 0x100000;
                     bar_base_opt = virtio.get_bar(cap.bar);
                 }

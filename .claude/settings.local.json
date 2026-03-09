@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(cargo check:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(grep:*)",
+      "Bash(RUSTUP_HOME=/home/hotei/.rustup CARGO_HOME=/home/hotei/.cargo /home/hotei/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo check:*)",
+      "Bash(git merge:*)",
+      "Bash(make:*)"
     ]
   }
 }
