@@ -22,6 +22,8 @@ pub struct Process {
     pub terminal_width: Mutex<u16>,
     pub terminal_height: Mutex<u16>,
     pub linear_memory_base: u64,
+    pub code_base: u64,
+    pub stack_base: u64,
     pub heap_start: u64,
     pub heap_limit: u64,
     pub heap_end: Mutex<u64>,
@@ -90,6 +92,9 @@ impl Process {
 
         let slot_id = crate::memory::address_space::allocate_slot().expect("SAS: Out of process slots!");
         let linear_memory_base = crate::memory::address_space::allocate_linear_memory(pid, slot_id);
+        let code_base = crate::memory::address_space::allocate_code(pid, slot_id);
+        let stack_top = crate::memory::address_space::allocate_stack(pid, slot_id);
+        
         let heap_start = linear_memory_base;
         let heap_limit = heap_start + crate::memory::address_space::LINEAR_MEMORY_SLOT_SIZE - 4096;
 
@@ -105,6 +110,8 @@ impl Process {
             terminal_width: Mutex::new(80),
             terminal_height: Mutex::new(25),
             linear_memory_base,
+            code_base,
+            stack_base: stack_top,
             heap_start,
             heap_limit,
             heap_end: Mutex::new(heap_start),
@@ -313,7 +320,7 @@ impl TaskManager {
         *proc.terminal_width.lock() = terminal_size.0;
         *proc.terminal_height.lock() = terminal_size.1;
 
-        thread.process = Some(proc);
+        thread.process = Some(proc.clone());
 
         let k_frame = pmm::allocate_frames(16, pid).ok_or(pmm::FrameError::NoMemory)?;
         thread.kernel_stack = k_frame + 4096 * 16 + paging::HHDM_OFFSET;
@@ -321,7 +328,7 @@ impl TaskManager {
         let stack_pages = (STACK_SIZE / 4096) as usize;
         let u_frame_phys = pmm::allocate_frames(stack_pages, pid).ok_or(pmm::FrameError::NoMemory)?;
 
-        let u_stack_top = crate::memory::address_space::allocate_stack(pid, slot_id);
+        let u_stack_top = proc.stack_base;
         let u_stack_base = u_stack_top - STACK_SIZE;
 
         // Map user stack, but leave the bottom-most page unmapped as a guard

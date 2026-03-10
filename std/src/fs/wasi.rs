@@ -990,6 +990,30 @@ crate::export_method!(
 );
 
 crate::export_method!(
+    "wasi_snapshot_preview1", "fd_filestat_get",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn fd_filestat_get_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let fd = match args.get(0) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let s_ptr = match args.get(1) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        match wasi_ctx(store).env.fd_filestat_get(fd) {
+            Ok(s) => {
+                let _ = write_u64(store, s_ptr, s.dev);
+                let _ = write_u64(store, s_ptr + 8, s.ino);
+                let _ = write_u32(store, s_ptr + 16, s.filetype as u32);
+                let _ = write_u32(store, s_ptr + 20, s.nlink as u32);
+                let _ = write_u64(store, s_ptr + 24, s.size);
+                let _ = write_u64(store, s_ptr + 32, s.atime);
+                let _ = write_u64(store, s_ptr + 40, s.mtime);
+                let _ = write_u64(store, s_ptr + 48, s.ctime);
+                Ok(vec![Value::I32(0)])
+            }
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+);
+
+crate::export_method!(
     "wasi_snapshot_preview1", "fd_read",
     [],
     vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
@@ -1099,6 +1123,504 @@ crate::export_method!(
 );
 
 crate::export_method!(
+    "wasi_snapshot_preview1", "fd_renumber",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn fd_renumber_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let from = match args.get(0) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let to = match args.get(1) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        match wasi_ctx(store).env.fd_renumber(from, to) {
+            Ok(_) => Ok(vec![Value::I32(0)]),
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+);
+
+crate::export_method!(
+    "wasi_snapshot_preview1", "fd_filestat_set_size",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I32)],
+    pub fn fd_filestat_set_size_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let fd = match args.get(0) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let size = match args.get(1) { Some(Value::I64(x)) => *x as u64, _ => 0 };
+        match wasi_ctx(store).env.fd_filestat_set_size(fd, size) {
+            Ok(_) => Ok(vec![Value::I32(0)]),
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+);
+
+crate::export_method!(
+    "wasi_snapshot_preview1", "fd_filestat_set_times",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn fd_filestat_set_times_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let fd = match args.get(0) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let atime = match args.get(1) { Some(Value::I64(x)) => *x as u64, _ => 0 };
+        let mtime = match args.get(2) { Some(Value::I64(x)) => *x as u64, _ => 0 };
+        let fst_flags = match args.get(3) { Some(Value::I32(x)) => *x as u16, _ => 0 };
+        match wasi_ctx(store).env.fd_filestat_set_times(fd, atime, mtime, fst_flags) {
+            Ok(_) => Ok(vec![Value::I32(0)]),
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+);
+
+crate::export_method!(
+    "wasi_snapshot_preview1", "fd_pread",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn fd_pread_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let fd = match args.get(0) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let i_ptr = match args.get(1) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let i_len = match args.get(2) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let offset = match args.get(3) { Some(Value::I64(x)) => *x as u64, _ => 0 };
+        let n_ptr = match args.get(4) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+
+        let mut iovs = Vec::new();
+        for i in 0..i_len {
+            let mut iov = [0u8; 8];
+            if crate::wasm::wasi::preview2::read_bytes(store, i_ptr + i * 8, &mut iov).is_err() { return Ok(vec![Value::I32(21)]); }
+            let b_ptr = u32::from_le_bytes(iov[0..4].try_into().unwrap());
+            let b_len = u32::from_le_bytes(iov[4..8].try_into().unwrap());
+            iovs.push((b_ptr, b_len));
+        }
+
+        let mut buffers = Vec::new();
+        for (_, len) in &iovs { buffers.push(vec![0u8; *len as usize]); }
+        let mut slices: Vec<&mut [u8]> = buffers.iter_mut().map(|v| v.as_mut_slice()).collect();
+
+        match wasi_ctx(store).env.fd_pread(fd, &mut slices, offset) {
+            Ok(n) => {
+                let mut remaining = n;
+                for ((ptr, _), buf) in iovs.iter().zip(buffers.iter()) {
+                    let to_write = core::cmp::min(remaining, buf.len());
+                    if to_write > 0 {
+                        let _ = write_bytes(store, *ptr, &buf[..to_write]);
+                        remaining -= to_write;
+                    }
+                }
+                let _ = write_u32(store, n_ptr, n as u32);
+                Ok(vec![Value::I32(0)])
+            }
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+);
+
+crate::export_method!(
+    "wasi_snapshot_preview1", "fd_pwrite",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn fd_pwrite_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let fd = match args.get(0) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let i_ptr = match args.get(1) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let i_len = match args.get(2) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let offset = match args.get(3) { Some(Value::I64(x)) => *x as u64, _ => 0 };
+        let n_ptr = match args.get(4) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+
+        let mut buffers = Vec::new();
+        for i in 0..i_len {
+            let mut iov = [0u8; 8];
+            if crate::wasm::wasi::preview2::read_bytes(store, i_ptr + i * 8, &mut iov).is_err() { return Ok(vec![Value::I32(21)]); }
+            let b_ptr = u32::from_le_bytes(iov[0..4].try_into().unwrap());
+            let b_len = u32::from_le_bytes(iov[4..8].try_into().unwrap());
+            let mut b = vec![0u8; b_len as usize];
+            if crate::wasm::wasi::preview2::read_bytes(store, b_ptr, &mut b).is_err() { return Ok(vec![Value::I32(21)]); }
+            buffers.push(b);
+        }
+
+        let slices: Vec<&[u8]> = buffers.iter().map(|v| v.as_slice()).collect();
+        match wasi_ctx(store).env.fd_pwrite(fd, &slices, offset) {
+            Ok(n) => {
+                let _ = write_u32(store, n_ptr, n as u32);
+                Ok(vec![Value::I32(0)])
+            }
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+);
+
+crate::export_method!(
+    "wasi_snapshot_preview1", "fd_prestat_get",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn fd_prestat_get_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let fd = match args.get(0) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let p_ptr = match args.get(1) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        match wasi_ctx(store).env.fd_prestat_get(fd) {
+            Ok(_) => {
+                let name = wasi_ctx(store).env.fd_prestat_dir_name(fd).unwrap_or_default();
+                let _ = write_u32(store, p_ptr, 0); // pr_type = 0 (preopentype_dir)
+                let _ = write_u32(store, p_ptr + 4, name.len() as u32);
+                Ok(vec![Value::I32(0)])
+            }
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+);
+
+crate::export_method!(
+    "wasi_snapshot_preview1", "fd_prestat_dir_name",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn fd_prestat_dir_name_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let fd = match args.get(0) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let ptr = match args.get(1) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let _len = match args.get(2) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        match wasi_ctx(store).env.fd_prestat_dir_name(fd) {
+            Ok(name) => {
+                let _ = write_bytes(store, ptr, name.as_bytes());
+                Ok(vec![Value::I32(0)])
+            }
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+);
+
+crate::export_method!(
+    "wasi_snapshot_preview1", "fd_readdir",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn fd_readdir_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let fd = match args.get(0) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let ptr = match args.get(1) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let len = match args.get(2) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let cookie = match args.get(3) { Some(Value::I64(x)) => *x as u64, _ => 0 };
+        let n_ptr = match args.get(4) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+
+        match wasi_ctx(store).env.fd_readdir(fd, cookie) {
+            Ok(entries) => {
+                let mut written = 0u32;
+                for (name, kind, ino) in entries {
+                    let name_bytes = name.as_bytes();
+                    let entry_len = 24 + name_bytes.len() as u32;
+                    if written + entry_len > len {
+                        break;
+                    }
+
+                    let base = ptr + written;
+                    let _ = write_u64(store, base, cookie + (written as u64) + 1); // next cookie (stub)
+                    let _ = write_u64(store, base + 8, ino);
+                    let _ = write_u32(store, base + 16, name_bytes.len() as u32);
+                    let _ = write_u32(store, base + 20, kind as u32);
+                    let _ = write_bytes(store, base + 24, name_bytes);
+                    written += entry_len;
+                }
+                let _ = write_u32(store, n_ptr, written);
+                Ok(vec![Value::I32(0)])
+            }
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+);
+
+crate::export_method!(
+    "wasi_snapshot_preview1", "fd_advise",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn fd_advise_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let fd = match args.get(0) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let offset = match args.get(1) { Some(Value::I64(x)) => *x as u64, _ => 0 };
+        let len = match args.get(2) { Some(Value::I64(x)) => *x as u64, _ => 0 };
+        let advice = match args.get(3) { Some(Value::I32(x)) => *x as u8, _ => 0 };
+        match wasi_ctx(store).env.fd_advise(fd, offset, len, advice) {
+            Ok(_) => Ok(vec![Value::I32(0)]),
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+);
+
+crate::export_method!(
+    "wasi_snapshot_preview1", "fd_allocate",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I32)],
+    pub fn fd_allocate_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let fd = match args.get(0) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let offset = match args.get(1) { Some(Value::I64(x)) => *x as u64, _ => 0 };
+        let len = match args.get(2) { Some(Value::I64(x)) => *x as u64, _ => 0 };
+        match wasi_ctx(store).env.fd_allocate(fd, offset, len) {
+            Ok(_) => Ok(vec![Value::I32(0)]),
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+);
+
+crate::export_method!(
+    "wasi_snapshot_preview1", "fd_datasync",
+    [],
+    vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn fd_datasync_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let fd = match args.get(0) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        match wasi_ctx(store).env.fd_datasync(fd) {
+            Ok(_) => Ok(vec![Value::I32(0)]),
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+);
+
+crate::export_method!(
+    "wasi_snapshot_preview1", "fd_fdstat_set_flags",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn fd_fdstat_set_flags_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let fd = match args.get(0) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let flags = match args.get(1) { Some(Value::I32(x)) => *x as u16, _ => 0 };
+        match wasi_ctx(store).env.fd_fdstat_set_flags(fd, flags) {
+            Ok(_) => Ok(vec![Value::I32(0)]),
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+);
+
+crate::export_method!(
+    "wasi_snapshot_preview1", "fd_fdstat_set_rights",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I32)],
+    pub fn fd_fdstat_set_rights_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let fd = match args.get(0) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let rb = match args.get(1) { Some(Value::I64(x)) => *x as u64, _ => 0 };
+        let ri = match args.get(2) { Some(Value::I64(x)) => *x as u64, _ => 0 };
+        match wasi_ctx(store).env.fd_fdstat_set_rights(fd, rb, ri) {
+            Ok(_) => Ok(vec![Value::I32(0)]),
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+);
+
+crate::export_method!(
+    "wasi_snapshot_preview1", "fd_sync",
+    [],
+    vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn fd_sync_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let fd = match args.get(0) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        match wasi_ctx(store).env.fd_sync(fd) {
+            Ok(_) => Ok(vec![Value::I32(0)]),
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+);
+
+crate::export_method!(
+    "wasi_snapshot_preview1", "path_filestat_get",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn path_filestat_get_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let dirfd = match args.get(0) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let flags = match args.get(1) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let ptr = match args.get(2) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let len = match args.get(3) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let s_ptr = match args.get(4) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+
+        let mut pb = vec![0u8; len as usize];
+        if crate::wasm::wasi::preview2::read_bytes(store, ptr, &mut pb).is_err() { return Ok(vec![Value::I32(21)]); }
+        let path = crate::alloc::string::String::from_utf8_lossy(&pb).into_owned();
+
+        match wasi_ctx(store).env.path_filestat_get(dirfd, flags, &path) {
+            Ok(s) => {
+                let _ = write_u64(store, s_ptr, s.dev);
+                let _ = write_u64(store, s_ptr + 8, s.ino);
+                let _ = write_u32(store, s_ptr + 16, s.filetype as u32);
+                let _ = write_u32(store, s_ptr + 20, s.nlink as u32);
+                let _ = write_u64(store, s_ptr + 24, s.size);
+                let _ = write_u64(store, s_ptr + 32, s.atime);
+                let _ = write_u64(store, s_ptr + 40, s.mtime);
+                let _ = write_u64(store, s_ptr + 48, s.ctime);
+                Ok(vec![Value::I32(0)])
+            }
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+);
+
+crate::export_method!(
+    "wasi_snapshot_preview1", "path_create_directory",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn path_create_directory_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let dirfd = match args.get(0) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let ptr = match args.get(1) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let len = match args.get(2) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let mut pb = vec![0u8; len as usize];
+        if crate::wasm::wasi::preview2::read_bytes(store, ptr, &mut pb).is_err() { return Ok(vec![Value::I32(21)]); }
+        let path = crate::alloc::string::String::from_utf8_lossy(&pb).into_owned();
+        match wasi_ctx(store).env.path_create_directory(dirfd, &path) {
+            Ok(_) => Ok(vec![Value::I32(0)]),
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+);
+
+crate::export_method!(
+    "wasi_snapshot_preview1", "path_remove_directory",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn path_remove_directory_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let dirfd = match args.get(0) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let ptr = match args.get(1) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let len = match args.get(2) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let mut pb = vec![0u8; len as usize];
+        if crate::wasm::wasi::preview2::read_bytes(store, ptr, &mut pb).is_err() { return Ok(vec![Value::I32(21)]); }
+        let path = crate::alloc::string::String::from_utf8_lossy(&pb).into_owned();
+        match wasi_ctx(store).env.path_remove_directory(dirfd, &path) {
+            Ok(_) => Ok(vec![Value::I32(0)]),
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+);
+
+crate::export_method!(
+    "wasi_snapshot_preview1", "path_unlink_file",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn path_unlink_file_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let dirfd = match args.get(0) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let ptr = match args.get(1) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let len = match args.get(2) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let mut pb = vec![0u8; len as usize];
+        if crate::wasm::wasi::preview2::read_bytes(store, ptr, &mut pb).is_err() { return Ok(vec![Value::I32(21)]); }
+        let path = crate::alloc::string::String::from_utf8_lossy(&pb).into_owned();
+        match wasi_ctx(store).env.path_unlink_file(dirfd, &path) {
+            Ok(_) => Ok(vec![Value::I32(0)]),
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+);
+
+crate::export_method!(
+    "wasi_snapshot_preview1", "path_rename",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn path_rename_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let old_fd = match args.get(0) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let old_ptr = match args.get(1) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let old_len = match args.get(2) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let new_fd = match args.get(3) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let new_ptr = match args.get(4) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let new_len = match args.get(5) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+
+        let mut old_pb = vec![0u8; old_len as usize];
+        if crate::wasm::wasi::preview2::read_bytes(store, old_ptr, &mut old_pb).is_err() { return Ok(vec![Value::I32(21)]); }
+        let old_path = crate::alloc::string::String::from_utf8_lossy(&old_pb).into_owned();
+
+        let mut new_pb = vec![0u8; new_len as usize];
+        if crate::wasm::wasi::preview2::read_bytes(store, new_ptr, &mut new_pb).is_err() { return Ok(vec![Value::I32(21)]); }
+        let new_path = crate::alloc::string::String::from_utf8_lossy(&new_pb).into_owned();
+
+        match wasi_ctx(store).env.path_rename(old_fd, &old_path, new_fd, &new_path) {
+            Ok(_) => Ok(vec![Value::I32(0)]),
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+);
+
+crate::export_method!(
+    "wasi_snapshot_preview1", "path_link",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn path_link_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let old_fd = match args.get(0) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let old_flags = match args.get(1) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let old_ptr = match args.get(2) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let old_len = match args.get(3) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let new_fd = match args.get(4) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let new_ptr = match args.get(5) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let new_len = match args.get(6) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+
+        let mut old_pb = vec![0u8; old_len as usize];
+        if crate::wasm::wasi::preview2::read_bytes(store, old_ptr, &mut old_pb).is_err() { return Ok(vec![Value::I32(21)]); }
+        let old_path = crate::alloc::string::String::from_utf8_lossy(&old_pb).into_owned();
+
+        let mut new_pb = vec![0u8; new_len as usize];
+        if crate::wasm::wasi::preview2::read_bytes(store, new_ptr, &mut new_pb).is_err() { return Ok(vec![Value::I32(21)]); }
+        let new_path = crate::alloc::string::String::from_utf8_lossy(&new_pb).into_owned();
+
+        match wasi_ctx(store).env.path_link(old_fd, old_flags, &old_path, new_fd, &new_path) {
+            Ok(_) => Ok(vec![Value::I32(0)]),
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+);
+
+crate::export_method!(
+    "wasi_snapshot_preview1", "path_symlink",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn path_symlink_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let old_ptr = match args.get(0) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let old_len = match args.get(1) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let fd = match args.get(2) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let new_ptr = match args.get(3) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let new_len = match args.get(4) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+
+        let mut old_pb = vec![0u8; old_len as usize];
+        if crate::wasm::wasi::preview2::read_bytes(store, old_ptr, &mut old_pb).is_err() { return Ok(vec![Value::I32(21)]); }
+        let old_path = crate::alloc::string::String::from_utf8_lossy(&old_pb).into_owned();
+
+        let mut new_pb = vec![0u8; new_len as usize];
+        if crate::wasm::wasi::preview2::read_bytes(store, new_ptr, &mut new_pb).is_err() { return Ok(vec![Value::I32(21)]); }
+        let new_path = crate::alloc::string::String::from_utf8_lossy(&new_pb).into_owned();
+
+        match wasi_ctx(store).env.path_symlink(&old_path, fd, &new_path) {
+            Ok(_) => Ok(vec![Value::I32(0)]),
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+);
+
+crate::export_method!(
+    "wasi_snapshot_preview1", "path_readlink",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn path_readlink_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let dirfd = match args.get(0) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let ptr = match args.get(1) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let len = match args.get(2) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let buf_ptr = match args.get(3) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let buf_len = match args.get(4) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let n_ptr = match args.get(5) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+
+        let mut pb = vec![0u8; len as usize];
+        if crate::wasm::wasi::preview2::read_bytes(store, ptr, &mut pb).is_err() { return Ok(vec![Value::I32(21)]); }
+        let path = crate::alloc::string::String::from_utf8_lossy(&pb).into_owned();
+
+        let mut buf = vec![0u8; buf_len as usize];
+        match wasi_ctx(store).env.path_readlink(dirfd, &path, &mut buf) {
+            Ok(n) => {
+                let _ = write_bytes(store, buf_ptr, &buf[..n]);
+                let _ = write_u32(store, n_ptr, n as u32);
+                Ok(vec![Value::I32(0)])
+            }
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+);
+
+crate::export_method!(
+    "wasi_snapshot_preview1", "path_filestat_set_times",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn path_filestat_set_times_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let dirfd = match args.get(0) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let flags = match args.get(1) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let ptr = match args.get(2) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let len = match args.get(3) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let atime = match args.get(4) { Some(Value::I64(x)) => *x as u64, _ => 0 };
+        let mtime = match args.get(5) { Some(Value::I64(x)) => *x as u64, _ => 0 };
+        let fst_flags = match args.get(6) { Some(Value::I32(x)) => *x as u16, _ => 0 };
+
+        let mut pb = vec![0u8; len as usize];
+        if crate::wasm::wasi::preview2::read_bytes(store, ptr, &mut pb).is_err() { return Ok(vec![Value::I32(21)]); }
+        let path = crate::alloc::string::String::from_utf8_lossy(&pb).into_owned();
+
+        match wasi_ctx(store).env.path_filestat_set_times(dirfd, flags, &path, atime, mtime, fst_flags) {
+            Ok(_) => Ok(vec![Value::I32(0)]),
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+);
+
+crate::export_method!(
     "wasi_snapshot_preview1", "path_open",
     [],
     vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I64), ValType::NumType(NumType::I64), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
@@ -1179,11 +1701,35 @@ pub fn register_wasi<T: Config + Clone>(linker: &mut crate::wasm::Linker, store:
     filesystem_error_code::register(linker, store);
     fd_close_p1::register(linker, store);
     fd_fdstat_get_p1::register(linker, store);
+    fd_filestat_get_p1::register(linker, store);
+    fd_filestat_set_size_p1::register(linker, store);
+    fd_filestat_set_times_p1::register(linker, store);
+    fd_prestat_get_p1::register(linker, store);
+    fd_prestat_dir_name_p1::register(linker, store);
+    fd_pread_p1::register(linker, store);
+    fd_pwrite_p1::register(linker, store);
+    fd_readdir_p1::register(linker, store);
+    fd_renumber_p1::register(linker, store);
+    fd_sync_p1::register(linker, store);
+    fd_advise_p1::register(linker, store);
+    fd_allocate_p1::register(linker, store);
+    fd_datasync_p1::register(linker, store);
+    fd_fdstat_set_flags_p1::register(linker, store);
+    fd_fdstat_set_rights_p1::register(linker, store);
     fd_read_p1::register(linker, store);
     fd_write_p1::register(linker, store);
     fd_seek_p1::register(linker, store);
     fd_tell_p1::register(linker, store);
+    path_create_directory_p1::register(linker, store);
+    path_filestat_get_p1::register(linker, store);
+    path_filestat_set_times_p1::register(linker, store);
+    path_link_p1::register(linker, store);
     path_open_p1::register(linker, store);
+    path_readlink_p1::register(linker, store);
+    path_remove_directory_p1::register(linker, store);
+    path_rename_p1::register(linker, store);
+    path_symlink_p1::register(linker, store);
+    path_unlink_file_p1::register(linker, store);
     descriptor_drop::register(linker, store);
     directory_entry_stream_drop::register(linker, store);
 }

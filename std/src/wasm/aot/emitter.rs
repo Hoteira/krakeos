@@ -403,6 +403,11 @@ impl X64Emitter {
         self.emit_u8(0xC3);
     }
 
+    pub fn ud2(&mut self) {
+        self.emit_u8(0x0F);
+        self.emit_u8(0x0B);
+    }
+
     pub fn call_reg(&mut self, reg: Reg) {
         if (reg as u8) >= 8 {
             self.emit_u8(0x41);
@@ -604,7 +609,7 @@ impl X64Emitter {
 
     pub fn pextrd_reg_xmm_imm8(&mut self, dst: Reg, src: XmmReg, imm: u8) {
         self.emit_u8(0x66);
-        self.rex(true, src as u8, 0, dst as u8);
+        self.rex(false, src as u8, 0, dst as u8);
         self.emit_u8(0x0F);
         self.emit_u8(0x3A);
         self.emit_u8(0x16);
@@ -614,7 +619,7 @@ impl X64Emitter {
 
     pub fn pinsrd_xmm_reg_imm8(&mut self, dst: XmmReg, src: Reg, imm: u8) {
         self.emit_u8(0x66);
-        self.rex(true, dst as u8, 0, src as u8);
+        self.rex(false, dst as u8, 0, src as u8);
         self.emit_u8(0x0F);
         self.emit_u8(0x3A);
         self.emit_u8(0x22);
@@ -624,7 +629,7 @@ impl X64Emitter {
 
     pub fn movd_xmm_reg(&mut self, dst: XmmReg, src: Reg) {
         self.emit_u8(0x66);
-        self.rex(true, dst as u8, 0, src as u8);
+        self.rex(false, dst as u8, 0, src as u8);
         self.emit_u8(0x0F);
         self.emit_u8(0x6E);
         self.modrm(3, dst as u8, src as u8);
@@ -632,7 +637,7 @@ impl X64Emitter {
 
     pub fn movd_reg_xmm(&mut self, dst: Reg, src: XmmReg) {
         self.emit_u8(0x66);
-        self.rex(true, src as u8, 0, dst as u8);
+        self.rex(false, src as u8, 0, dst as u8);
         self.emit_u8(0x0F);
         self.emit_u8(0x7E);
         self.modrm(3, src as u8, dst as u8);
@@ -954,7 +959,7 @@ impl X64Emitter {
 
     pub fn pextrw_reg_xmm_imm8(&mut self, dst: Reg, src: XmmReg, imm: u8) {
         self.emit_u8(0x66);
-        self.rex(true, dst as u8, 0, src as u8);
+        self.rex(false, dst as u8, 0, src as u8);
         self.emit_u8(0x0F);
         self.emit_u8(0xC5);
         self.modrm(3, dst as u8, src as u8);
@@ -973,7 +978,7 @@ impl X64Emitter {
 
     pub fn pinsrb_xmm_reg_imm8(&mut self, dst: XmmReg, src: Reg, imm: u8) {
         self.emit_u8(0x66);
-        self.rex(true, dst as u8, 0, src as u8);
+        self.rex(false, dst as u8, 0, src as u8);
         self.emit_u8(0x0F);
         self.emit_u8(0x3A);
         self.emit_u8(0x20);
@@ -983,7 +988,7 @@ impl X64Emitter {
 
     pub fn pinsrw_xmm_reg_imm8(&mut self, dst: XmmReg, src: Reg, imm: u8) {
         self.emit_u8(0x66);
-        self.rex(true, dst as u8, 0, src as u8);
+        self.rex(false, dst as u8, 0, src as u8);
         self.emit_u8(0x0F);
         self.emit_u8(0xC4);
         self.modrm(3, dst as u8, src as u8);

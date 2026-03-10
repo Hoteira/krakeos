@@ -18,6 +18,7 @@ impl VmaAllocator {
     }
 
     pub fn track(&mut self, start: u64, size: u64, pid: u64) {
+        crate::debugln!("[VMA] Track PID {} region {:#x}..{:#x}", pid, start, start + size);
         // Simple overlap check
         let end = start + size;
         for r in &self.regions {
@@ -37,6 +38,10 @@ impl VmaAllocator {
             }
         }
         false
+    }
+
+    pub fn get_regions(&self) -> &Vec<VmaRegion> {
+        &self.regions
     }
 
     pub fn dump(&self) {

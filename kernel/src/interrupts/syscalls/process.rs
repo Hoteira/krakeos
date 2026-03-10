@@ -115,6 +115,7 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
             buf_len: usize,
             pid: u64,
             slot_id: u16,
+            wasm_args: *mut Vec<String>,
         }
 
         extern "C" fn wasm_thread_entry(args_ptr: u64) {
@@ -125,11 +126,13 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
 
             let buffer = unsafe { core::slice::from_raw_parts(args.buf_ptr, args.buf_len) };
 
+            let wasm_args = unsafe { *Box::from_raw(args.wasm_args) };
+
             let res = std::wasm::runner::run_with_buffer(
                 &path,
                 buffer,
-                Vec::new(),
-                "/",
+                wasm_args,
+                "@0xE0/",
                 &[],
                 Vec::new(),
                 true, // AOT
@@ -149,6 +152,9 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
             }
         }
 
+        // Build args vec from what spawn_with_fds passed (already includes argv[0])
+        let wasm_args_vec: Vec<String> = args.unwrap_or(&[]).iter().map(|s| String::from(*s)).collect();
+
         // Leak strings/buffers manually to avoid large boxed structs
         let path_bytes = path.as_bytes();
         let path_ptr = unsafe { alloc::alloc::alloc(core::alloc::Layout::from_size_align(path_bytes.len(), 1).unwrap()) };
@@ -164,6 +170,7 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
             buf_len: file_buf.len(),
             pid,
             slot_id,
+            wasm_args: Box::into_raw(Box::new(wasm_args_vec)),
         }));
 
         crate::debugln!("[Spawn] Spawning WASM kernel thread for PID {} (slot {}) at {:#x}...", pid, slot_id, wasm_thread_entry as u64);
@@ -245,6 +252,56 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
     {
         crate::interrupts::task::TASK_MANAGER.int_lock().kill_process(pid_elf);
         Err(String::from("ELF support is disabled"))
+    }
+}
+
+pub fn spawn_ext_process(name: &str, state: CPUState, parent_pid: Option<u64>) -> Result<u64, String> {
+    let pid_idx = crate::interrupts::task::TASK_MANAGER.int_lock().reserve_pid().map_err(|_| String::from("No free process slots"))?;
+    let pid = pid_idx as u64;
+
+    let process_name_bytes = name.as_bytes();
+    let term_size = (80u16, 25u16); // Default
+
+    {
+        let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        tm.init_user_task(pid_idx, 0, 0, None, None, process_name_bytes, term_size, parent_pid).map_err(|_| String::from("Failed to init task"))?;
+        
+        let task = tm.tasks[pid_idx].as_mut().unwrap();
+        unsafe {
+            core::ptr::write(task.cpu_state_ptr as *mut CPUState, state);
+        }
+    }
+
+    Ok(pid)
+}
+
+pub fn handle_spawn_ext(context: &mut CPUState) {
+    let name_ptr = context.rdi as *const u8;
+    let name_len = context.rsi as usize;
+    let state_ptr = context.rdx as *const CPUState;
+
+    if name_ptr.is_null() || name_len == 0 || state_ptr.is_null() {
+        context.rax = u64::MAX;
+        return;
+    }
+
+    let name_slice = unsafe { core::slice::from_raw_parts(name_ptr, name_len) };
+    let name = String::from_utf8_lossy(name_slice);
+    let state = unsafe { *state_ptr };
+
+    let parent_pid = {
+        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let current = tm.current_task;
+        if current >= 0 {
+            tm.tasks[current as usize].as_ref().and_then(|t| t.process.as_ref()).map(|p| p.pid)
+        } else {
+            None
+        }
+    };
+
+    match spawn_ext_process(&name, state, parent_pid) {
+        Ok(pid) => context.rax = pid,
+        Err(_) => context.rax = u64::MAX,
     }
 }
 

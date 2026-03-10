@@ -159,6 +159,7 @@ pub fn run_with_buffer(
             // Allocate SAS memory base (1GB chunk within the process slot)
             let sas_base = Some(slot_info.linear_memory_base);
             store.sas_memory_base = sas_base;
+            store.code_base = Some(slot_info.code_base);
 
             // Register container
             let initial_mem_size = validation_info.memories.get(0).map(|m| m.limits.min * 65536).unwrap_or(0);
@@ -304,6 +305,7 @@ pub fn run_with_env(
                     // Use the slot's linear memory base directly
                     let sas_base = Some(slot_info.linear_memory_base);
                     store.sas_memory_base = sas_base;
+                    store.code_base = Some(slot_info.code_base);
 
                     // Register container
                     let initial_mem_size = validation_info.memories.get(0).map(|m| m.limits.min * 65536).unwrap_or(0);

@@ -17,7 +17,12 @@
       "Bash(RUSTC=/home/hotei/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/rustc CARGO_HOME=/home/hotei/.cargo make fs:*)",
       "Bash(RUSTC=/home/hotei/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/rustc CARGO=/home/hotei/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo CARGO_HOME=/home/hotei/.cargo make kernel:*)",
       "Bash(PATH=/home/hotei/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin:$PATH RUSTUP_TOOLCHAIN=nightly make kernel:*)",
-      "Bash(export:*)"
+      "Bash(export:*)",
+      "Bash(wasm-tools dump:*)",
+      "Bash(wasm-tools stats:*)",
+      "Bash(/root/.cargo/bin/wasm-tools stats:*)",
+      "Bash(/root/.cargo/bin/wasm-tools dump:)",
+      "Bash(/root/.cargo/bin/wasm-tools dump:*)"
     ]
   }
 }

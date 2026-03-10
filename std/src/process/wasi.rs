@@ -53,6 +53,28 @@ crate::export_method!(
 );
 
 crate::export_method!(
+    "krakeos:system/process@0.2.0", "spawn-ext",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I64)],
+    pub fn spawn_ext<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let name_ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+        let name_len = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+        let state_ptr = match args.get(2) { Some(Value::I32(v)) => *v as u32, _ => 0 };
+
+        let mut name_buf = vec![0u8; name_len as usize];
+        read_mem(store, name_ptr, &mut name_buf).map_err(|_| HaltExecutionError(1))?;
+        
+        let mut state = host::CPUState::default();
+        let state_size = core::mem::size_of::<host::CPUState>();
+        let state_mut_slice = unsafe { core::slice::from_raw_parts_mut(&mut state as *mut _ as *mut u8, state_size) };
+        read_mem(store, state_ptr, state_mut_slice).map_err(|_| HaltExecutionError(1))?;
+
+        let pid = host::process_spawn_ext(name_buf.as_ptr(), name_buf.len(), &state as *const _ as *const u8);
+        Ok(vec![Value::I64(pid)])
+    }
+);
+
+crate::export_method!(
     "krakeos:system/process@0.2.0", "waitpid",
     [],
     vec![ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I32)],
@@ -190,6 +212,7 @@ crate::export_method!(
 pub fn register_wasi<T: Config + Clone>(linker: &mut crate::wasm::Linker, store: &mut crate::wasm::Store<'_, T>) {
     exit::register(linker, store);
     spawn::register(linker, store);
+    spawn_ext::register(linker, store);
     waitpid::register(linker, store);
     pipe::register(linker, store);
     native_file_open::register(linker, store);

@@ -792,16 +792,29 @@ pub extern "C" fn aot_call_indirect(
     }
 
     match func_inst {
-        FuncInst::WasmFunc(wasm_func) => wasm_func
-            .aot_ptr
-            .map(|p| p as *const u8)
-            .unwrap_or_else(|| unsafe { 
+        FuncInst::WasmFunc(wasm_func) => {
+            let ptr = wasm_func.aot_ptr.map(|p| p as *const u8).unwrap_or_else(|| unsafe {
                 crate::os::debug_print("AOT Trap: aot_ptr is null\n");
-                aot_trap_indirect() 
-            }),
-        _ => unsafe { 
+                aot_trap_indirect()
+            });
+            // Validate pointer is within a reasonable code range
+            let code_base = store.code_base.unwrap_or(0);
+            if code_base != 0 {
+                let p = ptr as usize;
+                // Allow up to 512MB from code_base to account for large binaries
+                if p < code_base as usize || p >= code_base as usize + 512 * 1024 * 1024 {
+                    crate::os::debug_print(&crate::alloc::format!(
+                        "[aot_call_indirect] INVALID PTR={:#x} code_base={:#x} func_addr={} table={} i={}\n",
+                        p, code_base, func_addr, table_idx, i
+                    ));
+                    unsafe { aot_trap_indirect() }
+                }
+            }
+            ptr
+        }
+        _ => unsafe {
             crate::os::debug_print("AOT Trap: not a WasmFunc\n");
-            aot_trap_indirect() 
+            aot_trap_indirect()
         },
     }
 }

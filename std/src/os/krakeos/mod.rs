@@ -23,6 +23,32 @@ use crate::alloc::format;
 use crate::alloc::string::String;
 use crate::alloc::vec::Vec;
 
+#[repr(C, packed)]
+#[derive(Debug, Copy, Clone, Default)]
+pub struct CPUState {
+    pub r15: u64,
+    pub r14: u64,
+    pub r13: u64,
+    pub r12: u64,
+    pub r11: u64,
+    pub r10: u64,
+    pub r9: u64,
+    pub r8: u64,
+    pub rdi: u64,
+    pub rsi: u64,
+    pub rdx: u64,
+    pub rcx: u64,
+    pub rbx: u64,
+    pub rax: u64,
+    pub rbp: u64,
+
+    pub rip: u64,
+    pub cs: u64,
+    pub rflags: u64,
+    pub rsp: u64,
+    pub ss: u64,
+}
+
 // --- Process method_export! bindings ---
 
 method_export!("krakeos:system/process@0.2.0", "spawn",
@@ -34,6 +60,16 @@ method_export!("krakeos:system/process@0.2.0", "spawn",
             args_len as u64,
             fds_ptr as u64,
             fds_len as u64,
+        )
+    }
+);
+
+method_export!("krakeos:system/process@0.2.0", "spawn-ext",
+    pub fn process_spawn_ext(name_ptr: *const u8, name_len: usize, state_ptr: *const u8) -> u64 {
+        crate::sys::syscall(114,
+            name_ptr as u64,
+            name_len as u64,
+            state_ptr as u64,
         )
     }
 );

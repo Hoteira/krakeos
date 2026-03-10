@@ -839,10 +839,110 @@ pub fn register_wasi<T: Config + Clone>(linker: &mut crate::wasm::Linker, store:
     krakeos_socket_get_local_addr_host::register(linker, store);
     krakeos_socket_get_remote_addr_host::register(linker, store);
     krakeos_socket_shutdown_host::register(linker, store);
-}
+    sock_recv_p1::register(linker, store);
+    sock_send_p1::register(linker, store);
+    sock_shutdown_p1::register(linker, store);
+    }
 
+    crate::export_method!(
+    "wasi_snapshot_preview1", "sock_recv",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn sock_recv_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let fd = match args.get(0) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let ri_data_ptr = match args.get(1) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let ri_data_len = match args.get(2) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let ri_flags = match args.get(3) { Some(Value::I32(x)) => *x as u16, _ => 0 };
+        let ro_datalen_ptr = match args.get(4) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let ro_flags_ptr = match args.get(5) { Some(Value::I32(x)) => *x as u32, _ => 0 };
 
-crate::export_method!(
+        let mut iovs = Vec::new();
+        for i in 0..ri_data_len {
+            let mut iov = [0u8; 8];
+            if read_mem(store, ri_data_ptr + i * 8, &mut iov).is_err() { return Ok(vec![Value::I32(21)]); }
+            let b_ptr = u32::from_le_bytes(iov[0..4].try_into().unwrap());
+            let b_len = u32::from_le_bytes(iov[4..8].try_into().unwrap());
+            iovs.push((b_ptr, b_len));
+        }
+
+        let mut buffers = Vec::new();
+        for (_, len) in &iovs { buffers.push(vec![0u8; *len as usize]); }
+        let mut slices: Vec<&mut [u8]> = buffers.iter_mut().map(|v| v.as_mut_slice()).collect();
+
+        match wasi_ctx(store).env.sock_recv(fd, &mut slices, ri_flags) {
+            Ok((n, flags)) => {
+                let mut remaining = n;
+                for ((ptr, _), buf) in iovs.iter().zip(buffers.iter()) {
+                    let to_write = core::cmp::min(remaining, buf.len());
+                    if to_write > 0 {
+                        let _ = write_bytes(store, *ptr, &buf[..to_write]);
+                        remaining -= to_write;
+                    }
+                }
+                let _ = write_u32(store, ro_datalen_ptr, n as u32);
+                let _ = write_u32(store, ro_flags_ptr, flags as u32);
+                Ok(vec![Value::I32(0)])
+            }
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+    );
+
+    crate::export_method!(
+    "wasi_snapshot_preview1", "sock_send",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn sock_send_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let fd = match args.get(0) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let si_data_ptr = match args.get(1) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let si_data_len = match args.get(2) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+        let si_flags = match args.get(3) { Some(Value::I32(x)) => *x as u16, _ => 0 };
+        let so_datalen_ptr = match args.get(4) { Some(Value::I32(x)) => *x as u32, _ => 0 };
+
+        let mut buffers = Vec::new();
+        for i in 0..si_data_len {
+            let mut iov = [0u8; 8];
+            if read_mem(store, si_data_ptr + i * 8, &mut iov).is_err() { return Ok(vec![Value::I32(21)]); }
+            let b_ptr = u32::from_le_bytes(iov[0..4].try_into().unwrap());
+            let b_len = u32::from_le_bytes(iov[4..8].try_into().unwrap());
+            let mut b = vec![0u8; b_len as usize];
+            if read_mem(store, b_ptr, &mut b).is_err() { return Ok(vec![Value::I32(21)]); }
+            buffers.push(b);
+        }
+
+        let slices: Vec<&[u8]> = buffers.iter().map(|v| v.as_slice()).collect();
+        match wasi_ctx(store).env.sock_send(fd, &slices, si_flags) {
+            Ok(n) => {
+                let _ = write_u32(store, so_datalen_ptr, n as u32);
+                Ok(vec![Value::I32(0)])
+            }
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+    );
+
+    crate::export_method!(
+    "wasi_snapshot_preview1", "sock_shutdown",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn sock_shutdown_p1<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let fd = match args.get(0) { Some(Value::I32(x)) => *x as i32, _ => -1 };
+        let how = match args.get(1) { Some(Value::I32(x)) => *x as u8, _ => 0 };
+        match wasi_ctx(store).env.sock_shutdown(fd, how) {
+            Ok(_) => Ok(vec![Value::I32(0)]),
+            Err(e) => Ok(vec![Value::I32(e as u32)]),
+        }
+    }
+    );
+
+    fn wasi_ctx<'a, T: Config>(store: &'a mut Store<'_, T>) -> &'a mut crate::wasm::wasi::ctx::WasiCtx {
+    if store.wasi_ctx.is_none() {
+        store.wasi_ctx = Some(crate::wasm::wasi::ctx::WasiCtx::default());
+    }
+    store.wasi_ctx.as_mut().unwrap()
+    }
+
+    crate::export_method!(
     "krakeos:system/network@0.2.0", "socket-create",
     [],
     vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I64)],

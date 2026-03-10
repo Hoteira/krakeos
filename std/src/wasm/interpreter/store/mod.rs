@@ -67,6 +67,8 @@ pub struct Store<'a, T: Config> {
     pub caller_module: Option<ModuleAddr>,
     pub wasi_ctx: Option<crate::wasm::wasi::WasiCtx>,
     pub sas_memory_base: Option<u64>,
+    pub code_base: Option<u64>,
+    pub next_code_offset: usize,
     pub container_id: Option<u64>,
     pub shm_mappings: BTreeMap<String, u32>,
 }
@@ -93,6 +95,8 @@ impl<'a, T: Config> Store<'a, T> {
             caller_module: None,
             wasi_ctx: None,
             sas_memory_base: None,
+            code_base: None,
+            next_code_offset: 0,
             container_id: None,
             shm_mappings: BTreeMap::new(),
         }
@@ -311,11 +315,31 @@ impl<'a, T: Config> Store<'a, T> {
         if self.aot_enabled {
             let mut compiler = crate::wasm::aot::AotCompiler::new(validation_info);
             let aot_module = compiler.compile_module();
+            
+            let final_code_ptr = if let Some(base) = self.code_base {
+                let ptr = (base + self.next_code_offset as u64) as *mut u8;
+                let code_len = aot_module.code.len();
+                crate::debugln!("[AOT] code_base={:#x} offset={} code_len={} ({} MB)", base, self.next_code_offset, code_len, code_len / (1024 * 1024));
+                const CODE_SLOT_SIZE: usize = 256 * 1024 * 1024;
+                if self.next_code_offset + code_len > CODE_SLOT_SIZE {
+                    return Err(RuntimeError::Trap(TrapError::ReachedUnreachable));
+                }
+                unsafe {
+                    core::ptr::copy_nonoverlapping(aot_module.code.as_ptr(), ptr, code_len);
+                }
+                let res = ptr as usize;
+                // Align next offset to 4KB for isolation
+                self.next_code_offset = (self.next_code_offset + code_len + 4095) & !4095;
+                res
+            } else {
+                aot_module.code.as_ptr() as usize
+            };
+
             for (i, offset) in aot_module.func_offsets.iter().enumerate() {
                 let func_idx = validation_info.imports_length.imported_functions + i;
                 let func_addr = self.modules.get(module_addr).func_addrs[func_idx];
                 if let FuncInst::WasmFunc(wasm_func) = self.functions.get_mut(func_addr) {
-                    wasm_func.aot_ptr = Some(unsafe { aot_module.code.as_ptr().add(*offset) as usize });
+                    wasm_func.aot_ptr = Some(final_code_ptr + *offset);
                 }
             }
             self.aot_modules.push(aot_module);
@@ -519,8 +543,32 @@ impl<'a, T: Config> Store<'a, T> {
                                 }
                             }
 
-                            // crate::debugln!("WASI: [AOT] Entering generated machine code at {:#x}...", aot_ptr);
+                            // If we are in userland, we can spawn a real process for this AOT execution
+                            #[cfg(feature = "userland")]
+                            {
+                                if self.caller_module.is_none() && self.container_id.is_some() {
+                                    // Top-level execution, use real process spawning
+                                    let mut state = crate::os::krakeos::CPUState::default();
+                                    state.rip = aot_ptr as u64;
+                                    state.rsp = sp as u64;
+                                    state.rdi = &mut ctx as *mut _ as u64;
+                                    state.cs = 0x33; // User CS
+                                    state.ss = 0x23; // User SS
+                                    state.rflags = 0x202; // IF set
 
+                                    let name = "wasm_aot";
+                                    let pid = crate::os::krakeos::process_spawn_ext(name.as_ptr(), name.len(), &state as *const _ as *const u8);
+                                    if pid != u64::MAX {
+                                        let exit_code = crate::os::krakeos::process_waitpid(pid);
+                                        return Ok(RunState::Finished {
+                                            values: vec![Value::I32(exit_code as u32)],
+                                            maybe_remaining_fuel: Some(fuel),
+                                        });
+                                    }
+                                }
+                            }
+
+                            // Fallback to in-thread execution for nested/kernel or failed spawn
                             let final_sp: *mut u128;
 
                             #[cfg(not(target_arch = "wasm32"))]

@@ -253,6 +253,7 @@ pub fn dispatch_syscall(context: &mut CPUState) {
 
         SYS_SPAWN_THREAD => process::handle_spawn_thread(context),
         SYS_THREAD_EXIT => process::handle_thread_exit(context),
+        SYS_SPAWN_EXT => process::handle_spawn_ext(context),
 
         SYS_DEBUG_PRINT => misc::handle_debug_print(context),
         SYS_MOUNT => {

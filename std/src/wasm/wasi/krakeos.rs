@@ -301,7 +301,10 @@ impl WasiEnv for KrakeosWasiEnv {
                 vars.push((String::from("PYTHONHOME"), String::from("/")));
             }
             if !vars.iter().any(|(k, _)| k == "PYTHONPATH") {
-                vars.push((String::from("PYTHONPATH"), String::from("/lib/python3.13")));
+                vars.push((
+                    String::from("PYTHONPATH"),
+                    String::from("/apps/python/lib/python3.13"),
+                ));
             }
             if !vars.iter().any(|(k, _)| k == "PYTHONDONTWRITEBYTECODE") {
                 vars.push((String::from("PYTHONDONTWRITEBYTECODE"), String::from("1")));
@@ -373,7 +376,7 @@ impl WasiEnv for KrakeosWasiEnv {
             let (rb, ri) = if ft == 3 {
                 (u64::MAX, u64::MAX)
             } else {
-                (0x3F, 0x3F)
+                (u64::MAX, u64::MAX)
             };
             Ok(FdStat {
                 filetype: ft,
@@ -626,7 +629,18 @@ impl WasiEnv for KrakeosWasiEnv {
     fn fd_advise(&mut self, _fd: i32, _offset: u64, _len: u64, _advice: u8) -> Result<(), i32> {
         Ok(())
     }
+    fn fd_allocate(&mut self, _fd: i32, _offset: u64, _len: u64) -> Result<(), i32> {
+        Ok(())
+    }
     fn fd_fdstat_set_flags(&mut self, _fd: i32, _flags: u16) -> Result<(), i32> {
+        Ok(())
+    }
+    fn fd_fdstat_set_rights(
+        &mut self,
+        _fd: i32,
+        _rights_base: u64,
+        _rights_inheriting: u64,
+    ) -> Result<(), i32> {
         Ok(())
     }
     fn fd_filestat_set_times(

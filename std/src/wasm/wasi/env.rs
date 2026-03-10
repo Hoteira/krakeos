@@ -40,7 +40,9 @@ pub trait WasiEnv: Send {
     fn fd_sync(&mut self, fd: i32) -> Result<(), i32>;
     fn fd_datasync(&mut self, fd: i32) -> Result<(), i32>;
     fn fd_advise(&mut self, fd: i32, offset: u64, len: u64, advice: u8) -> Result<(), i32>;
+    fn fd_allocate(&mut self, fd: i32, offset: u64, len: u64) -> Result<(), i32>;
     fn fd_fdstat_set_flags(&mut self, fd: i32, flags: u16) -> Result<(), i32>;
+    fn fd_fdstat_set_rights(&mut self, fd: i32, rights_base: u64, rights_inheriting: u64) -> Result<(), i32>;
     fn fd_filestat_set_times(&mut self, fd: i32, atime: u64, mtime: u64, fst_flags: u16) -> Result<(), i32>;
     fn fd_pread(&mut self, fd: i32, iovs: &mut [(&mut [u8])], offset: u64) -> Result<usize, i32>;
     fn fd_pwrite(&mut self, fd: i32, iovs: &[&[u8]], offset: u64) -> Result<usize, i32>;

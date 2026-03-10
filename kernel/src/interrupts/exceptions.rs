@@ -143,6 +143,11 @@ pub extern "x86-interrupt" fn page_fault(info: &mut StackFrame, error_code: u64)
 
     // Check for guard page hits
     use crate::memory::address_space::*;
+    use crate::memory::address::{PhysAddr, VirtAddr};
+    use crate::memory::paging::{PageTableFlags, active_level_4_table};
+    use crate::memory::mapper::Mapper;
+    use crate::memory::pmm;
+
     let mut is_guard = false;
     // We only check for guards if CR2 is in the SAS regions
     if cr2 >= CODE_REGION_BASE && cr2 < LINEAR_MEMORY_BASE + (MAX_SLOTS as u64 * LINEAR_MEMORY_SLOT_SIZE) {
@@ -160,40 +165,73 @@ pub extern "x86-interrupt" fn page_fault(info: &mut StackFrame, error_code: u64)
             let lin_base = LINEAR_MEMORY_BASE + (slot_id as u64) * LINEAR_MEMORY_SLOT_SIZE;
 
             if cr2 >= code_base + CODE_SLOT_SIZE - 4096 && cr2 < code_base + CODE_SLOT_SIZE {
-                serial_print("\nGuard page fault: slot ");
-                print_hex(slot_id as u64);
-                serial_print(", region code, CR2=");
-                print_hex(cr2);
-                serial_println("");
                 is_guard = true;
             } else if (cr2 >= stack_base && cr2 < stack_base + 4096) || (cr2 >= stack_base + STACK_SLOT_SIZE - 4096 && cr2 < stack_base + STACK_SLOT_SIZE) {
-                serial_print("\nGuard page fault: slot ");
-                print_hex(slot_id as u64);
-                serial_print(", region stack, CR2=");
-                print_hex(cr2);
-                serial_println("");
                 is_guard = true;
             } else if cr2 >= lin_base + LINEAR_MEMORY_SLOT_SIZE - 4096 && cr2 < lin_base + LINEAR_MEMORY_SLOT_SIZE {
-                serial_print("\nGuard page fault: slot ");
-                print_hex(slot_id as u64);
-                serial_print(", region linear_memory, CR2=");
-                print_hex(cr2);
-                serial_println("");
                 is_guard = true;
             }
         }
     }
 
-    if !is_guard {
-        serial_println("\n=== PAGE FAULT ===");
-        serial_print("Address (CR2): ");
+    if is_guard {
+        serial_print("\nGuard page fault at ");
         print_hex(cr2);
-        serial_print("\r\nError Code: ");
-        print_hex(error_code);
-        serial_print("\r\nRIP: ");
-        print_hex(info.instruction_pointer);
+        serial_println(". Terminating task.");
+        kill_current_task();
+        return;
+    }
+
+    // Demand Paging Logic
+    let mut vma = crate::memory::vma::GLOBAL_VMA.lock();
+    if vma.is_mapped(cr2) {
+        // Find PID for this region to attribute memory correctly
+        let mut target_pid = 0;
+        for region in vma.get_regions() {
+            if cr2 >= region.start && cr2 < region.start + region.size {
+                target_pid = region.pid;
+                break;
+            }
+        }
+
+        if let Some(frame) = pmm::allocate_frame(target_pid) {
+            let pml4 = active_level_4_table();
+            let mut mapper = unsafe { Mapper::new(PhysAddr::new(crate::memory::paging::virt_to_phys(pml4 as *const _ as u64))) };
+            
+            let mut flags = PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE | PageTableFlags::WRITABLE;
+            
+            // If it's NOT in the code region, set NX
+            if cr2 < STACK_REGION_BASE {
+                // Code region: allow execution (do not set NX)
+            } else {
+                flags |= PageTableFlags::NO_EXECUTE;
+            }
+
+            let virt = VirtAddr::new(cr2 & !0xFFF);
+            let phys = PhysAddr::new(frame);
+
+            if let Ok(_) = mapper.map(virt, phys, flags) {
+                // Flush TLB
+                unsafe {
+                    core::arch::asm!("invlpg [{}]", in(reg) cr2, options(nostack, preserves_flags));
+                }
+                return;
+            }
+        }
+    } else {
+        serial_print("[PF] Address not in VMA: ");
+        print_hex(cr2);
         serial_println("");
     }
+
+    serial_println("\n=== PAGE FAULT ===");
+    serial_print("Address (CR2): ");
+    print_hex(cr2);
+    serial_print("\r\nError Code: ");
+    print_hex(error_code);
+    serial_print("\r\nRIP: ");
+    print_hex(info.instruction_pointer);
+    serial_println("");
 
     if (info.code_segment & 3) == 3 {
         serial_println("User mode Page Fault. Terminating task.");
