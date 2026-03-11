@@ -195,7 +195,7 @@ impl TaskManager {
             idle_thread.cpu_state_ptr = state_ptr as u64;
 
             (*state_ptr).rip = idle as u64;
-            (*state_ptr).cs = 0x28; // 64-bit kernel code segment (GDT index 5)
+            (*state_ptr).cs = 0x08; // 64-bit kernel code segment (GDT index 1)
             (*state_ptr).rflags = 0x202;
             (*state_ptr).rsp = idle_thread.kernel_stack;
             (*state_ptr).ss = 0x10;
@@ -381,10 +381,10 @@ impl TaskManager {
 
             (*state_ptr).rax = 0;
             (*state_ptr).rip = entry_point;
-            (*state_ptr).cs = 0x33;
+            (*state_ptr).cs = 0x23; // user_code_64 (0x20 | RPL 3)
             (*state_ptr).rflags = 0x202;
             (*state_ptr).rsp = current_virt_sp;
-            (*state_ptr).ss = 0x23;
+            (*state_ptr).ss = 0x1B; // user_data (0x18 | RPL 3)
         }
 
         thread.state = if entry_point == 0 { ThreadState::Reserved } else { ThreadState::Ready };
@@ -423,15 +423,15 @@ impl TaskManager {
             
             if user_stack == 0 {
                 // Native Kernel Thread (Ring 0)
-                (*state_ptr).cs = 0x28; // 64-bit kernel code segment (GDT index 5)
+                (*state_ptr).cs = 0x08; // 64-bit kernel code segment (GDT index 1)
                 (*state_ptr).ss = 0x10;
                 // System V ABI: RSP must be 16n + 8 upon function entry
                 (*state_ptr).rsp = thread.kernel_stack - state_size as u64 - 8; // Use kernel stack
                 (*state_ptr).rflags = 0x202;
             } else {
                 // User Thread (Ring 3)
-                (*state_ptr).cs = 0x33;
-                (*state_ptr).ss = 0x23;
+                (*state_ptr).cs = 0x23; // user_code_64 (0x20 | RPL 3)
+                (*state_ptr).ss = 0x1B; // user_data (0x18 | RPL 3)
                 (*state_ptr).rsp = (user_stack & !15) - 8;
                 (*state_ptr).rflags = 0x202;
             }

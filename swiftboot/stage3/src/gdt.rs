@@ -17,15 +17,15 @@ pub static mut GDT: Gdt = {
 
     Gdt {
         entries: [
-            zero,
-            kernel_code_32,
-            kernel_data,
-            user_code_32,
-            user_data,
-            kernel_code_64,
-            user_code_64,
-            tss_low,
-            tss_high,
+            zero,             // 0x00: null
+            kernel_code_64,   // 0x08: SYSCALL CS
+            kernel_data,      // 0x10: SYSCALL SS (= CS + 8)
+            user_data,        // 0x18: SYSRET SS (= base + 8)
+            user_code_64,     // 0x20: SYSRET CS 64-bit (= base + 16)
+            kernel_code_32,   // 0x28: legacy 32-bit (not used by SYSCALL)
+            user_code_32,     // 0x30: legacy 32-bit
+            tss_low,          // 0x38
+            tss_high,         // 0x40
         ],
     }
 };

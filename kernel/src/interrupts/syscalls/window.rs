@@ -6,11 +6,14 @@ use crate::window_manager::window::Window;
 
 pub fn handle_add_window(context: &mut CPUState) {
     unsafe {
+        let win_size = core::mem::size_of::<Window>() as u64;
+        if !super::validate_user_buf(context, context.rdi, win_size) { return; }
+
         let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         if let Some(current) = tm.current_task_idx() {
             if let Some(thread) = tm.tasks[current].as_ref() {
                 let proc = thread.process.as_ref().expect("Thread has no process");
-                
+
                 let mut w = *(context.rdi as *const Window);
                 w.pid = proc.pid;
 
@@ -28,6 +31,9 @@ pub fn handle_add_window(context: &mut CPUState) {
 
 pub fn handle_update_window(context: &mut CPUState) {
     unsafe {
+        let win_size = core::mem::size_of::<Window>() as u64;
+        if !super::validate_user_buf(context, context.rdi, win_size) { return; }
+
         let composer = &mut *(&raw mut COMPOSER);
 
         let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
@@ -81,6 +87,8 @@ pub fn handle_get_events(context: &mut CPUState) {
 
     let wid = context.rdi as u32;
     let max_events = context.rdx as usize;
+    let buf_size = (max_events as u64) * (core::mem::size_of::<Event>() as u64);
+    if !super::validate_user_buf(context, context.rsi, buf_size) { return; }
 
     // If the process has a registered queue, drain from it directly.
     {
@@ -133,14 +141,19 @@ pub fn handle_get_events(context: &mut CPUState) {
 
 pub fn handle_register_event_queue(context: &mut CPUState) {
     let capacity   = context.rdx as u32;
+    let header_ptr = context.rdi;
+    let buf_ptr    = context.rsi;
+
+    // Validate both header and event buffer pointers
+    let header_size = core::mem::size_of::<crate::window_manager::events::EventQueueHeader>() as u64;
+    let buf_size = (capacity as u64) * (core::mem::size_of::<crate::window_manager::events::Event>() as u64);
+    if !super::validate_user_buf(context, header_ptr, header_size) { return; }
+    if !super::validate_user_buf(context, buf_ptr, buf_size) { return; }
 
     let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
     if let Some(idx) = tm.current_task_idx() {
         if let Some(thread) = tm.tasks[idx].as_ref() {
             if let Some(proc) = thread.process.as_ref() {
-                let header_ptr = context.rdi;
-                let buf_ptr    = context.rsi;
-                
                 *proc.event_queue.lock() = (header_ptr, buf_ptr, capacity);
                 crate::debugln!(
                     "[EventQueue] PID {} registered queue: header={:#x} buf={:#x} cap={}",

@@ -153,8 +153,8 @@ fn init_syscall_msrs() {
         let mut efer = rdmsr(EFER_MSR);
         efer |= 1;
         wrmsr(EFER_MSR, efer);
-        let sysret_cs_base = 0x20;
-        let syscall_cs_base = 0x08; // TODO: GDT needs reorg - 0x08 is 32-bit code, SYSCALL needs adjacent CS/SS
+        let sysret_cs_base = 0x10; // SYSRET: CS = base+16 = 0x20|3, SS = base+8 = 0x18|3
+        let syscall_cs_base = 0x08; // SYSCALL: CS = 0x08 (kernel_code_64), SS = 0x10 (kernel_data)
         let star_value = ((sysret_cs_base as u64) << 48) | ((syscall_cs_base as u64) << 32);
         wrmsr(STAR_MSR, star_value);
         wrmsr(LSTAR_MSR, interrupts::syscalls::syscall_entry as u64);

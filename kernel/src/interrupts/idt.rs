@@ -19,7 +19,7 @@ pub struct Entry {
 
 impl Entry {
     pub fn set(&mut self, offset: u64) {
-        self.gdt_selector = 0x28;
+        self.gdt_selector = 0x08; // kernel_code_64
         self.pointer_low = (offset & 0xFFFF) as u16;
         self.pointer_middle = ((offset >> 16) & 0xFFFF) as u16;
         self.pointer_high = (offset >> 32) as u32;
@@ -33,7 +33,7 @@ impl Entry {
 
     #[allow(dead_code)]
     pub fn set_ring_3(&mut self, offset: u64) {
-        self.gdt_selector = 0x28;
+        self.gdt_selector = 0x08; // kernel_code_64
         self.pointer_low = (offset & 0xFFFF) as u16;
         self.pointer_middle = ((offset >> 16) & 0xFFFF) as u16;
         self.pointer_high = (offset >> 32) as u32;

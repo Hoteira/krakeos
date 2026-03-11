@@ -1,5 +1,7 @@
 use crate::debugln;
-use crate::interrupts::task::CPUState;
+use crate::interrupts::task::{CPUState, Process, TASK_MANAGER};
+use crate::memory::address_space::{CODE_SLOT_SIZE, LINEAR_MEMORY_SLOT_SIZE, STACK_SLOT_SIZE};
+use alloc::sync::Arc;
 use core::arch::naked_asm;
 
 pub mod fs;
@@ -11,6 +13,87 @@ pub mod misc;
 pub mod network;
 pub mod process;
 pub mod window;
+
+/// Returns the current process (cloned Arc) without holding the task manager lock.
+pub fn get_current_process() -> Option<Arc<Process>> {
+    let tm = TASK_MANAGER.int_lock();
+    let idx = tm.current_task_idx()?;
+    tm.tasks[idx].as_ref()?.process.clone()
+}
+
+/// Returns true if the current thread is a kernel thread (Ring 0).
+/// Kernel threads run the WASM runtime (interpreter/AOT) and are trusted —
+/// they legitimately pass kernel heap and image pointers to syscalls.
+/// User threads (Ring 3) can only access their process's SAS regions.
+pub fn is_kernel_thread() -> bool {
+    let tm = TASK_MANAGER.int_lock();
+    if let Some(idx) = tm.current_task_idx() {
+        if let Some(thread) = tm.tasks[idx].as_ref() {
+            let result = thread.user_stack == 0;
+            if !result {
+                debugln!("[is_kernel_thread] TID {} user_stack={:#x} -> NOT kernel thread", idx, thread.user_stack);
+            }
+            return result;
+        }
+    }
+    true // default to trusted if we can't determine (boot context)
+}
+
+/// Validates that [ptr, ptr+len) falls within the calling process's SAS regions.
+/// Only applied to Ring 3 (user) threads. Kernel threads are trusted.
+pub fn validate_user_ptr(proc: &Process, ptr: u64, len: u64) -> bool {
+    if len == 0 {
+        return true;
+    }
+    let end = match ptr.checked_add(len) {
+        Some(e) => e,
+        None => return false,
+    };
+
+    // Linear memory (WASM heap): [base, base + slot_size)
+    let lm_base = proc.linear_memory_base;
+    let lm_end = lm_base + LINEAR_MEMORY_SLOT_SIZE;
+    if ptr >= lm_base && end <= lm_end {
+        return true;
+    }
+
+    // User stack: [stack_top - slot_size, stack_top)
+    let stack_top = proc.stack_base;
+    let stack_bottom = stack_top - STACK_SLOT_SIZE;
+    if ptr >= stack_bottom && end <= stack_top {
+        return true;
+    }
+
+    // Code region: [code_base, code_base + slot_size)
+    let code_end = proc.code_base + CODE_SLOT_SIZE;
+    if ptr >= proc.code_base && end <= code_end {
+        return true;
+    }
+
+    false
+}
+
+/// Validates that [ptr, ptr+len) is within the current process's valid memory.
+/// Kernel threads (WASM runtime, Ring 0) are trusted and always pass.
+/// User threads (Ring 3) must have pointers within their SAS regions.
+/// On failure, sets context.rax = u64::MAX and returns false.
+pub fn validate_user_buf(context: &mut CPUState, ptr: u64, len: u64) -> bool {
+    if len == 0 {
+        return true;
+    }
+    // Kernel threads run the trusted WASM runtime — skip validation
+    if is_kernel_thread() {
+        return true;
+    }
+    if let Some(proc) = get_current_process() {
+        if validate_user_ptr(&proc, ptr, len) {
+            return true;
+        }
+    }
+    debugln!("[Syscall] REJECTED: invalid user pointer {:#x} len={}", ptr, len);
+    context.rax = u64::MAX;
+    false
+}
 
 pub const SYS_READ: u64 = 0;
 pub const SYS_WRITE: u64 = 1;
@@ -106,10 +189,10 @@ pub extern "C" fn syscall_entry() {
             "mov r15, rsp",
             "mov rsp, [rip + {kernel_stack_ptr}]",
             // 3. Build the IRETQ frame (pushed by CPU normally, we do it manually for SYSCALL)
-            "push QWORD PTR 0x23", // SS
+            "push QWORD PTR 0x1B", // SS (user_data 0x18 | RPL 3)
             "push r15",            // RSP
             "push r11",            // RFLAGS
-            "push QWORD PTR 0x33", // CS
+            "push QWORD PTR 0x23", // CS (user_code_64 0x20 | RPL 3)
             "push rcx",            // RIP
             // 4. Restore R15 and push the rest of CPUState (r15 down to rbp)
             "mov r15, [rip + {scratch}]",

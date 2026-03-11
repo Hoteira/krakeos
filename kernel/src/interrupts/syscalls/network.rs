@@ -8,6 +8,7 @@ pub fn handle_net_send(context: &mut CPUState) {
         context.rax = 1;
         return;
     }
+    if !super::validate_user_buf(context, ptr as u64, len as u64) { return; }
 
     let data = unsafe { core::slice::from_raw_parts(ptr, len) };
     let res = crate::drivers::network::virtio::send_packet(data);
@@ -22,6 +23,7 @@ pub fn handle_net_recv(context: &mut CPUState) {
         context.rax = 0;
         return;
     }
+    if !super::validate_user_buf(context, ptr as u64, len as u64) { return; }
 
     let packet_opt = crate::drivers::network::virtio::recv_packet();
 
@@ -80,6 +82,7 @@ pub fn handle_bind(context: &mut CPUState) {
         context.rax = u64::MAX;
         return;
     }
+    if !super::validate_user_buf(context, addr_ptr as u64, 8) { return; }
 
     let port = unsafe { u16::from_be(*(addr_ptr.add(2) as *const u16)) };
 
@@ -104,6 +107,7 @@ pub fn handle_connect(context: &mut CPUState) {
         context.rax = u64::MAX;
         return;
     }
+    if !super::validate_user_buf(context, addr_ptr as u64, 8) { return; }
 
     let (dst_ip, dst_port) = unsafe {
         let port = u16::from_be_bytes([*addr_ptr.add(2), *addr_ptr.add(3)]);
@@ -224,6 +228,8 @@ pub fn handle_tcp_send(context: &mut CPUState) {
     let buf_ptr = context.rsi as *const u8;
     let len = context.rdx as usize;
 
+    if !super::validate_user_buf(context, buf_ptr as u64, len as u64) { return; }
+
     let socket_id = match get_socket_id(context, fd) {
         Some(s) => s,
         None => {
@@ -248,6 +254,8 @@ pub fn handle_tcp_recv(context: &mut CPUState) {
     let fd = context.rdi as usize;
     let buf_ptr = context.rsi as *mut u8;
     let len = context.rdx as usize;
+
+    if !super::validate_user_buf(context, buf_ptr as u64, len as u64) { return; }
 
     let socket_id = match get_socket_id(context, fd) {
         Some(s) => s,
@@ -289,6 +297,9 @@ pub fn handle_sendto(context: &mut CPUState) {
     let len = context.rdx as usize;
     let dest_addr_ptr = context.r8 as *const u8;
 
+    if !super::validate_user_buf(context, buf_ptr as u64, len as u64) { return; }
+    if !super::validate_user_buf(context, dest_addr_ptr as u64, 8) { return; }
+
     let (dst_ip, dst_port) = unsafe {
         let port = u16::from_be(*(dest_addr_ptr.add(2) as *const u16));
         let ip_ptr = dest_addr_ptr.add(4);
@@ -313,6 +324,10 @@ pub fn handle_recvfrom(context: &mut CPUState) {
     let len = context.rdx as usize;
     let src_addr_ptr = context.r8 as *mut u8;
     let addr_len_ptr = context.r9 as *mut u32;
+
+    if !super::validate_user_buf(context, buf_ptr as u64, len as u64) { return; }
+    if !src_addr_ptr.is_null() && !super::validate_user_buf(context, src_addr_ptr as u64, 8) { return; }
+    if !addr_len_ptr.is_null() && !super::validate_user_buf(context, addr_len_ptr as u64, 4) { return; }
 
     let socket_id = match get_socket_id(context, fd) { Some(s) => s, None => 0 };
     if socket_id == 0 { context.rax = u64::MAX; return; }

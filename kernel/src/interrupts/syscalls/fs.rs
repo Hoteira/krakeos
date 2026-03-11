@@ -15,6 +15,16 @@ pub fn copy_string_from_user(ptr: *const u8, len: usize) -> String {
         return String::new();
     }
 
+    // Kernel threads (WASM runtime) are trusted — skip validation
+    if !super::is_kernel_thread() {
+        if let Some(proc) = super::get_current_process() {
+            if !super::validate_user_ptr(&proc, ptr as u64, len as u64) {
+                crate::debugln!("[Syscall] REJECTED: invalid string pointer {:#x} len={}", ptr as u64, len);
+                return String::new();
+            }
+        }
+    }
+
     unsafe {
         let slice = core::slice::from_raw_parts(ptr, len);
         let s = String::from_utf8_lossy(slice).into_owned();
@@ -65,6 +75,7 @@ pub fn handle_read(context: &mut CPUState) {
         context.rax = 0;
         return;
     }
+    if !super::validate_user_buf(context, user_ptr as u64, user_len as u64) { return; }
 
     let is_nonblock = {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
@@ -117,6 +128,7 @@ pub fn handle_poll(context: &mut CPUState) {
         context.rax = 0;
         return;
     }
+    if !super::validate_user_buf(context, fds_ptr as u64, (nfds * core::mem::size_of::<PollFd>()) as u64) { return; }
 
     let start_ticks = unsafe { crate::interrupts::task::SYSTEM_TICKS };
     let end_ticks = if timeout_ms >= 0 { Some(start_ticks + timeout_ms as u64) } else { None };
@@ -431,6 +443,8 @@ pub fn handle_read_file(context: &mut CPUState) {
     let buf_ptr = context.rsi as *mut u8;
     let len = context.rdx as usize;
 
+    if !super::validate_user_buf(context, buf_ptr as u64, len as u64) { return; }
+
     let global_fd_opt = {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
@@ -516,7 +530,7 @@ pub fn handle_write_file(context: &mut CPUState) {
     let buf_ptr = context.rsi as *const u8;
     let len = context.rdx as usize;
 
-    //crate::debugln!("SYS_WRITE: fd={} len={}", local_fd, len);
+    if !super::validate_user_buf(context, buf_ptr as u64, len as u64) { return; }
 
     let global_fd_opt = {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
@@ -588,6 +602,7 @@ pub fn handle_read_dir(context: &mut CPUState) {
         context.rax = u64::MAX;
         return;
     }
+    if !super::validate_user_buf(context, buf_ptr as u64, len as u64) { return; }
 
     let global_fd_opt = {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
@@ -690,6 +705,7 @@ pub fn handle_stat(context: &mut CPUState, is_fstat: bool) {
         Some(s) => {
             let user_stat_ptr = context.rdx as *mut crate::fs::vfs::Stat;
             if !user_stat_ptr.is_null() {
+                if !super::validate_user_buf(context, user_stat_ptr as u64, core::mem::size_of::<crate::fs::vfs::Stat>() as u64) { return; }
                 unsafe { core::ptr::write_unaligned(user_stat_ptr, s); }
                 context.rax = 0;
             } else {
@@ -740,6 +756,7 @@ pub fn handle_pipe(context: &mut CPUState) {
         context.rax = u64::MAX;
         return;
     }
+    if !super::validate_user_buf(context, fds_ptr as u64, (2 * core::mem::size_of::<i32>()) as u64) { return; }
 
     acquire_fs_lock();
 
@@ -865,6 +882,7 @@ pub fn handle_ioctl(context: &mut CPUState) {
     let request = context.rsi;
 
     let arg = context.rdx as *mut WinSize;
+    if !arg.is_null() && !super::validate_user_buf(context, arg as u64, core::mem::size_of::<WinSize>() as u64) { return; }
 
     match request {
         TIOCGWINSZ => {
@@ -966,6 +984,8 @@ pub fn handle_pread64(context: &mut CPUState) {
     let len = context.rdx as usize;
     let offset = context.r10 as u64;
 
+    if !super::validate_user_buf(context, buf_ptr as u64, len as u64) { return; }
+
     let global_fd_opt = {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
@@ -1008,6 +1028,8 @@ pub fn handle_pwrite64(context: &mut CPUState) {
     let buf_ptr = context.rsi as *const u8;
     let len = context.rdx as usize;
     let offset = context.r10 as u64;
+
+    if !super::validate_user_buf(context, buf_ptr as u64, len as u64) { return; }
 
     let global_fd_opt = {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
@@ -1172,6 +1194,8 @@ pub fn handle_readlinkat(context: &mut CPUState) {
     let path_len = context.rdx as usize;
     let buf_ptr = context.r10 as *mut u8;
     let buf_len = context.r8 as usize;
+
+    if !super::validate_user_buf(context, buf_ptr as u64, buf_len as u64) { return; }
 
     let path = copy_string_from_user(path_ptr, path_len);
 

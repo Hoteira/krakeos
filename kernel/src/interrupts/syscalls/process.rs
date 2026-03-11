@@ -284,6 +284,8 @@ pub fn handle_spawn_ext(context: &mut CPUState) {
         context.rax = u64::MAX;
         return;
     }
+    if !super::validate_user_buf(context, name_ptr as u64, name_len as u64) { return; }
+    if !super::validate_user_buf(context, state_ptr as u64, core::mem::size_of::<CPUState>() as u64) { return; }
 
     let name_slice = unsafe { core::slice::from_raw_parts(name_ptr, name_len) };
     let name = String::from_utf8_lossy(name_slice);
@@ -353,6 +355,7 @@ pub fn handle_spawn(context: &mut CPUState) {
         context.rax = u64::MAX;
         return;
     }
+    if !super::validate_user_buf(context, path_ptr as u64, path_len as u64) { return; }
 
     let path_slice = unsafe { core::slice::from_raw_parts(path_ptr, path_len) };
     let path_str = String::from_utf8_lossy(path_slice);
@@ -360,6 +363,7 @@ pub fn handle_spawn(context: &mut CPUState) {
 
     let mut args_vec = Vec::new();
     if !args_ptr.is_null() && args_len > 0 {
+        if !super::validate_user_buf(context, args_ptr as u64, (args_len * core::mem::size_of::<*const u8>()) as u64) { return; }
         let args_ptrs = unsafe { core::slice::from_raw_parts(args_ptr, args_len) };
         for &ptr in args_ptrs {
             if !ptr.is_null() {
@@ -373,6 +377,7 @@ pub fn handle_spawn(context: &mut CPUState) {
     let args_opt = if args_refs.is_empty() { None } else { Some(args_refs.as_slice()) };
 
     let fd_map = if !fd_map_ptr.is_null() && fd_map_len > 0 {
+        if !super::validate_user_buf(context, fd_map_ptr as u64, (fd_map_len * core::mem::size_of::<(u8, u8)>()) as u64) { return; }
         unsafe { Some(core::slice::from_raw_parts(fd_map_ptr, fd_map_len)) }
     } else {
         None
@@ -500,6 +505,8 @@ pub fn handle_get_process_list(context: &mut CPUState) {
         context.rax = 0;
         return;
     }
+    let struct_size = 48u64;
+    if !super::validate_user_buf(context, buf_ptr as u64, max_count as u64 * struct_size) { return; }
 
     let mut count = 0;
     let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
@@ -551,6 +558,7 @@ pub fn handle_get_slot_info(context: &mut CPUState) {
         context.rax = u64::MAX;
         return;
     }
+    if !super::validate_user_buf(context, buf_ptr as u64, core::mem::size_of::<SlotInfo>() as u64) { return; }
 
     let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
     if let Some(current) = tm.current_task_idx() {

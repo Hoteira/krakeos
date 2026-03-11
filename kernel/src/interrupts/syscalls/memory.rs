@@ -192,6 +192,7 @@ pub fn handle_shm_get(context: &mut CPUState) {
     let name_len = context.rsi as usize;
     let size = context.rdx as u64;
 
+    if !super::validate_user_buf(context, name_ptr as u64, name_len as u64) { return; }
     let name = crate::interrupts::syscalls::fs::copy_string_from_user(name_ptr, name_len);
     crate::debugln!("[Syscall] SHM_GET: name='{}', size={}", name, size);
 
@@ -216,6 +217,7 @@ pub fn handle_shm_map(context: &mut CPUState) {
     let name_len = context.rsi as usize;
     let target_addr = context.rdx as u64;
 
+    if !super::validate_user_buf(context, name_ptr as u64, name_len as u64) { return; }
     let name = crate::interrupts::syscalls::fs::copy_string_from_user(name_ptr, name_len);
     crate::debugln!("[Syscall] SHM_MAP: name='{}', target_addr={:#x}", name, target_addr);
 

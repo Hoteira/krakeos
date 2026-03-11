@@ -119,7 +119,7 @@ pub extern "C" fn _start() -> ! {
             (*(&raw mut GDT)).load_tss();
 
             asm!("mov edi, {0:e}", in(reg) ebx);
-            asm!("ljmp $0x28, ${}", const NEXT_STAGE_RAM, options(att_syntax));
+            asm!("ljmp $0x08, ${}", const NEXT_STAGE_RAM, options(att_syntax));
         }
     }
 

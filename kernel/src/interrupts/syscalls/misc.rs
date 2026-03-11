@@ -5,6 +5,7 @@ pub fn handle_debug_print(context: &mut CPUState) {
     let ptr = context.rdi;
     let len = context.rsi as usize;
 
+    if !super::validate_user_buf(context, ptr, len as u64) { return; }
     let s = unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
     let str_val = String::from_utf8_lossy(s);
 
@@ -44,6 +45,7 @@ pub fn handle_get_vma_dump(context: &mut CPUState) {
         context.rax = 0;
         return;
     }
+    if !super::validate_user_buf(context, ptr as u64, len as u64) { return; }
     let buf = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
     let written = crate::memory::vma::GLOBAL_VMA.lock().dump_to_buffer(buf);
     context.rax = written as u64;
