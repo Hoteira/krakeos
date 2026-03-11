@@ -6,14 +6,32 @@ use crate::window_manager::input::CLICKED_WINDOW_ID;
 #[derive(Debug, Clone)]
 pub struct Composer {
     pub windows: [Window; 16],
+    pub wallpaper: Window,
 }
 
 pub static mut COMPOSER: Composer = Composer {
     windows: [NULL_WINDOW; 16],
+    wallpaper: NULL_WINDOW,
 };
 
 impl Composer {
     pub fn copy_window(&mut self, id: usize) {
+        if id == self.wallpaper.id && self.wallpaper.w_type != Items::Null {
+            unsafe {
+                let ds = &mut *(&raw mut DISPLAY_SERVER);
+                ds.copy_to_db(
+                    self.wallpaper.width as u32,
+                    self.wallpaper.height as u32,
+                    self.wallpaper.get_active_buffer(),
+                    self.wallpaper.x as i32,
+                    self.wallpaper.y as i32,
+                    None,
+                    self.wallpaper.treat_as_transparent,
+                )
+            }
+            return;
+        }
+
         for i in 0..self.windows.len() {
             if id == self.windows[i].id {
                 let border_color = if self.windows[i].w_type == Items::Window {
@@ -48,6 +66,26 @@ impl Composer {
     }
 
     pub fn copy_window_clipped(&mut self, id: usize, clip_w: u32, clip_h: u32) {
+        if id == self.wallpaper.id && self.wallpaper.w_type != Items::Null {
+            unsafe {
+                let ds = &mut *(&raw mut DISPLAY_SERVER);
+                ds.copy_to_db_clipped(
+                    self.wallpaper.width as u32,
+                    self.wallpaper.height as u32,
+                    self.wallpaper.get_active_buffer(),
+                    self.wallpaper.x as i32,
+                    self.wallpaper.y as i32,
+                    self.wallpaper.x as i32,
+                    self.wallpaper.y as i32,
+                    clip_w,
+                    clip_h,
+                    None,
+                    self.wallpaper.treat_as_transparent,
+                )
+            }
+            return;
+        }
+
         for i in 0..self.windows.len() {
             if id == self.windows[i].id {
                 let border_color = if self.windows[i].w_type == Items::Window {
@@ -86,6 +124,22 @@ impl Composer {
     }
 
     pub fn copy_window_fb(&mut self, id: usize) {
+        if id == self.wallpaper.id && self.wallpaper.w_type != Items::Null {
+            unsafe {
+                let ds = &mut *(&raw mut DISPLAY_SERVER);
+                ds.copy_to_fb_a(
+                    self.wallpaper.width as u32,
+                    self.wallpaper.height as u32,
+                    self.wallpaper.get_active_buffer(),
+                    self.wallpaper.x as i32,
+                    self.wallpaper.y as i32,
+                    None,
+                    self.wallpaper.treat_as_transparent,
+                )
+            }
+            return;
+        }
+
         for i in 0..self.windows.len() {
             if id == self.windows[i].id {
                 let border_color = if self.windows[i].w_type == Items::Window {
@@ -139,6 +193,10 @@ impl Composer {
     }
 
     pub fn find_window_id(&mut self, id: usize) -> Option<&mut Window> {
+        if self.wallpaper.id == id && self.wallpaper.w_type != Items::Null {
+            return Some(&mut self.wallpaper);
+        }
+
         for i in 0..self.windows.len() {
             if self.windows[i].id == id {
                 let h = self.windows[i].w_type;
@@ -223,7 +281,17 @@ impl Composer {
             w.treat_as_transparent = false;
             w.can_move = false;
             w.can_resize = false;
-        } else if wtype == Items::Bar || wtype == Items::Popup {
+            w.id = self.check_id(w.buffer as u64);
+            self.wallpaper = w;
+            
+            let (sw, sh) = unsafe {
+                ((*(&raw mut DISPLAY_SERVER)).width as u32, (*(&raw mut DISPLAY_SERVER)).height as u32)
+            };
+            self.update_window_area_rect(0, 0, sw, sh);
+            return w.id;
+        }
+
+        if wtype == Items::Bar || wtype == Items::Popup {
             w.z = 0;
             w.can_move = false;
             w.can_resize = false;
@@ -294,6 +362,18 @@ impl Composer {
     }
 
     pub fn resize_window(&mut self, w: Window) {
+        if w.id == self.wallpaper.id && self.wallpaper.w_type != Items::Null {
+            self.wallpaper.buffer = w.buffer;
+            self.wallpaper.back_buffer = w.back_buffer;
+            self.wallpaper.flipped = w.flipped;
+            self.wallpaper.width = w.width;
+            self.wallpaper.height = w.height;
+            self.wallpaper.transparent = w.transparent;
+            self.wallpaper.treat_as_transparent = w.treat_as_transparent;
+            self.update_window_area_rect(0, 0, w.width as u32, w.height as u32);
+            return;
+        }
+
         for i in 0..self.windows.len() {
             if w.id == self.windows[i].id {
                 self.windows[i].buffer = w.buffer;
@@ -394,10 +474,23 @@ impl Composer {
                 let end_y = (dirty_y + dirty_h as i32).min(height);
 
                 if !occluded && end_x > start_x && end_y > start_y {
-                    for y in start_y..end_y {
-                        let row_offset = y as usize * pitch_u32;
-                        let row_ptr = db_ptr.add(row_offset + start_x as usize);
-                        core::ptr::write_bytes(row_ptr as *mut u8, 0, (end_x - start_x) as usize * 4);
+                    if self.wallpaper.w_type != Items::Null && self.wallpaper.id != ignore_id {
+                        display_server.copy_to_db_clipped(
+                            self.wallpaper.width as u32,
+                            self.wallpaper.height as u32,
+                            self.wallpaper.get_active_buffer(),
+                            self.wallpaper.x as i32,
+                            self.wallpaper.y as i32,
+                            dirty_x, dirty_y, dirty_w, dirty_h,
+                            None,
+                            self.wallpaper.treat_as_transparent,
+                        );
+                    } else {
+                        for y in start_y..end_y {
+                            let row_offset = y as usize * pitch_u32;
+                            let row_ptr = db_ptr.add(row_offset + start_x as usize);
+                            core::ptr::write_bytes(row_ptr as *mut u8, 0, (end_x - start_x) as usize * 4);
+                        }
                     }
                 }
             }
@@ -438,11 +531,23 @@ impl Composer {
         unsafe {
             let display_server = &mut *(&raw mut DISPLAY_SERVER);
             if display_server.double_buffer != 0 {
-                core::ptr::write_bytes(
-                    display_server.double_buffer as *mut u8,
-                    0,
-                    (display_server.pitch * display_server.height) as usize,
-                );
+                if self.wallpaper.w_type != Items::Null && self.wallpaper.id != except_id {
+                    display_server.copy_to_db(
+                        self.wallpaper.width as u32,
+                        self.wallpaper.height as u32,
+                        self.wallpaper.get_active_buffer(),
+                        self.wallpaper.x as i32,
+                        self.wallpaper.y as i32,
+                        None,
+                        self.wallpaper.treat_as_transparent,
+                    );
+                } else {
+                    core::ptr::write_bytes(
+                        display_server.double_buffer as *mut u8,
+                        0,
+                        (display_server.pitch * display_server.height) as usize,
+                    );
+                }
             }
 
             for i in (0..self.windows.len()).rev() {
@@ -488,7 +593,13 @@ impl Composer {
             }
             match found {
                 Some(rect) => rect,
-                None => return,
+                None => {
+                    if self.wallpaper.id == id && self.wallpaper.w_type != Items::Null {
+                        (self.wallpaper.x as i32, self.wallpaper.y as i32, self.wallpaper.width as u32, self.wallpaper.height as u32)
+                    } else {
+                        return;
+                    }
+                }
             }
         };
 
@@ -524,10 +635,23 @@ impl Composer {
                 let end_y = (dirty_y + dirty_h as i32).min(height);
 
                 if !occluded && end_x > start_x && end_y > start_y {
-                    for y in start_y..end_y {
-                        let row_offset = y as usize * pitch_u32;
-                        let row_ptr = db_ptr.add(row_offset + start_x as usize);
-                        core::ptr::write_bytes(row_ptr as *mut u8, 0, (end_x - start_x) as usize * 4);
+                    if self.wallpaper.w_type != Items::Null {
+                        display_server.copy_to_db_clipped(
+                            self.wallpaper.width as u32,
+                            self.wallpaper.height as u32,
+                            self.wallpaper.get_active_buffer(),
+                            self.wallpaper.x as i32,
+                            self.wallpaper.y as i32,
+                            dirty_x, dirty_y, dirty_w, dirty_h,
+                            None,
+                            self.wallpaper.treat_as_transparent,
+                        );
+                    } else {
+                        for y in start_y..end_y {
+                            let row_offset = y as usize * pitch_u32;
+                            let row_ptr = db_ptr.add(row_offset + start_x as usize);
+                            core::ptr::write_bytes(row_ptr as *mut u8, 0, (end_x - start_x) as usize * 4);
+                        }
                     }
                 }
             }
@@ -566,6 +690,10 @@ impl Composer {
     }
 
     pub fn remove_window(&mut self, wid: usize) {
+        if self.wallpaper.id == wid {
+            self.wallpaper.w_type = Items::Null;
+        }
+
         for i in 0..self.windows.len() {
             if self.windows[i].id == wid {
                 self.windows[i].w_type = Items::Null;
@@ -578,11 +706,23 @@ impl Composer {
         unsafe {
             let display_server = &mut *(&raw mut DISPLAY_SERVER);
             if display_server.double_buffer != 0 {
-                core::ptr::write_bytes(
-                    display_server.double_buffer as *mut u8,
-                    0,
-                    (display_server.pitch * display_server.height) as usize,
-                );
+                if self.wallpaper.w_type != Items::Null {
+                    display_server.copy_to_db(
+                        self.wallpaper.width as u32,
+                        self.wallpaper.height as u32,
+                        self.wallpaper.get_active_buffer(),
+                        self.wallpaper.x as i32,
+                        self.wallpaper.y as i32,
+                        None,
+                        self.wallpaper.treat_as_transparent,
+                    );
+                } else {
+                    core::ptr::write_bytes(
+                        display_server.double_buffer as *mut u8,
+                        0,
+                        (display_server.pitch * display_server.height) as usize,
+                    );
+                }
             }
 
             for j in (0..self.windows.len()).rev() {
@@ -620,6 +760,11 @@ impl Composer {
 
     pub fn remove_windows_by_pid(&mut self, pid: u64) {
         let mut removed = false;
+        if self.wallpaper.pid == pid && self.wallpaper.w_type != Items::Null {
+            self.wallpaper.w_type = Items::Null;
+            removed = true;
+        }
+
         for i in 0..self.windows.len() {
             if self.windows[i].pid == pid && self.windows[i].w_type != Items::Null {
                 self.windows[i].w_type = Items::Null;
@@ -633,11 +778,23 @@ impl Composer {
             unsafe {
                 let display_server = &mut *(&raw mut DISPLAY_SERVER);
                 if display_server.double_buffer != 0 {
-                    core::ptr::write_bytes(
-                        display_server.double_buffer as *mut u8,
-                        0,
-                        (display_server.pitch * display_server.height) as usize,
-                    );
+                    if self.wallpaper.w_type != Items::Null {
+                        display_server.copy_to_db(
+                            self.wallpaper.width as u32,
+                            self.wallpaper.height as u32,
+                            self.wallpaper.get_active_buffer(),
+                            self.wallpaper.x as i32,
+                            self.wallpaper.y as i32,
+                            None,
+                            self.wallpaper.treat_as_transparent,
+                        );
+                    } else {
+                        core::ptr::write_bytes(
+                            display_server.double_buffer as *mut u8,
+                            0,
+                            (display_server.pitch * display_server.height) as usize,
+                        );
+                    }
                 }
 
                 for j in (0..self.windows.len()).rev() {

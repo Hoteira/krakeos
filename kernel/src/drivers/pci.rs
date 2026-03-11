@@ -1,6 +1,19 @@
 use crate::drivers::port::{inl, outl};
 use alloc::vec::Vec;
 
+static mut PCI_BAR_HEAD: u32 = 0xC0000000;
+
+pub fn allocate_bar_address(size: u32) -> u32 {
+    unsafe {
+        let addr = PCI_BAR_HEAD;
+        // Align to 16MB or size, whichever is larger, to stay compatible with PCI rules
+        let align = size.max(0x1000000);
+        let aligned_addr = (addr + align - 1) & !(align - 1);
+        PCI_BAR_HEAD = aligned_addr + align;
+        aligned_addr
+    }
+}
+
 const PCI_CONFIG_ADDRESS: u32 = 0xCF8;
 const PCI_CONFIG_DATA: u32 = 0xCFC;
 

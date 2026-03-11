@@ -189,10 +189,15 @@ impl Widget {
     }
 
     pub fn raw_image(id: WidgetId, data: &[u8], width: usize, height: usize) -> Self {
-        let mut rasterized_buffer = Vec::with_capacity(width * height);
+        let mut rasterized_buffer = alloc::vec![0; width * height];
         if data.len() >= width * height * 4 {
-            let u32_slice = unsafe { core::slice::from_raw_parts(data.as_ptr() as *const u32, width * height) };
-            rasterized_buffer.extend_from_slice(u32_slice);
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    data.as_ptr(),
+                    rasterized_buffer.as_mut_ptr() as *mut u8,
+                    width * height * 4
+                );
+            }
         }
         Widget::Image {
             geometry: WidgetGeometry::new(id),

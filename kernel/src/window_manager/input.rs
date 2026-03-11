@@ -52,7 +52,46 @@ pub fn handle_mouse_update() {
     }
 }
 
+pub fn handle_vmmouse(buttons: u32, x: u32, y: u32, z: u32) {
+    unsafe {
+        (*(&raw mut MOUSE)).vmmouse(buttons, x, y, z);
+    }
+}
+
 impl Mouse {
+    pub fn vmmouse(&mut self, buttons: u32, vmm_x: u32, vmm_y: u32, z: u32) {
+        let old_x = self.x;
+        let old_y = self.y;
+
+        let screen_w = unsafe { (*(&raw mut DISPLAY_SERVER)).width } as u32;
+        let screen_h = unsafe { (*(&raw mut DISPLAY_SERVER)).height } as u32;
+
+        if screen_w > 0 && screen_h > 0 {
+            // Cap at 0xFFFF to avoid panic, though VMMouse should guarantee this.
+            let x_clamped = vmm_x.min(0xFFFF) as u64;
+            let y_clamped = vmm_y.min(0xFFFF) as u64;
+            self.x = ((x_clamped * screen_w as u64) / 0xFFFF) as u16;
+            self.y = ((y_clamped * screen_h as u64) / 0xFFFF) as u16;
+            
+            // Limit to screen edges
+            if self.x >= screen_w as u16 { self.x = screen_w as u16 - 1; }
+            if self.y >= screen_h as u16 { self.y = screen_h as u16 - 1; }
+        }
+
+        let prev_left = self.left;
+        let prev_right = self.right;
+        let prev_center = self.center;
+
+        // VMMouse button mapping
+        self.left = (buttons & 0x20) != 0;
+        self.right = (buttons & 0x10) != 0;
+        self.center = (buttons & 0x08) != 0;
+
+        let scroll_val = z as i8;
+
+        self.process_input(old_x, old_y, prev_left, prev_right, prev_center, scroll_val);
+    }
+
     pub fn cursor(&mut self, data: [u8; 4]) {
         let old_x = self.x;
         let old_y = self.y;
@@ -74,8 +113,6 @@ impl Mouse {
         }
 
         // Accumulate raw movement and apply sensitivity divisor.
-        // This prevents small movements from being lost to integer truncation
-        // while still capping the large per-packet deltas from QEMU SDL.
         self.dx_accum += x_rel as i32;
         self.dy_accum += -(y_rel as i32);
         let scaled_dx = self.dx_accum / MOUSE_SENSITIVITY_DIV;
@@ -94,18 +131,22 @@ impl Mouse {
         self.right = (data[0] & 0b00000010) != 0;
         self.center = (data[0] & 0b00000100) != 0;
 
-        // Scroll value is a 4-bit signed value in Explorer IntelliMouse mode (ID 4)
-        // Bit 3 is the sign bit.
         let mut scroll_val = (data[3] & 0x0F) as i8;
         if (scroll_val & 0x08) != 0 {
-            scroll_val |= !0x0F; // Sign extend to 8-bit
+            scroll_val |= !0x0F;
         }
+        
+        unsafe { LAST_INPUT = data[0]; }
 
+        self.process_input(old_x, old_y, prev_left, prev_right, prev_center, scroll_val);
+    }
+
+    fn process_input(&mut self, old_x: u16, old_y: u16, prev_left: bool, prev_right: bool, prev_center: bool, scroll_val: i8) {
         let moved = old_x != self.x || old_y != self.y;
         let btns_changed = prev_left != self.left || prev_right != self.right || prev_center != self.center;
 
         if !moved && !btns_changed && scroll_val == 0 {
-            return; // Ignore empty packets to prevent constant flickering
+            return;
         }
 
         unsafe {
@@ -114,7 +155,6 @@ impl Mouse {
             }
         }
 
-        // Check for resize termination via Left Click
         let resizing_id = RESIZING_WINDOW.load(Ordering::Relaxed);
         if resizing_id != 0 && self.left && !prev_left {
             let final_w = unsafe { W_WIDTH };
@@ -141,16 +181,7 @@ impl Mouse {
                 W_WIDTH = 0;
                 W_HEIGHT = 0;
             }
-            crate::debugln!("Resize Mode: STOPPED (Mouse Click)");
             return;
-        }
-
-        unsafe {
-            LAST_INPUT = data[0];
-        }
-
-        if scroll_val != 0 {
-            // debugln!("Mouse Scroll: {}", scroll_val);
         }
 
         if self.left && !prev_left {
@@ -162,13 +193,11 @@ impl Mouse {
                     let old_id = CLICKED_WINDOW_ID;
                     let new_id = ws.id;
 
-
                     if old_id != new_id {
                         CLICKED_WINDOW_ID = new_id;
                         (*(&raw mut COMPOSER)).focus_window(new_id);
                     }
                 }
-
 
                 if ws.can_move && is_super {
                     unsafe {
@@ -178,7 +207,10 @@ impl Mouse {
                     unsafe { CLICK_STARTED_IN_TITLEBAR = false; }
                 }
             } else {
-                unsafe { CLICK_STARTED_IN_TITLEBAR = false; }
+                unsafe {
+                    CLICKED_WINDOW_ID = 0;
+                    CLICK_STARTED_IN_TITLEBAR = false;
+                }
             }
         } else if !self.left {
             unsafe { CLICK_STARTED_IN_TITLEBAR = false; }
@@ -254,11 +286,9 @@ impl Mouse {
             let cur_h: usize;
 
             unsafe {
-                // Calculate dimensions from window top-left to mouse tip
                 let new_w = (self.x as isize - w_x).max(min_w as isize);
                 let new_h = (self.y as isize - w_y).max(min_h as isize);
                 
-                // Limit to screen size relative to window position
                 let max_w = ((*(&raw mut DISPLAY_SERVER)).width as isize).saturating_sub(w_x);
                 let max_h = ((*(&raw mut DISPLAY_SERVER)).height as isize).saturating_sub(w_y);
 
@@ -268,7 +298,6 @@ impl Mouse {
                 cur_h = W_HEIGHT;
             }
 
-            // Union of old and new area + mouse margin (32px)
             let dirty_w = old_w_val.max(cur_w) + 32;
             let dirty_h = old_h_val.max(cur_h) + 32;
 
@@ -276,28 +305,23 @@ impl Mouse {
                 let composer = &mut *(&raw mut COMPOSER);
                 let ds = &mut *(&raw mut DISPLAY_SERVER);
 
-                // 1. Recompose background AND static window into Double Buffer
                 composer.recompose_area(w_x as i32, w_y as i32, dirty_w as u32, dirty_h as u32);
 
-                // 2. Draw new white wireframe border into Double Buffer
                 (*(&raw mut MOUSE)).draw_resize_border(
                     w_x as u16,
                     w_y as u16,
                     cur_w as u16,
                     cur_h as u16,
-                    Color::rgb(255, 255, 255), // White border
-                    3 // Thickness
+                    Color::rgb(255, 255, 255),
+                    3
                 );
 
-                // 3. Flush Double Buffer to Front Buffer
                 ds.present_rect(w_x as i32, w_y as i32, dirty_w as u32, dirty_h as u32);
 
-                // 4. Draw Mouse directly to Front Buffer (on top of everything)
                 if !HARDWARE_CURSOR_ACTIVE {
                     ds.draw_mouse(self.x, self.y, false);
                 }
 
-                // 5. Final flush for mouse cursor (VirtIO)
                 if VIRTIO_ACTIVE {
                     let mx = self.x as u32;
                     let my = self.y as u32;
@@ -307,6 +331,7 @@ impl Mouse {
                     let fh = (32 as u32).min(sh.saturating_sub(my));
                     if fw > 0 && fh > 0 {
                         virtio::flush(mx, my, fw, fh, sw, ds.active_resource_id);
+                        ds.sync_vbe_rect(mx, my, fw, fh);
                     }
                 }
             }
@@ -316,7 +341,6 @@ impl Mouse {
             let display_server = unsafe { &mut *(&raw mut DISPLAY_SERVER) };
             let wid = DRAGGING_WINDOW.load(Ordering::Relaxed) as usize;
 
-            // Collect all needed data from the window while we have a mutable borrow.
             let (old_win_x, old_win_y, width, height, buffer, treat_as_transparent, new_x, new_y) = {
                 let window_opt = composer.find_window_id(wid);
                 let w = match window_opt {
@@ -333,9 +357,6 @@ impl Mouse {
 
                 let mouse_dx = self.x as i32 - old_x as i32;
                 let mouse_dy = self.y as i32 - old_y as i32;
-
-                crate::debugln!("Drag delta: dx={} dy={} | mouse ({},{})→({},{}) | win ({},{})",
-                    mouse_dx, mouse_dy, old_x, old_y, self.x, self.y, old_win_x, old_win_y);
 
                 let target_win_x = old_win_x as i32 + mouse_dx;
                 let target_win_y = old_win_y as i32 + mouse_dy;
@@ -356,29 +377,23 @@ impl Mouse {
                 let new_x = clamped_win_x as isize;
                 let new_y = clamped_win_y as isize;
 
-                // Update position while we still hold the mutable borrow.
                 w.x = new_x;
                 w.y = new_y;
 
                 (old_win_x, old_win_y, width, height, buffer, treat_as_transparent, new_x, new_y)
             };
-            // The mutable borrow on `w` is released here.
 
             let screen_w = display_server.width as i32;
             let screen_h = display_server.height as i32;
 
-            // Erase old window position: recompose background (all windows except dragged)
-            // into the double buffer at the old rect, then copy to front buffer.
             composer.recompose_area_except(
                 old_win_x as i32, old_win_y as i32, width as u32, height as u32,
                 wid,
             );
             display_server.copy_to_fb(old_win_x as i32, old_win_y as i32, width as u32, height as u32);
 
-            // Draw window at new position directly to front buffer.
             display_server.copy_to_fb_a(width as u32, height as u32, buffer, new_x as i32, new_y as i32, Some(0xFFFFFFFF), treat_as_transparent);
 
-            // Re-draw bars/popups over new window position.
             for i in 0..composer.windows.len() {
                 let w = &composer.windows[i];
                 match w.w_type {
@@ -434,6 +449,7 @@ impl Mouse {
             unsafe {
                 if VIRTIO_ACTIVE && flush_w > 0 && flush_h > 0 {
                     virtio::flush(flush_x, flush_y, flush_w, flush_h, display_server.width as u32, display_server.active_resource_id);
+                    display_server.sync_vbe_rect(flush_x, flush_y, flush_w, flush_h);
                 }
             }
             return;
@@ -467,18 +483,11 @@ impl Mouse {
 
                 if !HARDWARE_CURSOR_ACTIVE && flush_w > 0 && flush_h > 0 {
                     virtio::flush(flush_x, flush_y, flush_w, flush_h, screen_w, display_server.active_resource_id);
+                    display_server.sync_vbe_rect(flush_x, flush_y, flush_w, flush_h);
                 }
-            }
-
-            if self.left {
-                crate::debugln!("Input: Click at {},{}", self.x, self.y);
             }
 
             if let Some(w) = (*(&raw mut COMPOSER)).find_window(self.x as usize, self.y as usize) {
-                if self.left {
-                    crate::debugln!("Input: Found window ID {} at {},{}", w.id, w.x, w.y);
-                }
-
                 if w.event_handler != 0 {
                     let local_x = (self.x as isize - w.x).max(0) as usize;
                     let local_y = (self.y as isize - w.y).max(0) as usize;
@@ -510,10 +519,6 @@ impl Mouse {
                             if !GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&*tm, w.pid, event) {
                                 GLOBAL_EVENT_QUEUE.int_lock().add_event(event);
                             }
-                        }
-
-                        if self.left {
-                            crate::debugln!("Input: Dispatching Mouse Event to {}", w.id);
                         }
                     }
                 }

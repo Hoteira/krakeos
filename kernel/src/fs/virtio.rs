@@ -148,39 +148,35 @@ pub fn init() {
     let mut notify_base: u64 = 0;
     let mut notify_multiplier: u32 = 0;
 
-    let mut next_bar_addr = 0xF1000000;
-
     for cap in caps {
         if cap.id != 0x09 { continue; }
 
         let cfg_type = virtio.read_u8(cap.offset as u32 + 3);
         let bar = virtio.read_u8(cap.offset as u32 + 4);
         let offset = virtio.read_u32(cap.offset as u32 + 8);
+        let length = virtio.read_u32(cap.offset as u32 + 12);
 
         let mut bar_base_opt = virtio.get_bar(bar);
 
 
         if bar_base_opt.is_none() || bar_base_opt.unwrap() < 0xC0000000 {
-            let raw_bar = virtio.read_bar_raw(bar);
-            if (raw_bar & 0xFFFFFFF0) < 0xC0000000 {
-                debugln!("VirtIO Block: BAR {} is unmapped or low ({:#x}). Remapping to {:#x}", bar, raw_bar, next_bar_addr);
-                virtio.write_bar(bar, next_bar_addr);
-                next_bar_addr += 0x100000;
-                bar_base_opt = virtio.get_bar(bar);
-            }
+            let remapped_addr = crate::drivers::pci::allocate_bar_address(0x1000000); // 16MB
+            virtio.write_bar(bar, remapped_addr);
+            debugln!("VirtIO Block: Remapped BAR {} to {:#x}", bar, remapped_addr);
+            bar_base_opt = virtio.get_bar(bar);
         }
 
         if cfg_type == VIRTIO_CAP_COMMON {
             if let Some(bar_base) = bar_base_opt {
                 let addr = (bar_base as u64) + (offset as u64);
-                let virt_addr = crate::memory::vmm::map_mmio(addr, 4096);
+                let virt_addr = crate::memory::vmm::map_mmio(addr, length as usize);
                 common_cfg_ptr = virt_addr as *mut u8;
                 debugln!("VirtIO Block: Common Config mapped at {:#x} -> Phys {:#x}", virt_addr, addr);
             }
         } else if cfg_type == VIRTIO_CAP_NOTIFY {
             if let Some(bar_base) = bar_base_opt {
                 let addr = (bar_base as u64) + (offset as u64);
-                notify_base = crate::memory::vmm::map_mmio(addr, 4096);
+                notify_base = crate::memory::vmm::map_mmio(addr, length as usize);
                 notify_multiplier = virtio.read_capability_data(cap.offset as u8, 16);
                 debugln!("VirtIO Block: Notify mapped at {:#x} -> Phys {:#x}", notify_base, addr);
             }

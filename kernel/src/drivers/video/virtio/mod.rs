@@ -29,12 +29,16 @@ pub static mut TRANSFER_REQUESTS: [VirtioGpuTransferToHost2d; 128] = [VirtioGpuT
     padding: 0,
 }; 128];
 
+pub static mut TRANSFER_RESPONSES: [VirtioGpuCtrlHeader; 128] = [VirtioGpuCtrlHeader { type_: 0, flags: 0, fence_id: 0, ctx_id: 0, ring_idx: 0, padding: [0; 3] }; 128];
+
 pub static mut FLUSH_REQUESTS: [VirtioGpuResourceFlush; 128] = [VirtioGpuResourceFlush {
     hdr: VirtioGpuCtrlHeader { type_: 0, flags: 0, fence_id: 0, ctx_id: 0, ring_idx: 0, padding: [0; 3] },
     r: VirtioGpuRect { x: 0, y: 0, width: 0, height: 0 },
     resource_id: 0,
     padding: 0,
 }; 128];
+
+pub static mut FLUSH_RESPONSES: [VirtioGpuCtrlHeader; 128] = [VirtioGpuCtrlHeader { type_: 0, flags: 0, fence_id: 0, ctx_id: 0, ring_idx: 0, padding: [0; 3] }; 128];
 
 pub fn init() {
     let virtio_opt = crate::drivers::pci::find_device(0x1AF4, 0x1050);
@@ -57,7 +61,8 @@ pub fn init() {
     unsafe {
         if let Some(frame) = pmm::allocate_frame(0) {
             GPU_CMD_PHYS = frame;
-            GPU_CMD_VIRT = frame + crate::memory::paging::HHDM_OFFSET;
+            // Map command buffer as uncacheable MMIO
+            GPU_CMD_VIRT = crate::memory::vmm::map_mmio(frame, 4096);
             core::ptr::write_bytes(GPU_CMD_VIRT as *mut u8, 0, 4096);
         } else {
             panic!("VirtIO GPU: Failed to allocate command buffer");
@@ -71,43 +76,36 @@ pub fn init() {
     let mut notify_base: u64 = 0;
     let mut notify_multiplier: u32 = 0;
 
-    let mut next_bar_addr = 0xF0000000;
-
     for cap in virtio_caps {
         if cap.cfg_type == VIRTIO_CAP_COMMON {
             let mut bar_base_opt = virtio.get_bar(cap.bar);
             if bar_base_opt.is_none() || bar_base_opt.unwrap() < 0xC0000000 {
-                let raw_bar = virtio.read_bar_raw(cap.bar);
-                if (raw_bar & 0xFFFFFFF0) < 0xC0000000 {
-                    virtio.write_bar(cap.bar, next_bar_addr);
-                    debugln!("VirtIO GPU: Remapped BAR {} from {:#x} to {:#x}", cap.bar, raw_bar, next_bar_addr);
-                    next_bar_addr += 0x100000;
-                    bar_base_opt = virtio.get_bar(cap.bar);
-                }
+                let remapped_addr = crate::drivers::pci::allocate_bar_address(0x1000000); // 16MB for caps
+                virtio.write_bar(cap.bar, remapped_addr);
+                debugln!("VirtIO GPU: Remapped BAR {} to {:#x}", cap.bar, remapped_addr);
+                bar_base_opt = virtio.get_bar(cap.bar);
             }
 
             if let Some(bar_base) = bar_base_opt {
                 let addr = (bar_base as u64) + (cap.offset as u64);
-                let virt_addr = vmm::map_mmio(addr, 4096);
+                let virt_addr = vmm::map_mmio(addr, cap.length as usize);
                 common_cfg_ptr = virt_addr as *mut u8;
                 unsafe { COMMON_CFG_ADDR = virt_addr; }
             }
         } else if cap.cfg_type == VIRTIO_CAP_NOTIFY {
             let mut bar_base_opt = virtio.get_bar(cap.bar);
             if bar_base_opt.is_none() || bar_base_opt.unwrap() < 0xC0000000 {
-                let raw_bar = virtio.read_bar_raw(cap.bar);
-                if (raw_bar & 0xFFFFFFF0) < 0xC0000000 {
-                    virtio.write_bar(cap.bar, next_bar_addr);
-                    debugln!("VirtIO GPU: Remapped BAR {} from {:#x} to {:#x}", cap.bar, raw_bar, next_bar_addr);
-                    next_bar_addr += 0x100000;
-                    bar_base_opt = virtio.get_bar(cap.bar);
-                }
+                // Determine size based on multiplier if possible, otherwise assume large enough for safety
+                let remapped_addr = crate::drivers::pci::allocate_bar_address(0x10000000); // 256MB for notify
+                virtio.write_bar(cap.bar, remapped_addr);
+                debugln!("VirtIO GPU: Remapped BAR {} to {:#x} (Notify Area)", cap.bar, remapped_addr);
+                bar_base_opt = virtio.get_bar(cap.bar);
             }
 
             if let Some(bar_base) = bar_base_opt {
                 let addr = (bar_base as u64) + (cap.offset as u64);
-                notify_base = vmm::map_mmio(addr, 4096);
-                notify_multiplier = virtio.read_capability_data(cap.offset as u8, 16);
+                notify_base = vmm::map_mmio(addr, cap.length as usize);
+                notify_multiplier = virtio.read_capability_data(cap.cap_offset, 16);
                 if notify_multiplier == 0 { notify_multiplier = 4; }
             }
         }
@@ -168,7 +166,7 @@ pub fn parse_virtio_caps(pci_device: &PciDevice, caps: &[PciCapability]) -> Vec<
         let bar = pci_device.read_u8(cap.offset as u32 + 4);
         let offset = pci_device.read_u32(cap.offset as u32 + 8);
         let length = pci_device.read_u32(cap.offset as u32 + 12);
-        virtio_caps.push(VirtioPciCap { cfg_type, bar, offset, length });
+        virtio_caps.push(VirtioPciCap { cfg_type, bar, offset, length, cap_offset: cap.offset });
     }
     virtio_caps
 }
@@ -246,33 +244,42 @@ pub fn start_gpu(width: u32, height: u32, phys_buf1: u64, phys_buf2: u64) {
                     padding: [0; 3],
                 },
                 resource_id: id,
-                format: 1,
+                format: 1, // B8G8R8A8_UNORM
                 width,
                 height,
             });
 
+            crate::debugln!("VirtIO GPU: Creating resource {} ({}x{})", id, width, height);
             send_command_queue(0, &[GPU_CMD_PHYS], &[core::mem::size_of::<VirtioGpuResourceCreate2d>() as u32],
                                &[GPU_CMD_PHYS + 1024], &[24], true);
 
-            let req_attach_ptr = GPU_CMD_VIRT as *mut AttachRequest;
-            core::ptr::write(req_attach_ptr, AttachRequest {
-                hdr: VirtioGpuResourceAttachBacking {
-                    hdr: VirtioGpuCtrlHeader {
-                        type_: VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING,
-                        flags: 0,
-                        fence_id: 0,
-                        ctx_id: 0,
-                        ring_idx: 0,
-                        padding: [0; 3],
-                    },
-                    resource_id: id,
-                    nr_entries: 1,
+            // Use TWO descriptors for ATTACH_BACKING: one for header, one for entries
+            let req_attach_hdr_ptr = GPU_CMD_VIRT as *mut VirtioGpuResourceAttachBacking;
+            core::ptr::write(req_attach_hdr_ptr, VirtioGpuResourceAttachBacking {
+                hdr: VirtioGpuCtrlHeader {
+                    type_: VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING,
+                    flags: 0,
+                    fence_id: 0,
+                    ctx_id: 0,
+                    ring_idx: 0,
+                    padding: [0; 3],
                 },
-                entry: VirtioGpuMemEntry { addr: phys, length: width * height * 4, padding: 0 },
+                resource_id: id,
+                nr_entries: 1,
             });
 
-            send_command_queue(0, &[GPU_CMD_PHYS], &[core::mem::size_of::<AttachRequest>() as u32],
-                               &[GPU_CMD_PHYS + 1024], &[24], true);
+            let entry_ptr = (GPU_CMD_VIRT + 512) as *mut VirtioGpuMemEntry;
+            core::ptr::write(entry_ptr, VirtioGpuMemEntry {
+                addr: phys,
+                length: width * height * 4,
+                padding: 0,
+            });
+
+            crate::debugln!("VirtIO GPU: Attaching backing memory to resource {} at {:#x}", id, phys);
+            send_command_queue(0, 
+                &[GPU_CMD_PHYS, GPU_CMD_PHYS + 512], 
+                &[core::mem::size_of::<VirtioGpuResourceAttachBacking>() as u32, core::mem::size_of::<VirtioGpuMemEntry>() as u32],
+                &[GPU_CMD_PHYS + 1024], &[24], true);
         };
 
         create_resource(1, phys_buf1);
@@ -293,6 +300,7 @@ pub fn start_gpu(width: u32, height: u32, phys_buf1: u64, phys_buf2: u64) {
             resource_id: 1,
         });
 
+        crate::debugln!("VirtIO GPU: Setting scanout to resource 1");
         send_command_queue(0, &[GPU_CMD_PHYS], &[core::mem::size_of::<VirtioGpuSetScanout>() as u32],
                            &[GPU_CMD_PHYS + 1024], &[24], true);
     }
@@ -312,7 +320,8 @@ pub fn transfer_and_flush(resource_id: u32, width: u32, height: u32) {
             padding: 0,
         };
         let req_transfer_phys = virt_to_phys(req_transfer as *const _ as u64);
-        send_command_queue(0, &[req_transfer_phys], &[core::mem::size_of::<VirtioGpuTransferToHost2d>() as u32], &[], &[], false);
+        let resp_transfer_phys = virt_to_phys(&mut TRANSFER_RESPONSES[idx] as *mut _ as u64);
+        send_command_queue(0, &[req_transfer_phys], &[core::mem::size_of::<VirtioGpuTransferToHost2d>() as u32], &[resp_transfer_phys], &[24], true);
 
         let req_flush = &mut FLUSH_REQUESTS[idx];
         *req_flush = VirtioGpuResourceFlush {
@@ -322,13 +331,14 @@ pub fn transfer_and_flush(resource_id: u32, width: u32, height: u32) {
             padding: 0,
         };
         let req_flush_phys = virt_to_phys(req_flush as *const _ as u64);
-        send_command_queue(0, &[req_flush_phys], &[core::mem::size_of::<VirtioGpuResourceFlush>() as u32], &[], &[], false);
+        let resp_flush_phys = virt_to_phys(&mut FLUSH_RESPONSES[idx] as *mut _ as u64);
+        send_command_queue(0, &[req_flush_phys], &[core::mem::size_of::<VirtioGpuResourceFlush>() as u32], &[resp_flush_phys], &[24], true);
     }
 }
 
-pub fn flush(x: u32, y: u32, width: u32, height: u32, screen_width: u32, resource_id: u32) {
-    let offset = (y as u64 * screen_width as u64 + x as u64) * 4;
+pub fn flush(x: u32, y: u32, width: u32, height: u32, _screen_width: u32, resource_id: u32) {
     unsafe {
+        let offset = 0;
         let idx = REQ_IDX % 128;
         REQ_IDX += 1;
 
@@ -341,7 +351,8 @@ pub fn flush(x: u32, y: u32, width: u32, height: u32, screen_width: u32, resourc
             padding: 0,
         };
         let req_transfer_phys = virt_to_phys(req_transfer as *const _ as u64);
-        send_command_queue(0, &[req_transfer_phys], &[core::mem::size_of::<VirtioGpuTransferToHost2d>() as u32], &[], &[], false);
+        let resp_transfer_phys = virt_to_phys(&mut TRANSFER_RESPONSES[idx] as *mut _ as u64);
+        send_command_queue(0, &[req_transfer_phys], &[core::mem::size_of::<VirtioGpuTransferToHost2d>() as u32], &[resp_transfer_phys], &[24], true);
 
         let req_flush = &mut FLUSH_REQUESTS[idx];
         *req_flush = VirtioGpuResourceFlush {
@@ -351,7 +362,8 @@ pub fn flush(x: u32, y: u32, width: u32, height: u32, screen_width: u32, resourc
             padding: 0,
         };
         let req_flush_phys = virt_to_phys(req_flush as *const _ as u64);
-        send_command_queue(0, &[req_flush_phys], &[core::mem::size_of::<VirtioGpuResourceFlush>() as u32], &[], &[], false);
+        let resp_flush_phys = virt_to_phys(&mut FLUSH_RESPONSES[idx] as *mut _ as u64);
+        send_command_queue(0, &[req_flush_phys], &[core::mem::size_of::<VirtioGpuResourceFlush>() as u32], &[resp_flush_phys], &[24], true);
     }
 }
 pub fn set_scanout(resource_id: u32, width: u32, height: u32) {
@@ -363,6 +375,6 @@ pub fn set_scanout(resource_id: u32, width: u32, height: u32) {
             scanout_id: 0,
             resource_id,
         });
-        send_command_queue(0, &[GPU_CMD_PHYS], &[core::mem::size_of::<VirtioGpuSetScanout>() as u32], &[GPU_CMD_PHYS + 1024], &[24], false);
+        send_command_queue(0, &[GPU_CMD_PHYS], &[core::mem::size_of::<VirtioGpuSetScanout>() as u32], &[GPU_CMD_PHYS + 1024], &[24], true);
     }
 }

@@ -19,6 +19,10 @@ pub struct DisplayServer {
     pub buffer2_virt: u64,
     pub active_resource_id: u32,
 
+    /// Non-zero when VBE provides a valid framebuffer that QEMU scans directly.
+    /// When set, we memcpy to this address instead of using VirtIO resource swapping.
+    pub vbe_framebuffer: u64,
+
     pub dirty_min_x: i32,
     pub dirty_min_y: i32,
     pub dirty_max_x: i32,
@@ -38,6 +42,7 @@ pub static mut DISPLAY_SERVER: DisplayServer = DisplayServer {
     buffer1_virt: 0,
     buffer2_virt: 0,
     active_resource_id: 1,
+    vbe_framebuffer: 0,
     dirty_min_x: i32::MAX,
     dirty_min_y: i32::MAX,
     dirty_max_x: i32::MIN,
@@ -80,20 +85,19 @@ impl DisplayServer {
             virtio::init();
             if virtio::queue::VIRT_QUEUES[0].is_some() {
                 if let Some((w, h)) = virtio::get_display_info() {
-                    self.width = w as u64;
-                    self.height = h as u64;
-
-                    if self.width == 1280 && vbe.width != 1280 && vbe.width != 0 {
-                        self.width = vbe.width as u64;
-                        self.height = vbe.height as u64;
-                        self.pitch = self.width * 4;
-                        debugln!("DisplayServer: VirtIO reported 1280 but VBE says {}, trusting VBE", self.width);
+                    debugln!("DisplayServer: VirtIO display info: {}x{}", w, h);
+                    if w > 0 && h > 0 {
+                        self.width = w as u64;
+                        self.height = h as u64;
                     }
-
-                    debugln!("DisplayServer: Detected resolution {}x{}", self.width, self.height);
-                } else {
-                    debugln!("DisplayServer: Could not detect resolution, defaulting to {}x{} from VBE", self.width, self.height);
                 }
+
+                if self.width == 0 || self.height == 0 {
+                    self.width = 1024;
+                    self.height = 576;
+                }
+
+                debugln!("DisplayServer: Using resolution {}x{}", self.width, self.height);
 
                 self.pitch = self.width * 4;
                 self.depth = 32;
@@ -104,11 +108,18 @@ impl DisplayServer {
                 let b1 = crate::memory::pmm::allocate_frames(pages, 0).expect("Failed to allocate buffer 1");
                 let b2 = crate::memory::pmm::allocate_frames(pages, 0).expect("Failed to allocate buffer 2");
 
-                let b1_virt = b1 + crate::memory::paging::HHDM_OFFSET;
-                let b2_virt = b2 + crate::memory::paging::HHDM_OFFSET;
+                // Map framebuffers as uncacheable MMIO so the GPU sees updates immediately
+                let b1_virt = crate::memory::vmm::map_mmio(b1, size_bytes);
+                let b2_virt = crate::memory::vmm::map_mmio(b2, size_bytes);
 
-                core::ptr::write_bytes(b1_virt as *mut u8, 0, size_bytes);
-                core::ptr::write_bytes(b2_virt as *mut u8, 0, size_bytes);
+                unsafe {
+                    let b1_ptr = b1_virt as *mut u32;
+                    let b2_ptr = b2_virt as *mut u32;
+                    for i in 0..(self.width * self.height) as usize {
+                        *b1_ptr.add(i) = 0xFF333333; // Dark gray
+                        *b2_ptr.add(i) = 0xFF444444; // Slightly lighter gray
+                    }
+                }
 
                 self.buffer1_phys = b1;
                 self.buffer2_phys = b2;
@@ -116,48 +127,37 @@ impl DisplayServer {
                 self.buffer2_virt = b2_virt;
 
                 self.framebuffer = b1_virt;
+                self.double_buffer = b2_virt;
                 self.active_resource_id = 1;
 
-                self.double_buffer = b2_virt;
-
                 virtio::start_gpu(self.width as u32, self.height as u32, self.buffer1_phys, self.buffer2_phys);
-
-
+                virtio::set_scanout(1, self.width as u32, self.height as u32);
                 virtio::transfer_and_flush(1, self.width as u32, self.height as u32);
-                virtio::transfer_and_flush(2, self.width as u32, self.height as u32);
-
 
                 use crate::drivers::periferics::mouse::{CURSOR_BUFFER, CURSOR_HEIGHT, CURSOR_WIDTH};
-                // VirtIO GPU requires 64x64 cursor resources
                 let cursor_size_bytes = 64 * 64 * 4;
                 let cursor_pages = (cursor_size_bytes + 4095) / 4096;
                 if let Some(cursor_phys) = crate::memory::pmm::allocate_frames(cursor_pages, 0) {
                     let cursor_ptr = (cursor_phys + crate::memory::paging::HHDM_OFFSET) as *mut u32;
                     unsafe {
                         core::ptr::write_bytes(cursor_ptr as *mut u8, 0, cursor_size_bytes);
-
                         for row in 0..CURSOR_HEIGHT {
                             for col in 0..CURSOR_WIDTH {
                                 *cursor_ptr.add(row * 64 + col) = CURSOR_BUFFER[row * CURSOR_WIDTH + col];
                             }
                         }
                     }
-
                     virtio::cursor::setup_cursor(cursor_phys, 64, 64, 0, 0);
                     HARDWARE_CURSOR_ACTIVE = true;
-                } else {
-                    println!("DisplayServer: Failed to allocate hardware cursor buffer!");
-                    debugln!("DisplayServer: Hardware cursor is NOT ACTIVE (buffer alloc failed).");
                 }
 
                 VIRTIO_ACTIVE = true;
-
                 println!("DisplayServer: VirtIO GPU active at {}x{}", self.width, self.height);
                 return;
-            } else {
-                debugln!("DisplayServer: Hardware cursor is NOT ACTIVE (VirtIO GPU not found or setup failed).");
             }
         }
+        // ... rest of init fallback ...
+
 
         println!("DisplayServer: Using VBE fallback");
         if vbe.width == 0 || vbe.height == 0 {
@@ -172,7 +172,8 @@ impl DisplayServer {
         let size_bytes = self.pitch as usize * self.height as usize;
 
         unsafe {
-            self.framebuffer = crate::memory::paging::phys_to_virt(crate::memory::address::PhysAddr::new(vbe.framebuffer as u64)).as_u64();
+            // Map VBE framebuffer as uncacheable MMIO so writes reach the device
+            self.framebuffer = crate::memory::vmm::map_mmio(vbe.framebuffer as u64, size_bytes);
         }
 
         let pages = (size_bytes + 4095) / 4096;
@@ -183,6 +184,21 @@ impl DisplayServer {
                 core::ptr::write_bytes(self.double_buffer as *mut u8, 0, size_bytes);
             } else {
                 panic!("[DisplayServer] Failed to allocate double buffer!");
+            }
+        }
+    }
+
+    pub fn force_full_sync(&mut self) {
+        unsafe {
+            let fb_len = (self.pitch * self.height) as usize;
+            let src = self.framebuffer as *const u8;
+            
+            if self.vbe_framebuffer != 0 {
+                core::ptr::copy_nonoverlapping(src, self.vbe_framebuffer as *mut u8, fb_len);
+            }
+
+            if VIRTIO_ACTIVE {
+                virtio::flush(0, 0, self.width as u32, self.height as u32, self.width as u32, self.active_resource_id);
             }
         }
     }
@@ -201,18 +217,22 @@ impl DisplayServer {
                     let sh = (self.dirty_max_y as u32).saturating_sub(sy).min(self.height as u32);
 
                     if sw > 0 && sh > 0 {
-                        // Transfer only the dirty rect of the BACK buffer to the host resource
+                        // 1. Transfer the dirty rect of the BACK buffer (where we just drew) to the host
+                        // Note: next_resource is backed by the buffer we just drew to (double_buffer)
                         virtio::flush(sx, sy, sw, sh, self.width as u32, next_resource);
                         
-                        // Switch scanout to the newly updated resource
+                        // 2. Switch scanout to the newly updated resource
                         virtio::set_scanout(next_resource, self.width as u32, self.height as u32);
 
-                        // Swap our internal pointers
+                        // 3. Flush the WHOLE screen to the display. This is often required by OpenGL backends.
+                        virtio::transfer_and_flush(next_resource, self.width as u32, self.height as u32);
+
+                        // 4. Swap our internal pointers
                         self.active_resource_id = next_resource;
                         self.framebuffer = next_buffer_virt;
                         self.double_buffer = current_buffer_virt;
 
-                        // Synchronize the dirty area back to the now-hidden buffer
+                        // 5. Synchronize the dirty area back to the now-hidden buffer
                         let pitch = self.pitch as usize;
                         for row in 0..sh {
                             let offset = (sy + row) as usize * pitch + (sx as usize * 4);
@@ -221,6 +241,18 @@ impl DisplayServer {
                                 (self.double_buffer as *mut u8).add(offset),
                                 (sw * 4) as usize,
                             );
+                        }
+
+                        // 6. Also copy to VBE framebuffer if present
+                        if self.vbe_framebuffer != 0 {
+                            for row in 0..sh {
+                                let offset = (sy + row) as usize * pitch + (sx as usize * 4);
+                                core::ptr::copy_nonoverlapping(
+                                    (self.framebuffer as *const u8).add(offset),
+                                    (self.vbe_framebuffer as *mut u8).add(offset),
+                                    (sw * 4) as usize,
+                                );
+                            }
                         }
                     }
                     self.reset_dirty();
@@ -1039,6 +1071,10 @@ impl DisplayServer {
                 let dst = self.framebuffer as *mut u8;
                 let fb_len = (self.pitch * self.height) as usize;
 
+                if self.vbe_framebuffer != 0 {
+                    core::ptr::copy_nonoverlapping(src, self.vbe_framebuffer as *mut u8, fb_len);
+                }
+
                 if sx == 0 && sw == self.width as u32 {
                     let offset = sy as usize * pitch;
                     let size = sh as usize * pitch;
@@ -1061,6 +1097,30 @@ impl DisplayServer {
                 // The correct flicker-free way is Resource Swapping (copy() method).
 
                 virtio::flush(sx, sy, sw, sh, self.width as u32, self.active_resource_id);
+
+                // Also copy to VBE framebuffer so QEMU's VGA scanout shows the content
+                if self.vbe_framebuffer != 0 {
+                    let bpp = 4;
+                    let pitch = self.pitch as usize;
+                    let src = self.framebuffer as *const u8;
+                    let vbe = self.vbe_framebuffer as *mut u8;
+
+                    if sx == 0 && sw == self.width as u32 {
+                        let offset = sy as usize * pitch;
+                        let size = sh as usize * pitch;
+                        if offset + size <= fb_len {
+                            core::ptr::copy_nonoverlapping(src.add(offset), vbe.add(offset), size);
+                        }
+                    } else {
+                        for row in 0..sh {
+                            let offset = (sy + row) as usize * pitch + sx as usize * bpp;
+                            let end_offset = offset + (sw * bpp as u32) as usize;
+                            if end_offset <= fb_len {
+                                core::ptr::copy_nonoverlapping(src.add(offset), vbe.add(offset), (sw * bpp as u32) as usize);
+                            }
+                        }
+                    }
+                }
             } else {
                 self.copy_to_fb(x, y, w, h);
 
@@ -1073,6 +1133,26 @@ impl DisplayServer {
                 let overlap_y = (my as u32) < (sy + sh) && (my as u32 + mh) > sy;
                 if overlap_x && overlap_y {
                     self.draw_mouse(mx, my, false);
+                }
+            }
+        }
+    }
+
+    /// Copy a rect from the active framebuffer to the VBE framebuffer.
+    /// Call this after any direct framebuffer writes + virtio::flush() so
+    /// QEMU's VGA scanout picks up the changes.
+    pub fn sync_vbe_rect(&self, x: u32, y: u32, w: u32, h: u32) {
+        if self.vbe_framebuffer == 0 || w == 0 || h == 0 { return; }
+        unsafe {
+            let pitch = self.pitch as usize;
+            let src = self.framebuffer as *const u8;
+            let dst = self.vbe_framebuffer as *mut u8;
+            let fb_len = pitch * self.height as usize;
+            for row in 0..h {
+                let offset = (y + row) as usize * pitch + x as usize * 4;
+                let size = w as usize * 4;
+                if offset + size <= fb_len {
+                    core::ptr::copy_nonoverlapping(src.add(offset), dst.add(offset), size);
                 }
             }
         }

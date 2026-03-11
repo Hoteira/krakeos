@@ -387,10 +387,16 @@ pub fn print(s: &str) {
     file_write(1, s.as_bytes());
 }
 
-pub fn debug_print(s: &str) {
-    unsafe {
-        crate::sys::syscall(999, s.as_ptr() as u64, s.len() as u64, 0);
+method_export!("krakeos:system/process@0.2.0", "debug-print",
+    pub fn debug_print_host(s_ptr: *const u8, s_len: u64) {
+        unsafe {
+            crate::sys::syscall(999, s_ptr as u64, s_len, 0);
+        }
     }
+);
+
+pub fn debug_print(s: &str) {
+    debug_print_host(s.as_ptr(), s.len() as u64);
 }
 
 pub fn sleep(ms: u64) {

@@ -355,7 +355,29 @@ pub static mut MOUSE_PACKET: [u8; 4] = [0; 4];
 pub static mut MOUSE_IDX: usize = 0;
 
 pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
-    use crate::drivers::periferics::mouse::{MOUSE_IDX, MOUSE_PACKET, MOUSE_PACKET_SIZE};
+    use crate::drivers::periferics::mouse::{VMMOUSE_ACTIVE, vmport_in, VMPORT_CMD_VMMOUSE_STATUS, VMPORT_CMD_VMMOUSE_DATA, MOUSE_IDX, MOUSE_PACKET, MOUSE_PACKET_SIZE};
+
+    unsafe {
+        if VMMOUSE_ACTIVE {
+            let (status, _, _, _, _, _) = vmport_in(VMPORT_CMD_VMMOUSE_STATUS, 0);
+            let count = status & 0xFFFF;
+            if count > 0 {
+                let num_packets = count / 4;
+                for _ in 0..num_packets {
+                    let (buttons, x, y, z, _, _) = vmport_in(VMPORT_CMD_VMMOUSE_DATA, 4);
+                    crate::window_manager::input::handle_vmmouse(buttons, x, y, z);
+                }
+            }
+            
+            // Clear the 8042 PS/2 controller queue so it doesn't get stuck
+            while (inb(0x64) & 1) == 1 {
+                let _ = inb(0x60);
+            }
+
+            (*(&raw const crate::interrupts::pic::PICS)).end_interrupt(MOUSE_INT);
+            return;
+        }
+    }
 
     let data = inb(0x60);
 
@@ -377,7 +399,7 @@ pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
                 MOUSE_PACKET[3] = 0;
             }
 
-            (*(&raw mut MOUSE)).cursor(MOUSE_PACKET);
+            crate::window_manager::input::handle_mouse_update();
             MOUSE_IDX = 0;
         }
 

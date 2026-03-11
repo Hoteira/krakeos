@@ -134,8 +134,6 @@ pub fn init() -> Result<(), String> {
     let mut notify_multiplier: u32 = 0;
     let mut device_cfg_ptr: *mut u8 = core::ptr::null_mut();
 
-    let mut next_bar_addr = 0xF2000000;
-
     for cap in caps {
         if cap.id != 0x09 {
             continue;
@@ -144,35 +142,28 @@ pub fn init() -> Result<(), String> {
         let cfg_type = device.read_u8(cap.offset as u32 + 3);
         let bar = device.read_u8(cap.offset as u32 + 4);
         let offset = device.read_u32(cap.offset as u32 + 8);
+        let length = device.read_u32(cap.offset as u32 + 12);
 
         let mut bar_base_opt = device.get_bar(bar);
         if bar_base_opt.is_none() || bar_base_opt.unwrap() < 0xC0000000 {
-            let raw_bar = device.read_bar_raw(bar);
-            if (raw_bar & 0xFFFFFFF0) < 0xC0000000 {
-                debugln!(
-                    "VirtIO Net: BAR {} is unmapped or low ({:#x}). Remapping to {:#x}",
-                    bar,
-                    raw_bar,
-                    next_bar_addr
-                );
-                device.write_bar(bar, next_bar_addr);
-                next_bar_addr += 0x100000;
-                bar_base_opt = device.get_bar(bar);
-            }
+            let remapped_addr = crate::drivers::pci::allocate_bar_address(0x1000000); // 16MB
+            device.write_bar(bar, remapped_addr);
+            debugln!("VirtIO Net: Remapped BAR {} to {:#x}", bar, remapped_addr);
+            bar_base_opt = device.get_bar(bar);
         }
 
         if let Some(bar_base) = bar_base_opt {
             let addr = (bar_base as u64) + (offset as u64);
 
             if cfg_type == VIRTIO_CAP_COMMON {
-                let virt_addr = vmm::map_mmio(addr, 4096);
+                let virt_addr = vmm::map_mmio(addr, length as usize);
                 common_cfg_ptr = virt_addr as *mut u8;
             } else if cfg_type == VIRTIO_CAP_NOTIFY {
-                notify_base = vmm::map_mmio(addr, 4096);
+                notify_base = vmm::map_mmio(addr, length as usize);
                 notify_multiplier = device.read_capability_data(cap.offset as u8, 16);
             } else if cfg_type == 4 {
                 // Device specific (MAC)
-                let virt_addr = vmm::map_mmio(addr, 4096);
+                let virt_addr = vmm::map_mmio(addr, length as usize);
                 device_cfg_ptr = virt_addr as *mut u8;
             }
         }

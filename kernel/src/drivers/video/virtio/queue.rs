@@ -4,6 +4,7 @@ use crate::debugln;
 use crate::memory::mmio::{read_16, write_16, write_64};
 use crate::memory::pmm;
 use core::ptr::{read_volatile, write_volatile};
+use core::sync::atomic::{AtomicBool, Ordering};
 
 pub struct VirtQueue {
     pub desc_phys: u64,
@@ -18,6 +19,7 @@ pub struct VirtQueue {
 }
 
 pub static mut VIRT_QUEUES: [Option<VirtQueue>; 2] = [None, None];
+static QUEUE_LOCK: AtomicBool = AtomicBool::new(false);
 
 pub fn setup_queue(common_cfg: *mut u8, index: u16, notify_base: u64, notify_multiplier: u32) {
     unsafe {
@@ -73,6 +75,17 @@ pub fn setup_queue(common_cfg: *mut u8, index: u16, notify_base: u64, notify_mul
 }
 
 pub fn send_command_queue(queue_idx: usize, out_phys: &[u64], out_lens: &[u32], in_phys: &[u64], in_lens: &[u32], wait: bool) -> bool {
+    while QUEUE_LOCK.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+        core::hint::spin_loop();
+    }
+
+    let result = unsafe { send_command_queue_unlocked(queue_idx, out_phys, out_lens, in_phys, in_lens, wait) };
+    
+    QUEUE_LOCK.store(false, Ordering::Release);
+    result
+}
+
+unsafe fn send_command_queue_unlocked(queue_idx: usize, out_phys: &[u64], out_lens: &[u32], in_phys: &[u64], in_lens: &[u32], wait: bool) -> bool {
     unsafe {
         let int_enabled = crate::interrupts::idt::interrupts();
         if int_enabled { core::arch::asm!("cli"); }
@@ -148,6 +161,12 @@ pub fn send_command_queue(queue_idx: usize, out_phys: &[u64], out_lens: &[u32], 
         (*avail_ptr).idx = idx.wrapping_add(1);
         vq.last_avail_idx = vq.last_avail_idx.wrapping_add(1);
 
+        if queue_idx == 0 && out_phys.len() > 0 {
+            let virt_addr = out_phys[0] + crate::memory::paging::HHDM_OFFSET;
+            let cmd_type = core::ptr::read_volatile(virt_addr as *const u32);
+            crate::debugln!("VirtIO GPU: Queue 0 sent command {:#x}", cmd_type);
+        }
+
         write_volatile(vq.notify_addr as *mut u16, vq.queue_index);
         vq.free_head = ((free_head_usize + total_descs) % num_usize) as u16;
 
@@ -182,6 +201,13 @@ pub fn send_command_queue(queue_idx: usize, out_phys: &[u64], out_lens: &[u32], 
 
         if !success {
             debugln!("VirtIO GPU: Queue {} Timed Out!", queue_idx);
+        } else if queue_idx == 0 && in_phys.len() > 0 {
+            let virt_addr = in_phys[0] + crate::memory::paging::HHDM_OFFSET;
+            let resp_type = core::ptr::read_volatile(virt_addr as *const u32);
+            if resp_type != VIRTIO_GPU_RESP_OK_NODATA && resp_type != VIRTIO_GPU_RESP_OK_DISPLAY_INFO && resp_type != 0 {
+                debugln!("VirtIO GPU: Queue 0 error response: {:#x} for cmd {:#x}", resp_type, 
+                    core::ptr::read_volatile((out_phys[0] + crate::memory::paging::HHDM_OFFSET) as *const u32));
+            }
         }
         success
     }

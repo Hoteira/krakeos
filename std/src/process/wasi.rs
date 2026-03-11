@@ -216,6 +216,7 @@ pub fn register_wasi<T: Config + Clone>(linker: &mut crate::wasm::Linker, store:
     waitpid::register(linker, store);
     pipe::register(linker, store);
     native_file_open::register(linker, store);
+    debug_print::register(linker, store);
     native_file_stat::register(linker, store);
     file_read::register(linker, store);
     file_write::register(linker, store);
@@ -223,3 +224,22 @@ pub fn register_wasi<T: Config + Clone>(linker: &mut crate::wasm::Linker, store:
     proc_exit_p1::register(linker, store);
     sched_yield_p1::register(linker, store);
 }
+
+
+
+crate::export_method!(
+    "krakeos:system/process@0.2.0", "debug-print",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64)], vec![],
+    pub fn debug_print<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![]) };
+        let len = match args.get(1) { Some(Value::I64(v)) => *v, _ => return Ok(vec![]) };
+        
+        let mut buf = crate::alloc::vec![0u8; len as usize];
+        if let Err(_) = read_mem(store, ptr, &mut buf) {
+            return Ok(vec![]);
+        }
+        crate::os::debug_print_host(buf.as_ptr(), len);
+        Ok(vec![])
+    }
+);

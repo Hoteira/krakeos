@@ -88,6 +88,7 @@ pub extern "C" fn _start(bootinfo_ptr: u64) -> ! {
     interrupts::task::TASK_MANAGER.lock().init();
 
     unsafe { (*(&raw mut DISPLAY_SERVER)).init(); }
+    unsafe { (*(&raw mut DISPLAY_SERVER)).force_full_sync(); }
 
     debugln!("SIGNPOST: Drivers initialized.");
 
