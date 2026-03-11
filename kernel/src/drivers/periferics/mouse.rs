@@ -17,13 +17,13 @@ const VMPORT_CMD_VMMOUSE_COMMAND: u32 = 41;
 const VMMOUSE_READ_ID: u32 = 0x45414552;
 const VMMOUSE_REQUEST_ABSOLUTE: u32 = 0x53424152;
 
-pub fn vmport_in(command: u32, mut ebx: u32) -> (u32, u32, u32, u32, u32, u32) {
+pub fn vmport_in(command: u32, ebx: u32) -> (u32, u32, u32, u32, u32, u32) {
     let mut eax = VMPORT_MAGIC;
     let mut ecx = command;
-    let edx = VMPORT_PORT as u32;
+    let mut edx = VMPORT_PORT as u32;
+    let mut ebx_val = ebx;
     let mut esi = 0;
     let mut edi = 0;
-    let mut ebx_val = ebx;
 
     unsafe {
         core::arch::asm!(
@@ -35,7 +35,7 @@ pub fn vmport_in(command: u32, mut ebx: u32) -> (u32, u32, u32, u32, u32, u32) {
             inout(reg) ebx_val,
             inout("eax") eax,
             inout("ecx") ecx,
-            in("edx") edx,
+            inout("edx") edx,
             inout("esi") esi,
             inout("edi") edi,
         );
@@ -46,16 +46,14 @@ pub fn vmport_in(command: u32, mut ebx: u32) -> (u32, u32, u32, u32, u32, u32) {
 pub fn init_vmmouse() -> bool {
     vmport_in(VMPORT_CMD_VMMOUSE_COMMAND, VMMOUSE_READ_ID);
 
-    let (status, ebx, _, _, _, _) = vmport_in(VMPORT_CMD_VMMOUSE_STATUS, 0);
+    let (status, _, _, _, _, _) = vmport_in(VMPORT_CMD_VMMOUSE_STATUS, 0);
     let count = status & 0xFFFF;
     if count == 0 {
-        crate::debugln!("VMMouse: Not found (queue empty). Status={:#x} EBX={:#x}", status, ebx);
         return false;
     }
 
-    let (version, _, _, _, _, _) = vmport_in(VMPORT_CMD_VMMOUSE_DATA, count);
+    let (version, _, _, _, _, _) = vmport_in(VMPORT_CMD_VMMOUSE_DATA, 1);
     if version != 0x3442554a {
-        crate::debugln!("VMMouse: Unsupported version {:#x}", version);
         return false;
     }
 
@@ -74,7 +72,6 @@ const MOUSE_RESET: u8 = 0xFF;
 const MOUSE_SET_DEFAULTS: u8 = 0xF6;
 const MOUSE_ENABLE_STREAMING: u8 = 0xF4;
 const MOUSE_GET_ID: u8 = 0xF2;
-const MOUSE_SET_SAMPLE_RATE: u8 = 0xF3;
 
 pub fn init_mouse() {
     println!("Mouse: Initializing PS/2 Mouse...");
@@ -105,10 +102,22 @@ pub fn init_mouse() {
     mouse_write(MOUSE_SET_DEFAULTS);
     let _ack = mouse_read();
 
+    mouse_write(MOUSE_GET_ID);
+    let _ack = mouse_read();
+    let id = mouse_read();
+
+    unsafe {
+        if id == 3 || id == 4 {
+            MOUSE_PACKET_SIZE = 4;
+        } else {
+            MOUSE_PACKET_SIZE = 3;
+        }
+    }
+
     mouse_write(MOUSE_ENABLE_STREAMING);
     let _ack = mouse_read();
 
-    println!("Mouse: Initialized.");
+    println!("Mouse: Initialized (ID: {}).", id);
 }
 
 fn mouse_write(value: u8) {
@@ -166,5 +175,5 @@ pub const CURSOR_BUFFER: [u32; 24 * 24] = [
     0xffffffff, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000
 ];
 
-pub const CURSOR_WIDTH: usize = CURSOR_BUFFER.len().isqrt();
-pub const CURSOR_HEIGHT: usize = CURSOR_BUFFER.len().isqrt();
+pub const CURSOR_WIDTH: usize = 24;
+pub const CURSOR_HEIGHT: usize = 24;

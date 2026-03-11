@@ -289,12 +289,21 @@ pub const TIMER_INT: u8 = 32;
 
 pub const KEYBOARD_INT: u8 = 33;
 
+static mut IN_IRQ: bool = false;
+
 pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
+    unsafe {
+        if IN_IRQ {
+            (*(&raw const crate::interrupts::pic::PICS)).end_interrupt(KEYBOARD_INT);
+            return;
+        }
+        IN_IRQ = true;
+    }
+
     serial_print("K");
     let scancode: u8 = inb(0x60);
 
     if let Some((key, pressed)) = crate::drivers::periferics::keyboard::handle_scancode(scancode) {
-        // crate::debugln!("[Keyboard] key={:#x} pressed={}", key, pressed);
         let is_super = crate::drivers::periferics::keyboard::is_super_active();
         let mut handled_globally = false;
 
@@ -332,8 +341,6 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
                     if let Some(w_pid) = target_info {
                         use crate::window_manager::events::{Event, KeyboardEvent, GLOBAL_EVENT_QUEUE};
 
-                        crate::debugln!("[kernel] Dispatching keyboard event key={:#x} pressed={} to PID {}", key, pressed, w_pid);
-
                         let tm_ref = &*tm;
                         let event = Event::Keyboard(KeyboardEvent {
                             wid: active_window_id as u32,
@@ -352,6 +359,7 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
     }
 
     unsafe {
+        IN_IRQ = false;
         (*(&raw const crate::interrupts::pic::PICS)).end_interrupt(KEYBOARD_INT);
     }
 }
@@ -363,6 +371,14 @@ pub static mut MOUSE_PACKET: [u8; 4] = [0; 4];
 pub static mut MOUSE_IDX: usize = 0;
 
 pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
+    unsafe {
+        if IN_IRQ {
+            (*(&raw const crate::interrupts::pic::PICS)).end_interrupt(MOUSE_INT);
+            return;
+        }
+        IN_IRQ = true;
+    }
+
     serial_print("M");
     use crate::drivers::periferics::mouse::{VMMOUSE_ACTIVE, vmport_in, VMPORT_CMD_VMMOUSE_STATUS, VMPORT_CMD_VMMOUSE_DATA, MOUSE_IDX, MOUSE_PACKET, MOUSE_PACKET_SIZE};
 
@@ -386,6 +402,7 @@ pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
                 limit -= 1;
             }
 
+            IN_IRQ = false;
             (*(&raw const crate::interrupts::pic::PICS)).end_interrupt(MOUSE_INT);
             return;
         }
@@ -396,6 +413,7 @@ pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
 
     unsafe {
         if MOUSE_IDX == 0 && ((data & 0x08) == 0 || data == 0xFF) {
+            IN_IRQ = false;
             (*(&raw const crate::interrupts::pic::PICS)).end_interrupt(MOUSE_INT);
             return;
         }
@@ -416,6 +434,7 @@ pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
             MOUSE_IDX = 0;
         }
 
+        IN_IRQ = false;
         (*(&raw const crate::interrupts::pic::PICS)).end_interrupt(MOUSE_INT);
     }
 }
