@@ -244,10 +244,10 @@ pub fn start_gpu(width: u32, height: u32, phys_buf1: u64, phys_buf2: u64) {
                     padding: [0; 3],
                 },
                 resource_id: id,
-                format: 1, // B8G8R8A8_UNORM
+                format: 2, // A8R8G8B8_UNORM
                 width,
                 height,
-            });
+                });
 
             crate::debugln!("VirtIO GPU: Creating resource {} ({}x{})", id, width, height);
             send_command_queue(0, &[GPU_CMD_PHYS], &[core::mem::size_of::<VirtioGpuResourceCreate2d>() as u32],

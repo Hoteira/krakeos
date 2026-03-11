@@ -46,13 +46,16 @@ pub fn vmport_in(command: u32, mut ebx: u32) -> (u32, u32, u32, u32, u32, u32) {
 pub fn init_vmmouse() -> bool {
     vmport_in(VMPORT_CMD_VMMOUSE_COMMAND, VMMOUSE_READ_ID);
 
-    let (status, _, _, _, _, _) = vmport_in(VMPORT_CMD_VMMOUSE_STATUS, 0);
-    if (status & 0xFFFF) == 0 {
+    let (status, ebx, _, _, _, _) = vmport_in(VMPORT_CMD_VMMOUSE_STATUS, 0);
+    let count = status & 0xFFFF;
+    if count == 0 {
+        crate::debugln!("VMMouse: Not found (queue empty). Status={:#x} EBX={:#x}", status, ebx);
         return false;
     }
 
-    let (version, _, _, _, _, _) = vmport_in(VMPORT_CMD_VMMOUSE_DATA, 1);
+    let (version, _, _, _, _, _) = vmport_in(VMPORT_CMD_VMMOUSE_DATA, count);
     if version != 0x3442554a {
+        crate::debugln!("VMMouse: Unsupported version {:#x}", version);
         return false;
     }
 
@@ -90,57 +93,17 @@ pub fn init_mouse() {
     wait_write();
     outb(0x60, status);
 
-    if init_vmmouse() {
-        println!("Mouse: VMMouse initialized successfully (Absolute Mode).");
-        return;
+    // Unmask IRQ 12 on slave PIC
+    unsafe {
+        (*(&raw const crate::interrupts::pic::PICS)).slave.unmask_irq(4);
     }
 
-    mouse_write(MOUSE_RESET);
-    let _r1 = mouse_read();
-    let _r2 = mouse_read();
+    if init_vmmouse() {
+        println!("Mouse: VMMouse initialized successfully (Absolute Mode).");
+    }
 
     mouse_write(MOUSE_SET_DEFAULTS);
     let _ack = mouse_read();
-
-    mouse_write(MOUSE_SET_SAMPLE_RATE);
-    let _ = mouse_read();
-    mouse_write(200);
-    let _ = mouse_read();
-    mouse_write(MOUSE_SET_SAMPLE_RATE);
-    let _ = mouse_read();
-    mouse_write(100);
-    let _ = mouse_read();
-    mouse_write(MOUSE_SET_SAMPLE_RATE);
-    let _ = mouse_read();
-    mouse_write(80);
-    let _ = mouse_read();
-
-    // Extra sequence for 5-button IntelliMouse (some QEMU versions)
-    mouse_write(MOUSE_SET_SAMPLE_RATE);
-    let _ = mouse_read();
-    mouse_write(200);
-    let _ = mouse_read();
-    mouse_write(MOUSE_SET_SAMPLE_RATE);
-    let _ = mouse_read();
-    mouse_write(200);
-    let _ = mouse_read();
-    mouse_write(MOUSE_SET_SAMPLE_RATE);
-    let _ = mouse_read();
-    mouse_write(80);
-    let _ = mouse_read();
-
-    mouse_write(MOUSE_GET_ID);
-    let _ack = mouse_read();
-    let id = mouse_read();
-
-    unsafe {
-        MOUSE_PACKET_SIZE = 4;
-        if id == 3 || id == 4 {
-            println!("Mouse: ID: {}. 4-byte packet mode (Scroll Enabled).", id);
-        } else {
-            println!("Mouse: ID: {}. 4-byte packet mode FORCED (ID detected: {}).", id, id);
-        }
-    }
 
     mouse_write(MOUSE_ENABLE_STREAMING);
     let _ack = mouse_read();

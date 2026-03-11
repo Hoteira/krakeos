@@ -16,8 +16,14 @@ pub struct StackFrame {
 
 fn serial_print(s: &str) {
     for b in s.bytes() {
-        while (inb(0x3F8 + 5) & 0x20) == 0 {}
-        outb(0x3F8, b);
+        let mut timeout = 10000;
+        while (inb(0x3F8 + 5) & 0x20) == 0 && timeout > 0 {
+            core::hint::spin_loop();
+            timeout -= 1;
+        }
+        if timeout > 0 {
+            outb(0x3F8, b);
+        }
     }
 }
 
@@ -284,9 +290,11 @@ pub const TIMER_INT: u8 = 32;
 pub const KEYBOARD_INT: u8 = 33;
 
 pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
+    serial_print("K");
     let scancode: u8 = inb(0x60);
 
     if let Some((key, pressed)) = crate::drivers::periferics::keyboard::handle_scancode(scancode) {
+        // crate::debugln!("[Keyboard] key={:#x} pressed={}", key, pressed);
         let is_super = crate::drivers::periferics::keyboard::is_super_active();
         let mut handled_globally = false;
 
@@ -355,6 +363,7 @@ pub static mut MOUSE_PACKET: [u8; 4] = [0; 4];
 pub static mut MOUSE_IDX: usize = 0;
 
 pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
+    serial_print("M");
     use crate::drivers::periferics::mouse::{VMMOUSE_ACTIVE, vmport_in, VMPORT_CMD_VMMOUSE_STATUS, VMPORT_CMD_VMMOUSE_DATA, MOUSE_IDX, MOUSE_PACKET, MOUSE_PACKET_SIZE};
 
     unsafe {
@@ -362,6 +371,7 @@ pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
             let (status, _, _, _, _, _) = vmport_in(VMPORT_CMD_VMMOUSE_STATUS, 0);
             let count = status & 0xFFFF;
             if count > 0 {
+                serial_print("V");
                 let num_packets = count / 4;
                 for _ in 0..num_packets {
                     let (buttons, x, y, z, _, _) = vmport_in(VMPORT_CMD_VMMOUSE_DATA, 4);
@@ -370,8 +380,10 @@ pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
             }
             
             // Clear the 8042 PS/2 controller queue so it doesn't get stuck
-            while (inb(0x64) & 1) == 1 {
+            let mut limit = 5;
+            while (inb(0x64) & 1) == 1 && limit > 0 {
                 let _ = inb(0x60);
+                limit -= 1;
             }
 
             (*(&raw const crate::interrupts::pic::PICS)).end_interrupt(MOUSE_INT);
@@ -380,6 +392,7 @@ pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
     }
 
     let data = inb(0x60);
+    serial_print("m");
 
     unsafe {
         if MOUSE_IDX == 0 && ((data & 0x08) == 0 || data == 0xFF) {

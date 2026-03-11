@@ -53,6 +53,7 @@ pub fn handle_mouse_update() {
 }
 
 pub fn handle_vmmouse(buttons: u32, x: u32, y: u32, z: u32) {
+    crate::debugln!("[VMMouse] raw: btns={:#x} x={} y={} z={}", buttons, x, y, z);
     unsafe {
         (*(&raw mut MOUSE)).vmmouse(buttons, x, y, z);
     }
@@ -144,6 +145,16 @@ impl Mouse {
     fn process_input(&mut self, old_x: u16, old_y: u16, prev_left: bool, prev_right: bool, prev_center: bool, scroll_val: i8) {
         let moved = old_x != self.x || old_y != self.y;
         let btns_changed = prev_left != self.left || prev_right != self.right || prev_center != self.center;
+
+        if moved {
+            crate::debugln!("[Mouse] Moved to ({}, {})", self.x, self.y);
+        }
+        if btns_changed {
+            crate::debugln!("[Mouse] Buttons: L={} R={} C={}", self.left, self.right, self.center);
+        }
+        if scroll_val != 0 {
+            crate::debugln!("[Mouse] Scroll: {}", scroll_val);
+        }
 
         if !moved && !btns_changed && scroll_val == 0 {
             return;
