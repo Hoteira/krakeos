@@ -200,7 +200,7 @@ pub extern "x86-interrupt" fn page_fault(info: &mut StackFrame, error_code: u64)
             }
         }
 
-        if let Some(frame) = pmm::allocate_frame(target_pid) {
+        if let Some(frame) = pmm::allocate_frame() {
             let pml4 = active_level_4_table();
             let mut mapper = unsafe { Mapper::new(PhysAddr::new(crate::memory::paging::virt_to_phys(pml4 as *const _ as u64))) };
             

@@ -195,7 +195,7 @@ impl TaskManager {
             idle_thread.process = Some(kernel_proc);
 
             let stack_pages = (STACK_SIZE / 4096) as usize;
-            let stack_phys = pmm::allocate_frames(stack_pages, 0).expect("Idle stack allocation failed");
+            let stack_phys = pmm::allocate_frames(stack_pages).expect("Idle stack allocation failed");
             idle_thread.kernel_stack = stack_phys + STACK_SIZE + paging::HHDM_OFFSET;
 
             let state_size = core::mem::size_of::<CPUState>();
@@ -332,11 +332,11 @@ impl TaskManager {
 
         thread.process = Some(proc.clone());
 
-        let k_frame = pmm::allocate_frames(16, pid).ok_or(pmm::FrameError::NoMemory)?;
+        let k_frame = pmm::allocate_frames(16).ok_or(pmm::FrameError::NoMemory)?;
         thread.kernel_stack = k_frame + 4096 * 16 + paging::HHDM_OFFSET;
 
         let stack_pages = (STACK_SIZE / 4096) as usize;
-        let u_frame_phys = pmm::allocate_frames(stack_pages, pid).ok_or(pmm::FrameError::NoMemory)?;
+        let u_frame_phys = pmm::allocate_frames(stack_pages).ok_or(pmm::FrameError::NoMemory)?;
 
         let u_stack_top = proc.stack_base;
         let u_stack_base = u_stack_top - STACK_SIZE;
@@ -418,7 +418,7 @@ impl TaskManager {
         let mut thread = Thread::new(b"thread");
         thread.process = Some(parent_process.clone());
 
-        let k_frame = pmm::allocate_frames(64, tid as u64).ok_or(pmm::FrameError::NoMemory)?;
+        let k_frame = pmm::allocate_frames(64).ok_or(pmm::FrameError::NoMemory)?;
         thread.kernel_stack = k_frame + 4096 * 64 + paging::HHDM_OFFSET;
 
         let state_size = core::mem::size_of::<CPUState>();

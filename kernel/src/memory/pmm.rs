@@ -3,6 +3,61 @@ use crate::boot::BOOT_INFO;
 use crate::debugln;
 use crate::sync::Mutex;
 
+use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+
+pub struct LockFreeMagazine {
+    head: AtomicU64,
+    pub count: AtomicUsize,
+}
+
+impl LockFreeMagazine {
+    pub const fn new() -> Self {
+        Self {
+            head: AtomicU64::new(0),
+            count: AtomicUsize::new(0),
+        }
+    }
+
+    pub fn push(&self, phys: u64) {
+        let node_ptr = (phys + crate::memory::paging::HHDM_OFFSET) as *mut u64;
+        let mut head_val = self.head.load(Ordering::Acquire);
+        loop {
+            unsafe { *node_ptr = head_val; }
+            let tag = (head_val >> 48).wrapping_add(1);
+            let new_head = (tag << 48) | (phys & 0x0000FFFFFFFFF000);
+            match self.head.compare_exchange_weak(head_val, new_head, Ordering::Release, Ordering::Relaxed) {
+                Ok(_) => break,
+                Err(v) => head_val = v,
+            }
+        }
+        self.count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn pop(&self) -> Option<u64> {
+        let mut head_val = self.head.load(Ordering::Acquire);
+        loop {
+            let phys = head_val & 0x0000FFFFFFFFF000;
+            if phys == 0 { return None; }
+
+            let node_ptr = (phys + crate::memory::paging::HHDM_OFFSET) as *const u64;
+            let next_val = unsafe { *node_ptr };
+
+            match self.head.compare_exchange_weak(head_val, next_val, Ordering::Release, Ordering::Relaxed) {
+                Ok(_) => {
+                    self.count.fetch_sub(1, Ordering::Relaxed);
+                    return Some(phys);
+                }
+                Err(v) => head_val = v,
+            }
+        }
+    }
+}
+
+pub static PER_CPU_MAGAZINES: [LockFreeMagazine; 1] = [LockFreeMagazine::new()];
+static mut PAGE_MAP: *mut PageDescriptor = core::ptr::null_mut();
+static mut PAGE_MAP_ENTRIES: usize = 0;
+
+
 pub const PAGE_SIZE: u64 = 4096;
 pub const MAX_ORDER: usize = 18; // Max block size: 2^18 pages = 1GB
 
@@ -18,8 +73,7 @@ pub enum FrameError {
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 struct PageDescriptor {
-    pid: u32,      // Owner PID (0 for kernel/free)
-    order: u8,     // Buddy order (if head of a block)
+        order: u8,     // Buddy order (if head of a block)
     flags: u8,     // Bit 0: Is Allocated, Bit 1: Is Head
 }
 
@@ -105,7 +159,11 @@ pub fn init() {
         debugln!("PMM: Page Map zeroed successfully ({} descriptors).", num_descriptors);
 
         allocator.page_map = map_virt;
+        
         allocator.page_map_entries = total_pages;
+        PAGE_MAP = allocator.page_map;
+        PAGE_MAP_ENTRIES = allocator.page_map_entries;
+
         allocator.total_pages = total_pages;
 
         debugln!("PMM: Starting to add free regions...");
@@ -289,8 +347,21 @@ unsafe fn remove_free_block(alloc: &mut BuddyAllocator, phys: u64, order: usize)
     }
 }
 
-pub fn allocate_frames(count: usize, pid: u64) -> Option<u64> {
+pub fn allocate_frames(count: usize) -> Option<u64> {
     if count == 0 { return None; }
+    
+    // --- LOCK-FREE FAST PATH ---
+    if count == 1 {
+        // HACK: Hardcoded to CPU 0 for now until SMP is implemented
+        let cpu_id = 0; 
+        if let Some(phys) = PER_CPU_MAGAZINES[cpu_id].pop() {
+            unsafe {
+                core::ptr::write_bytes((phys + crate::memory::paging::HHDM_OFFSET) as *mut u8, 0, PAGE_SIZE as usize);
+            }
+            return Some(phys);
+        }
+    }
+    // ---------------------------
     
     let mut order = 0;
     while (1 << order) < count {
@@ -326,8 +397,7 @@ pub fn allocate_frames(count: usize, pid: u64) -> Option<u64> {
         let num_pages = 1 << order;
         for i in 0..num_pages {
             let desc = &mut (*alloc.page_map.add(page_idx + i));
-            desc.pid = pid as u32;
-            desc.flags |= 0x01; // Allocated
+                        desc.flags |= 0x01; // Allocated
         }
         
         alloc.used_pages += num_pages;
@@ -341,6 +411,24 @@ pub fn allocate_frames(count: usize, pid: u64) -> Option<u64> {
 
 pub fn free_frame(addr: u64) {
     if addr % PAGE_SIZE != 0 { return; }
+    
+    // --- LOCK-FREE FAST PATH ---
+    let page_idx = (addr / PAGE_SIZE) as usize;
+    unsafe {
+        if page_idx < PAGE_MAP_ENTRIES {
+            let desc = &*PAGE_MAP.add(page_idx);
+            // Must be allocated, and MUST be an Order 0 block (a single 4KB page)
+            if (desc.flags & 0x01) != 0 && desc.order == 0 {
+                let cpu_id = 0; // HACK: Hardcoded to CPU 0
+                // Cap the per-cpu magazine to 4096 pages (16 MiB) to prevent hoarding
+                if PER_CPU_MAGAZINES[cpu_id].count.load(Ordering::Relaxed) < 4096 {
+                    PER_CPU_MAGAZINES[cpu_id].push(addr);
+                    return;
+                }
+            }
+        }
+    }
+    // ---------------------------
     
     let mut alloc = PMM.int_lock();
     unsafe {
@@ -395,38 +483,17 @@ pub fn free_frame(addr: u64) {
     }
 }
 
-pub fn free_frames_by_pid(pid: u64) {
-    let target_pid = pid as u32;
-    
-    // Collect addresses first to avoid holding the lock while calling free_frame recursively
-    // which would cause a deadlock.
-    let mut blocks_to_free = alloc::vec::Vec::new();
-    
-    {
-        let alloc = PMM.int_lock();
-        unsafe {
-            let mut i = 0;
-            while i < alloc.page_map_entries {
-                let desc = &*alloc.page_map.add(i);
-                if (desc.flags & 0x01) != 0 && (desc.flags & 0x02) != 0 && desc.pid == target_pid {
-                    blocks_to_free.push(i as u64 * PAGE_SIZE);
-                }
-                i += 1;
-            }
-        }
-    }
 
-    for addr in blocks_to_free {
-        free_frame(addr);
-    }
-}
 
 pub fn reserve_frame(_addr: u64) -> bool {
     true 
 }
 
 pub fn get_used_memory() -> usize {
-    PMM.lock().used_pages * PAGE_SIZE as usize
+    let base_used = PMM.lock().used_pages * PAGE_SIZE as usize;
+    let cpu_id = 0; // HACK
+    let cached = PER_CPU_MAGAZINES[cpu_id].count.load(Ordering::Relaxed) * PAGE_SIZE as usize;
+    base_used.saturating_sub(cached)
 }
 
 pub fn get_total_memory() -> usize {
@@ -435,40 +502,31 @@ pub fn get_total_memory() -> usize {
 
 pub fn get_free_memory() -> usize {
     let alloc = PMM.lock();
-    (alloc.total_pages - alloc.used_pages) * PAGE_SIZE as usize
+    let base_free = (alloc.total_pages - alloc.used_pages) * PAGE_SIZE as usize;
+    let cpu_id = 0; // HACK
+    let cached = PER_CPU_MAGAZINES[cpu_id].count.load(Ordering::Relaxed) * PAGE_SIZE as usize;
+    base_free + cached
 }
 
-pub fn get_memory_usage_by_pid(pid: u64) -> usize {
-    let alloc = PMM.int_lock();
-    let mut count = 0;
-    unsafe {
-        for i in 0..alloc.page_map_entries {
-            let desc = &*alloc.page_map.add(i);
-            if (desc.flags & 0x01) != 0 && desc.pid == pid as u32 {
-                count += 1;
-            }
-        }
-    }
-    count * PAGE_SIZE as usize
-}
+
 
 #[unsafe(no_mangle)]
 pub extern "C" fn pmm_allocate_frames(count: usize, owner: u64) -> u64 {
-    allocate_frames(count, owner).unwrap_or(0)
+    allocate_frames(count).unwrap_or(0)
 }
 
-pub fn allocate_frame(pid: u64) -> Option<u64> {
-    allocate_frames(1, pid)
+pub fn allocate_frame() -> Option<u64> {
+    allocate_frames(1)
 }
 
-pub fn allocate_memory(bytes: usize, pid: u64) -> Option<u64> {
+pub fn allocate_memory(bytes: usize) -> Option<u64> {
     let pages = (bytes + PAGE_SIZE as usize - 1) / PAGE_SIZE as usize;
-    allocate_frames(pages, pid)
+    allocate_frames(pages)
 }
 
-pub fn allocate_aligned_memory(bytes: usize, pid: u64, alignment: usize) -> Option<u64> {
+pub fn allocate_aligned_memory(bytes: usize, alignment: usize) -> Option<u64> {
     let mut pages = (bytes + PAGE_SIZE as usize - 1) / PAGE_SIZE as usize;
     let align_pages = alignment / PAGE_SIZE as usize;
     if align_pages > pages { pages = align_pages; }
-    allocate_frames(pages, pid)
+    allocate_frames(pages)
 }

@@ -40,7 +40,7 @@ pub fn handle_brk(context: &mut CPUState) {
 
             for i in 0..pages {
                 let virt = aligned_current + (i * 4096);
-                if let Some(phys) = pmm::allocate_frame(pid) {
+                if let Some(phys) = pmm::allocate_frame() {
                     let flags = paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER;
                     unsafe {
                         vmm::map_page(virt, PhysAddr::new(phys), flags, None);
@@ -140,7 +140,7 @@ pub fn handle_mmap(context: &mut CPUState) {
         
         if is_2mb_aligned {
             // Attempt 2MB huge page allocation
-            if let Some(phys) = pmm::allocate_aligned_memory(0x200000, pid, 0x200000) {
+            if let Some(phys) = pmm::allocate_aligned_memory(0x200000, 0x200000) {
                 let flags = paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER;
                 vmm::map_huge_page(current_virt, PhysAddr::new(phys), flags, None);
                 
@@ -156,7 +156,7 @@ pub fn handle_mmap(context: &mut CPUState) {
         }
 
         // Fallback to 4KB page
-        if let Some(phys) = pmm::allocate_frame(pid) {
+        if let Some(phys) = pmm::allocate_frame() {
             let flags = paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER;
             unsafe {
                 vmm::map_page(current_virt, PhysAddr::new(phys), flags, None);
@@ -184,7 +184,7 @@ pub fn handle_munmap(context: &mut CPUState) {
 
 pub fn handle_get_process_mem(context: &mut CPUState) {
     let pid = context.rdi as u64;
-    context.rax = crate::memory::pmm::get_memory_usage_by_pid(pid) as u64;
+    context.rax = crate::memory::vma::GLOBAL_VMA.lock().get_usage_by_pid(pid) as u64;
 }
 
 pub fn handle_shm_get(context: &mut CPUState) {

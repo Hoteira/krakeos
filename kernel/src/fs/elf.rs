@@ -53,7 +53,7 @@ pub fn load_elf(data: &[u8], pid: u64) -> Result<u64, String> {
 
             let mut current_page = page_start;
             while current_page < page_end {
-                let frame = pmm::allocate_frame(pid).ok_or("OOM during ELF loading")?;
+                let frame = pmm::allocate_frame().ok_or("OOM during ELF loading")?;
 
                 let mut flags = paging::PAGE_PRESENT | paging::PAGE_USER;
                 if (phdr.p_flags & ProgramFlags::WRITE) != 0 {

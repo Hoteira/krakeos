@@ -73,7 +73,7 @@ pub extern "C" fn _start(bootinfo_ptr: u64) -> ! {
 
     let heap_size = 0x400_0000; // 64 MiB
     let heap_pages = heap_size / 4096;
-    let heap_phys_addr = pmm::allocate_frames(heap_pages as usize, 0).expect("Failed to allocate heap memory from PMM");
+    let heap_phys_addr = pmm::allocate_frames(heap_pages as usize).expect("Failed to allocate heap memory from PMM");
     let heap_virt_ptr = phys_to_virt(PhysAddr::new(heap_phys_addr)).as_mut_ptr::<u8>();
 
 

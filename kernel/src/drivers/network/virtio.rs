@@ -269,7 +269,7 @@ unsafe fn setup_queue(
     let size_bytes = 16 * size as usize + 6 + 2 * size as usize + 2 + 6 + 8 * size as usize + 2;
     let pages = (size_bytes + 4095) / 4096;
 
-    let frame = pmm::allocate_frames(pages, 0)?;
+    let frame = pmm::allocate_frames(pages)?;
     let virt_frame = (frame + crate::memory::paging::HHDM_OFFSET) as *mut u8;
     core::ptr::write_bytes(virt_frame, 0, pages * 4096);
 
@@ -313,7 +313,7 @@ unsafe fn fill_rx_queue(dev: &mut VirtioNetDevice) {
                 break;
             }
 
-            if let Some(frame) = pmm::allocate_frame(0) {
+            if let Some(frame) = pmm::allocate_frame() {
                 let virt = frame + crate::memory::paging::HHDM_OFFSET;
                 dev.rx_buffers.push_back((frame, virt, 2048));
 
@@ -451,7 +451,7 @@ pub fn send_packet(data: &[u8]) -> usize {
         let desc_ptr = (vq.desc_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqDesc;
         let next_idx = (*desc_ptr.add(head_idx as usize)).next;
 
-        let hdr_frame = match pmm::allocate_frame(0) {
+        let hdr_frame = match pmm::allocate_frame() {
             Some(f) => f,
             None => return 5,
         };

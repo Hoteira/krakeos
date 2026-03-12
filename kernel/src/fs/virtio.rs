@@ -254,7 +254,7 @@ unsafe fn setup_queue(common_cfg: *mut u8, index: u16, notify_base: u64, notify_
         let size: u16 = 128;
         write_16(common_cfg.add(OFF_QUEUE_SIZE), size);
 
-        if let Some(frame) = pmm::allocate_frame(0) {
+        if let Some(frame) = pmm::allocate_frame() {
             let virt_frame = (frame + crate::memory::paging::HHDM_OFFSET) as *mut u8;
             core::ptr::write_bytes(virt_frame, 0, 4096);
 

@@ -476,7 +476,6 @@ pub fn handle_wait_pid(context: &mut CPUState) {
                 let pid = target_pid as u64;
                 let k_stack_top = task.kernel_stack;
 
-                crate::memory::pmm::free_frames_by_pid(pid);
                 crate::memory::vma::GLOBAL_VMA.lock().remove_by_pid(pid);
 
                 if k_stack_top != 0 {

@@ -33,7 +33,7 @@ impl ShmManager {
         let page_count = (size + 4095) / 4096;
         let mut frames = Vec::with_capacity(page_count as usize);
         for _ in 0..page_count {
-            let phys = pmm::allocate_frame(0).ok_or("Out of memory for SHM")?;
+            let phys = pmm::allocate_frame().ok_or("Out of memory for SHM")?;
             frames.push(phys);
         }
 

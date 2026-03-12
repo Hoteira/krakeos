@@ -26,7 +26,7 @@ impl PageCache {
         }
 
         // Allocate a new frame for the cache
-        let phys = pmm::allocate_frame(0).expect("OOM for Page Cache");
+        let phys = pmm::allocate_frame().expect("OOM for Page Cache");
         let virt = phys + HHDM_OFFSET;
 
         let slice = unsafe { core::slice::from_raw_parts_mut(virt as *mut u8, PAGE_CACHE_SIZE) };

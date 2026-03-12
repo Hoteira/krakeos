@@ -134,8 +134,8 @@ impl DisplayServer {
                 let size_bytes = (self.pitch * self.height) as usize;
                 let pages = (size_bytes + 4095) / 4096;
 
-                let b1 = crate::memory::pmm::allocate_frames(pages, 0).expect("Failed to allocate buffer 1");
-                let b2 = crate::memory::pmm::allocate_frames(pages, 0).expect("Failed to allocate buffer 2");
+                let b1 = crate::memory::pmm::allocate_frames(pages).expect("Failed to allocate buffer 1");
+                let b2 = crate::memory::pmm::allocate_frames(pages).expect("Failed to allocate buffer 2");
 
                 // Map framebuffers as uncacheable MMIO so the GPU sees updates immediately
                 let b1_virt = crate::memory::vmm::map_mmio(b1, size_bytes);
@@ -166,7 +166,7 @@ impl DisplayServer {
                 use crate::drivers::periferics::mouse::{CURSOR_BUFFER, CURSOR_HEIGHT, CURSOR_WIDTH};
                 let cursor_size_bytes = 64 * 64 * 4;
                 let cursor_pages = (cursor_size_bytes + 4095) / 4096;
-                if let Some(cursor_phys) = crate::memory::pmm::allocate_frames(cursor_pages, 0) {
+                if let Some(cursor_phys) = crate::memory::pmm::allocate_frames(cursor_pages) {
                     let cursor_ptr = (cursor_phys + crate::memory::paging::HHDM_OFFSET) as *mut u32;
                     unsafe {
                         core::ptr::write_bytes(cursor_ptr as *mut u8, 0, cursor_size_bytes);
@@ -208,7 +208,7 @@ impl DisplayServer {
         let pages = (size_bytes + 4095) / 4096;
 
         unsafe {
-            if let Some(buffer) = crate::memory::pmm::allocate_frames(pages, 0) {
+            if let Some(buffer) = crate::memory::pmm::allocate_frames(pages) {
                 self.double_buffer = buffer + crate::memory::paging::HHDM_OFFSET;
                 core::ptr::write_bytes(self.double_buffer as *mut u8, 0, size_bytes);
             } else {

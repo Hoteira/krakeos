@@ -59,7 +59,7 @@ pub fn init() {
 
 
     unsafe {
-        if let Some(frame) = pmm::allocate_frame(0) {
+        if let Some(frame) = pmm::allocate_frame() {
             GPU_CMD_PHYS = frame;
             // Map command buffer as uncacheable MMIO
             GPU_CMD_VIRT = crate::memory::vmm::map_mmio(frame, 4096);

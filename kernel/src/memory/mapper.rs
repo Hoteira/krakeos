@@ -44,7 +44,7 @@ impl Mapper {
         }
 
         if entry.is_unused() {
-            let frame = pmm::allocate_frame(0).ok_or("OOM: Failed to allocate page table")?;
+            let frame = pmm::allocate_frame().ok_or("OOM: Failed to allocate page table")?;
 
 
             let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER_ACCESSIBLE;

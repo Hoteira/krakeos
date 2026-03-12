@@ -8,7 +8,7 @@ pub static mut KERNEL_PML4: u64 = 0;
 
 pub fn init() {
     unsafe {
-        let new_pml4_phys = pmm::allocate_frame(0).expect("VMM: Failed to allocate initial kernel PML4");
+        let new_pml4_phys = pmm::allocate_frame().expect("VMM: Failed to allocate initial kernel PML4");
         let new_pml4_addr = PhysAddr::new(new_pml4_phys);
         KERNEL_PML4 = new_pml4_phys;
 
@@ -28,7 +28,7 @@ pub fn init() {
         let p4_idx = (KERNEL_MAPPING_HEAD >> 39) & 0x1FF;
 
         if pml4[p4_idx as usize].is_unused() {
-            let pdpt_frame = pmm::allocate_frame(0).expect("VMM: OOM for Shared Kernel PDPT");
+            let pdpt_frame = pmm::allocate_frame().expect("VMM: OOM for Shared Kernel PDPT");
             let mut entry = paging::PageTableEntry::new();
             entry.set_addr(PhysAddr::new(pdpt_frame),
                            paging::PageTableFlags::PRESENT | paging::PageTableFlags::WRITABLE);
@@ -97,7 +97,7 @@ pub fn map_huge_page(virt: u64, phys: PhysAddr, flags_raw: u64, target_pml4_phys
         // Level 4 -> Level 3
         let mut p3_entry = pml4_table[p4_idx as usize];
         if p3_entry.is_unused() {
-            let frame = pmm::allocate_frame(0).expect("VMM: OOM for PDPT");
+            let frame = pmm::allocate_frame().expect("VMM: OOM for PDPT");
             let mut new_entry = paging::PageTableEntry::new();
             let table_flags = paging::PageTableFlags::from_bits_truncate(paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER);
             new_entry.set_addr(PhysAddr::new(frame), table_flags);
@@ -126,7 +126,7 @@ pub fn map_huge_page(virt: u64, phys: PhysAddr, flags_raw: u64, target_pml4_phys
         // Level 3 -> Level 2
         let mut p2_table_entry = p3[p3_idx as usize];
         if p2_table_entry.is_unused() {
-            let frame = pmm::allocate_frame(0).expect("VMM: OOM for PD");
+            let frame = pmm::allocate_frame().expect("VMM: OOM for PD");
             let mut new_entry = paging::PageTableEntry::new();
             let table_flags = paging::PageTableFlags::from_bits_truncate(paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER);
             new_entry.set_addr(PhysAddr::new(frame), table_flags);
@@ -187,7 +187,7 @@ pub fn map_page(virt: u64, phys: PhysAddr, flags_raw: u64, target_pml4_phys: Opt
 
         let mut p3_entry = pml4_table[p4_idx as usize];
         if p3_entry.is_unused() {
-            let frame = pmm::allocate_frame(0).expect("VMM: OOM for PDPT");
+            let frame = pmm::allocate_frame().expect("VMM: OOM for PDPT");
             let mut new_entry = paging::PageTableEntry::new();
             let table_flags = paging::PageTableFlags::from_bits_truncate(paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER);
             new_entry.set_addr(PhysAddr::new(frame), table_flags);
@@ -216,7 +216,7 @@ pub fn map_page(virt: u64, phys: PhysAddr, flags_raw: u64, target_pml4_phys: Opt
 
         let mut p2_entry = p3[p3_idx as usize];
         if p2_entry.is_unused() {
-            let frame = pmm::allocate_frame(0).expect("VMM: OOM for PD");
+            let frame = pmm::allocate_frame().expect("VMM: OOM for PD");
             let mut new_entry = paging::PageTableEntry::new();
             let table_flags = paging::PageTableFlags::from_bits_truncate(paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER);
             new_entry.set_addr(PhysAddr::new(frame), table_flags);
@@ -224,7 +224,7 @@ pub fn map_page(virt: u64, phys: PhysAddr, flags_raw: u64, target_pml4_phys: Opt
             paging::get_table_from_phys(frame).unwrap().zero();
             p2_entry = new_entry;
         } else if (p2_entry.as_u64() & paging::PAGE_HUGE) != 0 {
-            let frame = pmm::allocate_frame(0).expect("VMM: OOM for L2 shattering");
+            let frame = pmm::allocate_frame().expect("VMM: OOM for L2 shattering");
             let new_table = paging::get_table_from_phys(frame).unwrap();
             let base_phys = p2_entry.addr().as_u64();
             let huge_flags = paging::PageTableFlags::from_bits_truncate(p2_entry.as_u64() & 0xFFF);
@@ -257,7 +257,7 @@ pub fn map_page(virt: u64, phys: PhysAddr, flags_raw: u64, target_pml4_phys: Opt
 
         let mut p1_entry = p2[p2_idx as usize];
         if p1_entry.is_unused() {
-            let frame = pmm::allocate_frame(0).expect("VMM: OOM for PT");
+            let frame = pmm::allocate_frame().expect("VMM: OOM for PT");
             let mut new_entry = paging::PageTableEntry::new();
             let table_flags = paging::PageTableFlags::from_bits_truncate(paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER);
             new_entry.set_addr(PhysAddr::new(frame), table_flags);
@@ -265,7 +265,7 @@ pub fn map_page(virt: u64, phys: PhysAddr, flags_raw: u64, target_pml4_phys: Opt
             paging::get_table_from_phys(frame).unwrap().zero();
             p1_entry = new_entry;
         } else if (p1_entry.as_u64() & paging::PAGE_HUGE) != 0 {
-            let frame = pmm::allocate_frame(0).expect("VMM: OOM for L1 shattering");
+            let frame = pmm::allocate_frame().expect("VMM: OOM for L1 shattering");
             let new_table = paging::get_table_from_phys(frame).unwrap();
             let base_phys = p1_entry.addr().as_u64();
             let huge_flags = paging::PageTableFlags::from_bits_truncate(p1_entry.as_u64() & 0xFFF);
@@ -359,3 +359,57 @@ pub fn map_mmio(phys: u64, size: usize) -> u64 {
     }
 }
 
+
+pub fn unmap_and_free_range(virt_start: u64, size: u64) {
+    let mut current = virt_start & !0xFFF;
+    let end = (virt_start + size + 0xFFF) & !0xFFF;
+
+    unsafe {
+        let pml4 = paging::active_level_4_table();
+
+        while current < end {
+            let p4_idx = ((current >> 39) & 0x1FF) as usize;
+            let p3_idx = ((current >> 30) & 0x1FF) as usize;
+            let p2_idx = ((current >> 21) & 0x1FF) as usize;
+            let p1_idx = ((current >> 12) & 0x1FF) as usize;
+
+            let mut p3_entry = pml4[p4_idx];
+            if p3_entry.is_unused() {
+                current = (current + 0x8000000000) & !0x7FFFFFFFFF;
+                continue;
+            }
+
+            let p3 = paging::get_table_from_phys(p3_entry.addr().as_u64()).unwrap();
+            let mut p2_entry = p3[p3_idx];
+            if p2_entry.is_unused() {
+                current = (current + 0x40000000) & !0x3FFFFFFF;
+                continue;
+            }
+
+            if (p2_entry.as_u64() & paging::PAGE_HUGE) != 0 {
+                pmm::free_frame(p2_entry.addr().as_u64());
+                p2_entry.set_unused();
+                p3[p3_idx] = p2_entry;
+                current = (current + 0x200000) & !0x1FFFFF;
+                continue;
+            }
+
+            let p2 = paging::get_table_from_phys(p2_entry.addr().as_u64()).unwrap();
+            let mut p1_entry = p2[p2_idx];
+            if p1_entry.is_unused() {
+                current = (current + 0x200000) & !0x1FFFFF;
+                continue;
+            }
+
+            let p1 = paging::get_table_from_phys(p1_entry.addr().as_u64()).unwrap();
+            let mut final_entry = p1[p1_idx];
+            if !final_entry.is_unused() {
+                pmm::free_frame(final_entry.addr().as_u64());
+                final_entry.set_unused();
+                p1[p1_idx] = final_entry;
+            }
+            
+            current += 4096;
+        }
+    }
+}

@@ -41,7 +41,22 @@ impl VmaAllocator {
     }
 
     pub fn remove_by_pid(&mut self, pid: u64) {
+        for r in &self.regions {
+            if r.pid == pid {
+                crate::memory::vmm::unmap_and_free_range(r.start, r.size);
+            }
+        }
         self.regions.retain(|r| r.pid != pid);
+    }
+
+    pub fn get_usage_by_pid(&self, pid: u64) -> usize {
+        let mut total = 0;
+        for r in &self.regions {
+            if r.pid == pid {
+                total += r.size as usize;
+            }
+        }
+        total
     }
 
     pub fn get_regions(&self) -> &Vec<VmaRegion> {
