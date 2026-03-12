@@ -59,7 +59,7 @@ fn kill_current_task() {
     {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         if let Some(current) = tm.current_task_idx() {
-            if let Some(thread) = tm.tasks[current].as_ref() {
+            if let Some(thread) = tm.tasks.get(&(current)) {
                 pid_to_kill = thread.process.as_ref().expect("Thread has no process").pid as i32;
             }
         }

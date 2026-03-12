@@ -28,7 +28,7 @@ pub fn load_elf(data: &[u8], pid: u64) -> Result<u64, String> {
 
     let slot_id = {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
-        tm.tasks[pid as usize].as_ref().unwrap().process.as_ref().unwrap().slot_id
+        tm.tasks.get(&(pid as usize)).unwrap().process.as_ref().unwrap().slot_id
     };
 
     let load_base = crate::memory::address_space::allocate_code(pid, slot_id);

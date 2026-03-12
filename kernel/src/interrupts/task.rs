@@ -5,7 +5,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::arch::{asm, naked_asm};
 
-pub(crate) const MAX_THREADS: usize = 128;
+pub(crate) const MAX_THREADS: usize = 999999; // Deprecated
 pub(crate) const MAX_PROCESSES: usize = 64;
 const STACK_SIZE: u64 = 1024 * 1024;
 
@@ -45,9 +45,9 @@ pub enum ThreadState {
     WaitingForEvent,
 }
 
-#[repr(C, align(16))]
+#[repr(C)]
 pub struct Thread {
-    pub fpu_state: [u8; 512],
+    pub fpu_state: [u8; 528],
     pub kernel_stack: u64,
     pub user_stack: u64,
     pub cpu_state_ptr: u64,
@@ -96,30 +96,32 @@ impl Process {
         let stack_top = crate::memory::address_space::allocate_stack(pid, slot_id);
         
         let heap_start = linear_memory_base;
-        let heap_limit = heap_start + crate::memory::address_space::LINEAR_MEMORY_SLOT_SIZE - 4096;
+                let heap_limit = heap_start + crate::memory::address_space::LINEAR_MEMORY_SLOT_SIZE - 4096;
 
-        Arc::new(Self {
-            pid,
-            slot_id,
-            parent_pid,
-            children: Mutex::new(Vec::new()),
-            fd_table: Mutex::new([-1; 16]),
-            socket_table: Mutex::new([None; 16]),
-            fd_nonblock: Mutex::new([false; 16]),
-            cwd: Mutex::new(cwd),
-            terminal_width: Mutex::new(80),
-            terminal_height: Mutex::new(25),
-            linear_memory_base,
-            code_base,
-            stack_base: stack_top,
-            heap_start,
-            heap_limit,
-            heap_end: Mutex::new(heap_start),
-            event_queue: Mutex::new((0, 0, 0)),
-        })
-    }
-}
-
+                crate::debugln!("Process::new: allocating Arc<Self>...");
+                let arc = Arc::new(Self {
+                    pid,
+                    slot_id,
+                    parent_pid,
+                    children: Mutex::new(Vec::new()),
+                    fd_table: Mutex::new([-1; 16]),
+                    socket_table: Mutex::new([None; 16]),
+                    fd_nonblock: Mutex::new([false; 16]),
+                    cwd: Mutex::new(cwd),
+                    terminal_width: Mutex::new(80),
+                    terminal_height: Mutex::new(25),
+                    linear_memory_base,
+                    code_base,
+                    stack_base: stack_top,
+                    heap_start,
+                    heap_limit,
+                    heap_end: Mutex::new(heap_start),
+                    event_queue: Mutex::new((0, 0, 0)),
+                });
+                crate::debugln!("Process::new: allocated successfully.");
+                arc
+                }
+                }
 impl Drop for Process {
     fn drop(&mut self) {
         if self.pid != 0 {
@@ -137,13 +139,17 @@ pub const NULL_TASK: Option<Thread> = None;
 pub struct TaskManager {
     pub current_task: isize,
     pub thread_count: usize,
-    pub tasks: [Option<Thread>; MAX_THREADS],
+    pub tasks: alloc::collections::BTreeMap<usize, alloc::boxed::Box<Thread>>,
+    pub run_queue: alloc::collections::VecDeque<usize>,
+    pub next_tid: usize,
 }
 
 pub static TASK_MANAGER: Mutex<TaskManager> = Mutex::new(TaskManager {
     current_task: -1,
     thread_count: 0,
-    tasks: [const { None }; MAX_THREADS],
+    tasks: alloc::collections::BTreeMap::new(),
+    run_queue: alloc::collections::VecDeque::new(),
+    next_tid: 1,
 });
 
 #[unsafe(no_mangle)]
@@ -158,7 +164,7 @@ impl Thread {
         let len = core::cmp::min(name.len(), 32);
         t_name[..len].copy_from_slice(&name[..len]);
 
-        let mut fpu_state = [0u8; 512];
+        let mut fpu_state = [0u8; 528];
         // Initialize x87 FCW at offset 0 to 0x037F (all x87 exceptions masked, double precision)
         fpu_state[0] = 0x7F;
         fpu_state[1] = 0x03;
@@ -208,7 +214,8 @@ impl TaskManager {
             (*state_ptr).rsp = idle_thread.kernel_stack;
             (*state_ptr).ss = 0x10;
 
-            self.tasks[0] = Some(idle_thread);
+            self.tasks.insert(0, alloc::boxed::Box::new(idle_thread));
+            self.run_queue.push_back(0);
             self.thread_count = 1;
             self.current_task = 0;
         }
@@ -229,26 +236,36 @@ impl TaskManager {
             crate::debugln!("CRITICAL: Stack pointer is dangerously low: {:#x}", sp);
         }
 
-        for i in 0..MAX_THREADS {
-            if let Some(thread) = &mut self.tasks[i] {
-                if thread.state == ThreadState::Sleeping && unsafe { SYSTEM_TICKS } >= thread.wake_ticks {
-                    thread.state = ThreadState::Ready;
+        let mut to_wake = alloc::vec::Vec::new();
+        for (tid, thread) in self.tasks.iter_mut() {
+            if thread.state == ThreadState::Sleeping && unsafe { SYSTEM_TICKS } >= thread.wake_ticks {
+                thread.state = ThreadState::Ready;
+                to_wake.push(*tid);
+            }
+        }
+        for tid in to_wake {
+            if !self.run_queue.contains(&tid) {
+                self.run_queue.push_back(tid);
+            }
+        }
+
+        
+        if self.current_task >= 0 {
+            if let Some(thread) = self.tasks.get_mut(&(self.current_task as usize)) {
+                thread.cpu_state_ptr = cpu_state as u64;
+                if thread.state == ThreadState::Ready {
+                    self.run_queue.push_back(self.current_task as usize);
                 }
             }
         }
 
-        if self.current_task >= 0 {
-            if let Some(thread) = &mut self.tasks[self.current_task as usize] {
-                thread.cpu_state_ptr = cpu_state as u64;
-            }
-        }
-
         self.current_task = self.get_next_thread();
+
         if self.current_task < 0 {
             return (cpu_state, 0);
         }
 
-        let thread = self.tasks[self.current_task as usize].as_ref().unwrap();
+        let thread = self.tasks.get(&(self.current_task as usize)).unwrap();
         let next_state = thread.cpu_state_ptr as *const CPUState;
         unsafe {
             let p = next_state;
@@ -272,45 +289,38 @@ impl TaskManager {
         )
     }
 
-    fn get_next_thread(&self) -> isize {
-        let mut i = (self.current_task + 1) as usize;
-        for _ in 0..MAX_THREADS {
-            if i >= MAX_THREADS { i = 0; }
-            if let Some(thread) = &self.tasks[i] {
+    fn get_next_thread(&mut self) -> isize {
+        while let Some(tid) = self.run_queue.pop_front() {
+            if let Some(thread) = self.tasks.get(&tid) {
                 if thread.state == ThreadState::Ready {
-                    return i as isize;
+                    return tid as isize;
                 }
             }
-            i += 1;
         }
-        -1
+        0 // Fallback to idle task (0)
     }
 
     pub fn reserve_pid(&mut self) -> Result<usize, pmm::FrameError> {
-        for i in 0..MAX_THREADS {
-            if self.tasks[i].is_none() {
-                let mut t = Thread::new(b"reserved");
-                t.state = ThreadState::Reserved;
-                self.tasks[i] = Some(t);
-                self.thread_count += 1;
-                return Ok(i);
-            }
-        }
-        Err(pmm::FrameError::NoMemory)
+        let tid = self.next_tid;
+        self.next_tid += 1;
+        let mut t = Thread::new(b"reserved");
+        t.state = ThreadState::Reserved;
+        self.tasks.insert(tid, alloc::boxed::Box::new(t));
+        self.run_queue.push_back(tid);
+        self.thread_count += 1;
+        Ok(tid)
     }
 
     pub fn kill_process(&mut self, pid: u64) {
-        for i in 0..MAX_THREADS {
-            if let Some(thread) = &mut self.tasks[i] {
-                if let Some(proc) = &thread.process {
-                    if proc.pid == pid {
-                        thread.state = ThreadState::Zombie;
-                        // Clear the event queue registration before the WASM heap is freed
-                        // so the kernel never writes to a dangling pointer.
-                        *proc.event_queue.lock() = (0, 0, 0);
-                        unsafe {
-                            (*(&raw mut crate::window_manager::composer::COMPOSER)).remove_windows_by_pid(pid);
-                        }
+        for (_, thread) in self.tasks.iter_mut() {
+            if let Some(proc) = &thread.process {
+                if proc.pid == pid {
+                    thread.state = ThreadState::Zombie;
+                    // Clear the event queue registration before the WASM heap is freed
+                    // so the kernel never writes to a dangling pointer.
+                    *proc.event_queue.lock() = (0, 0, 0);
+                    unsafe {
+                        (*(&raw mut crate::window_manager::composer::COMPOSER)).remove_windows_by_pid(pid);
                     }
                 }
             }
@@ -398,14 +408,15 @@ impl TaskManager {
         }
 
         thread.state = if entry_point == 0 { ThreadState::Reserved } else { ThreadState::Ready };
-        self.tasks[slot] = Some(thread);
+        self.tasks.insert(slot, alloc::boxed::Box::new(thread));
+        self.run_queue.push_back(slot);
         Ok(())
     }
 
     pub fn spawn_thread(&mut self, parent_tid: usize, entry_point: u64, user_stack: u64, arg: u64) -> Result<usize, pmm::FrameError> {
         let tid = self.reserve_pid()?;
 
-        let parent_process = if let Some(t) = &self.tasks[parent_tid] {
+        let parent_process = if let Some(t) = self.tasks.get(&(parent_tid)) {
             if let Some(p) = &t.process {
                 p.clone()
             } else {
@@ -458,21 +469,20 @@ impl TaskManager {
         }
 
         thread.state = ThreadState::Ready;
-        self.tasks[tid] = Some(thread);
+        self.tasks.insert(tid, alloc::boxed::Box::new(thread));
+        self.run_queue.push_back(tid);
 
         Ok(tid)
     }
 
-    pub fn get_tasks(&self) -> &[Option<Thread>; MAX_THREADS] {
-        &self.tasks
-    }
+    pub fn get_tasks(&self) -> alloc::collections::btree_map::Values<usize, alloc::boxed::Box<Thread>> { self.tasks.values() }
 
     pub fn current_thread(&self) -> &Thread {
-        self.tasks[self.current_task as usize].as_ref().expect("No current thread")
+        self.tasks.get(&(self.current_task as usize)).expect("No current thread")
     }
 
     pub fn current_thread_mut(&mut self) -> &mut Thread {
-        self.tasks[self.current_task as usize].as_mut().expect("No current thread")
+        self.tasks.get_mut(&(self.current_task as usize)).expect("No current thread")
     }
 }
 
@@ -488,7 +498,7 @@ pub extern "C" fn timer_handler() {
         naked_asm!(
             "push rbp", "push rax", "push rbx", "push rcx", "push rdx", "push rsi", "push rdi",
             "push r8", "push r9", "push r10", "push r11", "push r12", "push r13", "push r14", "push r15",
-            "mov rdi, rsp", "call switch_timer", "mov rsp, rax",
+            "mov rdi, rsp", "and rsp, -16", "call switch_timer", "mov rsp, rax",
             "pop r15", "pop r14", "pop r13", "pop r12", "pop r11", "pop r10", "pop r9", "pop r8",
             "pop rdi", "pop rsi", "pop rdx", "pop rcx", "pop rbx", "pop rax", "pop rbp",
             "iretq",
@@ -502,7 +512,7 @@ pub extern "C" fn yield_handler() {
         naked_asm!(
             "push rbp", "push rax", "push rbx", "push rcx", "push rdx", "push rsi", "push rdi",
             "push r8", "push r9", "push r10", "push r11", "push r12", "push r13", "push r14", "push r15",
-            "mov rdi, rsp", "call switch_yield", "mov rsp, rax",
+            "mov rdi, rsp", "and rsp, -16", "call switch_yield", "mov rsp, rax",
             "pop r15", "pop r14", "pop r13", "pop r12", "pop r11", "pop r10", "pop r9", "pop r8",
             "pop rdi", "pop rsi", "pop rdx", "pop rcx", "pop rbx", "pop rax", "pop rbp",
             "iretq",
@@ -550,10 +560,10 @@ unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
 
 
         if current_task_idx >= 0 {
-            if let Some(thread) = &mut tm.tasks[current_task_idx as usize] {
+            if let Some(thread) = tm.tasks.get_mut(&(current_task_idx as usize)) {
                 thread.cpu_state_ptr = rsp;
-                let fpu_ptr = thread.fpu_state.as_mut_ptr();
-
+                let raw_ptr = thread.fpu_state.as_mut_ptr() as u64;
+                let fpu_ptr = (raw_ptr + 15) & !15;
                 asm!("fxsave [{}]", in(reg) fpu_ptr);
             }
         }
@@ -563,9 +573,9 @@ unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
         let new_task_idx = tm.current_task;
 
         if new_task_idx >= 0 {
-            if let Some(thread) = &tm.tasks[new_task_idx as usize] {
-                let fpu_ptr = thread.fpu_state.as_ptr();
-
+            if let Some(thread) = tm.tasks.get(&(new_task_idx as usize)) {
+                let raw_ptr = thread.fpu_state.as_ptr() as u64;
+                let fpu_ptr = (raw_ptr + 15) & !15;
                 asm!("fxrstor [{}]", in(reg) fpu_ptr);
             }
         }

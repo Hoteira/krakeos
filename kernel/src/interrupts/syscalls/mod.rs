@@ -18,7 +18,7 @@ pub mod window;
 pub fn get_current_process() -> Option<Arc<Process>> {
     let tm = TASK_MANAGER.int_lock();
     let idx = tm.current_task_idx()?;
-    tm.tasks[idx].as_ref()?.process.clone()
+    tm.tasks.get(&(idx))?.process.clone()
 }
 
 /// Returns true if the current thread is a kernel thread (Ring 0).
@@ -28,7 +28,7 @@ pub fn get_current_process() -> Option<Arc<Process>> {
 pub fn is_kernel_thread() -> bool {
     let tm = TASK_MANAGER.int_lock();
     if let Some(idx) = tm.current_task_idx() {
-        if let Some(thread) = tm.tasks[idx].as_ref() {
+        if let Some(thread) = tm.tasks.get(&(idx)) {
             let result = thread.user_stack == 0;
             if !result {
                 debugln!("[is_kernel_thread] TID {} user_stack={:#x} -> NOT kernel thread", idx, thread.user_stack);
@@ -214,7 +214,10 @@ pub extern "C" fn syscall_entry() {
             // 5. Call dispatcher
             "cld",
             "mov rdi, rsp",
+            "mov r12, rsp",
+            "and rsp, -16",
             "call syscall_dispatcher",
+            "mov rsp, r12",
             // 6. Restore all registers
             "pop r15",
             "pop r14",

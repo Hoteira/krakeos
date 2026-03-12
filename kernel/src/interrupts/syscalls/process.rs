@@ -7,10 +7,11 @@ use alloc::vec::Vec;
 use alloc::boxed::Box;
 
 pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&[(u8, u8)]>, parent_pid: Option<u64>) -> Result<u64, String> {
+    crate::debugln!("[spawn_process] path='{}'", path);
     let cwd_str = {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         if tm.current_task >= 0 {
-            if let Some(thread) = tm.tasks[tm.current_task as usize].as_ref() {
+            if let Some(thread) = tm.tasks.get(&(tm.current_task as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
                 let cwd = proc.cwd.lock();
                 let cwd_len = cwd.iter().position(|&c| c == 0).unwrap_or(cwd.len());
@@ -27,7 +28,7 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
 
     let path_parts: Vec<&str> = resolved.split('/').collect();
     if path_parts.len() < 1 || !path_parts[0].starts_with('@') {
-        return Err(String::from("Invalid path format"));
+        crate::debugln!("[spawn_process] Error: Invalid path format"); return Err(String::from("Invalid path format"));
     }
 
     let disk_part = &path_parts[0][1..];
@@ -59,7 +60,7 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
             return Err(String::from("File empty"));
         }
     } else {
-        return Err(String::from("File not found"));
+        crate::debugln!("[spawn_process] Error: File not found"); return Err(String::from("File not found"));
     }
 
     // WASM Detection and Execution via Native Kernel Thread
@@ -72,7 +73,7 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
             let mut fds = [-1i16; 16];
             let mut size = (80u16, 25u16);
             if tm.current_task >= 0 {
-                if let Some(thread) = tm.tasks[tm.current_task as usize].as_ref() {
+                if let Some(thread) = tm.tasks.get(&(tm.current_task as usize)) {
                     let proc = thread.process.as_ref().expect("Thread has no process");
                     fds = *proc.fd_table.lock();
                     size = (*proc.terminal_width.lock(), *proc.terminal_height.lock());
@@ -102,8 +103,8 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
             tm.init_user_task(pid_idx, 0, 0, args, Some(new_fd_table), process_name_bytes, term_size, parent_pid).map_err(|_| String::from("Failed to init task"))?;
             
             // FORCE the parent thread to not be scheduled at all
-            let proc = tm.tasks[pid_idx].as_ref().unwrap().process.as_ref().unwrap().clone();
-            tm.tasks[pid_idx].as_mut().unwrap().state = crate::interrupts::task::ThreadState::Null;
+            let proc = tm.tasks.get(&(pid_idx)).unwrap().process.as_ref().unwrap().clone();
+            tm.tasks.get_mut(&(pid_idx)).unwrap().state = crate::interrupts::task::ThreadState::Null;
             
             proc.slot_id
         };
@@ -193,7 +194,7 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
         let mut fds = [-1i16; 16];
         let mut size = (80u16, 25u16);
         if tm.current_task >= 0 {
-            if let Some(thread) = tm.tasks[tm.current_task as usize].as_ref() {
+            if let Some(thread) = tm.tasks.get(&(tm.current_task as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
                 fds = *proc.fd_table.lock();
                 size = (*proc.terminal_width.lock(), *proc.terminal_height.lock());
@@ -231,7 +232,7 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
         match crate::fs::elf::load_elf(&file_buf, pid_elf) {
             Ok(entry_point) => {
                 let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
-                let task = tm.tasks[pid_idx_elf].as_mut().unwrap();
+                let task = tm.tasks.get_mut(&(pid_idx_elf)).unwrap();
 
 
                 unsafe {
@@ -266,7 +267,7 @@ pub fn spawn_ext_process(name: &str, state: CPUState, parent_pid: Option<u64>) -
         let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         tm.init_user_task(pid_idx, 0, 0, None, None, process_name_bytes, term_size, parent_pid).map_err(|_| String::from("Failed to init task"))?;
         
-        let task = tm.tasks[pid_idx].as_mut().unwrap();
+        let task = tm.tasks.get_mut(&(pid_idx)).unwrap();
         unsafe {
             core::ptr::write(task.cpu_state_ptr as *mut CPUState, state);
         }
@@ -295,7 +296,7 @@ pub fn handle_spawn_ext(context: &mut CPUState) {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
         if current >= 0 {
-            tm.tasks[current as usize].as_ref().and_then(|t| t.process.as_ref()).map(|p| p.pid)
+            tm.tasks.get(&(current as usize)).and_then(|t| t.process.as_ref()).map(|p| p.pid)
         } else {
             None
         }
@@ -316,7 +317,7 @@ pub fn handle_exit(context: &mut CPUState) {
         let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
         if current >= 0 {
-            if let Some(thread) = tm.tasks[current as usize].as_mut() {
+            if let Some(thread) = tm.tasks.get_mut(&(current as usize)) {
                 thread.exit_code = exit_code;
                 thread.state = crate::interrupts::task::ThreadState::Zombie;
 
@@ -350,6 +351,7 @@ pub fn handle_spawn(context: &mut CPUState) {
     let args_len = context.r10 as usize;
     let fd_map_ptr = context.r8 as *const (u8, u8);
     let fd_map_len = context.r9 as usize;
+    crate::debugln!("[Syscall] handle_spawn called! path_len={}", path_len);
 
     if path_ptr.is_null() || path_len == 0 {
         context.rax = u64::MAX;
@@ -387,7 +389,7 @@ pub fn handle_spawn(context: &mut CPUState) {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
         if current >= 0 {
-            tm.tasks[current as usize].as_ref().and_then(|t| t.process.as_ref()).map(|p| p.pid)
+            tm.tasks.get(&(current as usize)).and_then(|t| t.process.as_ref()).map(|p| p.pid)
         } else {
             None
         }
@@ -412,7 +414,7 @@ pub fn handle_kill(context: &mut CPUState) {
     if current_idx < 0 { // Kernel
         can_kill = true;
     } else {
-        if let Some(current_thread) = tm.tasks[current_idx as usize].as_ref() {
+        if let Some(current_thread) = tm.tasks.get(&(current_idx as usize)) {
             let current_proc = current_thread.process.as_ref().unwrap();
             
             // Allow if killing self
@@ -422,8 +424,8 @@ pub fn handle_kill(context: &mut CPUState) {
                 can_kill = true;
             } else {
                 // Allow if current is parent of target
-                for i in 0..crate::interrupts::task::MAX_THREADS {
-                    if let Some(t) = tm.tasks[i].as_ref() {
+                for (_, t) in tm.tasks.iter() {
+                    if true {
                         if let Some(p) = t.process.as_ref() {
                             if p.pid == target_pid && p.parent_pid == Some(current_proc.pid) {
                                 can_kill = true;
@@ -448,7 +450,7 @@ pub fn handle_getpid(context: &mut CPUState) {
     let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
     let current = tm.current_task;
     if current >= 0 {
-        if let Some(thread) = tm.tasks[current as usize].as_ref() {
+        if let Some(thread) = tm.tasks.get(&(current as usize)) {
             let proc = thread.process.as_ref().expect("Thread has no process");
             context.rax = proc.pid;
             return;
@@ -465,9 +467,7 @@ pub fn handle_wait_pid(context: &mut CPUState) {
     }
 
     let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
-    let task_opt = &mut tm.tasks[target_pid];
-
-    if let Some(task) = task_opt {
+    if let Some(task) = tm.tasks.get_mut(&target_pid) {
         match task.state {
             crate::interrupts::task::ThreadState::Zombie => {
                 let exit_code = task.exit_code;
@@ -483,7 +483,7 @@ pub fn handle_wait_pid(context: &mut CPUState) {
                     crate::memory::pmm::free_frame(k_stack_start);
                 }
 
-                *task_opt = None;
+                tm.tasks.remove(&target_pid);
             }
             crate::interrupts::task::ThreadState::Null => {
                 context.rax = 0;
@@ -513,31 +513,29 @@ pub fn handle_get_process_list(context: &mut CPUState) {
 
     let struct_size = 48;
 
-    for (i, task_opt) in tm.tasks.iter().enumerate() {
-        if let Some(task) = task_opt {
-            if task.state != crate::interrupts::task::ThreadState::Null {
-                if count >= max_count {
-                    break;
-                }
-
-                let offset = count * struct_size;
-                unsafe {
-                    let ptr = buf_ptr.add(offset);
-                    *(ptr as *mut u64) = i as u64;
-                    *(ptr.add(8) as *mut u64) = match task.state {
-                        crate::interrupts::task::ThreadState::Null => 0,
-                        crate::interrupts::task::ThreadState::Reserved => 1,
-                        crate::interrupts::task::ThreadState::Ready => 2,
-                        crate::interrupts::task::ThreadState::Zombie => 3,
-                        crate::interrupts::task::ThreadState::Sleeping => 4,
-                        _ => 0,
-                    };
-
-                    let name_ptr = ptr.add(16);
-                    core::ptr::copy_nonoverlapping(task.name.as_ptr(), name_ptr, 32);
-                }
-                count += 1;
+    for (i, task) in tm.tasks.iter() {
+        if task.state != crate::interrupts::task::ThreadState::Null {
+            if count >= max_count {
+                break;
             }
+
+            let offset = count * struct_size;
+            unsafe {
+                let ptr = buf_ptr.add(offset);
+                *(ptr as *mut u64) = *i as u64;
+                *(ptr.add(8) as *mut u64) = match task.state {
+                    crate::interrupts::task::ThreadState::Null => 0,
+                    crate::interrupts::task::ThreadState::Reserved => 1,
+                    crate::interrupts::task::ThreadState::Ready => 2,
+                    crate::interrupts::task::ThreadState::Zombie => 3,
+                    crate::interrupts::task::ThreadState::Sleeping => 4,
+                    _ => 0,
+                };
+
+                let name_ptr = ptr.add(16);
+                core::ptr::copy_nonoverlapping(task.name.as_ptr(), name_ptr, 32);
+            }
+            count += 1;
         }
     }
     context.rax = count as u64;
@@ -562,7 +560,7 @@ pub fn handle_get_slot_info(context: &mut CPUState) {
 
     let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
     if let Some(current) = tm.current_task_idx() {
-        if let Some(thread) = tm.tasks[current].as_ref() {
+        if let Some(thread) = tm.tasks.get(&(current)) {
             let proc = thread.process.as_ref().expect("Thread has no process");
             
             use crate::memory::address_space::*;
@@ -590,7 +588,7 @@ pub fn handle_sleep(context: &mut CPUState) {
     let current = tm.current_task;
 
     if current >= 0 {
-        if let Some(task) = tm.tasks[current as usize].as_mut() {
+        if let Some(task) = tm.tasks.get_mut(&(current as usize)) {
             task.wake_ticks = unsafe { crate::interrupts::task::SYSTEM_TICKS } + duration;
             task.state = crate::interrupts::task::ThreadState::Sleeping;
         }
@@ -623,7 +621,7 @@ pub fn handle_thread_exit(context: &mut CPUState) {
         let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
         if current >= 0 {
-            if let Some(task) = tm.tasks[current as usize].as_mut() {
+            if let Some(task) = tm.tasks.get_mut(&(current as usize)) {
                 task.state = crate::interrupts::task::ThreadState::Zombie;
                 task.exit_code = 0;
             }

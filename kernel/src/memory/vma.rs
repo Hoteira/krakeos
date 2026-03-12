@@ -17,9 +17,8 @@ impl VmaAllocator {
         Self { regions: Vec::new() }
     }
 
-    pub fn track(&mut self, start: u64, size: u64, pid: u64) {
+        pub fn track(&mut self, start: u64, size: u64, pid: u64) {
         crate::debugln!("[VMA] Track PID {} region {:#x}..{:#x}", pid, start, start + size);
-        // Simple overlap check
         let end = start + size;
         for r in &self.regions {
             let r_end = r.start + r.size;
@@ -28,7 +27,9 @@ impl VmaAllocator {
                     pid, start, end, r.pid, r.start, r_end);
             }
         }
+        crate::debugln!("[VMA] Pushing to Vec...");
         self.regions.push(VmaRegion { start, size, pid });
+        crate::debugln!("[VMA] Push successful!");
     }
 
     pub fn is_mapped(&self, addr: u64) -> bool {
@@ -93,8 +94,8 @@ impl VmaAllocator {
         let mut seen_pids = Vec::new();
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         
-        for task_opt in tm.get_tasks() {
-            if let Some(task) = task_opt {
+        for task in tm.get_tasks() {
+            if true {
                 if let Some(proc) = &task.process {
                     let pid = proc.pid;
                     if seen_pids.contains(&pid) { continue; }

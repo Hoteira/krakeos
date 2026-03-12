@@ -12,7 +12,7 @@ pub fn handle_brk(context: &mut CPUState) {
         return;
     }
 
-    if let Some(thread) = tm.tasks[current_idx as usize].as_mut() {
+    if let Some(thread) = tm.tasks.get_mut(&(current_idx as usize)) {
         let proc = thread.process.as_ref().expect("Thread has no process");
         let mut heap_end = proc.heap_end.lock();
         let current_brk = *heap_end;
@@ -83,7 +83,7 @@ pub fn handle_mmap(context: &mut CPUState) {
             context.rax = u64::MAX;
             return;
         }
-        if let Some(thread) = tm.tasks[current_idx as usize].as_ref() {
+        if let Some(thread) = tm.tasks.get(&(current_idx as usize)) {
             let proc = thread.process.as_ref().expect("Thread has no process");
             (proc.pid, proc.heap_limit, proc.linear_memory_base)
         } else {
@@ -98,7 +98,7 @@ pub fn handle_mmap(context: &mut CPUState) {
     let target_addr = if addr == 0 {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         let current_idx = tm.current_task;
-        if let Some(thread) = tm.tasks[current_idx as usize].as_ref() {
+        if let Some(thread) = tm.tasks.get(&(current_idx as usize)) {
             let proc = thread.process.as_ref().expect("Thread has no process");
             let mut heap_end = proc.heap_end.lock();
             let old_brk = *heap_end;
@@ -225,7 +225,7 @@ pub fn handle_shm_map(context: &mut CPUState) {
     let (pid, mem_base) = {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         if let Some(current) = tm.current_task_idx() {
-            if let Some(thread) = tm.tasks[current].as_ref() {
+            if let Some(thread) = tm.tasks.get(&(current)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
                 (proc.pid, proc.linear_memory_base)
             } else {

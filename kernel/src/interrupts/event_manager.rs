@@ -65,9 +65,12 @@ impl EventManager {
             if let AsyncEvent::Timer(target) = self.registrations[i].event {
                 if current_ticks >= target {
                     let reg = self.registrations.remove(i);
-                    if let Some(thread) = &mut tm.tasks[reg.thread_idx] {
+                    if let Some(thread) = tm.tasks.get_mut(&(reg.thread_idx)) {
                         if thread.state == ThreadState::WaitingForEvent {
                             thread.state = ThreadState::Ready;
+                            if !tm.run_queue.contains(&reg.thread_idx) {
+                                tm.run_queue.push_back(reg.thread_idx);
+                            }
                         }
                     }
                     // When a thread wakes, clear its other registrations
@@ -103,10 +106,12 @@ impl EventManager {
             if self.registrations[i].event == event {
                 let reg = self.registrations.remove(i);
 
-                if let Some(thread) = &mut tm.tasks[reg.thread_idx] {
+                if let Some(thread) = tm.tasks.get_mut(&(reg.thread_idx)) {
                     if thread.state == ThreadState::WaitingForEvent {
                         thread.state = ThreadState::Ready;
-
+                        if !tm.run_queue.contains(&reg.thread_idx) {
+                            tm.run_queue.push_back(reg.thread_idx);
+                        }
                         woken_tids.push(reg.thread_idx);
                     }
                 }

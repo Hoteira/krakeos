@@ -27,7 +27,7 @@ pub fn handle_wait_for_event(context: &mut CPUState) {
             return;
         }
 
-        if let Some(thread) = &mut tm.tasks[current_idx] {
+        if let Some(thread) = tm.tasks.get_mut(&current_idx) {
             thread.state = ThreadState::WaitingForEvent;
             em.register(current_idx, event);
         }

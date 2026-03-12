@@ -56,10 +56,10 @@ pub fn handle_socket(context: &mut CPUState) {
 
     let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
     if let Some(current) = tm.current_task_idx() {
-        let pid = tm.tasks[current].as_ref().unwrap().process.as_ref().unwrap().pid;
+        let pid = tm.tasks.get(&(current)).unwrap().process.as_ref().unwrap().pid;
         let socket_id = crate::net::socket::SOCKET_MANAGER.lock().create_socket(pid, socket_kind);
         
-        if let Some(thread) = tm.tasks[current].as_mut() {
+        if let Some(thread) = tm.tasks.get_mut(&(current)) {
             let proc = thread.process.as_ref().unwrap();
             let mut table = proc.socket_table.lock();
             for i in 0..16 {
@@ -209,7 +209,7 @@ pub fn handle_accept(context: &mut CPUState) {
         
         let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         if let Some(current) = tm.current_task_idx() {
-            let proc = tm.tasks[current].as_ref().unwrap().process.as_ref().unwrap();
+            let proc = tm.tasks.get(&(current)).unwrap().process.as_ref().unwrap();
             let mut table = proc.socket_table.lock();
             for i in 0..16 {
                 if table[i].is_none() {
@@ -280,7 +280,7 @@ pub fn handle_close_socket(context: &mut CPUState) {
     let fd = context.rdi as usize;
     let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
     if let Some(current) = tm.current_task_idx() {
-        let proc = tm.tasks[current].as_ref().unwrap().process.as_ref().unwrap();
+        let proc = tm.tasks.get(&(current)).unwrap().process.as_ref().unwrap();
         let mut table = proc.socket_table.lock();
         if fd < 16 {
             table[fd] = None;
@@ -359,6 +359,6 @@ pub fn handle_recvfrom(context: &mut CPUState) {
 fn get_socket_id(context: &CPUState, fd: usize) -> Option<usize> {
     let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
     let current = tm.current_task_idx()?;
-    let proc = tm.tasks[current].as_ref()?.process.as_ref()?;
+    let proc = tm.tasks.get(&(current))?.process.as_ref()?;
     proc.socket_table.lock()[fd]
 }

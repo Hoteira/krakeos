@@ -35,19 +35,27 @@ use crate::memory::paging::{active_level_4_table, phys_to_virt};
 #[global_allocator]
 static ALLOCATOR: std::allocator::Allocator = std::allocator::Allocator::new();
 
+#[unsafe(naked)]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".start")]
-pub extern "C" fn _start(bootinfo_ptr: u64) -> ! {
-    unsafe { asm!("cli"); }
+pub unsafe extern "C" fn _start() -> ! {
+    core::arch::naked_asm!(
+        "cli",
+        // The bootloader passes the bootinfo pointer in RDI according to System V ABI
+        // We just need to align the stack and adjust it for HHDM.
+        "mov rax, rsp",
+        "mov rcx, 0xFFFF800000000000",
+        "add rax, rcx",
+        "and rax, -16", // 16-byte align
+        "mov rsp, rax",
+        "call rust_main",
+        "ud2"
+    );
+}
 
+#[unsafe(no_mangle)]
+pub extern "C" fn rust_main(bootinfo_ptr: u64) -> ! {
     unsafe { *(&raw mut BOOT_INFO) = *(bootinfo_ptr as *const BootInfo); };
-
-    unsafe {
-        let rsp: u64;
-        asm!("mov {}, rsp", out(reg) rsp);
-        let new_rsp = rsp + crate::memory::paging::HHDM_OFFSET;
-        asm!("mov rsp, {}", in(reg) new_rsp);
-    }
 
     reload_gdt_high_half();
 
@@ -87,8 +95,11 @@ pub extern "C" fn _start(bootinfo_ptr: u64) -> ! {
 
     window_manager::events::GLOBAL_EVENT_QUEUE.lock().init();
     interrupts::task::TASK_MANAGER.lock().init();
+    debugln!("SIGNPOST: TaskManager initialized.");
 
+    debugln!("SIGNPOST: Calling DISPLAY_SERVER.init()...");
     unsafe { (*(&raw mut DISPLAY_SERVER)).init(); }
+    debugln!("SIGNPOST: DISPLAY_SERVER initialized.");
     unsafe { (*(&raw mut DISPLAY_SERVER)).force_full_sync(); }
 
     debugln!("SIGNPOST: Drivers initialized.");

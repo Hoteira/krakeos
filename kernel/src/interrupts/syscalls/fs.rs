@@ -80,7 +80,7 @@ pub fn handle_read(context: &mut CPUState) {
     let is_nonblock = {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         if let Some(idx) = tm.current_task_idx() {
-            tm.tasks[idx].as_ref().unwrap().process.as_ref().unwrap().fd_nonblock.lock()[fd]
+            tm.tasks.get(&(idx)).unwrap().process.as_ref().unwrap().fd_nonblock.lock()[fd]
         } else { false }
     };
 
@@ -157,7 +157,7 @@ pub fn handle_poll(context: &mut CPUState) {
                     pfd.revents |= POLLIN;
                 }
             } else if pfd.fd >= 0 && (pfd.fd as usize) < 16 {
-                let proc = tm.tasks[current_idx].as_ref().unwrap().process.as_ref().unwrap();
+                let proc = tm.tasks.get(&(current_idx)).unwrap().process.as_ref().unwrap();
                 let gfd = proc.fd_table.lock()[pfd.fd as usize];
                 if gfd != -1 {
                     if let Some(handle) = crate::fs::vfs::get_file(gfd as usize) {
@@ -198,7 +198,7 @@ pub fn handle_poll(context: &mut CPUState) {
             }
         }
 
-        if let Some(thread) = &mut tm.tasks[current_idx] {
+        if let Some(thread) = tm.tasks.get_mut(&current_idx) {
             thread.state = crate::interrupts::task::ThreadState::WaitingForEvent;
         }
 
@@ -222,7 +222,7 @@ pub fn handle_chdir(context: &mut CPUState) {
     let cwd_str = {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         if tm.current_task >= 0 {
-            if let Some(thread) = tm.tasks[tm.current_task as usize].as_ref() {
+            if let Some(thread) = tm.tasks.get(&(tm.current_task as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
                 let cwd = proc.cwd.lock();
                 let cwd_len = cwd.iter().position(|&c| c == 0).unwrap_or(cwd.len());
@@ -247,7 +247,7 @@ pub fn handle_chdir(context: &mut CPUState) {
             let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
             let current_idx = tm.current_task as usize;
             if tm.current_task >= 0 {
-                if let Some(thread) = tm.tasks[current_idx].as_mut() {
+                if let Some(thread) = tm.tasks.get_mut(&(current_idx)) {
                     let proc = thread.process.as_ref().expect("Thread has no process");
                     let mut cwd = proc.cwd.lock();
                     cwd.fill(0);
@@ -330,7 +330,7 @@ pub fn handle_create(context: &mut CPUState, syscall_num: u64) {
 pub fn get_current_cwd() -> String {
     let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
     if tm.current_task >= 0 {
-        if let Some(thread) = tm.tasks[tm.current_task as usize].as_ref() {
+        if let Some(thread) = tm.tasks.get(&(tm.current_task as usize)) {
             let proc = thread.process.as_ref().expect("Thread has no process");
             let cwd = proc.cwd.lock();
             let cwd_len = cwd.iter().position(|&c| c == 0).unwrap_or(cwd.len());
@@ -344,7 +344,7 @@ pub fn assign_local_fd(global_fd: usize) -> u64 {
     let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
     let current = tm.current_task;
     if current >= 0 {
-        if let Some(thread) = tm.tasks[current as usize].as_mut() {
+        if let Some(thread) = tm.tasks.get_mut(&(current as usize)) {
             let proc = thread.process.as_ref().expect("Thread has no process");
             let mut fd_table = proc.fd_table.lock();
             for i in 0..16 {
@@ -449,7 +449,7 @@ pub fn handle_read_file(context: &mut CPUState) {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
         if current >= 0 && local_fd < 16 {
-            if let Some(thread) = tm.tasks[current as usize].as_ref() {
+            if let Some(thread) = tm.tasks.get(&(current as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
                 Some(proc.fd_table.lock()[local_fd])
             } else { None }
@@ -469,7 +469,7 @@ pub fn handle_read_file(context: &mut CPUState) {
         let is_nonblock = {
             let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
             if let Some(idx) = tm.current_task_idx() {
-                tm.tasks[idx].as_ref().unwrap().process.as_ref().unwrap().fd_nonblock.lock()[local_fd]
+                tm.tasks.get(&(idx)).unwrap().process.as_ref().unwrap().fd_nonblock.lock()[local_fd]
             } else { false }
         };
 
@@ -536,7 +536,7 @@ pub fn handle_write_file(context: &mut CPUState) {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
         if current >= 0 && local_fd < 16 {
-            if let Some(thread) = tm.tasks[current as usize].as_ref() {
+            if let Some(thread) = tm.tasks.get(&(current as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
                 Some(proc.fd_table.lock()[local_fd])
             } else { None }
@@ -608,7 +608,7 @@ pub fn handle_read_dir(context: &mut CPUState) {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
         if current >= 0 && local_fd < 16 {
-            if let Some(thread) = tm.tasks[current as usize].as_ref() {
+            if let Some(thread) = tm.tasks.get(&(current as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
                 Some(proc.fd_table.lock()[local_fd])
             } else { None }
@@ -680,7 +680,7 @@ pub fn handle_stat(context: &mut CPUState, is_fstat: bool) {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
         if current >= 0 && local_fd < 16 {
-            if let Some(thread) = tm.tasks[current as usize].as_ref() {
+            if let Some(thread) = tm.tasks.get(&(current as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
                 let gfd = proc.fd_table.lock()[local_fd];
                 if gfd != -1 {
@@ -724,7 +724,7 @@ pub fn handle_ftruncate(context: &mut CPUState) {
     let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
     let current = tm.current_task;
     if current >= 0 && local_fd < 16 {
-        if let Some(thread) = tm.tasks[current as usize].as_ref() {
+        if let Some(thread) = tm.tasks.get(&(current as usize)) {
             let proc = thread.process.as_ref().expect("Thread has no process");
             let gfd = proc.fd_table.lock()[local_fd];
             if gfd != -1 {
@@ -804,7 +804,7 @@ pub fn handle_close(context: &mut CPUState) {
     let local_fd = context.rdi as usize;
     let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
     if let Some(current) = tm.current_task_idx() {
-        if let Some(thread) = tm.tasks[current].as_mut() {
+        if let Some(thread) = tm.tasks.get_mut(&(current)) {
             let proc = thread.process.as_ref().expect("Thread has no process");
             let mut fd_table = proc.fd_table.lock();
             if local_fd < 16 {
@@ -830,7 +830,7 @@ pub fn handle_seek(context: &mut CPUState) {
     let whence = context.rdx as usize;
     let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
     if let Some(current) = tm.current_task_idx() {
-        if let Some(thread) = tm.tasks[current].as_ref() {
+        if let Some(thread) = tm.tasks.get(&(current)) {
             let proc = thread.process.as_ref().expect("Thread has no process");
             let gfd = proc.fd_table.lock()[local_fd];
             if gfd != -1 {
@@ -889,7 +889,7 @@ pub fn handle_ioctl(context: &mut CPUState) {
             let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
 
             if let Some(current) = tm.current_task_idx() {
-                if let Some(thread) = tm.tasks[current].as_ref() {
+                if let Some(thread) = tm.tasks.get(&(current)) {
                     let proc = thread.process.as_ref().expect("Thread has no process");
 
                     if !arg.is_null() {
@@ -909,7 +909,7 @@ pub fn handle_ioctl(context: &mut CPUState) {
             let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
 
             if let Some(current) = tm.current_task_idx() {
-                if let Some(thread) = tm.tasks[current].as_mut() {
+                if let Some(thread) = tm.tasks.get_mut(&(current)) {
                     let proc = thread.process.as_ref().expect("Thread has no process");
 
                     if !arg.is_null() {
@@ -942,7 +942,7 @@ pub fn handle_mmap_file(context: &mut CPUState) {
         let current = tm.current_task;
 
         if current >= 0 && local_fd < 16 {
-            if let Some(thread) = tm.tasks[current as usize].as_ref() {
+            if let Some(thread) = tm.tasks.get(&(current as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
 
                 Some(proc.fd_table.lock()[local_fd])
@@ -990,7 +990,7 @@ pub fn handle_pread64(context: &mut CPUState) {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
         if current >= 0 && local_fd < 16 {
-            if let Some(thread) = tm.tasks[current as usize].as_ref() {
+            if let Some(thread) = tm.tasks.get(&(current as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
                 Some(proc.fd_table.lock()[local_fd])
             } else { None }
@@ -1035,7 +1035,7 @@ pub fn handle_pwrite64(context: &mut CPUState) {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
         if current >= 0 && local_fd < 16 {
-            if let Some(thread) = tm.tasks[current as usize].as_ref() {
+            if let Some(thread) = tm.tasks.get(&(current as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
                 Some(proc.fd_table.lock()[local_fd])
             } else { None }
@@ -1175,7 +1175,7 @@ pub fn handle_set_nonblock(context: &mut CPUState) {
 
     let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
     if let Some(current) = tm.current_task_idx() {
-        if let Some(thread) = tm.tasks[current].as_mut() {
+        if let Some(thread) = tm.tasks.get_mut(&(current)) {
             let proc = thread.process.as_ref().expect("Thread has no process");
             if fd < 16 {
                 proc.fd_nonblock.lock()[fd] = nonblock;
@@ -1207,7 +1207,7 @@ pub fn handle_readlinkat(context: &mut CPUState) {
         let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
         if current >= 0 {
-            let proc = tm.tasks[current as usize].as_ref().unwrap().process.as_ref().unwrap();
+            let proc = tm.tasks.get(&(current as usize)).unwrap().process.as_ref().unwrap();
 
             // Helper to get CWD without re-locking TM (which get_current_cwd does)
             let get_proc_cwd = || {

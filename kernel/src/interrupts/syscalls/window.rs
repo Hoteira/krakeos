@@ -11,7 +11,7 @@ pub fn handle_add_window(context: &mut CPUState) {
 
         let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         if let Some(current) = tm.current_task_idx() {
-            if let Some(thread) = tm.tasks[current].as_ref() {
+            if let Some(thread) = tm.tasks.get(&(current)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
 
                 let mut w = *(context.rdi as *const Window);
@@ -38,7 +38,7 @@ pub fn handle_update_window(context: &mut CPUState) {
 
         let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         if let Some(current) = tm.current_task_idx() {
-            if let Some(thread) = tm.tasks[current].as_ref() {
+            if let Some(thread) = tm.tasks.get(&(current)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
                 let w = *(context.rdi as *const Window);
 
@@ -94,7 +94,7 @@ pub fn handle_get_events(context: &mut CPUState) {
     {
         let tm = TASK_MANAGER.int_lock();
         if let Some(idx) = tm.current_task_idx() {
-            if let Some(thread) = tm.tasks[idx].as_ref() {
+            if let Some(thread) = tm.tasks.get(&(idx)) {
                 if let Some(proc) = thread.process.as_ref() {
                     let buf_ptr = context.rsi as *mut Event;
 
@@ -152,7 +152,7 @@ pub fn handle_register_event_queue(context: &mut CPUState) {
 
     let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
     if let Some(idx) = tm.current_task_idx() {
-        if let Some(thread) = tm.tasks[idx].as_ref() {
+        if let Some(thread) = tm.tasks.get(&(idx)) {
             if let Some(proc) = thread.process.as_ref() {
                 *proc.event_queue.lock() = (header_ptr, buf_ptr, capacity);
                 crate::debugln!(
@@ -170,7 +170,7 @@ pub fn handle_register_event_queue(context: &mut CPUState) {
 pub fn handle_deregister_event_queue(context: &mut CPUState) {
     let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
     if let Some(idx) = tm.current_task_idx() {
-        if let Some(thread) = tm.tasks[idx].as_ref() {
+        if let Some(thread) = tm.tasks.get(&(idx)) {
             if let Some(proc) = thread.process.as_ref() {
                 *proc.event_queue.lock() = (0, 0, 0);
                 crate::debugln!("[EventQueue] PID {} deregistered queue", proc.pid);
