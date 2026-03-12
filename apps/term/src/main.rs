@@ -136,8 +136,15 @@ pub fn main() {
 
     let mut term_buffer = TerminalBuffer::new();
     let mut pipe_buf = [0u8; 4096];
+    
+    debugln!("[term] ENTERING MAIN LOOP!");
 
+    let mut tick_counter = 0;
     loop {
+        tick_counter += 1;
+        if tick_counter % 100 == 0 {
+            debugln!("[term] Still alive... did_work loop");
+        }
         let mut did_work = false;
         let events = win.poll_events();
 

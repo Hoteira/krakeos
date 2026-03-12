@@ -120,14 +120,14 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
         }
 
         extern "C" fn wasm_thread_entry(args_ptr: u64) {
-            let args = unsafe { Box::from_raw(args_ptr as *mut WasmThreadArgs) };
+            let args = unsafe { alloc::boxed::Box::from_raw(args_ptr as *mut WasmThreadArgs) };
 
             let path_slice = unsafe { core::slice::from_raw_parts(args.path_ptr, args.path_len) };
-            let path = String::from_utf8_lossy(path_slice).into_owned();
+            let path = alloc::string::String::from_utf8_lossy(path_slice).into_owned();
 
             let buffer = unsafe { core::slice::from_raw_parts(args.buf_ptr, args.buf_len) };
 
-            let wasm_args = unsafe { *Box::from_raw(args.wasm_args) };
+            let wasm_args = unsafe { *alloc::boxed::Box::from_raw(args.wasm_args) };
 
             let res = std::wasm::runner::run_with_buffer(
                 &path,
@@ -135,7 +135,7 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
                 wasm_args,
                 "@0xE0/",
                 &[],
-                Vec::new(),
+                alloc::vec::Vec::new(),
                 true, // AOT
                 args.pid,
                 args.slot_id,

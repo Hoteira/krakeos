@@ -1,4 +1,5 @@
 use crate::sync::Mutex;
+use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
 #[derive(Debug, Clone, Copy)]
@@ -9,32 +10,32 @@ pub struct VmaRegion {
 }
 
 pub struct VmaAllocator {
-    regions: Vec<VmaRegion>,
+    regions: BTreeMap<u64, VmaRegion>,
 }
 
 impl VmaAllocator {
     pub const fn new() -> Self {
-        Self { regions: Vec::new() }
+        Self { regions: BTreeMap::new() }
     }
 
-        pub fn track(&mut self, start: u64, size: u64, pid: u64) {
+    pub fn track(&mut self, start: u64, size: u64, pid: u64) {
         crate::debugln!("[VMA] Track PID {} region {:#x}..{:#x}", pid, start, start + size);
         let end = start + size;
-        for r in &self.regions {
+        for r in self.regions.values() {
             let r_end = r.start + r.size;
             if (start >= r.start && start < r_end) || (end > r.start && end <= r_end) {
                 crate::debugln!("VMA WARNING: Overlap detected! New [PID {} {:#x}-{:#x}], Existing [PID {} {:#x}-{:#x}]", 
                     pid, start, end, r.pid, r.start, r_end);
             }
         }
-        crate::debugln!("[VMA] Pushing to Vec...");
-        self.regions.push(VmaRegion { start, size, pid });
+        crate::debugln!("[VMA] Pushing to BTreeMap...");
+        self.regions.insert(start, VmaRegion { start, size, pid });
         crate::debugln!("[VMA] Push successful!");
     }
 
     pub fn is_mapped(&self, addr: u64) -> bool {
-        for r in &self.regions {
-            if addr >= r.start && addr < r.start + r.size {
+        if let Some((_, r)) = self.regions.range(..=addr).next_back() {
+            if addr < r.start + r.size {
                 return true;
             }
         }
@@ -42,17 +43,21 @@ impl VmaAllocator {
     }
 
     pub fn remove_by_pid(&mut self, pid: u64) {
-        for r in &self.regions {
+        let mut to_remove = Vec::new();
+        for r in self.regions.values() {
             if r.pid == pid {
                 crate::memory::vmm::unmap_and_free_range(r.start, r.size);
+                to_remove.push(r.start);
             }
         }
-        self.regions.retain(|r| r.pid != pid);
+        for start in to_remove {
+            self.regions.remove(&start);
+        }
     }
 
     pub fn get_usage_by_pid(&self, pid: u64) -> usize {
         let mut total = 0;
-        for r in &self.regions {
+        for r in self.regions.values() {
             if r.pid == pid {
                 total += r.size as usize;
             }
@@ -60,8 +65,8 @@ impl VmaAllocator {
         total
     }
 
-    pub fn get_regions(&self) -> &Vec<VmaRegion> {
-        &self.regions
+    pub fn get_regions(&self) -> alloc::collections::btree_map::Values<'_, u64, VmaRegion> {
+        self.regions.values()
     }
 
     pub fn dump(&self) {
@@ -107,7 +112,7 @@ impl VmaAllocator {
                     let mut stack = (0, 0);
                     
                     use crate::memory::address_space::*;
-                    for r in &self.regions {
+                    for r in self.regions.values() {
                         if r.pid == pid {
                             if r.start >= STACK_REGION_BASE && r.start < LINEAR_MEMORY_BASE {
                                 stack = (r.start, r.start + r.size - 1);

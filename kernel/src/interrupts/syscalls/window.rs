@@ -6,8 +6,13 @@ use crate::window_manager::window::Window;
 
 pub fn handle_add_window(context: &mut CPUState) {
     unsafe {
+        let ptr = { core::ptr::addr_of!(context.rdi).read_unaligned() };
+        crate::debugln!("[Syscall] handle_add_window called! ptr={:#x}", ptr);
         let win_size = core::mem::size_of::<Window>() as u64;
-        if !super::validate_user_buf(context, context.rdi, win_size) { return; }
+        if !super::validate_user_buf(context, ptr, win_size) { 
+            crate::debugln!("[Syscall] handle_add_window FAILED validation!");
+            return; 
+        }
 
         let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
         if let Some(current) = tm.current_task_idx() {

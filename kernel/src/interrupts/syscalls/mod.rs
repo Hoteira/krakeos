@@ -31,7 +31,7 @@ pub fn is_kernel_thread() -> bool {
         if let Some(thread) = tm.tasks.get(&(idx)) {
             let result = thread.user_stack == 0;
             if !result {
-                debugln!("[is_kernel_thread] TID {} user_stack={:#x} -> NOT kernel thread", idx, thread.user_stack);
+                crate::debugln!("[is_kernel_thread] TID {} user_stack={:#x} -> NOT kernel thread", idx, thread.user_stack);
             }
             return result;
         }
@@ -90,7 +90,7 @@ pub fn validate_user_buf(context: &mut CPUState, ptr: u64, len: u64) -> bool {
             return true;
         }
     }
-    debugln!("[Syscall] REJECTED: invalid user pointer {:#x} len={}", ptr, len);
+    crate::debugln!("[Syscall] REJECTED: invalid user pointer {:#x} len={}", ptr, len);
     context.rax = u64::MAX;
     false
 }

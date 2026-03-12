@@ -760,42 +760,39 @@ pub fn handle_pipe(context: &mut CPUState) {
 
     acquire_fs_lock();
 
-    use crate::fs::vfs::{FileHandle, GLOBAL_FILE_REFCOUNT, OPEN_FILES};
+    use crate::fs::vfs::{FileHandle, GLOBAL_FILES};
     use crate::fs::pipe::Pipe;
-    let mut g1 = -1;
-    let mut g2 = -1;
-    for i in 3..256 {
-        unsafe {
-            if OPEN_FILES[i].is_none() {
-                if g1 == -1 { g1 = i as i32; } else {
-                    g2 = i as i32;
-                    break;
-                }
-            }
-        }
-    }
-    if g1 != -1 && g2 != -1 {
-        let pipe = Pipe::new();
-        unsafe {
-            OPEN_FILES[g1 as usize] = Some(FileHandle::Pipe { pipe: pipe.clone() });
-            OPEN_FILES[g2 as usize] = Some(FileHandle::Pipe { pipe });
-            GLOBAL_FILE_REFCOUNT[g1 as usize] = 1;
-            GLOBAL_FILE_REFCOUNT[g2 as usize] = 1;
-        }
-        release_fs_lock();
+    use alloc::boxed::Box;
 
-        let l1 = assign_local_fd(g1 as usize);
-        let l2 = assign_local_fd(g2 as usize);
-        if l1 != u64::MAX && l2 != u64::MAX {
-            unsafe {
-                *fds_ptr.add(0) = l1 as i32;
-                *fds_ptr.add(1) = l2 as i32;
-            }
-            context.rax = 0;
-            return;
+    let pipe = Pipe::new();
+    
+    let (g1, g2) = {
+        let mut table = GLOBAL_FILES.lock();
+        let fd1 = table.next_fd;
+        table.next_fd += 1;
+        let fd2 = table.next_fd;
+        table.next_fd += 1;
+        
+        table.files.insert(fd1, Box::new(FileHandle::Pipe { pipe: pipe.clone() }));
+        table.files.insert(fd2, Box::new(FileHandle::Pipe { pipe }));
+        
+        table.refcounts.insert(fd1, 1);
+        table.refcounts.insert(fd2, 1);
+        
+        (fd1, fd2)
+    };
+    release_fs_lock();
+
+    let l1 = assign_local_fd(g1);
+    let l2 = assign_local_fd(g2);
+    
+    if l1 != u64::MAX && l2 != u64::MAX {
+        unsafe {
+            *fds_ptr.add(0) = l1 as i32;
+            *fds_ptr.add(1) = l2 as i32;
         }
-    } else {
-        release_fs_lock();
+        context.rax = 0;
+        return;
     }
     context.rax = u64::MAX;
 }

@@ -132,6 +132,8 @@ pub extern "C" fn rust_main(bootinfo_ptr: u64) -> ! {
     unsafe { asm!("sti"); }
 
     loop {
+        // Trigger a cooperative context switch instead of just halting
+        unsafe { asm!("int 0x81"); }
         unsafe { asm!("hlt"); }
     }
 }

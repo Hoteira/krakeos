@@ -5,8 +5,20 @@ use alloc::vec::Vec;
 
 
 pub static mut FILESYSTEMS: [Option<Box<dyn FileSystem>>; 256] = [const { None }; 256];
-pub static mut OPEN_FILES: [Option<FileHandle>; 256] = [const { None }; 256];
-pub static mut GLOBAL_FILE_REFCOUNT: [u16; 256] = [0; 256];
+use alloc::collections::BTreeMap;
+use crate::sync::Mutex;
+
+pub struct GlobalFileTable {
+    pub files: BTreeMap<usize, Box<FileHandle>>,
+    pub refcounts: BTreeMap<usize, u16>,
+    pub next_fd: usize,
+}
+
+pub static GLOBAL_FILES: Mutex<GlobalFileTable> = Mutex::new(GlobalFileTable {
+    files: BTreeMap::new(),
+    refcounts: BTreeMap::new(),
+    next_fd: 3,
+});
 
 pub enum FileHandle {
     File { node: Box<dyn VfsNode>, offset: u64 },
@@ -27,48 +39,50 @@ pub fn open_file(disk_id: u8, path_str: &str) -> Result<usize, String> {
     if !path_str.starts_with('@') && !path_str.starts_with('/') {}
 
     let node = open(disk_id, path_str)?;
-    unsafe {
-        for i in 3..256 {
-            if OPEN_FILES[i].is_none() {
-                OPEN_FILES[i] = Some(FileHandle::File { node, offset: 0 });
-                GLOBAL_FILE_REFCOUNT[i] = 1;
-                return Ok(i);
-            }
-        }
-        Err(String::from("No free file descriptors"))
-    }
+    
+    let mut table = GLOBAL_FILES.lock();
+    let fd = table.next_fd;
+    table.next_fd += 1;
+    
+    table.files.insert(fd, Box::new(FileHandle::File { node, offset: 0 }));
+    table.refcounts.insert(fd, 1);
+    
+    Ok(fd)
 }
 
 pub fn get_file(fd: usize) -> Option<&'static mut FileHandle> {
-    unsafe {
-        if fd < 256 {
-            OPEN_FILES[fd].as_mut()
-        } else {
-            None
+    let mut table = GLOBAL_FILES.lock();
+    if let Some(boxed_handle) = table.files.get_mut(&fd) {
+        unsafe {
+            Some(&mut *(boxed_handle.as_mut() as *mut FileHandle))
         }
+    } else {
+        None
     }
 }
 
 pub fn close_file(fd: usize) {
-    unsafe {
-        if fd < 256 {
-            if GLOBAL_FILE_REFCOUNT[fd] > 0 {
-                GLOBAL_FILE_REFCOUNT[fd] -= 1;
-                if GLOBAL_FILE_REFCOUNT[fd] == 0 {
-                    if let Some(FileHandle::Pipe { pipe }) = &OPEN_FILES[fd] {
+    let mut table = GLOBAL_FILES.lock();
+    if let Some(count) = table.refcounts.get_mut(&fd) {
+        if *count > 0 {
+            *count -= 1;
+            if *count == 0 {
+                if let Some(boxed_handle) = table.files.remove(&fd) {
+                    if let FileHandle::Pipe { pipe } = *boxed_handle {
                         pipe.close();
                     }
-                    OPEN_FILES[fd] = None;
                 }
+                table.refcounts.remove(&fd);
             }
         }
     }
 }
 
 pub fn increment_ref(fd: usize) {
-    unsafe {
-        if fd < 256 && OPEN_FILES[fd].is_some() {
-            GLOBAL_FILE_REFCOUNT[fd] += 1;
+    let mut table = GLOBAL_FILES.lock();
+    if table.files.contains_key(&fd) {
+        if let Some(count) = table.refcounts.get_mut(&fd) {
+            *count += 1;
         }
     }
 }
