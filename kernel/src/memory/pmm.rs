@@ -1,248 +1,455 @@
 use super::address::PhysAddr;
 use crate::boot::BOOT_INFO;
 use crate::debugln;
-use core::sync::atomic::{AtomicBool, Ordering};
+use crate::sync::Mutex;
 
 pub const PAGE_SIZE: u64 = 4096;
+pub const MAX_ORDER: usize = 18; // Max block size: 2^18 pages = 1GB
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum FrameError {
+    #[allow(dead_code)]
     NoMemory,
+    #[allow(dead_code)]
     IndexOutOfBounds,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct FrameAllocation {
-    pub pid: u64,
-    pub start: PhysAddr,
-    pub count: usize,
-    pub used: bool,
+/// Metadata for every physical page in the system.
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+struct PageDescriptor {
+    pid: u32,      // Owner PID (0 for kernel/free)
+    order: u8,     // Buddy order (if head of a block)
+    flags: u8,     // Bit 0: Is Allocated, Bit 1: Is Head
 }
 
-const MAX_ALLOCS: usize = 32768;
-
-pub struct StructPmm {
-    allocations: [FrameAllocation; MAX_ALLOCS],
-    total_ram: PhysAddr,
-    lock: AtomicBool,
+/// A node in the free list, stored at the beginning of free pages.
+#[repr(C)]
+struct FreeBlockNode {
+    next: *mut FreeBlockNode,
+    prev: *mut FreeBlockNode,
 }
 
-static mut PMM: StructPmm = StructPmm {
-    allocations: [FrameAllocation { pid: 0, start: PhysAddr::new(0), count: 0, used: false }; MAX_ALLOCS],
-    total_ram: PhysAddr::new(0),
-    lock: AtomicBool::new(false),
-};
+pub struct BuddyAllocator {
+    // Free lists for each order (0 to MAX_ORDER)
+    free_lists: [*mut FreeBlockNode; MAX_ORDER + 1],
+    // Pointer to the global page metadata map
+    page_map: *mut PageDescriptor,
+    page_map_entries: usize,
+    
+    total_pages: usize,
+    used_pages: usize,
+}
+
+unsafe impl Send for BuddyAllocator {}
+unsafe impl Sync for BuddyAllocator {}
+
+// Mutex allows safe internal mutability and handles the lock bit for us.
+static PMM: Mutex<BuddyAllocator> = Mutex::new(BuddyAllocator {
+    free_lists: [core::ptr::null_mut(); MAX_ORDER + 1],
+    page_map: core::ptr::null_mut(),
+    page_map_entries: 0,
+    total_pages: 0,
+    used_pages: 0,
+});
 
 pub fn init() {
+    let mut allocator = PMM.lock();
     unsafe {
         let mmap = (*(&raw mut BOOT_INFO)).mmap;
-
-        debugln!("--- PMM Init: Memory Map ---");
         let mut max_addr: u64 = 0;
+
         for i in 0..32 {
             let entry = mmap.entries[i];
-
             if entry.length > 0 {
-                let base = entry.base;
-                let len = entry.length;
-                let type_ = entry.memory_type;
-                debugln!("  [{}] Base: {:#x}, Len: {:#x}, Type: {}", i, base, len, type_);
-                let end = base + len;
+                let end = entry.base + entry.length;
                 if end > max_addr { max_addr = end; }
             }
         }
-        debugln!("----------------------------");
 
-        let pmm_ptr = &raw mut PMM;
-        (*pmm_ptr).total_ram = PhysAddr::new(max_addr);
+        let total_pages = (max_addr / PAGE_SIZE) as usize;
+        let page_map_size = total_pages * core::mem::size_of::<PageDescriptor>();
+        let page_map_pages = (page_map_size + PAGE_SIZE as usize - 1) / PAGE_SIZE as usize;
 
-        let pages = (0xA00000 / PAGE_SIZE) as usize;
-        add_allocation(0, PhysAddr::new(0), pages);
-    }
-}
+        debugln!("PMM: Detected {}MB RAM. Metadata needs {}KB.", max_addr / 1024 / 1024, page_map_size / 1024);
 
-unsafe fn add_allocation(pid: u64, start: PhysAddr, count: usize) -> bool {
-    unsafe {
-        let pmm_ptr = &raw mut PMM;
-
-        let mut count_used = 0;
-        for i in 0..MAX_ALLOCS {
-            if (*pmm_ptr).allocations[i].used {
-                count_used += 1;
+        // 2. Find a contiguous block for the Page Map
+        let mut map_phys: u64 = 0;
+        for i in 0..32 {
+            let entry = mmap.entries[i];
+            let base = entry.base;
+            let length = entry.length;
+            if entry.memory_type == 1 && length >= page_map_size as u64 {
+                let candidate = base.max(0x1000000); // Start at 16MB
+                if candidate + page_map_size as u64 <= base + length && candidate < 0x80000000 {
+                    map_phys = candidate;
+                    debugln!("PMM: Selected map_phys={:#x} from entry base={:#x} len={:#x}", map_phys, base, length);
+                    break;
+                }
             }
         }
 
-        if count_used >= MAX_ALLOCS {
-            return false;
+        if map_phys == 0 {
+            panic!("PMM: Could not find memory for Page Map in lower 2GB!");
         }
 
-        let mut idx = 0;
-        while idx < count_used {
-            if (*pmm_ptr).allocations[idx].start > start {
-                break;
+        let map_virt = (map_phys + crate::memory::paging::HHDM_OFFSET) as *mut PageDescriptor;
+        debugln!("PMM: Page Map Virtual Address: {:p}. Zeroing...", map_virt);
+        
+        let num_descriptors = page_map_size / core::mem::size_of::<PageDescriptor>();
+        for i in 0..num_descriptors {
+            unsafe {
+                core::ptr::write_bytes(map_virt.add(i) as *mut u8, 0, core::mem::size_of::<PageDescriptor>());
             }
-            idx += 1;
         }
+        debugln!("PMM: Page Map zeroed successfully ({} descriptors).", num_descriptors);
 
+        allocator.page_map = map_virt;
+        allocator.page_map_entries = total_pages;
+        allocator.total_pages = total_pages;
 
-        if idx > 0 {
-            let prev_idx = idx - 1;
-            let prev = &mut (*pmm_ptr).allocations[prev_idx];
-            if prev.pid == pid {
-                let prev_end = prev.start + (prev.count as u64 * PAGE_SIZE);
-                if prev_end == start {
-                    prev.count += count;
+        debugln!("PMM: Starting to add free regions...");
+        for i in 0..32 {
+            let entry = mmap.entries[i];
+            let base = entry.base;
+            let length = entry.length;
+            
+            if entry.memory_type == 1 && length > 0 {
+                let mut start = base;
+                let end = base + length;
+                debugln!("PMM: Processing mmap entry {}: {:#x} -> {:#x}", i, start, end);
 
-                    if idx < count_used {
-                        let next = &(*pmm_ptr).allocations[idx];
-                        let current_end = prev.start + (prev.count as u64 * PAGE_SIZE);
-                        if next.pid == pid && current_end == next.start {
-                            prev.count += next.count;
+                // PROTECT KERNEL: Skip everything below 16MB (0x1000000)
+                if start < 0x1000000 {
+                    start = 0x1000000;
+                }
 
-                            for i in idx..(count_used - 1) {
-                                (*pmm_ptr).allocations[i] = (*pmm_ptr).allocations[i + 1];
-                            }
-                            (*pmm_ptr).allocations[count_used - 1].used = false;
-                        }
+                if start >= end { 
+                    debugln!("PMM: Skipping entry {} (fully below 16MB or invalid)", i);
+                    continue; 
+                }
+
+                // Skip the region used by the Page Map itself
+                if start <= map_phys && end > map_phys {
+                    let map_end = map_phys + (page_map_pages as u64 * PAGE_SIZE);
+                    debugln!("PMM: Entry overlaps Page Map. Splitting. Map is {:#x} -> {:#x}", map_phys, map_end);
+                    
+                    if map_phys > start {
+                        debugln!("PMM: Adding region before map: {:#x} -> {:#x}", start, map_phys);
+                        add_free_region(&mut allocator, start, map_phys);
                     }
-                    return true;
+                    
+                    start = map_end;
+                    debugln!("PMM: Remaining region after map: {:#x} -> {:#x}", start, end);
+                }
+
+                if end > start {
+                    // CAP TO 4GB: Initial discovery must stay within boot-mapped range.
+                    // Accessing HHDM above 4GB before VMM is ready will cause a crash.
+                    let safe_end = end.min(0x100000000); 
+                    if safe_end > start {
+                        debugln!("PMM: Adding free region: {:#x} -> {:#x}", start, safe_end);
+                        add_free_region(&mut allocator, start, safe_end);
+                    } else {
+                        debugln!("PMM: Region {:#x} -> {:#x} is above 4GB, skipping for now.", start, end);
+                    }
                 }
             }
         }
-
-
-        if idx < count_used {
-            let next = &mut (*pmm_ptr).allocations[idx];
-            if next.pid == pid {
-                let current_end = start + (count as u64 * PAGE_SIZE);
-                if current_end == next.start {
-                    next.start = start;
-                    next.count += count;
-                    return true;
-                }
-            }
-        }
-
-
-        if idx < count_used {
-            for i in (idx..count_used).rev() {
-                (*pmm_ptr).allocations[i + 1] = (*pmm_ptr).allocations[i];
-            }
-        }
-
-        (*pmm_ptr).allocations[idx] = FrameAllocation {
-            pid,
-            start,
-            count,
-            used: true,
-        };
-
-        true
+        
+        debugln!("PMM: Buddy Allocator initialized. Free: {}MB", (allocator.total_pages - allocator.used_pages) * PAGE_SIZE as usize / 1024 / 1024);
     }
 }
 
-unsafe fn remove_allocation(start: PhysAddr) {
+/// Discovers all physical RAM entries, including those above 4GB.
+/// This must only be called AFTER vmm::init() has mapped the entire RAM range.
+pub fn discover_all_memory() {
+    let mut allocator = PMM.lock();
     unsafe {
-        let pmm_ptr = &raw mut PMM;
-        let mut found_idx = MAX_ALLOCS;
-        let mut count_used = 0;
-
-        for i in 0..MAX_ALLOCS {
-            if (*pmm_ptr).allocations[i].used {
-                count_used += 1;
-                if (*pmm_ptr).allocations[i].start == start {
-                    found_idx = i;
-                }
-            } else {
-                break;
-            }
-        }
-
-        if found_idx != MAX_ALLOCS {
-            let start_addr = (*pmm_ptr).allocations[found_idx].start;
-            let size = (*pmm_ptr).allocations[found_idx].count as u64 * PAGE_SIZE;
-
-
-            let virt_ptr = (start_addr.as_u64() + crate::memory::paging::HHDM_OFFSET) as *mut u8;
-            core::ptr::write_bytes(virt_ptr, 0, size as usize);
-
-            for i in found_idx..(count_used - 1) {
-                (*pmm_ptr).allocations[i] = (*pmm_ptr).allocations[i + 1];
-            }
-            (*pmm_ptr).allocations[count_used - 1].used = false;
-        }
-    }
-}
-
-unsafe fn is_overlap(start: PhysAddr, count: usize) -> bool {
-    unsafe {
-        let end = start + (count as u64 * PAGE_SIZE);
-        let pmm_ptr = &raw mut PMM;
-
-        for i in 0..MAX_ALLOCS {
-            let alloc = &(*pmm_ptr).allocations[i];
-            if alloc.used {
-                let alloc_end = alloc.start + (alloc.count as u64 * PAGE_SIZE);
-                if start < alloc_end && end > alloc.start {
-                    return true;
-                }
-            } else {
-                break;
-            }
-        }
-        false
-    }
-}
-
-unsafe fn is_valid_ram(start: PhysAddr, count: usize) -> bool {
-    unsafe {
-        let end = start + (count as u64 * PAGE_SIZE);
         let mmap = (*(&raw mut BOOT_INFO)).mmap;
+        let map_phys = allocator.page_map as u64 - crate::memory::paging::HHDM_OFFSET;
+        let map_pages = (allocator.page_map_entries * core::mem::size_of::<PageDescriptor>() + PAGE_SIZE as usize - 1) / PAGE_SIZE as usize;
+
+        debugln!("PMM: Expanding discovery to all available RAM...");
 
         for i in 0..32 {
             let entry = mmap.entries[i];
-            if entry.memory_type == 1 && entry.length > 0 {
-                let entry_base = PhysAddr::new(entry.base);
-                let entry_end = entry_base + entry.length;
-                if start >= entry_base && end <= entry_end {
-                    return true;
+            let base = entry.base;
+            let length = entry.length;
+            
+            if entry.memory_type == 1 && length > 0 {
+                let mut start = base;
+                let end = base + length;
+
+                // PROTECT KERNEL
+                if start < 0x1000000 { start = 0x1000000; }
+                if start >= end { continue; }
+
+                // We only care about memory ABOVE 4GB now, or memory we partially skipped
+                // Memory below 4GB was already added in init().
+                // However, adding it again is safe because Buddy push_free_block 
+                // will just update metadata. But to be clean, let's only add new stuff.
+                if end <= 0x100000000 && start >= 0x1000000 {
+                    // This was likely already handled, but let's check if it overlaps map
+                    continue;
+                }
+
+                if start < 0x100000000 && end > 0x100000000 {
+                    start = 0x100000000; // Only add the new part
+                } else if start < 0x100000000 {
+                    continue; // fully below 4GB, skip
+                }
+
+                // Skip the region used by the Page Map itself (unlikely above 4GB but possible)
+                if start <= map_phys && end > map_phys {
+                    let map_end = map_phys + (map_pages as u64 * PAGE_SIZE);
+                    if map_phys > start {
+                        add_free_region(&mut allocator, start, map_phys);
+                    }
+                    start = map_end;
+                }
+
+                if end > start {
+                    debugln!("PMM: Adding extended free region: {:#x} -> {:#x}", start, end);
+                    add_free_region(&mut allocator, start, end);
                 }
             }
         }
-        false
+        debugln!("PMM: Expansion complete. Free: {}MB", (allocator.total_pages - allocator.used_pages) * PAGE_SIZE as usize / 1024 / 1024);
     }
 }
 
-unsafe fn lock_pmm() -> u64 {
-    unsafe {
-        let rflags: u64;
-        core::arch::asm!("pushfq; pop {}", out(reg) rflags);
-        core::arch::asm!("cli");
-        let pmm_ptr = &raw mut PMM;
-        while (*pmm_ptr).lock.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
-            core::hint::spin_loop();
+unsafe fn add_free_region(alloc: &mut BuddyAllocator, start: u64, end: u64) {
+    let mut current = (start + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
+    let aligned_end = end & !(PAGE_SIZE - 1);
+
+    while current < aligned_end {
+        let mut order = MAX_ORDER;
+        while order > 0 {
+            let size = (1u64 << order) * PAGE_SIZE;
+            if current + size <= aligned_end && (current % size) == 0 {
+                break;
+            }
+            order -= 1;
         }
-        rflags
+
+        push_free_block(alloc, current, order);
+        current += (1u64 << order) * PAGE_SIZE;
     }
 }
 
-unsafe fn unlock_pmm(rflags: u64) {
-    unsafe {
-        let pmm_ptr = &raw mut PMM;
-        (*pmm_ptr).lock.store(false, Ordering::Release);
-        if (rflags & 0x200) != 0 {
-            core::arch::asm!("sti");
-        }
+unsafe fn push_free_block(alloc: &mut BuddyAllocator, phys: u64, order: usize) {
+    let virt = (phys + crate::memory::paging::HHDM_OFFSET) as *mut FreeBlockNode;
+    
+    let node = &mut *virt;
+    node.next = alloc.free_lists[order];
+    node.prev = core::ptr::null_mut();
+    
+    if !node.next.is_null() {
+        (*node.next).prev = virt;
     }
+    alloc.free_lists[order] = virt;
+
+    let page_idx = (phys / PAGE_SIZE) as usize;
+    let desc = &mut (*alloc.page_map.add(page_idx));
+    desc.order = order as u8;
+    desc.flags = 0x02; // Is Head, Not Allocated
 }
 
-pub fn allocate_frame(pid: u64) -> Option<u64> {
-    allocate_frames(1, pid)
+unsafe fn pop_free_block(alloc: &mut BuddyAllocator, order: usize) -> Option<u64> {
+    let head = alloc.free_lists[order];
+    if head.is_null() { return None; }
+
+    alloc.free_lists[order] = (*head).next;
+    if !alloc.free_lists[order].is_null() {
+        (*alloc.free_lists[order]).prev = core::ptr::null_mut();
+    }
+
+    let virt = head as u64;
+    let phys = virt - crate::memory::paging::HHDM_OFFSET;
+    
+    let page_idx = (phys / PAGE_SIZE) as usize;
+    (*alloc.page_map.add(page_idx)).flags = 0x03; // Head + Allocated
+    
+    Some(phys)
+}
+
+unsafe fn remove_free_block(alloc: &mut BuddyAllocator, phys: u64, order: usize) {
+    let virt = (phys + crate::memory::paging::HHDM_OFFSET) as *mut FreeBlockNode;
+    let node = &mut *virt;
+
+    if !node.prev.is_null() {
+        (*node.prev).next = node.next;
+    } else {
+        alloc.free_lists[order] = node.next;
+    }
+
+    if !node.next.is_null() {
+        (*node.next).prev = node.prev;
+    }
 }
 
 pub fn allocate_frames(count: usize, pid: u64) -> Option<u64> {
-    allocate_memory(count * PAGE_SIZE as usize, pid)
+    if count == 0 { return None; }
+    
+    let mut order = 0;
+    while (1 << order) < count {
+        order += 1;
+    }
+
+    if order > MAX_ORDER { return None; }
+
+    let mut alloc = PMM.int_lock();
+    
+    let mut current_order = order;
+    while current_order <= MAX_ORDER && alloc.free_lists[current_order].is_null() {
+        current_order += 1;
+    }
+
+    if current_order > MAX_ORDER {
+        return None;
+    }
+
+    unsafe {
+        let mut phys = pop_free_block(&mut alloc, current_order).unwrap();
+
+        while current_order > order {
+            current_order -= 1;
+            let buddy_phys = phys + (1u64 << current_order) * PAGE_SIZE;
+            push_free_block(&mut alloc, buddy_phys, current_order);
+            
+            let head_desc = &mut (*alloc.page_map.add((phys / PAGE_SIZE) as usize));
+            head_desc.order = current_order as u8;
+        }
+
+        let page_idx = (phys / PAGE_SIZE) as usize;
+        let num_pages = 1 << order;
+        for i in 0..num_pages {
+            let desc = &mut (*alloc.page_map.add(page_idx + i));
+            desc.pid = pid as u32;
+            desc.flags |= 0x01; // Allocated
+        }
+        
+        alloc.used_pages += num_pages;
+        
+        let virt_ptr = (phys + crate::memory::paging::HHDM_OFFSET) as *mut u8;
+        core::ptr::write_bytes(virt_ptr, 0, num_pages * PAGE_SIZE as usize);
+
+        Some(phys)
+    }
+}
+
+pub fn free_frame(addr: u64) {
+    if addr % PAGE_SIZE != 0 { return; }
+    
+    let mut alloc = PMM.int_lock();
+    unsafe {
+        let mut current_phys = addr;
+        let mut page_idx = (addr / PAGE_SIZE) as usize;
+        
+        if page_idx >= alloc.page_map_entries {
+            return;
+        }
+
+        let desc = &mut (*alloc.page_map.add(page_idx));
+        if (desc.flags & 0x01) == 0 {
+            return;
+        }
+
+        let mut order = desc.order as usize;
+        alloc.used_pages -= 1 << order;
+
+        while order < MAX_ORDER {
+            let buddy_phys = current_phys ^ ((1u64 << order) * PAGE_SIZE);
+            let buddy_idx = (buddy_phys / PAGE_SIZE) as usize;
+            
+            if buddy_idx >= alloc.page_map_entries { break; }
+            
+            let buddy_desc = &mut (*alloc.page_map.add(buddy_idx));
+            
+            if (buddy_desc.flags & 0x01) == 0 && (buddy_desc.flags & 0x02) != 0 && buddy_desc.order as usize == order {
+                remove_free_block(&mut alloc, buddy_phys, order);
+                
+                buddy_desc.flags = 0;
+                buddy_desc.order = 0;
+                
+                if buddy_phys < current_phys {
+                    let old_head = &mut (*alloc.page_map.add(page_idx));
+                    old_head.flags = 0;
+                    old_head.order = 0;
+                    current_phys = buddy_phys;
+                    page_idx = buddy_idx;
+                } else {
+                    let old_buddy_head = &mut (*alloc.page_map.add(buddy_idx));
+                    old_buddy_head.flags = 0;
+                    old_buddy_head.order = 0;
+                }
+                
+                order += 1;
+            } else {
+                break;
+            }
+        }
+
+        push_free_block(&mut alloc, current_phys, order);
+    }
+}
+
+pub fn free_frames_by_pid(pid: u64) {
+    let target_pid = pid as u32;
+    
+    // Collect addresses first to avoid holding the lock while calling free_frame recursively
+    // which would cause a deadlock.
+    let mut blocks_to_free = alloc::vec::Vec::new();
+    
+    {
+        let alloc = PMM.int_lock();
+        unsafe {
+            let mut i = 0;
+            while i < alloc.page_map_entries {
+                let desc = &*alloc.page_map.add(i);
+                if (desc.flags & 0x01) != 0 && (desc.flags & 0x02) != 0 && desc.pid == target_pid {
+                    blocks_to_free.push(i as u64 * PAGE_SIZE);
+                }
+                i += 1;
+            }
+        }
+    }
+
+    for addr in blocks_to_free {
+        free_frame(addr);
+    }
+}
+
+pub fn reserve_frame(_addr: u64) -> bool {
+    true 
+}
+
+pub fn get_used_memory() -> usize {
+    PMM.lock().used_pages * PAGE_SIZE as usize
+}
+
+pub fn get_total_memory() -> usize {
+    PMM.lock().total_pages * PAGE_SIZE as usize
+}
+
+pub fn get_free_memory() -> usize {
+    let alloc = PMM.lock();
+    (alloc.total_pages - alloc.used_pages) * PAGE_SIZE as usize
+}
+
+pub fn get_memory_usage_by_pid(pid: u64) -> usize {
+    let alloc = PMM.int_lock();
+    let mut count = 0;
+    unsafe {
+        for i in 0..alloc.page_map_entries {
+            let desc = &*alloc.page_map.add(i);
+            if (desc.flags & 0x01) != 0 && desc.pid == pid as u32 {
+                count += 1;
+            }
+        }
+    }
+    count * PAGE_SIZE as usize
 }
 
 #[unsafe(no_mangle)]
@@ -250,274 +457,18 @@ pub extern "C" fn pmm_allocate_frames(count: usize, owner: u64) -> u64 {
     allocate_frames(count, owner).unwrap_or(0)
 }
 
+pub fn allocate_frame(pid: u64) -> Option<u64> {
+    allocate_frames(1, pid)
+}
+
 pub fn allocate_memory(bytes: usize, pid: u64) -> Option<u64> {
-    allocate_aligned_memory(bytes, pid, PAGE_SIZE as usize)
+    let pages = (bytes + PAGE_SIZE as usize - 1) / PAGE_SIZE as usize;
+    allocate_frames(pages, pid)
 }
 
 pub fn allocate_aligned_memory(bytes: usize, pid: u64, alignment: usize) -> Option<u64> {
-    let pages = (bytes + PAGE_SIZE as usize - 1) / PAGE_SIZE as usize;
-    if pages == 0 { return None; }
-
-    unsafe {
-        let flags = lock_pmm();
-        let pmm_ptr = &raw mut PMM;
-
-        let mut count_used = 0;
-        for i in 0..MAX_ALLOCS {
-            if (*pmm_ptr).allocations[i].used {
-                count_used += 1;
-            } else {
-                break;
-            }
-        }
-
-        let mut found_addr = PhysAddr::new(0);
-        let mut found = false;
-
-        let mut prev_end = PhysAddr::new(0);
-
-        if count_used > 0 {
-            prev_end = (*pmm_ptr).allocations[0].start + ((*pmm_ptr).allocations[0].count as u64 * PAGE_SIZE);
-        } else {
-            prev_end = PhysAddr::new(0xA00000);
-        }
-
-        if prev_end.as_u64() < 0xA00000 {
-            prev_end = PhysAddr::new(0xA00000);
-        }
-        
-        if !prev_end.is_aligned(alignment as u64) {
-            prev_end = prev_end.align_up(alignment as u64);
-        }
-
-        for i in 0..count_used {
-            let current = (*pmm_ptr).allocations[i];
-
-            if current.start > prev_end {
-                let gap_size = current.start - prev_end;
-                if gap_size >= (pages as u64 * PAGE_SIZE) {
-                    if is_valid_ram(prev_end, pages) {
-                        found_addr = prev_end;
-                        found = true;
-                        break;
-                    }
-                }
-            }
-
-            let current_end = current.start + (current.count as u64 * PAGE_SIZE);
-            let aligned_end = if current_end.is_aligned(alignment as u64) {
-                current_end
-            } else {
-                current_end.align_up(alignment as u64)
-            };
-            
-            if aligned_end > prev_end {
-                prev_end = aligned_end;
-            }
-        }
-
-        if !found {
-            let mmap = (*(&raw mut BOOT_INFO)).mmap;
-            let req_size = pages as u64 * PAGE_SIZE;
-
-            for i in 0..32 {
-                let entry = mmap.entries[i];
-                if entry.memory_type == 1 && entry.length > 0 {
-                    let entry_base = PhysAddr::new(entry.base);
-                    let entry_end = entry_base + entry.length;
-
-
-                    if entry_end <= prev_end { continue; }
-
-
-                    let mut candidate_start = if entry_base > prev_end { entry_base } else { prev_end };
-
-
-                    if !candidate_start.is_aligned(alignment as u64) {
-                        candidate_start = candidate_start.align_up(alignment as u64);
-                    }
-
-                    if candidate_start < entry_end {
-                        let available = entry_end - candidate_start;
-                        if available >= req_size {
-                            found_addr = candidate_start;
-                            found = true;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        if found {
-            if add_allocation(pid, found_addr, pages) {
-                let virt_ptr = (found_addr.as_u64() + crate::memory::paging::HHDM_OFFSET) as *mut u8;
-                core::ptr::write_bytes(virt_ptr, 0, pages * PAGE_SIZE as usize);
-
-                unlock_pmm(flags);
-                return Some(found_addr.as_u64());
-            }
-        }
-
-        unlock_pmm(flags);
-        debugln!("PMM: FAILED to allocate {} bytes for PID {}. prev_end={:#x}, count_used={}", bytes, pid, prev_end.as_u64(), count_used);
-        None
-    }
-}
-
-pub fn reserve_frame(addr: u64) -> bool {
-    reserve_frames(addr, 1)
-}
-
-pub fn reserve_frames(addr: u64, count: usize) -> bool {
-    unsafe {
-        let flags = lock_pmm();
-        if is_overlap(PhysAddr::new(addr), count) {
-            unlock_pmm(flags);
-            return false;
-        }
-        let res = add_allocation(0, PhysAddr::new(addr), count);
-        if res {
-            let virt_ptr = (addr + crate::memory::paging::HHDM_OFFSET) as *mut u8;
-            core::ptr::write_bytes(virt_ptr, 0, count * PAGE_SIZE as usize);
-        }
-        unlock_pmm(flags);
-        res
-    }
-}
-
-pub fn free_frame(addr: u64) {
-    unsafe {
-        let flags = lock_pmm();
-        remove_allocation(PhysAddr::new(addr));
-        unlock_pmm(flags);
-    }
-}
-
-pub fn free_frames_by_pid(pid: u64) {
-    unsafe {
-        let flags = lock_pmm();
-        let pmm_ptr = &raw mut PMM;
-
-        let target_main = pid >> 32;
-        let target_child = pid & 0xFFFFFFFF;
-
-        let mut i = 0;
-        while i < MAX_ALLOCS {
-            if (*pmm_ptr).allocations[i].used {
-                let alloc_pid = (*pmm_ptr).allocations[i].pid;
-                let alloc_main = alloc_pid >> 32;
-
-
-                let should_free = if target_child == 0 {
-                    alloc_main == target_main
-                } else {
-                    alloc_pid == pid
-                };
-
-                if should_free {
-                    let start_addr = (*pmm_ptr).allocations[i].start;
-                    let size = (*pmm_ptr).allocations[i].count as u64 * PAGE_SIZE;
-                    let virt_ptr = (start_addr.as_u64() + crate::memory::paging::HHDM_OFFSET) as *mut u8;
-                    core::ptr::write_bytes(virt_ptr, 0, size as usize);
-
-                    let count_used = {
-                        let mut c = 0;
-                        for k in 0..MAX_ALLOCS {
-                            if (*pmm_ptr).allocations[k].used { c += 1; }
-                        }
-                        c
-                    };
-
-                    for k in i..(count_used - 1) {
-                        (*pmm_ptr).allocations[k] = (*pmm_ptr).allocations[k + 1];
-                    }
-                    (*pmm_ptr).allocations[count_used - 1].used = false;
-
-
-                    continue;
-                }
-            } else {
-                break;
-            }
-            i += 1;
-        }
-
-        unlock_pmm(flags);
-    }
-}
-
-pub fn print_allocations() {
-    unsafe {
-        let flags = lock_pmm();
-        let pmm_ptr = &raw mut PMM;
-
-        debugln!("--- PMM Allocations ---");
-
-        let mut count_used = 0;
-        for i in 0..MAX_ALLOCS {
-            if (*pmm_ptr).allocations[i].used {
-                count_used += 1;
-            } else {
-                break;
-            }
-        }
-
-        for i in 0..count_used {
-            let alloc = (*pmm_ptr).allocations[i];
-            let start = alloc.start;
-            let end = start + (alloc.count as u64 * PAGE_SIZE);
-
-            debugln!("PID {}: {:#x} -> {:#x} ({} pages)", alloc.pid, start.as_u64(), end.as_u64(), alloc.count);
-
-            if i > 0 {
-                let prev = (*pmm_ptr).allocations[i - 1];
-                let prev_end = prev.start + (prev.count as u64 * PAGE_SIZE);
-                if start < prev_end {
-                    debugln!("!!! COLLISION DETECTED with previous allocation !!!");
-                }
-            }
-        }
-        debugln!("--- End of Allocations ---");
-
-        unlock_pmm(flags);
-    }
-}
-
-#[allow(dead_code)]
-pub fn get_used_memory() -> usize {
-    unsafe {
-        let pmm_ptr = &raw mut PMM;
-        let mut total = 0;
-        for i in 0..MAX_ALLOCS {
-            if (*pmm_ptr).allocations[i].used {
-                total += (*pmm_ptr).allocations[i].count;
-            }
-        }
-        total * PAGE_SIZE as usize
-    }
-}
-
-#[allow(dead_code)]
-pub fn get_total_memory() -> usize {
-    unsafe { (*(&raw mut PMM)).total_ram.as_u64() as usize }
-}
-
-pub fn get_memory_usage_by_pid(pid: u64) -> usize {
-    unsafe {
-        let pmm_ptr = &raw mut PMM;
-        let mut total_pages = 0;
-
-        for i in 0..MAX_ALLOCS {
-            if (*pmm_ptr).allocations[i].used {
-                if (*pmm_ptr).allocations[i].pid == pid {
-                    total_pages += (*pmm_ptr).allocations[i].count;
-                }
-            } else {
-                break;
-            }
-        }
-
-        total_pages * PAGE_SIZE as usize
-    }
+    let mut pages = (bytes + PAGE_SIZE as usize - 1) / PAGE_SIZE as usize;
+    let align_pages = alignment / PAGE_SIZE as usize;
+    if align_pages > pages { pages = align_pages; }
+    allocate_frames(pages, pid)
 }

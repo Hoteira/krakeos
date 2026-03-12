@@ -501,6 +501,15 @@ impl Composer {
                     Items::Null => {}
                     _ => {
                         let w = &self.windows[i];
+                        
+                        // SKIP IF NOT INTERSECTING
+                        if (w.x as i32) >= (dirty_x + dirty_w as i32) || 
+                           (w.x as i32 + w.width as i32) <= dirty_x ||
+                           (w.y as i32) >= (dirty_y + dirty_h as i32) ||
+                           (w.y as i32 + w.height as i32) <= dirty_y {
+                            continue;
+                        }
+
                         let border_color = if w.w_type == Items::Window {
                             if w.id == CLICKED_WINDOW_ID {
                                 Some(0xFFFFFFFF)

@@ -53,6 +53,7 @@ pub extern "C" fn _start(bootinfo_ptr: u64) -> ! {
 
     debugln!("SIGNPOST: Initializing Memory...");
     memory::init();
+    memory::pmm::discover_all_memory();
 
     /* unsafe {
         let pml4 = active_level_4_table();

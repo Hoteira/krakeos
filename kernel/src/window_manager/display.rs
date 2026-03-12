@@ -4,6 +4,15 @@ use core::arch::x86_64::*;
 
 pub const DEPTH: u8 = 32;
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct Rect {
+    pub x: i32,
+    pub y: i32,
+    pub w: u32,
+    pub h: u32,
+}
+
 pub struct DisplayServer {
     pub width: u64,
     pub pitch: u64,
@@ -19,15 +28,11 @@ pub struct DisplayServer {
     pub buffer2_virt: u64,
     pub active_resource_id: u32,
 
-    /// Non-zero when VBE provides a valid framebuffer that QEMU scans directly.
-    /// When set, we memcpy to this address instead of using VirtIO resource swapping.
     pub vbe_framebuffer: u64,
 
-    pub dirty_min_x: i32,
-    pub dirty_min_y: i32,
-    pub dirty_max_x: i32,
-    pub dirty_max_y: i32,
-    pub has_dirty: bool,
+    // Damage tracking
+    pub damage_rects: [Option<Rect>; 8],
+    pub has_damage: bool,
 }
 
 pub static mut DISPLAY_SERVER: DisplayServer = DisplayServer {
@@ -43,11 +48,8 @@ pub static mut DISPLAY_SERVER: DisplayServer = DisplayServer {
     buffer2_virt: 0,
     active_resource_id: 1,
     vbe_framebuffer: 0,
-    dirty_min_x: i32::MAX,
-    dirty_min_y: i32::MAX,
-    dirty_max_x: i32::MIN,
-    dirty_max_y: i32::MIN,
-    has_dirty: false,
+    damage_rects: [None; 8],
+    has_damage: false,
 };
 
 pub static mut VIRTIO_ACTIVE: bool = false;
@@ -55,22 +57,49 @@ pub static mut HARDWARE_CURSOR_ACTIVE: bool = false;
 
 impl DisplayServer {
     pub fn mark_dirty(&mut self, x: i32, y: i32, w: u32, h: u32) {
-        let x2 = x + w as i32;
-        let y2 = y + h as i32;
-
-        if x < self.dirty_min_x { self.dirty_min_x = x; }
-        if y < self.dirty_min_y { self.dirty_min_y = y; }
-        if x2 > self.dirty_max_x { self.dirty_max_x = x2; }
-        if y2 > self.dirty_max_y { self.dirty_max_y = y2; }
-        self.has_dirty = true;
+        if w == 0 || h == 0 { return; }
+        
+        // Try to merge with or add to damage list
+        for i in 0..8 {
+            if let Some(r) = self.damage_rects[i] {
+                // Check for overlap or containment
+                if x >= r.x && y >= r.y && (x + w as i32) <= (r.x + r.w as i32) && (y + h as i32) <= (r.y + r.h as i32) {
+                    return; // Already covered
+                }
+            } else {
+                self.damage_rects[i] = Some(Rect { x, y, w, h });
+                self.has_damage = true;
+                return;
+            }
+        }
+        
+        // If list is full, merge into a bounding box in the first slot
+        let mut min_x = x;
+        let mut min_y = y;
+        let mut max_x = x + w as i32;
+        let mut max_y = y + h as i32;
+        
+        for i in 0..8 {
+            if let Some(r) = self.damage_rects[i] {
+                if r.x < min_x { min_x = r.x; }
+                if r.y < min_y { min_y = r.y; }
+                if (r.x + r.w as i32) > max_x { max_x = r.x + r.w as i32; }
+                if (r.y + r.h as i32) > max_y { max_y = r.y + r.h as i32; }
+                self.damage_rects[i] = None;
+            }
+        }
+        self.damage_rects[0] = Some(Rect { 
+            x: min_x, 
+            y: min_y, 
+            w: (max_x - min_x) as u32, 
+            h: (max_y - min_y) as u32 
+        });
+        self.has_damage = true;
     }
 
     pub fn reset_dirty(&mut self) {
-        self.dirty_min_x = i32::MAX;
-        self.dirty_min_y = i32::MAX;
-        self.dirty_max_x = i32::MIN;
-        self.dirty_max_y = i32::MIN;
-        self.has_dirty = false;
+        for i in 0..8 { self.damage_rects[i] = None; }
+        self.has_damage = false;
     }
 
     pub fn init(&mut self) {
@@ -132,7 +161,7 @@ impl DisplayServer {
 
                 virtio::start_gpu(self.width as u32, self.height as u32, self.buffer1_phys, self.buffer2_phys);
                 virtio::set_scanout(1, self.width as u32, self.height as u32);
-                virtio::transfer_and_flush(1, self.width as u32, self.height as u32);
+                virtio::transfer_and_flush(1, self.width as u32, self.height as u32, true); // Blocking init
 
                 use crate::drivers::periferics::mouse::{CURSOR_BUFFER, CURSOR_HEIGHT, CURSOR_WIDTH};
                 let cursor_size_bytes = 64 * 64 * 4;
@@ -198,7 +227,7 @@ impl DisplayServer {
             }
 
             if VIRTIO_ACTIVE {
-                virtio::flush(0, 0, self.width as u32, self.height as u32, self.width as u32, self.active_resource_id);
+                virtio::flush(0, 0, self.width as u32, self.height as u32, self.width as u32, self.active_resource_id, false);
             }
         }
     }
@@ -210,29 +239,41 @@ impl DisplayServer {
                 let next_buffer_virt = if self.active_resource_id == 1 { self.buffer2_virt } else { self.buffer1_virt };
                 let current_buffer_virt = if self.active_resource_id == 1 { self.buffer1_virt } else { self.buffer2_virt };
 
-                if self.has_dirty {
-                    let sx = self.dirty_min_x.max(0) as u32;
-                    let sy = self.dirty_min_y.max(0) as u32;
-                    let sw = (self.dirty_max_x as u32).saturating_sub(sx).min(self.width as u32);
-                    let sh = (self.dirty_max_y as u32).saturating_sub(sy).min(self.height as u32);
+                if self.has_damage {
+                    // 1. Calculate a single bounding box for all damage this frame
+                    let mut min_x = self.width as i32;
+                    let mut min_y = self.height as i32;
+                    let mut max_x = 0i32;
+                    let mut max_y = 0i32;
+                    
+                    for i in 0..8 {
+                        if let Some(r) = self.damage_rects[i] {
+                            if r.x < min_x { min_x = r.x; }
+                            if r.y < min_y { min_y = r.y; }
+                            if (r.x + r.w as i32) > max_x { max_x = r.x + r.w as i32; }
+                            if (r.y + r.h as i32) > max_y { max_y = r.y + r.h as i32; }
+                        }
+                    }
+
+                    let sx = min_x.max(0) as u32;
+                    let sy = min_y.max(0) as u32;
+                    let sw = (max_x as u32).saturating_sub(sx).min(self.width as u32);
+                    let sh = (max_y as u32).saturating_sub(sy).min(self.height as u32);
 
                     if sw > 0 && sh > 0 {
-                        // 1. Transfer the dirty rect of the BACK buffer (where we just drew) to the host
-                        // Note: next_resource is backed by the buffer we just drew to (double_buffer)
-                        virtio::flush(sx, sy, sw, sh, self.width as u32, next_resource);
+                        // NON-BLOCKING transfer and flush
+                        virtio::flush(sx, sy, sw, sh, self.width as u32, next_resource, false);
                         
-                        // 2. Switch scanout to the newly updated resource
+                        // Switch scanout and commit the frame (also non-blocking)
                         virtio::set_scanout(next_resource, self.width as u32, self.height as u32);
+                        virtio::transfer_and_flush(next_resource, self.width as u32, self.height as u32, false);
 
-                        // 3. Flush the WHOLE screen to the display. This is often required by OpenGL backends.
-                        virtio::transfer_and_flush(next_resource, self.width as u32, self.height as u32);
-
-                        // 4. Swap our internal pointers
+                        // Swap internal pointers
                         self.active_resource_id = next_resource;
                         self.framebuffer = next_buffer_virt;
                         self.double_buffer = current_buffer_virt;
 
-                        // 5. Synchronize the dirty area back to the now-hidden buffer
+                        // Sync the change back to the now-hidden buffer to prevent trails
                         let pitch = self.pitch as usize;
                         for row in 0..sh {
                             let offset = (sy + row) as usize * pitch + (sx as usize * 4);
@@ -242,19 +283,8 @@ impl DisplayServer {
                                 (sw * 4) as usize,
                             );
                         }
-
-                        // 6. Also copy to VBE framebuffer if present
-                        if self.vbe_framebuffer != 0 {
-                            for row in 0..sh {
-                                let offset = (sy + row) as usize * pitch + (sx as usize * 4);
-                                core::ptr::copy_nonoverlapping(
-                                    (self.framebuffer as *const u8).add(offset),
-                                    (self.vbe_framebuffer as *mut u8).add(offset),
-                                    (sw * 4) as usize,
-                                );
-                            }
-                        }
                     }
+                    
                     self.reset_dirty();
                 }
             } else {
@@ -333,34 +363,7 @@ impl DisplayServer {
                 let is_top_or_bottom = (src_off_y + row) == 0 || (src_off_y + row) == (height as usize - 1);
 
                 if !treat_as_transparent && !is_top_or_bottom {
-                    let mut start_col = 0;
-                    let mut end_col = copy_width;
-
-                    if src_off_x == 0 && copy_width > 0 {
-                        if let Some(color) = border_color {
-                            *dst_row_ptr.add(0) = color;
-                        } else {
-                            *dst_row_ptr.add(0) = *src_row_ptr.add(0);
-                        }
-                        start_col = 1;
-                    }
-
-                    if (src_off_x + copy_width) == (width as usize) && copy_width > start_col {
-                        if let Some(color) = border_color {
-                            *dst_row_ptr.add(copy_width - 1) = color;
-                        } else {
-                            *dst_row_ptr.add(copy_width - 1) = *src_row_ptr.add(copy_width - 1);
-                        }
-                        end_col = copy_width - 1;
-                    }
-
-                    if end_col > start_col {
-                        core::ptr::copy_nonoverlapping(
-                            src_row_ptr.add(start_col),
-                            dst_row_ptr.add(start_col),
-                            end_col - start_col,
-                        );
-                    }
+                    core::ptr::copy_nonoverlapping(src_row_ptr, dst_row_ptr, copy_width);
                     continue;
                 }
 
@@ -590,34 +593,7 @@ impl DisplayServer {
                 let is_top_or_bottom = (src_off_y + row) == 0 || (src_off_y + row) == (height as usize - 1);
 
                 if !treat_as_transparent && !is_top_or_bottom {
-                    let mut start_col = 0;
-                    let mut end_col = copy_width;
-
-                    if src_off_x == 0 && copy_width > 0 {
-                        if let Some(color) = border_color {
-                            *dst_row_ptr.add(0) = color;
-                        } else {
-                            *dst_row_ptr.add(0) = *src_row_ptr.add(0);
-                        }
-                        start_col = 1;
-                    }
-
-                    if (src_off_x + copy_width) == (width as usize) && copy_width > start_col {
-                        if let Some(color) = border_color {
-                            *dst_row_ptr.add(copy_width - 1) = color;
-                        } else {
-                            *dst_row_ptr.add(copy_width - 1) = *src_row_ptr.add(copy_width - 1);
-                        }
-                        end_col = copy_width - 1;
-                    }
-
-                    if end_col > start_col {
-                        core::ptr::copy_nonoverlapping(
-                            src_row_ptr.add(start_col),
-                            dst_row_ptr.add(start_col),
-                            end_col - start_col,
-                        );
-                    }
+                    core::ptr::copy_nonoverlapping(src_row_ptr, dst_row_ptr, copy_width);
                     continue;
                 }
 
@@ -956,34 +932,7 @@ impl DisplayServer {
                 let is_top_or_bottom = (src_off_y + row) == 0 || (src_off_y + row) == (height as usize - 1);
 
                 if !treat_as_transparent && !is_top_or_bottom {
-                    let mut start_col = 0;
-                    let mut end_col = copy_width;
-
-                    if src_off_x == 0 && copy_width > 0 {
-                        if let Some(color) = border_color {
-                            *dst_row_ptr.add(0) = color;
-                        } else {
-                            *dst_row_ptr.add(0) = *src_row_ptr.add(0);
-                        }
-                        start_col = 1;
-                    }
-
-                    if (src_off_x + copy_width) == (width as usize) && copy_width > start_col {
-                        if let Some(color) = border_color {
-                            *dst_row_ptr.add(copy_width - 1) = color;
-                        } else {
-                            *dst_row_ptr.add(copy_width - 1) = *src_row_ptr.add(copy_width - 1);
-                        }
-                        end_col = copy_width - 1;
-                    }
-
-                    if end_col > start_col {
-                        core::ptr::copy_nonoverlapping(
-                            src_row_ptr.add(start_col),
-                            dst_row_ptr.add(start_col),
-                            end_col - start_col,
-                        );
-                    }
+                    core::ptr::copy_nonoverlapping(src_row_ptr, dst_row_ptr, copy_width);
                     continue;
                 }
 
@@ -1052,8 +1001,11 @@ impl DisplayServer {
     pub fn present_rect(&mut self, x: i32, y: i32, w: u32, h: u32) {
         let sx = x.max(0) as u32;
         let sy = y.max(0) as u32;
-        let sw = w.min((self.width as u32).saturating_sub(sx));
-        let sh = h.min((self.height as u32).saturating_sub(sy));
+        let ex = (x + w as i32).min(self.width as i32).max(0) as u32;
+        let ey = (y + h as i32).min(self.height as i32).max(0) as u32;
+        
+        let sw = ex.saturating_sub(sx);
+        let sh = ey.saturating_sub(sy);
 
         if sw == 0 || sh == 0 { return; }
 
@@ -1096,7 +1048,7 @@ impl DisplayServer {
                 // If not, we'd draw it here, but that causes flicker.
                 // The correct flicker-free way is Resource Swapping (copy() method).
 
-                virtio::flush(sx, sy, sw, sh, self.width as u32, self.active_resource_id);
+                virtio::flush(sx, sy, sw, sh, self.width as u32, self.active_resource_id, false);
 
                 // Also copy to VBE framebuffer so QEMU's VGA scanout shows the content
                 if self.vbe_framebuffer != 0 {

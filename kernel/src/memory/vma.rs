@@ -40,6 +40,10 @@ impl VmaAllocator {
         false
     }
 
+    pub fn remove_by_pid(&mut self, pid: u64) {
+        self.regions.retain(|r| r.pid != pid);
+    }
+
     pub fn get_regions(&self) -> &Vec<VmaRegion> {
         &self.regions
     }

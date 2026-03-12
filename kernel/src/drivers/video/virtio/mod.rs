@@ -306,7 +306,7 @@ pub fn start_gpu(width: u32, height: u32, phys_buf1: u64, phys_buf2: u64) {
     }
 }
 
-pub fn transfer_and_flush(resource_id: u32, width: u32, height: u32) {
+pub fn transfer_and_flush(resource_id: u32, width: u32, height: u32, wait: bool) {
     unsafe {
         let idx = REQ_IDX % 128;
         REQ_IDX += 1;
@@ -321,7 +321,7 @@ pub fn transfer_and_flush(resource_id: u32, width: u32, height: u32) {
         };
         let req_transfer_phys = virt_to_phys(req_transfer as *const _ as u64);
         let resp_transfer_phys = virt_to_phys(&mut TRANSFER_RESPONSES[idx] as *mut _ as u64);
-        send_command_queue(0, &[req_transfer_phys], &[core::mem::size_of::<VirtioGpuTransferToHost2d>() as u32], &[resp_transfer_phys], &[24], true);
+        send_command_queue(0, &[req_transfer_phys], &[core::mem::size_of::<VirtioGpuTransferToHost2d>() as u32], &[resp_transfer_phys], &[24], wait);
 
         let req_flush = &mut FLUSH_REQUESTS[idx];
         *req_flush = VirtioGpuResourceFlush {
@@ -332,11 +332,11 @@ pub fn transfer_and_flush(resource_id: u32, width: u32, height: u32) {
         };
         let req_flush_phys = virt_to_phys(req_flush as *const _ as u64);
         let resp_flush_phys = virt_to_phys(&mut FLUSH_RESPONSES[idx] as *mut _ as u64);
-        send_command_queue(0, &[req_flush_phys], &[core::mem::size_of::<VirtioGpuResourceFlush>() as u32], &[resp_flush_phys], &[24], true);
+        send_command_queue(0, &[req_flush_phys], &[core::mem::size_of::<VirtioGpuResourceFlush>() as u32], &[resp_flush_phys], &[24], wait);
     }
 }
 
-pub fn flush(x: u32, y: u32, width: u32, height: u32, _screen_width: u32, resource_id: u32) {
+pub fn flush(x: u32, y: u32, width: u32, height: u32, _screen_width: u32, resource_id: u32, wait: bool) {
     unsafe {
         let offset = 0;
         let idx = REQ_IDX % 128;
@@ -352,7 +352,7 @@ pub fn flush(x: u32, y: u32, width: u32, height: u32, _screen_width: u32, resour
         };
         let req_transfer_phys = virt_to_phys(req_transfer as *const _ as u64);
         let resp_transfer_phys = virt_to_phys(&mut TRANSFER_RESPONSES[idx] as *mut _ as u64);
-        send_command_queue(0, &[req_transfer_phys], &[core::mem::size_of::<VirtioGpuTransferToHost2d>() as u32], &[resp_transfer_phys], &[24], true);
+        send_command_queue(0, &[req_transfer_phys], &[core::mem::size_of::<VirtioGpuTransferToHost2d>() as u32], &[resp_transfer_phys], &[24], wait);
 
         let req_flush = &mut FLUSH_REQUESTS[idx];
         *req_flush = VirtioGpuResourceFlush {
@@ -363,7 +363,7 @@ pub fn flush(x: u32, y: u32, width: u32, height: u32, _screen_width: u32, resour
         };
         let req_flush_phys = virt_to_phys(req_flush as *const _ as u64);
         let resp_flush_phys = virt_to_phys(&mut FLUSH_RESPONSES[idx] as *mut _ as u64);
-        send_command_queue(0, &[req_flush_phys], &[core::mem::size_of::<VirtioGpuResourceFlush>() as u32], &[resp_flush_phys], &[24], true);
+        send_command_queue(0, &[req_flush_phys], &[core::mem::size_of::<VirtioGpuResourceFlush>() as u32], &[resp_flush_phys], &[24], wait);
     }
 }
 pub fn set_scanout(resource_id: u32, width: u32, height: u32) {

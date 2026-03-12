@@ -2,6 +2,7 @@ use crate::memory::address::PhysAddr;
 use crate::memory::paging::PageTableFlags;
 use crate::memory::{paging, pmm};
 use core::arch::asm;
+use crate::debugln;
 
 pub static mut KERNEL_PML4: u64 = 0;
 
@@ -44,6 +45,37 @@ pub fn init() {
         (*(&raw mut crate::boot::BOOT_INFO)).pml4 = new_pml4_phys;
 
         crate::debugln!("VMM: Relocated PML4 from {:#x} to {:#x}", old_pml4_phys, new_pml4_phys);
+        
+        map_physical_memory(new_pml4_phys);
+    }
+}
+
+pub fn map_physical_memory(pml4_phys: u64) {
+    unsafe {
+        let mmap = (*(&raw mut crate::boot::BOOT_INFO)).mmap;
+        debugln!("VMM: Mapping entire physical RAM into HHDM...");
+
+        for i in 0..32 {
+            let entry = mmap.entries[i];
+            if entry.memory_type == 1 && entry.length > 0 {
+                let start = entry.base;
+                let end = entry.base + entry.length;
+                
+                // Align to 2MB for huge page mapping
+                let mut current = start & !0x1FFFFF;
+                let aligned_end = (end + 0x1FFFFF) & !0x1FFFFF;
+
+                while current < aligned_end {
+                    let virt = current + paging::HHDM_OFFSET;
+                    let flags = paging::PAGE_PRESENT | paging::PAGE_WRITABLE;
+                    
+                    // Map using 2MB huge pages to minimize page table overhead
+                    map_huge_page(virt, PhysAddr::new(current), flags, Some(pml4_phys));
+                    current += 0x200000; // 2MB
+                }
+            }
+        }
+        debugln!("VMM: Physical memory mapping complete.");
     }
 }
 

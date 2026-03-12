@@ -120,6 +120,14 @@ impl Process {
     }
 }
 
+impl Drop for Process {
+    fn drop(&mut self) {
+        if self.pid != 0 {
+            crate::memory::address_space::free_slot(self.slot_id);
+        }
+    }
+}
+
 // Compatibility aliases
 pub type Task = Thread;
 pub type TaskState = ThreadState;
@@ -250,9 +258,11 @@ impl TaskManager {
             let ss = core::ptr::addr_of!((*p).ss).read_unaligned();
             let rflags = core::ptr::addr_of!((*p).rflags).read_unaligned();
             if rip == 0 || (rip < 0xFFFF_8000_0000_0000 && cs == 0x08) {
-                crate::debugln!("CRITICAL: Scheduling task {} RIP={:#x} CS={:#x} RSP={:#x} SS={:#x} RFLAGS={:#x} state_ptr={:#x} k_stack={:#x}",
+                /*crate::debugln!("CRITICAL: Scheduling task {} RIP={:#x} CS={:#x} RSP={:#x} SS={:#x} RFLAGS={:#x} state_ptr={:#x} k_stack={:#x}",
                     self.current_task, rip, cs, rsp, ss, rflags,
                     thread.cpu_state_ptr, thread.kernel_stack);
+                    
+                 */
             }
         }
 

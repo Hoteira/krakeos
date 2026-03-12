@@ -41,6 +41,8 @@ pub static DRAGGING_WINDOW: AtomicU16 = AtomicU16::new(0);
 pub static RESIZING_WINDOW: AtomicU16 = AtomicU16::new(0);
 pub static mut CLICK_STARTED_IN_TITLEBAR: bool = false;
 pub static mut CLICKED_WINDOW_ID: usize = 0;
+pub static mut CLICK_X_OFFSET: i32 = 0;
+pub static mut CLICK_Y_OFFSET: i32 = 0;
 pub static mut W_WIDTH: usize = 0;
 pub static mut W_HEIGHT: usize = 0;
 pub static mut MOUSE_PENDING: bool = false;
@@ -53,7 +55,7 @@ pub fn handle_mouse_update() {
 }
 
 pub fn handle_vmmouse(buttons: u32, x: u32, y: u32, z: u32) {
-    crate::debugln!("[VMMouse] raw: btns={:#x} x={} y={} z={}", buttons, x, y, z);
+    //crate::debugln!("[VMMouse] raw: btns={:#x} x={} y={} z={}", buttons, x, y, z);
     unsafe {
         (*(&raw mut MOUSE)).vmmouse(buttons, x, y, z);
     }
@@ -61,6 +63,13 @@ pub fn handle_vmmouse(buttons: u32, x: u32, y: u32, z: u32) {
 
 impl Mouse {
     pub fn vmmouse(&mut self, buttons: u32, vmm_x: u32, vmm_y: u32, z: u32) {
+        // VALIDITY CHECK: VMMouse coordinates are strictly 16-bit absolute values.
+        // If high bits are set, the packet is invalid (e.g. sign-extended negatives)
+        // and would cause the mouse to teleport to the opposite edge.
+        if vmm_x > 65535 || vmm_y > 65535 {
+            return;
+        }
+
         let old_x = self.x;
         let old_y = self.y;
 
@@ -68,13 +77,12 @@ impl Mouse {
         let screen_h = unsafe { (*(&raw mut DISPLAY_SERVER)).height } as u32;
 
         if screen_w > 0 && screen_h > 0 {
-            // Cap at 0xFFFF to avoid panic, though VMMouse should guarantee this.
-            let x_clamped = vmm_x.min(0xFFFF) as u64;
-            let y_clamped = vmm_y.min(0xFFFF) as u64;
-            self.x = ((x_clamped * screen_w as u64) / 0xFFFF) as u16;
-            self.y = ((y_clamped * screen_h as u64) / 0xFFFF) as u16;
+            let x_clamped = vmm_x as u64;
+            let y_clamped = vmm_y as u64;
             
-            // Limit to screen edges
+            self.x = ((x_clamped * screen_w as u64) / 65535) as u16;
+            self.y = ((y_clamped * screen_h as u64) / 65535) as u16;
+            
             if self.x >= screen_w as u16 { self.x = screen_w as u16 - 1; }
             if self.y >= screen_h as u16 { self.y = screen_h as u16 - 1; }
         }
@@ -83,7 +91,7 @@ impl Mouse {
         let prev_right = self.right;
         let prev_center = self.center;
 
-        // VMMouse button mapping
+        // VMMouse button mapping (Standard VMware/QEMU)
         self.left = (buttons & 0x20) != 0;
         self.right = (buttons & 0x10) != 0;
         self.center = (buttons & 0x08) != 0;
@@ -113,16 +121,19 @@ impl Mouse {
             y_rel |= 0xFF00u16 as i16;
         }
 
-        // Accumulate raw movement and apply sensitivity divisor.
+        // Apply scaling without a hard integer division bottleneck
+        // We accumulate the remainder to ensure sub-pixel movement isn't lost.
         self.dx_accum += x_rel as i32;
         self.dy_accum += -(y_rel as i32);
-        let scaled_dx = self.dx_accum / MOUSE_SENSITIVITY_DIV;
-        let scaled_dy = self.dy_accum / MOUSE_SENSITIVITY_DIV;
-        self.dx_accum %= MOUSE_SENSITIVITY_DIV;
-        self.dy_accum %= MOUSE_SENSITIVITY_DIV;
+        
+        let move_x = self.dx_accum / 2; // Divide by 2 instead of 3 for more speed
+        let move_y = self.dy_accum / 2;
+        
+        self.dx_accum %= 2;
+        self.dy_accum %= 2;
 
-        self.x = self.clamp_mx(scaled_dx as i16);
-        self.y = self.clamp_my(scaled_dy as i16);
+        self.x = self.clamp_mx(move_x as i16);
+        self.y = self.clamp_my(move_y as i16);
 
         let prev_left = self.left;
         let prev_right = self.right;
@@ -208,6 +219,10 @@ impl Mouse {
                         CLICKED_WINDOW_ID = new_id;
                         (*(&raw mut COMPOSER)).focus_window(new_id);
                     }
+                    
+                    // Capture offset for absolute dragging
+                    CLICK_X_OFFSET = self.x as i32 - ws.x as i32;
+                    CLICK_Y_OFFSET = self.y as i32 - ws.y as i32;
                 }
 
                 if ws.can_move && is_super {
@@ -341,7 +356,7 @@ impl Mouse {
                     let fw = (32 as u32).min(sw.saturating_sub(mx));
                     let fh = (32 as u32).min(sh.saturating_sub(my));
                     if fw > 0 && fh > 0 {
-                        virtio::flush(mx, my, fw, fh, sw, ds.active_resource_id);
+                        virtio::flush(mx, my, fw, fh, sw, ds.active_resource_id, false);
                         ds.sync_vbe_rect(mx, my, fw, fh);
                     }
                 }
@@ -352,117 +367,65 @@ impl Mouse {
             let display_server = unsafe { &mut *(&raw mut DISPLAY_SERVER) };
             let wid = DRAGGING_WINDOW.load(Ordering::Relaxed) as usize;
 
-            let (old_win_x, old_win_y, width, height, buffer, treat_as_transparent, new_x, new_y) = {
-                let window_opt = composer.find_window_id(wid);
-                let w = match window_opt {
+            // Only recompose if moved enough to matter (de-jitter)
+            if !moved && !btns_changed { return; }
+
+            let (old_x_pos, old_y_pos, width, height) = {
+                let w = match composer.find_window_id(wid) {
                     Some(w) => w,
                     None => return,
                 };
 
-                let old_win_x = w.x;
-                let old_win_y = w.y;
+                let old_x = w.x;
+                let old_y = w.y;
                 let width = w.width;
                 let height = w.height;
-                let buffer = w.get_active_buffer();
-                let treat_as_transparent = w.treat_as_transparent;
 
-                let mouse_dx = self.x as i32 - old_x as i32;
-                let mouse_dy = self.y as i32 - old_y as i32;
-
-                let target_win_x = old_win_x as i32 + mouse_dx;
-                let target_win_y = old_win_y as i32 + mouse_dy;
+                // ABSOLUTE MATH: New position is CurrentMouse - ClickOffset
+                let target_win_x = self.x as i32 - unsafe { CLICK_X_OFFSET };
+                let target_win_y = self.y as i32 - unsafe { CLICK_Y_OFFSET };
 
                 let screen_w = display_server.width as i32;
                 let screen_h = display_server.height as i32;
 
-                let margin = 3;
+                // Clamp to ensure window doesn't disappear and handles edge limits correctly
+                let new_x = target_win_x.max(-((width as i32) - 20)).min(screen_w - 20);
+                let new_y = target_win_y.max(0).min(screen_h - 20);
 
-                let min_visible_x = -(width as i32) + margin;
-                let max_visible_x = screen_w - margin;
-                let min_visible_y = -(height as i32) + margin;
-                let max_visible_y = screen_h - margin;
+                w.x = new_x as isize;
+                w.y = new_y as isize;
 
-                let clamped_win_x = target_win_x.max(min_visible_x).min(max_visible_x);
-                let clamped_win_y = target_win_y.max(min_visible_y).min(max_visible_y);
-
-                let new_x = clamped_win_x as isize;
-                let new_y = clamped_win_y as isize;
-
-                w.x = new_x;
-                w.y = new_y;
-
-                (old_win_x, old_win_y, width, height, buffer, treat_as_transparent, new_x, new_y)
+                (old_x, old_y, width, height)
             };
 
-            let screen_w = display_server.width as i32;
-            let screen_h = display_server.height as i32;
+            let (new_x_pos, new_y_pos) = {
+                let w = composer.find_window_id(wid).unwrap();
+                (w.x, w.y)
+            };
 
-            composer.recompose_area_except(
-                old_win_x as i32, old_win_y as i32, width as u32, height as u32,
-                wid,
-            );
-            display_server.copy_to_fb(old_win_x as i32, old_win_y as i32, width as u32, height as u32);
-
-            display_server.copy_to_fb_a(width as u32, height as u32, buffer, new_x as i32, new_y as i32, Some(0xFFFFFFFF), treat_as_transparent);
-
-            for i in 0..composer.windows.len() {
-                let w = &composer.windows[i];
-                match w.w_type {
-                    Items::Bar | Items::Popup => {
-                        display_server.copy_to_fb_clipped(
-                            w.width as u32,
-                            w.height as u32,
-                            w.get_active_buffer(),
-                            w.x as i32,
-                            w.y as i32,
-                            new_x as i32, new_y as i32, width as u32, height as u32,
-                            None,
-                            w.treat_as_transparent,
-                        );
-                    }
-                    _ => {}
-                }
+            // Only update if the position actually changed after clamping
+            if old_x_pos == new_x_pos && old_y_pos == new_y_pos && !btns_changed {
+                return;
             }
 
-            let old_x_clamped = (old_win_x as i32).max(0) as u32;
-            let old_y_clamped = (old_win_y as i32).max(0) as u32;
-            let new_x_clamped = (new_x as i32).max(0) as u32;
-            let new_y_clamped = (new_y as i32).max(0) as u32;
-            let mouse_x = self.x as u32;
-            let mouse_y = self.y as u32;
+            // Calculate the total area that needs updating (Union of old and new)
+            let min_x = old_x_pos.min(new_x_pos) as i32;
+            let min_y = old_y_pos.min(new_y_pos) as i32;
+            let max_x = (old_x_pos + width as isize).max(new_x_pos + width as isize) as i32;
+            let max_y = (old_y_pos + height as isize).max(new_y_pos + height as isize) as i32;
 
-            let screen_w_u32 = screen_w as u32;
-            let screen_h_u32 = screen_h as u32;
+            let update_w = (max_x - min_x) as u32;
+            let update_h = (max_y - min_y) as u32;
 
-            let old_x_end = (old_win_x as i32 + width as i32).max(0).min(screen_w).max(0) as u32;
-            let old_y_end = (old_win_y as i32 + height as i32).max(0).min(screen_h).max(0) as u32;
-            let new_x_end = (new_x as i32 + width as i32).max(0).min(screen_w).max(0) as u32;
-            let new_y_end = (new_y as i32 + height as i32).max(0).min(screen_h).max(0) as u32;
-            let mouse_x_end = (mouse_x + 32).min(screen_w_u32);
-            let mouse_y_end = (mouse_y + 32).min(screen_h_u32);
+            // Perform ONE unified recomposition into the back-buffer
+            composer.update_window_area_rect(min_x, min_y, update_w, update_h);
 
-            let min_x = old_x_clamped.min(new_x_clamped).min(mouse_x);
-            let min_y = old_y_clamped.min(new_y_clamped).min(mouse_y);
-            let max_x = old_x_end.max(new_x_end).max(mouse_x_end);
-            let max_y = old_y_end.max(new_y_end).max(mouse_y_end);
-
-            let flush_x = min_x;
-            let flush_y = min_y;
-            let flush_w = max_x.saturating_sub(min_x);
-            let flush_h = max_y.saturating_sub(min_y);
-
-            unsafe {
-                if !HARDWARE_CURSOR_ACTIVE {
-                    display_server.draw_mouse(self.x, self.y, true);
-                }
+            // Draw mouse last into the same buffer if no hardware cursor
+            if unsafe { !HARDWARE_CURSOR_ACTIVE } {
+                display_server.draw_mouse(self.x, self.y, true);
+                display_server.mark_dirty(self.x as i32, self.y as i32, 32, 32);
             }
-
-            unsafe {
-                if VIRTIO_ACTIVE && flush_w > 0 && flush_h > 0 {
-                    virtio::flush(flush_x, flush_y, flush_w, flush_h, display_server.width as u32, display_server.active_resource_id);
-                    display_server.sync_vbe_rect(flush_x, flush_y, flush_w, flush_h);
-                }
-            }
+            
             return;
         }
 
@@ -493,7 +456,7 @@ impl Mouse {
                 let flush_h = (max_y.min(screen_h)).saturating_sub(flush_y);
 
                 if !HARDWARE_CURSOR_ACTIVE && flush_w > 0 && flush_h > 0 {
-                    virtio::flush(flush_x, flush_y, flush_w, flush_h, screen_w, display_server.active_resource_id);
+                    virtio::flush(flush_x, flush_y, flush_w, flush_h, screen_w, display_server.active_resource_id, false);
                     display_server.sync_vbe_rect(flush_x, flush_y, flush_w, flush_h);
                 }
             }
