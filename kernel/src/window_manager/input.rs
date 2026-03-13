@@ -49,7 +49,7 @@ pub static mut MOUSE_PENDING: bool = false;
 
 pub fn handle_mouse_update() {
     unsafe {
-        use crate::drivers::periferics::mouse::MOUSE_PACKET;
+        use crate::drivers::peripherals::mouse::MOUSE_PACKET;
         (*(&raw mut MOUSE)).cursor(MOUSE_PACKET);
     }
 }
@@ -191,7 +191,7 @@ impl Mouse {
                         height: final_h as u32,
                     });
 
-                    let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+                    let tm = crate::task::TASK_MANAGER.int_lock();
                     if !GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&*tm, w.pid, event) {
                         GLOBAL_EVENT_QUEUE.int_lock().add_event(event);
                     }
@@ -209,7 +209,7 @@ impl Mouse {
         if self.left && !prev_left {
             let w = unsafe { (*(&raw mut COMPOSER)).find_window(self.x as usize, self.y as usize) };
             if let Some(ws) = w {
-                let is_super = crate::drivers::periferics::keyboard::is_super_active();
+                let is_super = crate::drivers::peripherals::keyboard::is_super_active();
 
                 unsafe {
                     let old_id = CLICKED_WINDOW_ID;
@@ -489,7 +489,7 @@ impl Mouse {
                         });
 
                         {
-                            let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+                            let tm = crate::task::TASK_MANAGER.int_lock();
                             if !GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&*tm, w.pid, event) {
                                 GLOBAL_EVENT_QUEUE.int_lock().add_event(event);
                             }

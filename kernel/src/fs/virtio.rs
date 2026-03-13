@@ -419,7 +419,7 @@ unsafe fn send_command(out_phys: &[u64], out_lens: &[u32], in_phys: &[u64], in_l
     }
 
     unsafe {
-        let int_enabled = crate::interrupts::idt::interrupts();
+        let int_enabled = crate::arch::x86_64::idt::interrupts();
 
         core::arch::asm!("cli");
 

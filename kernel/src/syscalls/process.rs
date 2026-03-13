@@ -1,6 +1,6 @@
 use crate::debugln;
-use crate::interrupts::syscalls::fs::resolve_path;
-use crate::interrupts::task::CPUState;
+use crate::syscalls::fs::resolve_path;
+use crate::task::CPUState;
 use crate::memory::paging;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -9,7 +9,7 @@ use alloc::boxed::Box;
 pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&[(u8, u8)]>, parent_pid: Option<u64>) -> Result<u64, String> {
     crate::debugln!("[spawn_process] path='{}'", path);
     let cwd_str = {
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let tm = crate::task::TASK_MANAGER.int_lock();
         if tm.current_task >= 0 {
             if let Some(thread) = tm.tasks.get(&(tm.current_task as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
@@ -65,11 +65,11 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
 
     // WASM Detection and Execution via Native Kernel Thread
     if file_buf.len() > 4 && &file_buf[0..4] == b"\0asm" {
-        let pid_idx = crate::interrupts::task::TASK_MANAGER.int_lock().reserve_pid().map_err(|_| String::from("No free process slots"))?;
+        let pid_idx = crate::task::TASK_MANAGER.int_lock().reserve_pid().map_err(|_| String::from("No free process slots"))?;
         let pid = pid_idx as u64;
 
         let (new_fd_table, term_size) = {
-            let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+            let tm = crate::task::TASK_MANAGER.int_lock();
             let mut fds = [-1i16; 16];
             let mut size = (80u16, 25u16);
             if tm.current_task >= 0 {
@@ -99,12 +99,12 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
         }
 
         let slot_id = {
-            let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+            let mut tm = crate::task::TASK_MANAGER.int_lock();
             tm.init_user_task(pid_idx, 0, 0, args, Some(new_fd_table), process_name_bytes, term_size, parent_pid).map_err(|_| String::from("Failed to init task"))?;
             
             // FORCE the parent thread to not be scheduled at all
             let proc = tm.tasks.get(&(pid_idx)).unwrap().process.as_ref().unwrap().clone();
-            tm.tasks.get_mut(&(pid_idx)).unwrap().state = crate::interrupts::task::ThreadState::Null;
+            tm.tasks.get_mut(&(pid_idx)).unwrap().state = crate::task::ThreadState::Null;
             
             proc.slot_id
         };
@@ -145,8 +145,8 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
                 alloc::alloc::dealloc(args.path_ptr, core::alloc::Layout::from_size_align(args.path_len, 1).unwrap());
                 alloc::alloc::dealloc(args.buf_ptr, core::alloc::Layout::from_size_align(args.buf_len, 1).unwrap());
 
-                crate::interrupts::syscalls::syscall_dispatcher(
-                    crate::interrupts::syscalls::SYS_EXIT,
+                crate::syscalls::syscall_dispatcher(
+                    crate::syscalls::SYS_EXIT,
                     res as u64,
                     0, 0, 0, 0, 0
                 );
@@ -177,7 +177,7 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
         crate::debugln!("[Spawn] Spawning WASM kernel thread for PID {} (slot {}) at {:#x}...", pid, slot_id, wasm_thread_entry as u64);
 
         {
-            let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+            let mut tm = crate::task::TASK_MANAGER.int_lock();
             tm.spawn_thread(pid_idx, wasm_thread_entry as u64, 0, thread_args as u64).map_err(|_| String::from("Failed to spawn WASM thread"))?;
         }
 
@@ -185,12 +185,12 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
         }
 
 
-    let pid_idx_elf = crate::interrupts::task::TASK_MANAGER.int_lock().reserve_pid().map_err(|_| String::from("No free process slots"))?;
+    let pid_idx_elf = crate::task::TASK_MANAGER.int_lock().reserve_pid().map_err(|_| String::from("No free process slots"))?;
     let pid_elf = pid_idx_elf as u64;
 
 
     let (new_fd_table_elf, term_size_elf) = {
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let tm = crate::task::TASK_MANAGER.int_lock();
         let mut fds = [-1i16; 16];
         let mut size = (80u16, 25u16);
         if tm.current_task >= 0 {
@@ -221,7 +221,7 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
 
 
     {
-        let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let mut tm = crate::task::TASK_MANAGER.int_lock();
 
         tm.init_user_task(pid_idx_elf, 0, 0, args, Some(new_fd_table_elf), process_name_bytes, term_size_elf, parent_pid).map_err(|_| String::from("Failed to init task"))?;
     }
@@ -231,19 +231,19 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
     {
         match crate::fs::elf::load_elf(&file_buf, pid_elf) {
             Ok(entry_point) => {
-                let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+                let mut tm = crate::task::TASK_MANAGER.int_lock();
                 let task = tm.tasks.get_mut(&(pid_idx_elf)).unwrap();
 
 
                 unsafe {
-                    let cpu_state = &mut *(task.cpu_state_ptr as *mut crate::interrupts::task::CPUState);
+                    let cpu_state = &mut *(task.cpu_state_ptr as *mut crate::task::CPUState);
                     cpu_state.rip = entry_point;
                 }
 
                 Ok(pid_elf)
             }
             Err(e) => {
-                crate::interrupts::task::TASK_MANAGER.int_lock().kill_process(pid_elf);
+                crate::task::TASK_MANAGER.int_lock().kill_process(pid_elf);
                 Err(e)
             }
         }
@@ -251,20 +251,20 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
 
     #[cfg(not(feature = "elf_support"))]
     {
-        crate::interrupts::task::TASK_MANAGER.int_lock().kill_process(pid_elf);
+        crate::task::TASK_MANAGER.int_lock().kill_process(pid_elf);
         Err(String::from("ELF support is disabled"))
     }
 }
 
 pub fn spawn_ext_process(name: &str, state: CPUState, parent_pid: Option<u64>) -> Result<u64, String> {
-    let pid_idx = crate::interrupts::task::TASK_MANAGER.int_lock().reserve_pid().map_err(|_| String::from("No free process slots"))?;
+    let pid_idx = crate::task::TASK_MANAGER.int_lock().reserve_pid().map_err(|_| String::from("No free process slots"))?;
     let pid = pid_idx as u64;
 
     let process_name_bytes = name.as_bytes();
     let term_size = (80u16, 25u16); // Default
 
     {
-        let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let mut tm = crate::task::TASK_MANAGER.int_lock();
         tm.init_user_task(pid_idx, 0, 0, None, None, process_name_bytes, term_size, parent_pid).map_err(|_| String::from("Failed to init task"))?;
         
         let task = tm.tasks.get_mut(&(pid_idx)).unwrap();
@@ -293,7 +293,7 @@ pub fn handle_spawn_ext(context: &mut CPUState) {
     let state = unsafe { *state_ptr };
 
     let parent_pid = {
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let tm = crate::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
         if current >= 0 {
             tm.tasks.get(&(current as usize)).and_then(|t| t.process.as_ref()).map(|p| p.pid)
@@ -314,12 +314,12 @@ pub fn handle_exit(context: &mut CPUState) {
     {
         use crate::window_manager::composer::COMPOSER;
 
-        let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let mut tm = crate::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
         if current >= 0 {
             if let Some(thread) = tm.tasks.get_mut(&(current as usize)) {
                 thread.exit_code = exit_code;
-                thread.state = crate::interrupts::task::ThreadState::Zombie;
+                thread.state = crate::task::ThreadState::Zombie;
 
                 unsafe {
                     (*(&raw mut COMPOSER)).remove_windows_by_pid(current as u64);
@@ -386,7 +386,7 @@ pub fn handle_spawn(context: &mut CPUState) {
     };
 
     let parent_pid = {
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let tm = crate::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
         if current >= 0 {
             tm.tasks.get(&(current as usize)).and_then(|t| t.process.as_ref()).map(|p| p.pid)
@@ -406,7 +406,7 @@ pub fn handle_spawn(context: &mut CPUState) {
 
 pub fn handle_kill(context: &mut CPUState) {
     let target_pid = context.rdi as u64;
-    let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    let mut tm = crate::task::TASK_MANAGER.int_lock();
     
     let current_idx = tm.current_task;
     let mut can_kill = false;
@@ -447,7 +447,7 @@ pub fn handle_kill(context: &mut CPUState) {
 }
 
 pub fn handle_getpid(context: &mut CPUState) {
-    let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    let tm = crate::task::TASK_MANAGER.int_lock();
     let current = tm.current_task;
     if current >= 0 {
         if let Some(thread) = tm.tasks.get(&(current as usize)) {
@@ -461,15 +461,15 @@ pub fn handle_getpid(context: &mut CPUState) {
 
 pub fn handle_wait_pid(context: &mut CPUState) {
     let target_pid = context.rdi as usize;
-    if target_pid >= crate::interrupts::task::MAX_TASKS {
+    if target_pid >= crate::task::MAX_TASKS {
         context.rax = u64::MAX;
         return;
     }
 
-    let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    let mut tm = crate::task::TASK_MANAGER.int_lock();
     if let Some(task) = tm.tasks.get_mut(&target_pid) {
         match task.state {
-            crate::interrupts::task::ThreadState::Zombie => {
+            crate::task::ThreadState::Zombie => {
                 let exit_code = task.exit_code;
                 context.rax = exit_code;
 
@@ -485,7 +485,7 @@ pub fn handle_wait_pid(context: &mut CPUState) {
 
                 tm.tasks.remove(&target_pid);
             }
-            crate::interrupts::task::ThreadState::Null => {
+            crate::task::ThreadState::Null => {
                 context.rax = 0;
             }
             _ => {
@@ -509,12 +509,12 @@ pub fn handle_get_process_list(context: &mut CPUState) {
     if !super::validate_user_buf(context, buf_ptr as u64, max_count as u64 * struct_size) { return; }
 
     let mut count = 0;
-    let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    let tm = crate::task::TASK_MANAGER.int_lock();
 
     let struct_size = 48;
 
     for (i, task) in tm.tasks.iter() {
-        if task.state != crate::interrupts::task::ThreadState::Null {
+        if task.state != crate::task::ThreadState::Null {
             if count >= max_count {
                 break;
             }
@@ -524,11 +524,11 @@ pub fn handle_get_process_list(context: &mut CPUState) {
                 let ptr = buf_ptr.add(offset);
                 *(ptr as *mut u64) = *i as u64;
                 *(ptr.add(8) as *mut u64) = match task.state {
-                    crate::interrupts::task::ThreadState::Null => 0,
-                    crate::interrupts::task::ThreadState::Reserved => 1,
-                    crate::interrupts::task::ThreadState::Ready => 2,
-                    crate::interrupts::task::ThreadState::Zombie => 3,
-                    crate::interrupts::task::ThreadState::Sleeping => 4,
+                    crate::task::ThreadState::Null => 0,
+                    crate::task::ThreadState::Reserved => 1,
+                    crate::task::ThreadState::Ready => 2,
+                    crate::task::ThreadState::Zombie => 3,
+                    crate::task::ThreadState::Sleeping => 4,
                     _ => 0,
                 };
 
@@ -558,7 +558,7 @@ pub fn handle_get_slot_info(context: &mut CPUState) {
     }
     if !super::validate_user_buf(context, buf_ptr as u64, core::mem::size_of::<SlotInfo>() as u64) { return; }
 
-    let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    let tm = crate::task::TASK_MANAGER.int_lock();
     if let Some(current) = tm.current_task_idx() {
         if let Some(thread) = tm.tasks.get(&(current)) {
             let proc = thread.process.as_ref().expect("Thread has no process");
@@ -584,13 +584,13 @@ pub fn handle_get_slot_info(context: &mut CPUState) {
 
 pub fn handle_sleep(context: &mut CPUState) {
     let duration = context.rdi;
-    let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    let mut tm = crate::task::TASK_MANAGER.int_lock();
     let current = tm.current_task;
 
     if current >= 0 {
         if let Some(task) = tm.tasks.get_mut(&(current as usize)) {
-            task.wake_ticks = unsafe { crate::interrupts::task::SYSTEM_TICKS } + duration;
-            task.state = crate::interrupts::task::ThreadState::Sleeping;
+            task.wake_ticks = unsafe { crate::task::SYSTEM_TICKS } + duration;
+            task.state = crate::task::ThreadState::Sleeping;
         }
     }
 }
@@ -600,7 +600,7 @@ pub fn handle_spawn_thread(context: &mut CPUState) {
     let stack = context.rsi;
     let arg = context.rdx;
 
-    let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    let mut tm = crate::task::TASK_MANAGER.int_lock();
     let current = tm.current_task;
 
     if current < 0 {
@@ -618,11 +618,11 @@ pub fn handle_thread_exit(context: &mut CPUState) {
     let exit_code = context.rdi;
     debugln!("[Syscall] Thread exited");
     {
-        let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let mut tm = crate::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
         if current >= 0 {
             if let Some(task) = tm.tasks.get_mut(&(current as usize)) {
-                task.state = crate::interrupts::task::ThreadState::Zombie;
+                task.state = crate::task::ThreadState::Zombie;
                 task.exit_code = 0;
             }
         }

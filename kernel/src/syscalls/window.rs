@@ -1,4 +1,4 @@
-use crate::interrupts::task::CPUState;
+use crate::task::CPUState;
 use crate::window_manager::composer::COMPOSER;
 use crate::window_manager::display::DISPLAY_SERVER;
 use crate::window_manager::input::MOUSE;
@@ -14,7 +14,7 @@ pub fn handle_add_window(context: &mut CPUState) {
             return; 
         }
 
-        let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let mut tm = crate::task::TASK_MANAGER.int_lock();
         if let Some(current) = tm.current_task_idx() {
             if let Some(thread) = tm.tasks.get(&(current)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
@@ -41,7 +41,7 @@ pub fn handle_update_window(context: &mut CPUState) {
 
         let composer = &mut *(&raw mut COMPOSER);
 
-        let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let mut tm = crate::task::TASK_MANAGER.int_lock();
         if let Some(current) = tm.current_task_idx() {
             if let Some(thread) = tm.tasks.get(&(current)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
@@ -88,7 +88,7 @@ pub fn handle_update_window_area(context: &mut CPUState) {
 pub fn handle_get_events(context: &mut CPUState) {
     use core::sync::atomic::Ordering;
     use crate::window_manager::events::{Event, EventQueueHeader, GLOBAL_EVENT_QUEUE};
-    use crate::interrupts::task::TASK_MANAGER;
+    use crate::task::TASK_MANAGER;
 
     let wid = context.rdi as u32;
     let max_events = context.rdx as usize;
@@ -155,7 +155,7 @@ pub fn handle_register_event_queue(context: &mut CPUState) {
     if !super::validate_user_buf(context, header_ptr, header_size) { return; }
     if !super::validate_user_buf(context, buf_ptr, buf_size) { return; }
 
-    let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    let mut tm = crate::task::TASK_MANAGER.int_lock();
     if let Some(idx) = tm.current_task_idx() {
         if let Some(thread) = tm.tasks.get(&(idx)) {
             if let Some(proc) = thread.process.as_ref() {
@@ -173,7 +173,7 @@ pub fn handle_register_event_queue(context: &mut CPUState) {
 }
 
 pub fn handle_deregister_event_queue(context: &mut CPUState) {
-    let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    let tm = crate::task::TASK_MANAGER.int_lock();
     if let Some(idx) = tm.current_task_idx() {
         if let Some(thread) = tm.tasks.get(&(idx)) {
             if let Some(proc) = thread.process.as_ref() {

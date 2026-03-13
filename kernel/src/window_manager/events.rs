@@ -36,11 +36,11 @@ impl EventQueue {
         self.count += 1;
     }
 
-    pub fn push_to_process(&self, tm: &crate::interrupts::task::TaskManager, pid: u64, event: Event) -> bool {
+    pub fn push_to_process(&self, tm: &crate::task::TaskManager, pid: u64, event: Event) -> bool {
         use core::sync::atomic::Ordering;
 
         let thread = tm.tasks.values().find(|t| {
-            t.state != crate::interrupts::task::ThreadState::Zombie
+            t.state != crate::task::ThreadState::Zombie
                 && t.process.as_ref().map_or(false, |p| p.pid == pid)
         });
         if let Some(thread) = thread {

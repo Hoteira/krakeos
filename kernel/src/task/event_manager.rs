@@ -1,4 +1,4 @@
-use crate::interrupts::task::{ThreadState, TASK_MANAGER};
+use crate::task::{ThreadState, TASK_MANAGER};
 use crate::sync::Mutex;
 use alloc::vec::Vec;
 
@@ -34,7 +34,7 @@ pub static EVENT_MANAGER: Mutex<EventManager> = Mutex::new(EventManager {
 
 impl EventManager {
     pub fn register(&mut self, thread_idx: usize, event: AsyncEvent) {
-        if thread_idx >= crate::interrupts::task::MAX_THREADS { return; }
+        if thread_idx >= crate::task::MAX_THREADS { return; }
 
         for reg in &self.registrations {
             if reg.thread_idx == thread_idx && reg.event == event {
@@ -59,7 +59,7 @@ impl EventManager {
         found
     }
 
-    pub fn check_timers(&mut self, tm: &mut crate::interrupts::task::TaskManager, current_ticks: u64) {
+    pub fn check_timers(&mut self, tm: &mut crate::task::TaskManager, current_ticks: u64) {
         let mut i = 0;
         while i < self.registrations.len() {
             if let AsyncEvent::Timer(target) = self.registrations[i].event {
@@ -97,7 +97,7 @@ impl EventManager {
     }
 
 
-    pub fn signal_with_latch(&mut self, tm: &mut crate::interrupts::task::TaskManager, event: AsyncEvent) {
+    pub fn signal_with_latch(&mut self, tm: &mut crate::task::TaskManager, event: AsyncEvent) {
         let mut woken_tids = Vec::new();
 
         let mut i = 0;
@@ -145,7 +145,7 @@ impl EventManager {
 
 
             if let Some(target_idx) = thread_idx {
-                if target_idx < crate::interrupts::task::MAX_THREADS {
+                if target_idx < crate::task::MAX_THREADS {
                     let mut exists = false;
 
 

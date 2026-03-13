@@ -1,5 +1,5 @@
-use crate::interrupts::event_manager::{AsyncEvent, EVENT_MANAGER};
-use crate::interrupts::task::{CPUState, ThreadState, TASK_MANAGER};
+use crate::task::event_manager::{AsyncEvent, EVENT_MANAGER};
+use crate::task::{CPUState, ThreadState, TASK_MANAGER};
 
 pub fn handle_wait_for_event(context: &mut CPUState) {
     let event_type = context.rdi;
@@ -101,6 +101,6 @@ pub fn handle_signal_event(context: &mut CPUState) {
     };
 
     // signal_event will lock TM then EM internally
-    crate::interrupts::event_manager::signal_event(event);
+    crate::task::event_manager::signal_event(event);
     context.rax = 0;
 }

@@ -46,7 +46,7 @@ impl PipeBuffer {
         }
 
         if written > 0 {
-            crate::interrupts::event_manager::signal_event(crate::interrupts::event_manager::AsyncEvent::IO(self.id));
+            crate::task::event_manager::signal_event(crate::task::event_manager::AsyncEvent::IO(self.id));
         }
 
         written
@@ -65,7 +65,7 @@ impl PipeBuffer {
         }
 
         if read > 0 {
-            crate::interrupts::event_manager::signal_event(crate::interrupts::event_manager::AsyncEvent::IO(self.id));
+            crate::task::event_manager::signal_event(crate::task::event_manager::AsyncEvent::IO(self.id));
         }
 
         read

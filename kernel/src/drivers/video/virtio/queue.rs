@@ -69,7 +69,7 @@ pub fn send_command_queue(queue_idx: usize, out_phys: &[u64], out_lens: &[u32], 
 }
 
 unsafe fn send_command_queue_unlocked(queue_idx: usize, out_phys: &[u64], out_lens: &[u32], in_phys: &[u64], in_lens: &[u32], wait: bool) -> bool {
-    let int_enabled = crate::interrupts::idt::interrupts();
+    let int_enabled = crate::arch::x86_64::idt::interrupts();
     if int_enabled { core::arch::asm!("cli"); }
     let vq = match &mut VIRT_QUEUES[queue_idx] {
         Some(v) => v,

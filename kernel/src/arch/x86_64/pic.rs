@@ -1,4 +1,4 @@
-use crate::drivers::port::{inb, outb};
+use crate::arch::x86_64::io::{inb, outb};
 
 pub static mut PICS: Pics = Pics {
     master: Pic {

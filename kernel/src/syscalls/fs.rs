@@ -1,7 +1,7 @@
 use super::{PollFd, POLLERR, POLLIN, POLLNVAL, POLLOUT};
 use crate::debugln;
-use crate::drivers::periferics::keyboard::KEYBOARD_BUFFER;
-use crate::interrupts::task::CPUState;
+use crate::drivers::peripherals::keyboard::KEYBOARD_BUFFER;
+use crate::task::CPUState;
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
@@ -78,7 +78,7 @@ pub fn handle_read(context: &mut CPUState) {
     if !super::validate_user_buf(context, user_ptr as u64, user_len as u64) { return; }
 
     let is_nonblock = {
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let tm = crate::task::TASK_MANAGER.int_lock();
         if let Some(idx) = tm.current_task_idx() {
             tm.tasks.get(&(idx)).unwrap().process.as_ref().unwrap().fd_nonblock.lock()[fd]
         } else { false }
@@ -130,17 +130,17 @@ pub fn handle_poll(context: &mut CPUState) {
     }
     if !super::validate_user_buf(context, fds_ptr as u64, (nfds * core::mem::size_of::<PollFd>()) as u64) { return; }
 
-    let start_ticks = unsafe { crate::interrupts::task::SYSTEM_TICKS };
+    let start_ticks = unsafe { crate::task::SYSTEM_TICKS };
     let end_ticks = if timeout_ms >= 0 { Some(start_ticks + timeout_ms as u64) } else { None };
 
     loop {
         let mut ready_count = 0;
 
-        let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let mut tm = crate::task::TASK_MANAGER.int_lock();
         let current_idx = tm.current_task_idx().unwrap();
-        let mut em = crate::interrupts::event_manager::EVENT_MANAGER.int_lock();
+        let mut em = crate::task::event_manager::EVENT_MANAGER.int_lock();
 
-        if em.check_pending(current_idx, crate::interrupts::event_manager::AsyncEvent::Generic(current_idx as u64)) {
+        if em.check_pending(current_idx, crate::task::event_manager::AsyncEvent::Generic(current_idx as u64)) {
             em.unregister_thread(current_idx);
             context.rax = 0;
             return;
@@ -152,7 +152,7 @@ pub fn handle_poll(context: &mut CPUState) {
             pfd.revents = 0;
 
             if pfd.fd == 0 {
-                em.register(current_idx, crate::interrupts::event_manager::AsyncEvent::Read(0));
+                em.register(current_idx, crate::task::event_manager::AsyncEvent::Read(0));
                 if !KEYBOARD_BUFFER.lock().is_empty() {
                     pfd.revents |= POLLIN;
                 }
@@ -164,7 +164,7 @@ pub fn handle_poll(context: &mut CPUState) {
                         use crate::fs::vfs::FileHandle;
                         match handle {
                             FileHandle::Pipe { pipe } => {
-                                em.register(current_idx, crate::interrupts::event_manager::AsyncEvent::IO(pipe.id()));
+                                em.register(current_idx, crate::task::event_manager::AsyncEvent::IO(pipe.id()));
                                 if (pfd.events & POLLIN) != 0 && pipe.available() > 0 { pfd.revents |= POLLIN; }
                                 if (pfd.events & POLLOUT) != 0 && pipe.available() < 4096 { pfd.revents |= POLLOUT; }
                             }
@@ -182,7 +182,7 @@ pub fn handle_poll(context: &mut CPUState) {
         }
 
         // Always register for generic wakeup
-        em.register(current_idx, crate::interrupts::event_manager::AsyncEvent::Generic(current_idx as u64));
+        em.register(current_idx, crate::task::event_manager::AsyncEvent::Generic(current_idx as u64));
 
         if ready_count > 0 {
             em.unregister_thread(current_idx);
@@ -191,7 +191,7 @@ pub fn handle_poll(context: &mut CPUState) {
         }
 
         if let Some(end) = end_ticks {
-            if unsafe { crate::interrupts::task::SYSTEM_TICKS } >= end {
+            if unsafe { crate::task::SYSTEM_TICKS } >= end {
                 em.unregister_thread(current_idx);
                 context.rax = 0;
                 return;
@@ -199,7 +199,7 @@ pub fn handle_poll(context: &mut CPUState) {
         }
 
         if let Some(thread) = tm.tasks.get_mut(&current_idx) {
-            thread.state = crate::interrupts::task::ThreadState::WaitingForEvent;
+            thread.state = crate::task::ThreadState::WaitingForEvent;
         }
 
         drop(em);
@@ -220,7 +220,7 @@ pub fn handle_chdir(context: &mut CPUState) {
     let path_str_full = copy_string_from_user(ptr, len);
 
     let cwd_str = {
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let tm = crate::task::TASK_MANAGER.int_lock();
         if tm.current_task >= 0 {
             if let Some(thread) = tm.tasks.get(&(tm.current_task as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
@@ -244,7 +244,7 @@ pub fn handle_chdir(context: &mut CPUState) {
     if let Ok(node) = open_res {
         use crate::fs::vfs::FileType;
         if node.kind() == FileType::Directory {
-            let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+            let mut tm = crate::task::TASK_MANAGER.int_lock();
             let current_idx = tm.current_task as usize;
             if tm.current_task >= 0 {
                 if let Some(thread) = tm.tasks.get_mut(&(current_idx)) {
@@ -295,7 +295,7 @@ pub fn handle_create(context: &mut CPUState, syscall_num: u64) {
     crate::debugln!("SYS_CREATE: Creating '{}' in '{}'", name, parent_path);
 
     let (uid, gid) = {
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let tm = crate::task::TASK_MANAGER.int_lock();
         if let Some(idx) = tm.current_task_idx() {
             let p = tm.tasks.get(&idx).unwrap().process.as_ref().unwrap();
             (p.uid, p.gid)
@@ -340,7 +340,7 @@ pub fn handle_create(context: &mut CPUState, syscall_num: u64) {
 }
 
 pub fn get_current_cwd() -> String {
-    let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    let tm = crate::task::TASK_MANAGER.int_lock();
     if tm.current_task >= 0 {
         if let Some(thread) = tm.tasks.get(&(tm.current_task as usize)) {
             let proc = thread.process.as_ref().expect("Thread has no process");
@@ -353,7 +353,7 @@ pub fn get_current_cwd() -> String {
 }
 
 pub fn assign_local_fd(global_fd: usize) -> u64 {
-    let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    let mut tm = crate::task::TASK_MANAGER.int_lock();
     let current = tm.current_task;
     if current >= 0 {
         if let Some(thread) = tm.tasks.get_mut(&(current as usize)) {
@@ -383,7 +383,7 @@ pub fn handle_remove(context: &mut CPUState) {
     } else { ("", resolved.as_str()) };
 
     let (uid, gid) = {
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let tm = crate::task::TASK_MANAGER.int_lock();
         if let Some(idx) = tm.current_task_idx() {
             let p = tm.tasks.get(&idx).unwrap().process.as_ref().unwrap();
             (p.uid, p.gid)
@@ -426,7 +426,7 @@ pub fn handle_rename(context: &mut CPUState) {
     let (parent_new, _name_new) = if let Some(idx) = resolved_new.rfind('/') { (&resolved_new[..idx], &resolved_new[idx + 1..]) } else { ("", resolved_new.as_str()) };
 
     let (uid, gid) = {
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let tm = crate::task::TASK_MANAGER.int_lock();
         if let Some(idx) = tm.current_task_idx() {
             let p = tm.tasks.get(&idx).unwrap().process.as_ref().unwrap();
             (p.uid, p.gid)
@@ -482,7 +482,7 @@ pub fn handle_read_file(context: &mut CPUState) {
     if !super::validate_user_buf(context, buf_ptr as u64, len as u64) { return; }
 
     let global_fd_opt = {
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let tm = crate::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
         if current >= 0 && local_fd < 16 {
             if let Some(thread) = tm.tasks.get(&(current as usize)) {
@@ -503,7 +503,7 @@ pub fn handle_read_file(context: &mut CPUState) {
         }
 
         let is_nonblock = {
-            let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+            let tm = crate::task::TASK_MANAGER.int_lock();
             if let Some(idx) = tm.current_task_idx() {
                 tm.tasks.get(&(idx)).unwrap().process.as_ref().unwrap().fd_nonblock.lock()[local_fd]
             } else { false }
@@ -569,7 +569,7 @@ pub fn handle_write_file(context: &mut CPUState) {
     if !super::validate_user_buf(context, buf_ptr as u64, len as u64) { return; }
 
     let global_fd_opt = {
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let tm = crate::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
         if current >= 0 && local_fd < 16 {
             if let Some(thread) = tm.tasks.get(&(current as usize)) {
@@ -641,7 +641,7 @@ pub fn handle_read_dir(context: &mut CPUState) {
     if !super::validate_user_buf(context, buf_ptr as u64, len as u64) { return; }
 
     let global_fd_opt = {
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let tm = crate::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
         if current >= 0 && local_fd < 16 {
             if let Some(thread) = tm.tasks.get(&(current as usize)) {
@@ -713,7 +713,7 @@ pub fn handle_stat(context: &mut CPUState, is_fstat: bool) {
         }
     } else { // SYS_FSTAT
         let local_fd = context.rdi as usize;
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let tm = crate::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
         if current >= 0 && local_fd < 16 {
             if let Some(thread) = tm.tasks.get(&(current as usize)) {
@@ -757,7 +757,7 @@ pub fn handle_stat(context: &mut CPUState, is_fstat: bool) {
 pub fn handle_ftruncate(context: &mut CPUState) {
     let local_fd = context.rdi as usize;
     let length = context.rsi as u64;
-    let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    let tm = crate::task::TASK_MANAGER.int_lock();
     let current = tm.current_task;
     if current >= 0 && local_fd < 16 {
         if let Some(thread) = tm.tasks.get(&(current as usize)) {
@@ -835,7 +835,7 @@ pub fn handle_pipe(context: &mut CPUState) {
 
 pub fn handle_close(context: &mut CPUState) {
     let local_fd = context.rdi as usize;
-    let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    let mut tm = crate::task::TASK_MANAGER.int_lock();
     if let Some(current) = tm.current_task_idx() {
         if let Some(thread) = tm.tasks.get_mut(&(current)) {
             let proc = thread.process.as_ref().expect("Thread has no process");
@@ -861,7 +861,7 @@ pub fn handle_seek(context: &mut CPUState) {
     let local_fd = context.rdi as usize;
     let offset = context.rsi as i64;
     let whence = context.rdx as usize;
-    let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    let tm = crate::task::TASK_MANAGER.int_lock();
     if let Some(current) = tm.current_task_idx() {
         if let Some(thread) = tm.tasks.get(&(current)) {
             let proc = thread.process.as_ref().expect("Thread has no process");
@@ -919,7 +919,7 @@ pub fn handle_ioctl(context: &mut CPUState) {
 
     match request {
         TIOCGWINSZ => {
-            let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+            let tm = crate::task::TASK_MANAGER.int_lock();
 
             if let Some(current) = tm.current_task_idx() {
                 if let Some(thread) = tm.tasks.get(&(current)) {
@@ -939,7 +939,7 @@ pub fn handle_ioctl(context: &mut CPUState) {
         }
 
         TIOCSWINSZ => {
-            let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+            let mut tm = crate::task::TASK_MANAGER.int_lock();
 
             if let Some(current) = tm.current_task_idx() {
                 if let Some(thread) = tm.tasks.get_mut(&(current)) {
@@ -970,7 +970,7 @@ pub fn handle_mmap_file(context: &mut CPUState) {
 
 
     let global_fd_opt = {
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let tm = crate::task::TASK_MANAGER.int_lock();
 
         let current = tm.current_task;
 
@@ -1020,7 +1020,7 @@ pub fn handle_pread64(context: &mut CPUState) {
     if !super::validate_user_buf(context, buf_ptr as u64, len as u64) { return; }
 
     let global_fd_opt = {
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let tm = crate::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
         if current >= 0 && local_fd < 16 {
             if let Some(thread) = tm.tasks.get(&(current as usize)) {
@@ -1065,7 +1065,7 @@ pub fn handle_pwrite64(context: &mut CPUState) {
     if !super::validate_user_buf(context, buf_ptr as u64, len as u64) { return; }
 
     let global_fd_opt = {
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let tm = crate::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
         if current >= 0 && local_fd < 16 {
             if let Some(thread) = tm.tasks.get(&(current as usize)) {
@@ -1206,7 +1206,7 @@ pub fn handle_set_nonblock(context: &mut CPUState) {
     let fd = context.rdi as usize;
     let nonblock = context.rsi != 0;
 
-    let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    let mut tm = crate::task::TASK_MANAGER.int_lock();
     if let Some(current) = tm.current_task_idx() {
         if let Some(thread) = tm.tasks.get_mut(&(current)) {
             let proc = thread.process.as_ref().expect("Thread has no process");
@@ -1237,7 +1237,7 @@ pub fn handle_readlinkat(context: &mut CPUState) {
     let base_path = if dirfd == -100 { // AT_FDCWD
         get_current_cwd()
     } else if dirfd >= 0 && (dirfd as usize) < 16 {
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let tm = crate::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
         if current >= 0 {
             let proc = tm.tasks.get(&(current as usize)).unwrap().process.as_ref().unwrap();

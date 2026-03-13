@@ -1,4 +1,4 @@
-use crate::drivers::port::outb;
+use crate::arch::x86_64::io::outb;
 
 const PIT_CHANNEL_0: u16 = 0x40;
 const PIT_COMMAND: u16 = 0x43;

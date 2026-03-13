@@ -1,10 +1,10 @@
-use crate::interrupts::task::CPUState;
+use crate::task::CPUState;
 use crate::memory::address::PhysAddr;
 use crate::memory::{paging, pmm, vmm};
 
 pub fn handle_brk(context: &mut CPUState) {
     let new_brk = context.rdi;
-    let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    let mut tm = crate::task::TASK_MANAGER.int_lock();
     let current_idx = tm.current_task;
 
     if current_idx < 0 {
@@ -76,7 +76,7 @@ pub fn handle_mmap(context: &mut CPUState) {
     }
 
     let (pid, heap_limit, mem_base) = {
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let tm = crate::task::TASK_MANAGER.int_lock();
         let current_idx = tm.current_task;
         if current_idx < 0 {
             crate::debugln!("[MMAP] REJECTED: no current task");
@@ -96,7 +96,7 @@ pub fn handle_mmap(context: &mut CPUState) {
     crate::debugln!("[MMAP] pid={} mem_base={:#x} heap_limit={:#x}", pid, mem_base, heap_limit);
 
     let target_addr = if addr == 0 {
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let tm = crate::task::TASK_MANAGER.int_lock();
         let current_idx = tm.current_task;
         if let Some(thread) = tm.tasks.get(&(current_idx as usize)) {
             let proc = thread.process.as_ref().expect("Thread has no process");
@@ -193,7 +193,7 @@ pub fn handle_shm_get(context: &mut CPUState) {
     let size = context.rdx as u64;
 
     if !super::validate_user_buf(context, name_ptr as u64, name_len as u64) { return; }
-    let name = crate::interrupts::syscalls::fs::copy_string_from_user(name_ptr, name_len);
+    let name = crate::syscalls::fs::copy_string_from_user(name_ptr, name_len);
     crate::debugln!("[Syscall] SHM_GET: name='{}', size={}", name, size);
 
     let mut shm = crate::memory::shm::GLOBAL_SHM.lock();
@@ -218,12 +218,12 @@ pub fn handle_shm_map(context: &mut CPUState) {
     let target_addr = context.rdx as u64;
 
     if !super::validate_user_buf(context, name_ptr as u64, name_len as u64) { return; }
-    let name = crate::interrupts::syscalls::fs::copy_string_from_user(name_ptr, name_len);
+    let name = crate::syscalls::fs::copy_string_from_user(name_ptr, name_len);
     crate::debugln!("[Syscall] SHM_MAP: name='{}', target_addr={:#x}", name, target_addr);
 
     // Get current process info first, before taking SHM lock
     let (pid, mem_base) = {
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let tm = crate::task::TASK_MANAGER.int_lock();
         if let Some(current) = tm.current_task_idx() {
             if let Some(thread) = tm.tasks.get(&(current)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");

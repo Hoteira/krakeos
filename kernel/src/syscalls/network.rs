@@ -1,4 +1,4 @@
-use crate::interrupts::task::CPUState;
+use crate::task::CPUState;
 
 pub fn handle_net_send(context: &mut CPUState) {
     let ptr = context.rdi as *const u8;
@@ -54,7 +54,7 @@ pub fn handle_socket(context: &mut CPUState) {
         crate::net::socket::SocketType::Udp
     };
 
-    let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    let mut tm = crate::task::TASK_MANAGER.int_lock();
     if let Some(current) = tm.current_task_idx() {
         let pid = tm.tasks.get(&(current)).unwrap().process.as_ref().unwrap().pid;
         let socket_id = crate::net::socket::SOCKET_MANAGER.lock().create_socket(pid, socket_kind);
@@ -207,7 +207,7 @@ pub fn handle_accept(context: &mut CPUState) {
             }
         }
         
-        let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let mut tm = crate::task::TASK_MANAGER.int_lock();
         if let Some(current) = tm.current_task_idx() {
             let proc = tm.tasks.get(&(current)).unwrap().process.as_ref().unwrap();
             let mut table = proc.socket_table.lock();
@@ -278,7 +278,7 @@ pub fn handle_tcp_recv(context: &mut CPUState) {
 
 pub fn handle_close_socket(context: &mut CPUState) {
     let fd = context.rdi as usize;
-    let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    let mut tm = crate::task::TASK_MANAGER.int_lock();
     if let Some(current) = tm.current_task_idx() {
         let proc = tm.tasks.get(&(current)).unwrap().process.as_ref().unwrap();
         let mut table = proc.socket_table.lock();
@@ -357,7 +357,7 @@ pub fn handle_recvfrom(context: &mut CPUState) {
 }
 
 fn get_socket_id(context: &CPUState, fd: usize) -> Option<usize> {
-    let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    let tm = crate::task::TASK_MANAGER.int_lock();
     let current = tm.current_task_idx()?;
     let proc = tm.tasks.get(&(current))?.process.as_ref()?;
     proc.socket_table.lock()[fd]

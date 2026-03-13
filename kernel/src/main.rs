@@ -3,34 +3,28 @@
 #![no_std]
 #![no_main]
 
-
 extern crate alloc;
 
+pub mod arch;
 pub mod boot;
-mod interrupts;
-mod drivers;
-mod fs;
-mod memory;
-mod tss;
 pub mod debug;
-pub mod window_manager;
-pub mod sync;
+pub mod drivers;
+pub mod fs;
+pub mod memory;
 pub mod net;
+pub mod sync;
+pub mod syscalls;
+pub mod task;
 
 use crate::boot::{BootInfo, BOOT_INFO};
 use crate::fs::ext2::fs::Ext2;
-use crate::interrupts::gdt::reload_gdt_high_half;
+use crate::memory::address::PhysAddr;
+use crate::memory::paging::phys_to_virt;
 use crate::memory::pmm;
 use core::arch::asm;
 use window_manager::display::DISPLAY_SERVER;
 
-const EFER_MSR: u32 = 0xC0000080;
-const STAR_MSR: u32 = 0xC0000081;
-const LSTAR_MSR: u32 = 0xC0000082;
-const SFMASK_MSR: u32 = 0xC0000084;
-const PAT_MSR: u32 = 0x277;
-use crate::memory::address::PhysAddr;
-use crate::memory::paging::{active_level_4_table, phys_to_virt};
+pub mod window_manager;
 
 #[global_allocator]
 static ALLOCATOR: std::allocator::Allocator = std::allocator::Allocator::new();
@@ -41,12 +35,10 @@ static ALLOCATOR: std::allocator::Allocator = std::allocator::Allocator::new();
 pub unsafe extern "C" fn _start() -> ! {
     core::arch::naked_asm!(
         "cli",
-        // The bootloader passes the bootinfo pointer in RDI according to System V ABI
-        // We just need to align the stack and adjust it for HHDM.
         "mov rax, rsp",
         "mov rcx, 0xFFFF800000000000",
         "add rax, rcx",
-        "and rax, -16", // 16-byte align
+        "and rax, -16", 
         "mov rsp, rax",
         "call rust_main",
         "ud2"
@@ -57,22 +49,14 @@ pub unsafe extern "C" fn _start() -> ! {
 pub extern "C" fn rust_main(bootinfo_ptr: u64) -> ! {
     unsafe { *(&raw mut BOOT_INFO) = *(bootinfo_ptr as *const BootInfo); };
 
-    reload_gdt_high_half();
+    arch::x86_64::gdt::reload_gdt_high_half();
 
     debugln!("SIGNPOST: Initializing Memory...");
     memory::init();
     memory::pmm::discover_all_memory();
 
-    /* unsafe {
-        let pml4 = active_level_4_table();
-        pml4[0].set_unused();
-        let cr3: u64;
-        asm!("mov {}, cr3", out(reg) cr3);
-        asm!("mov cr3, {}", in(reg) cr3);
-    } */
-
     debugln!("SIGNPOST: Initializing ISTs...");
-    crate::tss::init_ists();
+    arch::x86_64::tss::init_ists();
 
     debugln!("SIGNPOST: Loading IDT...");
     load_idt();
@@ -84,7 +68,6 @@ pub extern "C" fn rust_main(bootinfo_ptr: u64) -> ! {
     let heap_phys_addr = pmm::allocate_frames(heap_pages as usize).expect("Failed to allocate heap memory from PMM");
     let heap_virt_ptr = phys_to_virt(PhysAddr::new(heap_phys_addr)).as_mut_ptr::<u8>();
 
-
     ALLOCATOR.init(heap_virt_ptr, heap_size as usize);
 
     debugln!("SIGNPOST: Heap initialized.");
@@ -94,7 +77,7 @@ pub extern "C" fn rust_main(bootinfo_ptr: u64) -> ! {
     crate::fs::vfs::init();
 
     window_manager::events::GLOBAL_EVENT_QUEUE.lock().init();
-    interrupts::task::TASK_MANAGER.lock().init();
+    task::init();
     debugln!("SIGNPOST: TaskManager initialized.");
 
     debugln!("SIGNPOST: Calling DISPLAY_SERVER.init()...");
@@ -104,9 +87,9 @@ pub extern "C" fn rust_main(bootinfo_ptr: u64) -> ! {
 
     debugln!("SIGNPOST: Drivers initialized.");
 
-    drivers::periferics::keyboard::init();
-    drivers::periferics::mouse::init_mouse();
-    drivers::periferics::timer::init_pit(100);
+    drivers::peripherals::keyboard::init();
+    drivers::peripherals::mouse::init_mouse();
+    drivers::peripherals::timer::init_pit(100);
 
     crate::debugln!("Mounting Ext2...");
     match Ext2::new(0xE0, 16384) {
@@ -118,7 +101,7 @@ pub extern "C" fn rust_main(bootinfo_ptr: u64) -> ! {
     }
 
     crate::debugln!("Spawning init process (WASM)...");
-    match crate::interrupts::syscalls::spawn_process("@0xE0/sys/bin/init.wasm", None, None, None) {
+    match crate::syscalls::spawn_process("@0xE0/sys/bin/init.wasm", None, None, None) {
         Ok(pid) => crate::debugln!("Init process spawned with PID {}", pid),
         Err(e) => {
             crate::debugln!("Failed to spawn init: {}", e);
@@ -126,64 +109,24 @@ pub extern "C" fn rust_main(bootinfo_ptr: u64) -> ! {
         }
     }
 
-    init_syscall_msrs();
+    arch::x86_64::init_syscall_msrs();
 
     crate::debugln!("Kernel initialized, entering idle loop...");
     unsafe { asm!("sti"); }
 
     loop {
-        // Trigger a cooperative context switch instead of just halting
         unsafe { asm!("int 0x81"); }
         unsafe { asm!("hlt"); }
     }
 }
 
-fn init_pat() {
-    unsafe {
-        let mut pat = rdmsr(PAT_MSR);
-        pat &= !(0xFFu64 << 32);
-        pat |= 0x01u64 << 32;
-        wrmsr(PAT_MSR, pat);
-        let cr3: u64;
-        asm!("mov {}, cr3", out(reg) cr3);
-        asm!("mov cr3, {}", in(reg) cr3);
-    }
-}
-
-unsafe fn rdmsr(msr: u32) -> u64 {
-    let (low, high): (u32, u32);
-    unsafe { asm!("rdmsr", in("ecx") msr, out("eax") low, out("edx") high) };
-    ((high as u64) << 32) | (low as u64)
-}
-
-unsafe fn wrmsr(msr: u32, value: u64) {
-    let low = value as u32;
-    let high = (value >> 32) as u32;
-    unsafe { asm!("wrmsr", in("ecx") msr, in("eax") low, in("edx") high) };
-}
-
-fn init_syscall_msrs() {
-    unsafe {
-        let mut efer = rdmsr(EFER_MSR);
-        efer |= 1;
-        wrmsr(EFER_MSR, efer);
-        let sysret_cs_base = 0x10; // SYSRET: CS = base+16 = 0x20|3, SS = base+8 = 0x18|3
-        let syscall_cs_base = 0x08; // SYSCALL: CS = 0x08 (kernel_code_64), SS = 0x10 (kernel_data)
-        let star_value = ((sysret_cs_base as u64) << 48) | ((syscall_cs_base as u64) << 32);
-        wrmsr(STAR_MSR, star_value);
-        wrmsr(LSTAR_MSR, interrupts::syscalls::syscall_entry as u64);
-        let rflags_mask = (1 << 9) | (1 << 8);
-        wrmsr(SFMASK_MSR, rflags_mask);
-    }
-}
-
 pub fn load_idt() {
     unsafe {
-        (*(&raw mut interrupts::idt::IDT)).init();
-        (*(&raw mut interrupts::idt::IDT)).processor_exceptions();
-        (*(&raw mut interrupts::idt::IDT)).hardware_interrupts();
-        (*(&raw mut interrupts::idt::IDT)).load();
-        (*(&raw mut interrupts::pic::PICS)).init();
+        (*(&raw mut arch::x86_64::idt::IDT)).init();
+        (*(&raw mut arch::x86_64::idt::IDT)).processor_exceptions();
+        (*(&raw mut arch::x86_64::idt::IDT)).hardware_interrupts();
+        (*(&raw mut arch::x86_64::idt::IDT)).load();
+        (*(&raw mut arch::x86_64::pic::PICS)).init();
     }
 }
 

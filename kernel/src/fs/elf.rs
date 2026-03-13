@@ -27,7 +27,7 @@ pub fn load_elf(data: &[u8], pid: u64) -> Result<u64, String> {
     }
 
     let slot_id = {
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let tm = crate::task::TASK_MANAGER.int_lock();
         tm.tasks.get(&(pid as usize)).unwrap().process.as_ref().unwrap().slot_id
     };
 

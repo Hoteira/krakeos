@@ -1,4 +1,5 @@
-use crate::interrupts::{exceptions, task};
+use crate::arch::x86_64::exceptions;
+use crate::task;
 use core::arch::asm;
 use core::mem::size_of;
 
@@ -81,22 +82,22 @@ impl Idt {
     }
 
     pub fn processor_exceptions(&mut self) {
-        self.entries[0].set(crate::interrupts::exceptions::div_error as u64);
-        self.entries[5].set(crate::interrupts::exceptions::bounds as u64);
-        self.entries[6].set(crate::interrupts::exceptions::invalid_opcode as u64);
-        self.entries[7].set(crate::interrupts::exceptions::device_not_available as u64);
+        self.entries[0].set(crate::arch::x86_64::exceptions::div_error as u64);
+        self.entries[5].set(crate::arch::x86_64::exceptions::bounds as u64);
+        self.entries[6].set(crate::arch::x86_64::exceptions::invalid_opcode as u64);
+        self.entries[7].set(crate::arch::x86_64::exceptions::device_not_available as u64);
 
-        self.entries[8].set(crate::interrupts::exceptions::double_fault as u64);
+        self.entries[8].set(crate::arch::x86_64::exceptions::double_fault as u64);
         self.entries[8].set_ist(1);
 
-        self.entries[13].set(crate::interrupts::exceptions::general_protection_fault as u64);
+        self.entries[13].set(crate::arch::x86_64::exceptions::general_protection_fault as u64);
         self.entries[13].set_ist(3);
 
-        self.entries[14].set(crate::interrupts::exceptions::page_fault as u64);
+        self.entries[14].set(crate::arch::x86_64::exceptions::page_fault as u64);
         self.entries[14].set_ist(2);
 
-        self.entries[16].set(crate::interrupts::exceptions::fpu_error as u64);
-        self.entries[19].set(crate::interrupts::exceptions::simd_error as u64);
+        self.entries[16].set(crate::arch::x86_64::exceptions::fpu_error as u64);
+        self.entries[19].set(crate::arch::x86_64::exceptions::simd_error as u64);
     }
 
 

@@ -1,12 +1,11 @@
-use crate::debugln;
-use crate::interrupts::task::{CPUState, Process, TASK_MANAGER};
+use crate::task::manager::TASK_MANAGER;
+use crate::task::process::Process;
+use crate::task::thread::CPUState;
 use crate::memory::address_space::{CODE_SLOT_SIZE, LINEAR_MEMORY_SLOT_SIZE, STACK_SLOT_SIZE};
 use alloc::sync::Arc;
 use core::arch::naked_asm;
 
 pub mod fs;
-pub use process::spawn_process;
-
 pub mod event;
 pub mod memory;
 pub mod misc;
@@ -14,33 +13,24 @@ pub mod network;
 pub mod process;
 pub mod window;
 
-/// Returns the current process (cloned Arc) without holding the task manager lock.
+pub use process::spawn_process;
+
 pub fn get_current_process() -> Option<Arc<Process>> {
     let tm = TASK_MANAGER.int_lock();
     let idx = tm.current_task_idx()?;
     tm.tasks.get(&(idx))?.process.clone()
 }
 
-/// Returns true if the current thread is a kernel thread (Ring 0).
-/// Kernel threads run the WASM runtime (interpreter/AOT) and are trusted —
-/// they legitimately pass kernel heap and image pointers to syscalls.
-/// User threads (Ring 3) can only access their process's SAS regions.
 pub fn is_kernel_thread() -> bool {
     let tm = TASK_MANAGER.int_lock();
     if let Some(idx) = tm.current_task_idx() {
         if let Some(thread) = tm.tasks.get(&(idx)) {
-            let result = thread.user_stack == 0;
-            if !result {
-                crate::debugln!("[is_kernel_thread] TID {} user_stack={:#x} -> NOT kernel thread", idx, thread.user_stack);
-            }
-            return result;
+            return thread.user_stack == 0;
         }
     }
-    true // default to trusted if we can't determine (boot context)
+    true
 }
 
-/// Validates that [ptr, ptr+len) falls within the calling process's SAS regions.
-/// Only applied to Ring 3 (user) threads. Kernel threads are trusted.
 pub fn validate_user_ptr(proc: &Process, ptr: u64, len: u64) -> bool {
     if len == 0 {
         return true;
@@ -50,21 +40,18 @@ pub fn validate_user_ptr(proc: &Process, ptr: u64, len: u64) -> bool {
         None => return false,
     };
 
-    // Linear memory (WASM heap): [base, base + slot_size)
     let lm_base = proc.linear_memory_base;
     let lm_end = lm_base + LINEAR_MEMORY_SLOT_SIZE;
     if ptr >= lm_base && end <= lm_end {
         return true;
     }
 
-    // User stack: [stack_top - slot_size, stack_top)
     let stack_top = proc.stack_base;
     let stack_bottom = stack_top - STACK_SLOT_SIZE;
     if ptr >= stack_bottom && end <= stack_top {
         return true;
     }
 
-    // Code region: [code_base, code_base + slot_size)
     let code_end = proc.code_base + CODE_SLOT_SIZE;
     if ptr >= proc.code_base && end <= code_end {
         return true;
@@ -73,15 +60,10 @@ pub fn validate_user_ptr(proc: &Process, ptr: u64, len: u64) -> bool {
     false
 }
 
-/// Validates that [ptr, ptr+len) is within the current process's valid memory.
-/// Kernel threads (WASM runtime, Ring 0) are trusted and always pass.
-/// User threads (Ring 3) must have pointers within their SAS regions.
-/// On failure, sets context.rax = u64::MAX and returns false.
 pub fn validate_user_buf(context: &mut CPUState, ptr: u64, len: u64) -> bool {
     if len == 0 {
         return true;
     }
-    // Kernel threads run the trusted WASM runtime — skip validation
     if is_kernel_thread() {
         return true;
     }
@@ -184,18 +166,14 @@ pub const SYS_GET_DMESG: u64 = 140;
 pub extern "C" fn syscall_entry() {
     unsafe {
         naked_asm!(
-            // 1. Save R15 to scratch
             "mov [rip + {scratch}], r15",
-            // 2. Switch to kernel stack
             "mov r15, rsp",
             "mov rsp, [rip + {kernel_stack_ptr}]",
-            // 3. Build the IRETQ frame (pushed by CPU normally, we do it manually for SYSCALL)
-            "push QWORD PTR 0x1B", // SS (user_data 0x18 | RPL 3)
-            "push r15",            // RSP
-            "push r11",            // RFLAGS
-            "push QWORD PTR 0x23", // CS (user_code_64 0x20 | RPL 3)
-            "push rcx",            // RIP
-            // 4. Restore R15 and push the rest of CPUState (r15 down to rbp)
+            "push QWORD PTR 0x1B", 
+            "push r15",            
+            "push r11",            
+            "push QWORD PTR 0x23", 
+            "push rcx",            
             "mov r15, [rip + {scratch}]",
             "push rbp",
             "push rax",
@@ -212,14 +190,12 @@ pub extern "C" fn syscall_entry() {
             "push r13",
             "push r14",
             "push r15",
-            // 5. Call dispatcher
             "cld",
             "mov rdi, rsp",
             "mov r12, rsp",
             "and rsp, -16",
             "call syscall_dispatcher",
             "mov rsp, r12",
-            // 6. Restore all registers
             "pop r15",
             "pop r14",
             "pop r13",
@@ -235,10 +211,9 @@ pub extern "C" fn syscall_entry() {
             "pop rbx",
             "pop rax",
             "pop rbp",
-            // 7. Return via IRETQ
             "iretq",
-            kernel_stack_ptr = sym crate::interrupts::task::KERNEL_STACK_PTR,
-            scratch = sym crate::interrupts::task::SCRATCH,
+            kernel_stack_ptr = sym crate::task::scheduler::KERNEL_STACK_PTR,
+            scratch = sym crate::task::scheduler::SCRATCH,
         );
     }
 }
@@ -261,9 +236,10 @@ pub extern "C" fn syscall_dispatcher(
         r10: arg4,
         r8: arg5,
         r9: arg6,
+        r11: 0,
+        rcx: 0,
         rbp: 0, rbx: 0, r12: 0, r13: 0, r14: 0, r15: 0,
         rip: 0, cs: 0, rflags: 0, rsp: 0, ss: 0,
-        r11: 0, rcx: 0,
     };
 
     dispatch_syscall(&mut fake_context);
@@ -359,13 +335,10 @@ pub fn dispatch_syscall(context: &mut CPUState) {
         SYS_REGISTER_EVENT_QUEUE => window::handle_register_event_queue(context),
         SYS_DEREGISTER_EVENT_QUEUE => window::handle_deregister_event_queue(context),
         SYS_YIELD => {
-            // No-op here, the dispatcher will return and the naked_asm will handle iretq.
-            // Cooperative yielding is handled by the int 0x81 which actually switches.
-            // But we must allow this syscall to prevent 'Unknown syscall' noise.
         }
 
         _ => {
-            debugln!("[Syscall] Unknown syscall #{}", syscall_num);
+            crate::debugln!("[Syscall] Unknown syscall #{}", syscall_num);
             context.rax = u64::MAX;
         }
     }

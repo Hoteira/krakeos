@@ -1,5 +1,5 @@
-use crate::drivers::periferics::keyboard::KEYBOARD_BUFFER;
-use crate::drivers::port::{inb, outb};
+use crate::drivers::peripherals::keyboard::KEYBOARD_BUFFER;
+use crate::arch::x86_64::io::{inb, outb};
 use crate::window_manager::input::{MOUSE, RESIZING_WINDOW, W_WIDTH, W_HEIGHT, CLICKED_WINDOW_ID};
 use crate::window_manager::events::{Event, ResizeEvent, GLOBAL_EVENT_QUEUE};
 use core::sync::atomic::Ordering;
@@ -57,7 +57,7 @@ fn print_hex(n: u64) {
 fn kill_current_task() {
     let mut pid_to_kill = -1;
     {
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let tm = crate::task::TASK_MANAGER.int_lock();
         if let Some(current) = tm.current_task_idx() {
             if let Some(thread) = tm.tasks.get(&(current)) {
                 pid_to_kill = thread.process.as_ref().expect("Thread has no process").pid as i32;
@@ -66,7 +66,7 @@ fn kill_current_task() {
     }
 
     if pid_to_kill != -1 {
-        crate::interrupts::task::TASK_MANAGER.int_lock().kill_process(pid_to_kill as u64);
+        crate::task::TASK_MANAGER.int_lock().kill_process(pid_to_kill as u64);
 
         unsafe {
             core::arch::asm!("sti");
@@ -294,7 +294,7 @@ static mut IN_IRQ: bool = false;
 pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
     unsafe {
         if IN_IRQ {
-            (*(&raw const crate::interrupts::pic::PICS)).end_interrupt(KEYBOARD_INT);
+            (*(&raw const crate::arch::x86_64::pic::PICS)).end_interrupt(KEYBOARD_INT);
             return;
         }
         IN_IRQ = true;
@@ -303,8 +303,8 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
     serial_print("K");
     let scancode: u8 = inb(0x60);
 
-    if let Some((key, pressed)) = crate::drivers::periferics::keyboard::handle_scancode(scancode) {
-        let is_super = crate::drivers::periferics::keyboard::is_super_active();
+    if let Some((key, pressed)) = crate::drivers::peripherals::keyboard::handle_scancode(scancode) {
+        let is_super = crate::drivers::peripherals::keyboard::is_super_active();
         let mut handled_globally = false;
 
         // Check for keyboard shortcuts
@@ -319,14 +319,14 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
             if pressed && !is_super {
                 KEYBOARD_BUFFER.lock().push_back(key);
                 // Signal readiness for stdin (FD 0)
-                crate::interrupts::event_manager::signal_event(crate::interrupts::event_manager::AsyncEvent::Read(0));
+                crate::task::event_manager::signal_event(crate::task::event_manager::AsyncEvent::Read(0));
             }
 
             // Dispatch to Window Manager
             unsafe {
                 let active_window_id = crate::window_manager::input::CLICKED_WINDOW_ID;
                 if active_window_id != 0 {
-                    let mut tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+                    let mut tm = crate::task::TASK_MANAGER.int_lock();
                     let composer = &*(&raw const crate::window_manager::composer::COMPOSER);
                     let mut target_info = None;
                     for w in &composer.windows {
@@ -360,7 +360,7 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
 
     unsafe {
         IN_IRQ = false;
-        (*(&raw const crate::interrupts::pic::PICS)).end_interrupt(KEYBOARD_INT);
+        (*(&raw const crate::arch::x86_64::pic::PICS)).end_interrupt(KEYBOARD_INT);
     }
 }
 
@@ -373,14 +373,14 @@ pub static mut MOUSE_IDX: usize = 0;
 pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
     unsafe {
         if IN_IRQ {
-            (*(&raw const crate::interrupts::pic::PICS)).end_interrupt(MOUSE_INT);
+            (*(&raw const crate::arch::x86_64::pic::PICS)).end_interrupt(MOUSE_INT);
             return;
         }
         IN_IRQ = true;
     }
 
     serial_print("M");
-    use crate::drivers::periferics::mouse::{VMMOUSE_ACTIVE, vmport_in, VMPORT_CMD_VMMOUSE_STATUS, VMPORT_CMD_VMMOUSE_DATA, MOUSE_IDX, MOUSE_PACKET, MOUSE_PACKET_SIZE};
+    use crate::drivers::peripherals::mouse::{VMMOUSE_ACTIVE, vmport_in, VMPORT_CMD_VMMOUSE_STATUS, VMPORT_CMD_VMMOUSE_DATA, MOUSE_IDX, MOUSE_PACKET, MOUSE_PACKET_SIZE};
 
     unsafe {
         if VMMOUSE_ACTIVE {
@@ -403,7 +403,7 @@ pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
             }
 
             IN_IRQ = false;
-            (*(&raw const crate::interrupts::pic::PICS)).end_interrupt(MOUSE_INT);
+            (*(&raw const crate::arch::x86_64::pic::PICS)).end_interrupt(MOUSE_INT);
             return;
         }
     }
@@ -414,7 +414,7 @@ pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
     unsafe {
         if MOUSE_IDX == 0 && ((data & 0x08) == 0 || data == 0xFF) {
             IN_IRQ = false;
-            (*(&raw const crate::interrupts::pic::PICS)).end_interrupt(MOUSE_INT);
+            (*(&raw const crate::arch::x86_64::pic::PICS)).end_interrupt(MOUSE_INT);
             return;
         }
 
@@ -435,7 +435,7 @@ pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
         }
 
         IN_IRQ = false;
-        (*(&raw const crate::interrupts::pic::PICS)).end_interrupt(MOUSE_INT);
+        (*(&raw const crate::arch::x86_64::pic::PICS)).end_interrupt(MOUSE_INT);
     }
 }
 

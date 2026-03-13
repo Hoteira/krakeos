@@ -163,7 +163,7 @@ impl DisplayServer {
                 virtio::set_scanout(1, self.width as u32, self.height as u32);
                 virtio::transfer_and_flush(1, self.width as u32, self.height as u32, true); // Blocking init
 
-                use crate::drivers::periferics::mouse::{CURSOR_BUFFER, CURSOR_HEIGHT, CURSOR_WIDTH};
+                use crate::drivers::peripherals::mouse::{CURSOR_BUFFER, CURSOR_HEIGHT, CURSOR_WIDTH};
                 let cursor_size_bytes = 64 * 64 * 4;
                 let cursor_pages = (cursor_size_bytes + 4095) / 4096;
                 if let Some(cursor_phys) = crate::memory::pmm::allocate_frames(cursor_pages) {
@@ -1078,7 +1078,7 @@ impl DisplayServer {
 
                 let mx = crate::window_manager::input::MOUSE.x;
                 let my = crate::window_manager::input::MOUSE.y;
-                use crate::drivers::periferics::mouse::{CURSOR_HEIGHT, CURSOR_WIDTH};
+                use crate::drivers::peripherals::mouse::{CURSOR_HEIGHT, CURSOR_WIDTH};
                 let mw = CURSOR_WIDTH as u32;
                 let mh = CURSOR_HEIGHT as u32;
                 let overlap_x = (mx as u32) < (sx + sw) && (mx as u32 + mw) > sx;
@@ -1111,7 +1111,7 @@ impl DisplayServer {
     }
 
     pub fn draw_mouse(&self, x: u16, y: u16, dragging_window: bool) {
-        use crate::drivers::periferics::mouse::{CURSOR_BUFFER, CURSOR_HEIGHT, CURSOR_WIDTH};
+        use crate::drivers::peripherals::mouse::{CURSOR_BUFFER, CURSOR_HEIGHT, CURSOR_WIDTH};
 
         let pitch_bytes = self.pitch as usize;
         let fb_ptr = self.framebuffer as *mut u32;

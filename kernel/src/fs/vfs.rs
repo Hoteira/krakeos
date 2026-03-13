@@ -92,7 +92,7 @@ pub fn increment_ref(fd: usize) {
 }
 
 fn get_current_ids() -> (u16, u16) {
-    let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    let tm = crate::task::TASK_MANAGER.int_lock();
     if let Some(idx) = tm.current_task_idx() {
         if let Some(thread) = tm.tasks.get(&idx) {
             if let Some(proc) = &thread.process {

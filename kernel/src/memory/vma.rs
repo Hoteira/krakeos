@@ -97,7 +97,7 @@ impl VmaAllocator {
         let _ = writeln!(writer, "\n[SAS DUMP]");
         
         let mut seen_pids = Vec::new();
-        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        let tm = crate::task::TASK_MANAGER.int_lock();
         
         for task in tm.get_tasks() {
             if true {

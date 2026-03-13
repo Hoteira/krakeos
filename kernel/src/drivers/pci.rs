@@ -1,4 +1,4 @@
-use crate::drivers::port::{inl, outl};
+use crate::arch::x86_64::io::{inl, outl};
 use alloc::vec::Vec;
 
 static mut PCI_BAR_HEAD: u32 = 0xC0000000;

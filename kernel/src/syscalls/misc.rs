@@ -1,4 +1,4 @@
-use crate::interrupts::task::CPUState;
+use crate::task::CPUState;
 use alloc::string::String;
 
 pub fn handle_debug_print(context: &mut CPUState) {
@@ -26,7 +26,7 @@ pub fn handle_date(context: &mut CPUState) {
 
 pub fn handle_ticks(context: &mut CPUState) {
     unsafe {
-        context.rax = crate::interrupts::task::SYSTEM_TICKS;
+        context.rax = crate::task::SYSTEM_TICKS;
     }
 }
 

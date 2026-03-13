@@ -1,4 +1,4 @@
-use crate::drivers::port::{inb, outb};
+use crate::arch::x86_64::io::{inb, outb};
 use crate::println;
 
 pub const MOUSE_INT: u8 = 44;
@@ -92,7 +92,7 @@ pub fn init_mouse() {
 
     // Unmask IRQ 12 on slave PIC
     unsafe {
-        (*(&raw const crate::interrupts::pic::PICS)).slave.unmask_irq(4);
+        (*(&raw const crate::arch::x86_64::pic::PICS)).slave.unmask_irq(4);
     }
 
     if init_vmmouse() {

@@ -1,4 +1,4 @@
-use crate::drivers::port::Port;
+use crate::arch::x86_64::io::Port;
 
 const CMOS_ADDR: u16 = 0x70;
 const CMOS_DATA: u16 = 0x71;
