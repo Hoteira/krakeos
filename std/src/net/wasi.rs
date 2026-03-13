@@ -841,8 +841,18 @@ pub fn register_wasi<T: Config + Clone>(linker: &mut crate::wasm::Linker, store:
     krakeos_socket_shutdown_host::register(linker, store);
     sock_recv_p1::register(linker, store);
     sock_send_p1::register(linker, store);
+    sock_accept_p1::register(linker, store);
     sock_shutdown_p1::register(linker, store);
     }
+
+    crate::export_method!(
+    "wasi_snapshot_preview1", "sock_accept",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
+    pub fn sock_accept_p1<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        panic!("WASI P1 sock_accept called - NOT IMPLEMENTED");
+    }
+    );
 
     crate::export_method!(
     "wasi_snapshot_preview1", "sock_recv",

@@ -315,7 +315,7 @@ impl<'a, T: Config> Store<'a, T> {
         if self.aot_enabled {
             let mut compiler = crate::wasm::aot::AotCompiler::new(validation_info);
             let aot_module = compiler.compile_module();
-            
+
             let final_code_ptr = if let Some(base) = self.code_base {
                 let ptr = (base + self.next_code_offset as u64) as *mut u8;
                 let code_len = aot_module.code.len();
@@ -324,12 +324,16 @@ impl<'a, T: Config> Store<'a, T> {
                 if self.next_code_offset + code_len > CODE_SLOT_SIZE {
                     return Err(RuntimeError::Trap(TrapError::ReachedUnreachable));
                 }
+
+
                 unsafe {
                     core::ptr::copy_nonoverlapping(aot_module.code.as_ptr(), ptr, code_len);
                 }
+
                 let res = ptr as usize;
                 // Align next offset to 4KB for isolation
                 self.next_code_offset = (self.next_code_offset + code_len + 4095) & !4095;
+
                 res
             } else {
                 aot_module.code.as_ptr() as usize
@@ -359,6 +363,7 @@ impl<'a, T: Config> Store<'a, T> {
         } else {
             maybe_fuel
         };
+
         Ok(InstantiationOutcome {
             module_addr,
             maybe_remaining_fuel,
