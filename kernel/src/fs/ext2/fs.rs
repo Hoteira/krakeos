@@ -528,12 +528,13 @@ impl VfsNode for Ext2Node {
             dev: 1,
             ino: self.inode_idx as u64,
             mode: self.inode.mode as u32,
+            uid: self.inode.uid as u32,
+            gid: self.inode.gid as u32,
             nlink: self.inode.links_count as u32,
             size: self.inode.size as u64,
             atime: self.inode.atime as u64,
             mtime: self.inode.mtime as u64,
             ctime: self.inode.ctime as u64,
-            _reserved: [0],
         }
     }
 

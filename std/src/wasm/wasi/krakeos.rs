@@ -147,12 +147,13 @@ impl WasiFile for WasiSocket {
             dev: 0,
             ino: 0,
             mode: 0,
+            uid: 0,
+            gid: 0,
             nlink: 1,
             size: 0,
             atime: 0,
             mtime: 0,
             ctime: 0,
-            _reserved: [0; 1],
         })
     }
     fn set_len(&mut self, _size: u64) -> Result<(), i32> {

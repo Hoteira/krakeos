@@ -177,6 +177,7 @@ pub const SYS_GET_TOTAL_MEM: u64 = 134;
 pub const SYS_GET_USED_MEM: u64 = 135;
 pub const SYS_GET_VMA_DUMP: u64 = 136;
 pub const SYS_GET_SLOT_INFO: u64 = 137;
+pub const SYS_GET_DMESG: u64 = 140;
 
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
@@ -353,6 +354,7 @@ pub fn dispatch_syscall(context: &mut CPUState) {
         SYS_GET_TOTAL_MEM => misc::handle_get_total_mem(context),
         SYS_GET_USED_MEM => misc::handle_get_used_mem(context),
         SYS_GET_VMA_DUMP => misc::handle_get_vma_dump(context),
+        SYS_GET_DMESG => misc::handle_get_dmesg(context),
         SYS_GET_SLOT_INFO => process::handle_get_slot_info(context),
         SYS_REGISTER_EVENT_QUEUE => window::handle_register_event_queue(context),
         SYS_DEREGISTER_EVENT_QUEUE => window::handle_deregister_event_queue(context),

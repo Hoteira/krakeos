@@ -53,6 +53,29 @@ impl<T> Mutex<T> {
     pub fn int_lock(&self) -> IntMutexGuard<'_, T> {
         self.lock()
     }
+
+    pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
+        let rflags: u64;
+        unsafe {
+            core::arch::asm!("pushfq; pop {}", out(reg) rflags);
+            core::arch::asm!("cli");
+        }
+
+        if self.lock.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+            Some(MutexGuard {
+                lock: &self.lock,
+                data: unsafe { &mut *self.data.get() },
+                rflags,
+            })
+        } else {
+            unsafe {
+                if (rflags & 0x200) != 0 {
+                    core::arch::asm!("sti");
+                }
+            }
+            None
+        }
+    }
 }
 
 impl<'a, T> core::ops::Deref for MutexGuard<'a, T> {

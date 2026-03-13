@@ -294,10 +294,22 @@ pub fn handle_create(context: &mut CPUState, syscall_num: u64) {
 
     crate::debugln!("SYS_CREATE: Creating '{}' in '{}'", name, parent_path);
 
+    let (uid, gid) = {
+        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        if let Some(idx) = tm.current_task_idx() {
+            let p = tm.tasks.get(&idx).unwrap().process.as_ref().unwrap();
+            (p.uid, p.gid)
+        } else { (0, 0) }
+    };
+
     acquire_fs_lock();
     let parent_res = crate::fs::vfs::open(0, parent_path);
     let final_res = if let Ok(mut parent) = parent_res {
-        if syscall_num == 83 { parent.create_dir(name).map(|_| 0usize) } else { parent.create_file(name).map(|_| 0usize) }
+        if !crate::fs::vfs::check_access(uid, gid, &parent.stat(), crate::fs::vfs::ACCESS_WRITE) {
+            Err(String::from("Permission denied"))
+        } else {
+            if syscall_num == 83 { parent.create_dir(name).map(|_| 0usize) } else { parent.create_file(name).map(|_| 0usize) }
+        }
     } else { Err(String::from("Parent not found")) };
     release_fs_lock();
 
@@ -370,11 +382,23 @@ pub fn handle_remove(context: &mut CPUState) {
         (&resolved[..idx], &resolved[idx + 1..])
     } else { ("", resolved.as_str()) };
 
+    let (uid, gid) = {
+        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        if let Some(idx) = tm.current_task_idx() {
+            let p = tm.tasks.get(&idx).unwrap().process.as_ref().unwrap();
+            (p.uid, p.gid)
+        } else { (0, 0) }
+    };
+
     acquire_fs_lock();
     let parent_res = crate::fs::vfs::open(0, parent_path);
 
     let remove_res = if let Ok(mut parent) = parent_res {
-        parent.remove(name)
+        if !crate::fs::vfs::check_access(uid, gid, &parent.stat(), crate::fs::vfs::ACCESS_WRITE) {
+            Err(String::from("Permission denied"))
+        } else {
+            parent.remove(name)
+        }
     } else { Err(String::from("Parent not found")) };
 
     release_fs_lock();
@@ -401,6 +425,14 @@ pub fn handle_rename(context: &mut CPUState) {
     let (parent_old, name_old) = if let Some(idx) = resolved_old.rfind('/') { (&resolved_old[..idx], &resolved_old[idx + 1..]) } else { ("", resolved_old.as_str()) };
     let (parent_new, _name_new) = if let Some(idx) = resolved_new.rfind('/') { (&resolved_new[..idx], &resolved_new[idx + 1..]) } else { ("", resolved_new.as_str()) };
 
+    let (uid, gid) = {
+        let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+        if let Some(idx) = tm.current_task_idx() {
+            let p = tm.tasks.get(&idx).unwrap().process.as_ref().unwrap();
+            (p.uid, p.gid)
+        } else { (0, 0) }
+    };
+
     if parent_old != parent_new {
         // This limitation might need lifting, but for now it's safer
     }
@@ -409,8 +441,12 @@ pub fn handle_rename(context: &mut CPUState) {
     let parent_res = crate::fs::vfs::open(0, parent_old);
 
     let rename_res = if let Ok(mut parent) = parent_res {
-        let name_new = if let Some(idx) = resolved_new.rfind('/') { &resolved_new[idx + 1..] } else { resolved_new.as_str() };
-        parent.rename(name_old, name_new)
+        if !crate::fs::vfs::check_access(uid, gid, &parent.stat(), crate::fs::vfs::ACCESS_WRITE) {
+            Err(String::from("Permission denied"))
+        } else {
+            let name_new = if let Some(idx) = resolved_new.rfind('/') { &resolved_new[idx + 1..] } else { resolved_new.as_str() };
+            parent.rename(name_old, name_new)
+        }
     } else { Err(String::from("Parent not found")) };
 
     release_fs_lock();

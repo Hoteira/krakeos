@@ -50,3 +50,16 @@ pub fn handle_get_vma_dump(context: &mut CPUState) {
     let written = crate::memory::vma::GLOBAL_VMA.lock().dump_to_buffer(buf);
     context.rax = written as u64;
 }
+
+pub fn handle_get_dmesg(context: &mut CPUState) {
+    let ptr = context.rdi as *mut u8;
+    let len = context.rsi as usize;
+    if ptr.is_null() || len == 0 {
+        context.rax = 0;
+        return;
+    }
+    if !super::validate_user_buf(context, ptr as u64, len as u64) { return; }
+    let buf = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
+    let written = crate::debug::DMESG.lock().read(buf);
+    context.rax = written as u64;
+}

@@ -12,6 +12,8 @@ const STACK_SIZE: u64 = 1024 * 1024;
 #[derive(Debug)]
 pub struct Process {
     pub pid: u64,
+    pub uid: u16,
+    pub gid: u16,
     pub slot_id: u16,
     pub parent_pid: Option<u64>,
     pub children: Mutex<Vec<u64>>,
@@ -85,7 +87,7 @@ pub struct CPUState {
 }
 
 impl Process {
-    pub fn new(pid: u64, parent_pid: Option<u64>) -> Arc<Self> {
+    pub fn new(pid: u64, uid: u16, gid: u16, parent_pid: Option<u64>) -> Arc<Self> {
         let mut cwd = [0; 128];
         let root = b"@0xE0/";
         cwd[..root.len()].copy_from_slice(root);
@@ -101,6 +103,8 @@ impl Process {
                 crate::debugln!("Process::new: allocating Arc<Self>...");
                 let arc = Arc::new(Self {
                     pid,
+                    uid,
+                    gid,
                     slot_id,
                     parent_pid,
                     children: Mutex::new(Vec::new()),
@@ -197,7 +201,7 @@ impl TaskManager {
         idle_thread.state = ThreadState::Ready;
 
         unsafe {
-            let kernel_proc = Process::new(0, None);
+            let kernel_proc = Process::new(0, 0, 0, None);
             idle_thread.process = Some(kernel_proc);
 
             let stack_pages = (STACK_SIZE / 4096) as usize;
@@ -331,7 +335,18 @@ impl TaskManager {
         let pid = slot as u64;
         let mut thread = Thread::new(name);
 
-        let proc = Process::new(pid, parent_pid);
+        let (uid, gid) = if let Some(ppid) = parent_pid {
+            if let Some(parent_thread) = self.tasks.values().find(|t| t.process.as_ref().map_or(false, |p| p.pid == ppid)) {
+                let p = parent_thread.process.as_ref().unwrap();
+                (p.uid, p.gid)
+            } else {
+                (0, 0)
+            }
+        } else {
+            (0, 0)
+        };
+
+        let proc = Process::new(pid, uid, gid, parent_pid);
         let slot_id = proc.slot_id;
 
         if let Some(fds) = fd_table {

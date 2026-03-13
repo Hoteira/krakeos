@@ -39,6 +39,10 @@ pub fn open_file(disk_id: u8, path_str: &str) -> Result<usize, String> {
     if !path_str.starts_with('@') && !path_str.starts_with('/') {}
 
     let node = open(disk_id, path_str)?;
+    let (uid, gid) = get_current_ids();
+    if !check_access(uid, gid, &node.stat(), ACCESS_READ) {
+        return Err(String::from("Permission denied (read)"));
+    }
     
     let mut table = GLOBAL_FILES.lock();
     let fd = table.next_fd;
@@ -87,6 +91,18 @@ pub fn increment_ref(fd: usize) {
     }
 }
 
+fn get_current_ids() -> (u16, u16) {
+    let tm = crate::interrupts::task::TASK_MANAGER.int_lock();
+    if let Some(idx) = tm.current_task_idx() {
+        if let Some(thread) = tm.tasks.get(&idx) {
+            if let Some(proc) = &thread.process {
+                return (proc.uid, proc.gid);
+            }
+        }
+    }
+    (0, 0) // Root/Kernel
+}
+
 pub fn open(disk_id: u8, path_str: &str) -> Result<Box<dyn VfsNode>, String> {
     let (actual_disk, actual_path) = if path_str.starts_with('@') {
         let mut parts = path_str.splitn(2, '/');
@@ -103,11 +119,18 @@ pub fn open(disk_id: u8, path_str: &str) -> Result<Box<dyn VfsNode>, String> {
     };
 
     let components: Vec<String> = actual_path.split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
+    let (uid, gid) = get_current_ids();
 
     unsafe {
         if let Some(fs) = &mut FILESYSTEMS[actual_disk as usize] {
             let mut node = fs.root()?;
             for component in components.iter() {
+                // Check traversal permission (X bit) on directories
+                if node.kind() == FileType::Directory {
+                    if !check_access(uid, gid, &node.stat(), ACCESS_EXEC) {
+                        return Err(String::from("Permission denied"));
+                    }
+                }
                 node = node.find(&component)?;
             }
             Ok(node)
@@ -138,12 +161,32 @@ pub struct Stat {
     pub dev: u64,
     pub ino: u64,
     pub mode: u32,
+    pub uid: u32,
+    pub gid: u32,
     pub nlink: u32,
     pub size: u64,
     pub atime: u64,
     pub mtime: u64,
     pub ctime: u64,
-    pub _reserved: [u64; 1], // Pad to 64 bytes
+}
+
+pub const ACCESS_READ: u32 = 4;
+pub const ACCESS_WRITE: u32 = 2;
+pub const ACCESS_EXEC: u32 = 1;
+
+pub fn check_access(proc_uid: u16, proc_gid: u16, stat: &Stat, requested: u32) -> bool {
+    if proc_uid == 0 { return true; } // Root
+
+    let mode = stat.mode;
+    let actual = if proc_uid as u32 == stat.uid {
+        (mode >> 6) & 7
+    } else if proc_gid as u32 == stat.gid {
+        (mode >> 3) & 7
+    } else {
+        mode & 7
+    };
+
+    (actual & requested) == requested
 }
 
 pub trait FileSystem: Send + Sync {
@@ -161,12 +204,13 @@ pub trait VfsNode: Send + Sync {
             dev: 1,
             ino: self.inode(),
             mode: 0,
+            uid: 0,
+            gid: 0,
             nlink: 1,
             size: self.size(),
             atime: 0,
             mtime: 0,
             ctime: 0,
-            _reserved: [0],
         }
     }
     fn read(&mut self, offset: u64, buffer: &mut [u8]) -> Result<usize, String>;

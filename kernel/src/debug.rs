@@ -4,6 +4,39 @@ use core::fmt;
 
 pub const COM1: u16 = 0x3F8;
 
+const DMESG_SIZE: usize = 128 * 1024;
+pub struct Dmesg {
+    pub buffer: [u8; DMESG_SIZE],
+    pub head: usize,
+    pub count: usize,
+}
+
+pub static DMESG: crate::sync::Mutex<Dmesg> = crate::sync::Mutex::new(Dmesg {
+    buffer: [0; DMESG_SIZE],
+    head: 0,
+    count: 0,
+});
+
+impl Dmesg {
+    pub fn write_byte(&mut self, b: u8) {
+        self.buffer[self.head] = b;
+        self.head = (self.head + 1) % DMESG_SIZE;
+        if self.count < DMESG_SIZE {
+            self.count += 1;
+        }
+    }
+
+    pub fn read(&self, user_buf: &mut [u8]) -> usize {
+        let to_read = core::cmp::min(user_buf.len(), self.count);
+        let start = (self.head + DMESG_SIZE - self.count) % DMESG_SIZE;
+        
+        for i in 0..to_read {
+            user_buf[i] = self.buffer[(start + i) % DMESG_SIZE];
+        }
+        to_read
+    }
+}
+
 pub struct SerialDebug {
     port: Port,
 }
@@ -21,6 +54,11 @@ impl SerialDebug {
     }
 
     pub fn write_byte(&self, byte: u8) {
+        // Log to dmesg
+        if let Some(mut dmesg) = DMESG.try_lock() {
+            dmesg.write_byte(byte);
+        }
+
         self.wait_for_ready();
         match byte {
             b'\n' => {

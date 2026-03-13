@@ -20,12 +20,13 @@ pub struct Stat {
     pub dev: u64,
     pub ino: u64,
     pub mode: u32,
+    pub uid: u32,
+    pub gid: u32,
     pub nlink: u32,
     pub size: u64,
     pub atime: u64,
     pub mtime: u64,
     pub ctime: u64,
-    pub _reserved: [u64; 1],
 }
 
 #[derive(Debug)]

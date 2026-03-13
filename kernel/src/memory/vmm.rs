@@ -342,20 +342,75 @@ pub unsafe fn get_phys(virt: u64, pml4_phys: u64) -> Option<u64> {
     Some(final_entry.addr().as_u64() + (virt & 0xFFF))
 }
 
-static mut MMIO_VIRT_HEAD: u64 = 0xFFFF_A000_0000_0000;
+const MMIO_BASE: u64 = 0xFFFF_A000_0000_0000;
+const MMIO_SIZE: u64 = 1024 * 1024 * 1024 * 1024; // 1 TB
+const MMIO_CHUNK: u64 = 2 * 1024 * 1024; // 2 MB
+const MMIO_BITMAP_SIZE: usize = (MMIO_SIZE / MMIO_CHUNK / 64) as usize;
+
+static mut MMIO_BITMAP: [u64; MMIO_BITMAP_SIZE] = [0; MMIO_BITMAP_SIZE];
 static mut KERNEL_MAPPING_HEAD: u64 = 0xFFFF_FA00_0000_0000;
 
 pub fn map_mmio(phys: u64, size: usize) -> u64 {
     unsafe {
-        let start_virt = MMIO_VIRT_HEAD;
+        let chunks_needed = (size as u64 + MMIO_CHUNK - 1) / MMIO_CHUNK;
+        let mut start_chunk = 0;
+        let mut found = false;
+
+        // Simple first-fit search in the bitmap
+        'outer: for i in 0..MMIO_BITMAP_SIZE {
+            if MMIO_BITMAP[i] == u64::MAX { continue; }
+            for bit in 0..64 {
+                let chunk_idx = i * 64 + bit;
+                let mut possible = true;
+                for j in 0..chunks_needed {
+                    let c = chunk_idx + j as usize;
+                    let word = c / 64;
+                    let b = c % 64;
+                    if word >= MMIO_BITMAP_SIZE || (MMIO_BITMAP[word] & (1 << b)) != 0 {
+                        possible = false;
+                        break;
+                    }
+                }
+                if possible {
+                    start_chunk = chunk_idx;
+                    found = true;
+                    break 'outer;
+                }
+            }
+        }
+
+        if !found {
+            panic!("VMM: Out of virtual MMIO space!");
+        }
+
+        // Mark as used
+        for j in 0..chunks_needed {
+            let c = start_chunk + j as usize;
+            MMIO_BITMAP[c / 64] |= 1 << (c % 64);
+        }
+
+        let start_virt = MMIO_BASE + (start_chunk as u64 * MMIO_CHUNK);
         let pages = (size + 4095) / 4096;
         for i in 0..pages {
             let offset = i as u64 * 4096;
             map_page(start_virt + offset, PhysAddr::new(phys + offset),
                      paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_NO_CACHE, None);
         }
-        MMIO_VIRT_HEAD += (pages as u64 * 4096) + 4096;
         start_virt
+    }
+}
+
+pub fn unmap_mmio(virt: u64, size: usize) {
+    if virt < MMIO_BASE || virt >= MMIO_BASE + MMIO_SIZE { return; }
+    unsafe {
+        let start_chunk = (virt - MMIO_BASE) / MMIO_CHUNK;
+        let chunks = (size as u64 + MMIO_CHUNK - 1) / MMIO_CHUNK;
+        for j in 0..chunks {
+            let c = (start_chunk + j) as usize;
+            MMIO_BITMAP[c / 64] &= !(1 << (c % 64));
+        }
+        // In a production OS, we would also unmap from page tables here.
+        // For now, we just reclaim the virtual address space.
     }
 }
 
