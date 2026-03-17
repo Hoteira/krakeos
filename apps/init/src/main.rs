@@ -57,11 +57,11 @@ pub fn main() {
     }*/
 
     sleep(500);
-    debugln!("[Init] About to spawn term.wasm...");
+    debugln!("[Init] About to spawn dummy.wasm (WASIP1)...");
 
     match std::os::spawn_with_fds("@0xE0/apps/term.wasm", &[], &[(0, 0), (1, 1), (2, 2)]) {
-        pid if pid != usize::MAX => debugln!("[Init] Term test into its own slot with PID {}", pid),
-        _ => debugln!("[Init] Failed to spawn term"),
+        pid if pid != usize::MAX => debugln!("[Init] Term app spawned with PID {}", pid),
+        _ => debugln!("[Init] Failed to spawn term app"),
     }
 
     debugln!("[Init] System ready.");

@@ -22,7 +22,9 @@
       "Bash(wasm-tools stats:*)",
       "Bash(/root/.cargo/bin/wasm-tools stats:*)",
       "Bash(/root/.cargo/bin/wasm-tools dump:)",
-      "Bash(/root/.cargo/bin/wasm-tools dump:*)"
+      "Bash(/root/.cargo/bin/wasm-tools dump:*)",
+      "Bash(/tmp/audit_rdi.txt:*)",
+      "Read(//tmp/**)"
     ]
   }
 }

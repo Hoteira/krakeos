@@ -319,12 +319,17 @@ impl<'a, T: Config> Store<'a, T> {
             let final_code_ptr = if let Some(base) = self.code_base {
                 let ptr = (base + self.next_code_offset as u64) as *mut u8;
                 let code_len = aot_module.code.len();
-                crate::debugln!("[AOT] code_base={:#x} offset={} code_len={} ({} MB)", base, self.next_code_offset, code_len, code_len / (1024 * 1024));
+                crate::debugln!(
+                    "[AOT] code_base={:#x} offset={} code_len={} ({} MB)",
+                    base,
+                    self.next_code_offset,
+                    code_len,
+                    code_len / (1024 * 1024)
+                );
                 const CODE_SLOT_SIZE: usize = 256 * 1024 * 1024;
                 if self.next_code_offset + code_len > CODE_SLOT_SIZE {
                     return Err(RuntimeError::Trap(TrapError::ReachedUnreachable));
                 }
-
 
                 unsafe {
                     core::ptr::copy_nonoverlapping(aot_module.code.as_ptr(), ptr, code_len);
@@ -415,7 +420,10 @@ impl<'a, T: Config> Store<'a, T> {
                 // Check if this container has a parent to determine if it's a view or top-level SAS
                 let is_nested = {
                     let registry = crate::wasm::container::CONTAINER_REGISTRY.lock();
-                    registry.get(&container_id).map(|c| c.lock().parent_id.is_some()).unwrap_or(false)
+                    registry
+                        .get(&container_id)
+                        .map(|c| c.lock().parent_id.is_some())
+                        .unwrap_or(false)
                 };
 
                 if is_nested {
@@ -426,16 +434,10 @@ impl<'a, T: Config> Store<'a, T> {
                         ty.limits.max.unwrap_or(u32::MAX),
                     )
                 } else {
-                    LinearMemory::new_sas(
-                        sas_base,
-                        ty.limits.min.try_into().unwrap_validated(),
-                    )
+                    LinearMemory::new_sas(sas_base, ty.limits.min.try_into().unwrap_validated())
                 }
             } else {
-                LinearMemory::new_sas(
-                    sas_base,
-                    ty.limits.min.try_into().unwrap_validated(),
-                )
+                LinearMemory::new_sas(sas_base, ty.limits.min.try_into().unwrap_validated())
             }
         } else {
             LinearMemory::new_with_initial_pages(ty.limits.min.try_into().unwrap_validated())
@@ -520,10 +522,14 @@ impl<'a, T: Config> Store<'a, T> {
 
                             let stack_size = 1024 * 1024 * 4; // 4MB stack
                             let stack_ptr =
-                                unsafe { crate::memory::malloc(stack_size) } as *mut u128;
+                                crate::memory::mmap(0, stack_size as u64) as *mut u128;
                             let locals_size = 1024 * 64; // 64KB locals
                             let locals_ptr =
-                                unsafe { crate::memory::malloc(locals_size) } as *mut u128;
+                                crate::memory::mmap(0, locals_size as u64) as *mut u128;
+
+                            if stack_ptr as u64 == u64::MAX || locals_ptr as u64 == u64::MAX {
+                                return Err(RuntimeError::StackExhaustion);
+                            }
 
                             let mut trap_code: i32 = 0;
 
@@ -537,6 +543,7 @@ impl<'a, T: Config> Store<'a, T> {
                                 module_addr,
                                 stack_limit: stack_ptr as usize,
                                 trap_code: &mut trap_code as *mut i32,
+                                trampolines: crate::wasm::aot::trampoline::get_trampoline_table(),
                             };
 
                             // Prepare AOT stack with parameters
@@ -548,47 +555,22 @@ impl<'a, T: Config> Store<'a, T> {
                                 }
                             }
 
-                            // If we are in userland, we can spawn a real process for this AOT execution
-                            #[cfg(feature = "userland")]
-                            {
-                                if self.caller_module.is_none() && self.container_id.is_some() {
-                                    // Top-level execution, use real process spawning
-                                    let mut state = crate::os::krakeos::CPUState::default();
-                                    state.rip = aot_ptr as u64;
-                                    state.rsp = sp as u64;
-                                    state.rdi = &mut ctx as *mut _ as u64;
-                                    state.cs = 0x33; // User CS
-                                    state.ss = 0x23; // User SS
-                                    state.rflags = 0x202; // IF set
-
-                                    let name = "wasm_aot";
-                                    let pid = crate::os::krakeos::process_spawn_ext(name.as_ptr(), name.len(), &state as *const _ as *const u8);
-                                    if pid != u64::MAX {
-                                        let exit_code = crate::os::krakeos::process_waitpid(pid);
-                                        return Ok(RunState::Finished {
-                                            values: vec![Value::I32(exit_code as u32)],
-                                            maybe_remaining_fuel: Some(fuel),
-                                        });
-                                    }
-                                }
-                            }
-
-                            // Fallback to in-thread execution for nested/kernel or failed spawn
+                            // Use in-thread execution for AOT. 
+                            // Real process spawning via process_spawn_ext is currently disabled due to context sharing issues in SAS.
                             let final_sp: *mut u128;
 
                             #[cfg(not(target_arch = "wasm32"))]
                             unsafe {
                                 core::arch::asm!(
-                                    "push rbp",
-                                    "mov rbp, rsp",
-                                    "mov rsp, {0}",       // Switch to AOT stack
-                                    "call {1}",           // Call AOT code
-                                    "mov rsp, rbp",       // Restore host RSP
-                                    "pop rbp",
-                                    in(reg) sp,
-                                    in(reg) aot_ptr,
+                                    "mov r12, rsp",       // Save host RSP in R12 (callee-saved, preserved by AOT code)
+                                    "mov rsp, {sp}",      // Switch to AOT stack
+                                    "call {func}",        // Call AOT code
+                                    "mov rsp, r12",       // Restore host RSP from R12
+                                    sp = in(reg) sp,
+                                    func = in(reg) aot_ptr,
                                     inout("rdi") &mut ctx => _,
                                     lateout("rax") final_sp,
+                                    out("r12") _,         // R12 is used as scratch; prevents inputs from being allocated to it
                                     clobber_abi("C"),
                                 );
                             }
@@ -617,11 +599,9 @@ impl<'a, T: Config> Store<'a, T> {
                                 Ok(results)
                             };
 
-                            // Free the AOT stack and locals — these were leaking on every call.
-                            unsafe {
-                                crate::memory::free(stack_ptr as usize, stack_size);
-                                crate::memory::free(locals_ptr as usize, locals_size);
-                            }
+                            // Free the AOT stack and locals
+                            crate::memory::munmap(stack_ptr as u64, stack_size as u64);
+                            crate::memory::munmap(locals_ptr as u64, locals_size as u64);
 
                             return match aot_result {
                                 Ok(values) => Ok(RunState::Finished {

@@ -36,8 +36,8 @@ impl Process {
         let code_base = crate::memory::address_space::allocate_code(pid, slot_id);
         let stack_top = crate::memory::address_space::allocate_stack(pid, slot_id);
         
-        let heap_start = linear_memory_base;
-        let heap_limit = heap_start + crate::memory::address_space::LINEAR_MEMORY_SLOT_SIZE - 4096;
+        let heap_start = linear_memory_base + 4 * 1024 * 1024 * 1024;
+        let heap_limit = linear_memory_base + crate::memory::address_space::LINEAR_MEMORY_SLOT_SIZE - 4096;
 
         crate::debugln!("Process::new: allocating Arc<Self>...");
         let arc = Arc::new(Self {

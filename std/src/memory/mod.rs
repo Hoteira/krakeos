@@ -41,6 +41,18 @@ pub fn free(ptr: usize, _size: usize) {
     }
 }
 
+pub fn mmap(addr: u64, len: u64) -> u64 {
+    unsafe {
+        crate::sys::syscall6(9, addr, len, 7, 0, 0, 0)
+    }
+}
+
+pub fn munmap(addr: u64, len: u64) -> u64 {
+    unsafe {
+        crate::sys::syscall(11, addr, len, 0)
+    }
+}
+
 pub fn shm_get(name: &str, size: u64) -> Option<u64> {
     let res = unsafe {
         crate::os::krakeos::shm_get_raw(name.as_ptr(), name.len(), size as usize)

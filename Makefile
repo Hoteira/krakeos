@@ -67,7 +67,12 @@ $(APP_WASM_TARGETS): build-%:
 	mkdir -p $(APPS_DIR)
 	cp $(TARGET_DIR)/$(WASM_TARGET)/release/$*.wasm $(APPS_DIR)/$*.wasm
 
-userland: $(SYS_WASM_TARGETS) $(APP_WASM_TARGETS)
+userland: $(SYS_WASM_TARGETS) $(APP_WASM_TARGETS) build-dummy
+
+build-dummy:
+	$(CARGO) build --package=dummy --target=wasm32-wasip1 --release
+	mkdir -p $(APPS_DIR)
+	cp $(TARGET_DIR)/wasm32-wasip1/release/dummy.wasm $(APPS_DIR)/dummy.wasm
 
 fs: swiftboot kernel wasm_loader userland
 	$(GENEXT2FS) -d $(TREE_DIR) -b 262144 -B 1024 $(BUILD_DIR)/disk2.img

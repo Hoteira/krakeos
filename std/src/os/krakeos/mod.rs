@@ -104,32 +104,6 @@ method_export!("krakeos:system/memory@0.2.0", "shm-map",
 
 method_export!("wasi:random/random@0.2.0", "get-random-bytes",
     pub fn get_random_bytes(len: u64, result_ptr: *mut u8) {
-        #[cfg(target_arch = "x86_64")]
-        {
-            let mut i = 0;
-            while i + 8 <= len as usize {
-                let mut val = 0u64;
-                if unsafe { core::arch::x86_64::_rdrand64_step(&mut val) } == 1 {
-                    unsafe { core::ptr::copy_nonoverlapping(val.to_le_bytes().as_ptr(), result_ptr.add(i), 8); }
-                    i += 8;
-                } else {
-                    break;
-                }
-            }
-            while i < len as usize {
-                let mut val = 0u32;
-                if unsafe { core::arch::x86_64::_rdrand32_step(&mut val) } == 1 {
-                    unsafe { *result_ptr.add(i) = val as u8; }
-                    i += 1;
-                } else {
-                    break;
-                }
-            }
-            if i == len as usize {
-                return;
-            }
-        }
-
         // Pseudo-random fallback for native
         static mut STATE: u64 = 1574;
         unsafe {

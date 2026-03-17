@@ -1,7 +1,7 @@
-use crate::math::FloatMath;
-use crate::os::debug_print;
 use crate::alloc::format;
 use crate::alloc::vec::Vec;
+use crate::math::FloatMath;
+use crate::os::debug_print;
 use crate::wasm::aot::runtime::AotContext;
 use crate::wasm::common::runtime_error::RuntimeError;
 use crate::wasm::common::value::{F32, F64, Ref, Value};
@@ -48,7 +48,9 @@ pub extern "C" fn aot_trap_indirect() -> ! {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_trap_unreachable() -> ! {
-    crate::os::debug_print("AOT Trap: WASM Reached Unreachable Instruction. (Check for earlier [USER PANIC] messages!)\n");
+    crate::os::debug_print(
+        "AOT Trap: WASM Reached Unreachable Instruction. (Check for earlier [USER PANIC] messages!)\n",
+    );
     crate::os::exit(1);
 }
 
@@ -59,9 +61,13 @@ pub extern "C" fn aot_trap_stack_overflow() -> ! {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_trap_host() -> ! {
+pub extern "C" fn aot_trap_host(ctx: &AotContext) -> ! {
+    let code = unsafe { *ctx.trap_code };
+    if code == -1 {
+        crate::os::exit(0);
+    }
     crate::os::debug_print("AOT Trap: Host Function Error\n");
-    crate::os::exit(1);
+    crate::os::exit(code as u64);
 }
 
 #[unsafe(no_mangle)]
@@ -697,9 +703,7 @@ pub extern "C" fn aot_memory_grow(ctx: &mut AotContext, n: u32) -> u32 {
             ctx.memory_size = mem.len();
             old_size
         }
-        Err(_) => {
-            u32::MAX
-        }
+        Err(_) => u32::MAX,
     }
 }
 
@@ -769,11 +773,12 @@ pub extern "C" fn aot_call_indirect(
         .unwrap_or_else(|| unsafe { aot_trap_oob() });
     let func_addr = match r {
         Ref::Func(addr) => *addr,
-        _ => unsafe { 
-            crate::os::debug_print(
-                &crate::alloc::format!("AOT Trap: Table element {} is not a Ref::Func\n", i)
-            );
-            aot_trap_indirect() 
+        _ => unsafe {
+            crate::os::debug_print(&crate::alloc::format!(
+                "AOT Trap: Table element {} is not a Ref::Func\n",
+                i
+            ));
+            aot_trap_indirect()
         },
     };
 
@@ -781,22 +786,24 @@ pub extern "C" fn aot_call_indirect(
     let expected_ty = &store.modules.get(module_addr).types[type_idx as usize];
     if func_inst.ty() != *expected_ty {
         unsafe {
-            crate::os::debug_print(
-                &crate::alloc::format!(
-                    "AOT Trap: Signature Mismatch. Expected {:?}, Got {:?}\n",
-                    expected_ty, func_inst.ty()
-                )
-            );
+            crate::os::debug_print(&crate::alloc::format!(
+                "AOT Trap: Signature Mismatch. Expected {:?}, Got {:?}\n",
+                expected_ty,
+                func_inst.ty()
+            ));
             aot_trap_indirect();
         }
     }
 
     match func_inst {
         FuncInst::WasmFunc(wasm_func) => {
-            let ptr = wasm_func.aot_ptr.map(|p| p as *const u8).unwrap_or_else(|| unsafe {
-                crate::os::debug_print("AOT Trap: aot_ptr is null\n");
-                aot_trap_indirect()
-            });
+            let ptr = wasm_func
+                .aot_ptr
+                .map(|p| p as *const u8)
+                .unwrap_or_else(|| unsafe {
+                    crate::os::debug_print("AOT Trap: aot_ptr is null\n");
+                    aot_trap_indirect()
+                });
             // Validate pointer is within a reasonable code range
             let code_base = store.code_base.unwrap_or(0);
             if code_base != 0 {
@@ -805,7 +812,11 @@ pub extern "C" fn aot_call_indirect(
                 if p < code_base as usize || p >= code_base as usize + 512 * 1024 * 1024 {
                     crate::os::debug_print(&crate::alloc::format!(
                         "[aot_call_indirect] INVALID PTR={:#x} code_base={:#x} func_addr={} table={} i={}\n",
-                        p, code_base, func_addr, table_idx, i
+                        p,
+                        code_base,
+                        func_addr,
+                        table_idx,
+                        i
                     ));
                     unsafe { aot_trap_indirect() }
                 }
@@ -837,7 +848,9 @@ pub extern "C" fn aot_call_host(ctx: &mut AotContext, func_idx: u32, sp: *mut u1
 
     // Safety check: Ensure sp is not null and points to valid stack
     if sp.is_null() {
-        unsafe { aot_trap(); }
+        unsafe {
+            aot_trap();
+        }
     }
 
     unsafe {
@@ -867,7 +880,10 @@ pub extern "C" fn aot_call_host(ctx: &mut AotContext, func_idx: u32, sp: *mut u1
             let fuel = unsafe { *ctx.fuel };
             let run_state = store.invoke_unchecked(func_addr, params, Some(fuel));
             match run_state {
-                Ok(RunState::Finished { values, maybe_remaining_fuel }) => {
+                Ok(RunState::Finished {
+                    values,
+                    maybe_remaining_fuel,
+                }) => {
                     if let Some(rem) = maybe_remaining_fuel {
                         unsafe {
                             *ctx.fuel = rem;
@@ -881,7 +897,7 @@ pub extern "C" fn aot_call_host(ctx: &mut AotContext, func_idx: u32, sp: *mut u1
                     }
                     return sp;
                 }
-                _ => unsafe { aot_trap_host() },
+                _ => unsafe { aot_trap_host(ctx) },
             }
         }
     };
@@ -1421,4 +1437,276 @@ pub extern "C" fn aot_v128_not(a: *mut [u8; 16]) {
     unsafe {
         *a = simd_utils::v128_not(*a);
     }
+}
+
+#[repr(transparent)]
+struct SyncPtr(*const ());
+unsafe impl Sync for SyncPtr {}
+
+pub fn get_trampoline_table() -> *const usize {
+    use crate::wasm::aot::runtime::AotTrampoline;
+    static TABLE: [SyncPtr; AotTrampoline::Count as usize] = [
+        SyncPtr(aot_trap as *const ()),
+        SyncPtr(aot_trap_oob as *const ()),
+        SyncPtr(aot_trap_fuel as *const ()),
+        SyncPtr(aot_trap_div_zero as *const ()),
+        SyncPtr(aot_trap_int_overflow as *const ()),
+        SyncPtr(aot_trap_indirect as *const ()),
+        SyncPtr(aot_trap_unreachable as *const ()),
+        SyncPtr(aot_trap_stack_overflow as *const ()),
+        SyncPtr(aot_trap_host as *const ()),
+        SyncPtr(aot_trap_unimplemented_fc as *const ()),
+        SyncPtr(aot_trap_unimplemented_simd as *const ()),
+        SyncPtr(aot_trap_unimplemented_atomic as *const ()),
+        SyncPtr(aot_i32_div_s as *const ()),
+        SyncPtr(aot_i32_div_u as *const ()),
+        SyncPtr(aot_i32_rem_s as *const ()),
+        SyncPtr(aot_i32_rem_u as *const ()),
+        SyncPtr(aot_i64_div_s as *const ()),
+        SyncPtr(aot_i64_div_u as *const ()),
+        SyncPtr(aot_i64_rem_s as *const ()),
+        SyncPtr(aot_i64_rem_u as *const ()),
+        SyncPtr(aot_f32_eq as *const ()),
+        SyncPtr(aot_f32_ne as *const ()),
+        SyncPtr(aot_f32_lt as *const ()),
+        SyncPtr(aot_f32_gt as *const ()),
+        SyncPtr(aot_f32_le as *const ()),
+        SyncPtr(aot_f32_ge as *const ()),
+        SyncPtr(aot_f64_eq as *const ()),
+        SyncPtr(aot_f64_ne as *const ()),
+        SyncPtr(aot_f64_lt as *const ()),
+        SyncPtr(aot_f64_gt as *const ()),
+        SyncPtr(aot_f64_le as *const ()),
+        SyncPtr(aot_f64_ge as *const ()),
+        SyncPtr(aot_f32_min as *const ()),
+        SyncPtr(aot_f32_max as *const ()),
+        SyncPtr(aot_f64_min as *const ()),
+        SyncPtr(aot_f64_max as *const ()),
+        SyncPtr(aot_f32_convert_i64_u as *const ()),
+        SyncPtr(aot_f64_convert_i64_u as *const ()),
+        SyncPtr(aot_i32_trunc_f32_u as *const ()),
+        SyncPtr(aot_i32_trunc_f64_u as *const ()),
+        SyncPtr(aot_i64_trunc_f32_u as *const ()),
+        SyncPtr(aot_i64_trunc_f64_u as *const ()),
+        SyncPtr(aot_i32_trunc_sat_f32_s as *const ()),
+        SyncPtr(aot_i32_trunc_sat_f32_u as *const ()),
+        SyncPtr(aot_i32_trunc_sat_f64_s as *const ()),
+        SyncPtr(aot_i32_trunc_sat_f64_u as *const ()),
+        SyncPtr(aot_i64_trunc_sat_f32_s as *const ()),
+        SyncPtr(aot_i64_trunc_sat_f32_u as *const ()),
+        SyncPtr(aot_i64_trunc_sat_f64_s as *const ()),
+        SyncPtr(aot_i64_trunc_sat_f64_u as *const ()),
+        SyncPtr(aot_memory_init as *const ()),
+        SyncPtr(aot_data_drop as *const ()),
+        SyncPtr(aot_memory_copy as *const ()),
+        SyncPtr(aot_memory_fill as *const ()),
+        SyncPtr(aot_table_init as *const ()),
+        SyncPtr(aot_elem_drop as *const ()),
+        SyncPtr(aot_table_copy as *const ()),
+        SyncPtr(aot_table_grow as *const ()),
+        SyncPtr(aot_table_size as *const ()),
+        SyncPtr(aot_table_fill as *const ()),
+        SyncPtr(aot_memory_size as *const ()),
+        SyncPtr(aot_memory_grow as *const ()),
+        SyncPtr(aot_global_get as *const ()),
+        SyncPtr(aot_global_set as *const ()),
+        SyncPtr(aot_table_get as *const ()),
+        SyncPtr(aot_table_set as *const ()),
+        SyncPtr(aot_call_indirect as *const ()),
+        SyncPtr(aot_call_host as *const ()),
+        SyncPtr(aot_ref_func as *const ()),
+        SyncPtr(aot_v128_load_lane as *const ()),
+        SyncPtr(aot_v128_store_lane as *const ()),
+        SyncPtr(aot_v128_and as *const ()),
+        SyncPtr(aot_v128_or as *const ()),
+        SyncPtr(aot_v128_xor as *const ()),
+        SyncPtr(aot_v128_bitselect as *const ()),
+        SyncPtr(aot_v128_eq_i8x16 as *const ()),
+        SyncPtr(aot_v128_eq_i16x8 as *const ()),
+        SyncPtr(aot_v128_eq_i32x4 as *const ()),
+        SyncPtr(aot_v128_eq_i64x2 as *const ()),
+        SyncPtr(aot_v128_eq_f32x4 as *const ()),
+        SyncPtr(aot_v128_eq_f64x2 as *const ()),
+        SyncPtr(aot_v128_any_true as *const ()),
+        SyncPtr(aot_v128_bitmask_i8x16 as *const ()),
+        SyncPtr(aot_v128_i8x16_shuffle as *const ()),
+        SyncPtr(aot_i8x16_add as *const ()),
+        SyncPtr(aot_i8x16_sub as *const ()),
+        SyncPtr(aot_i16x8_add as *const ()),
+        SyncPtr(aot_i16x8_sub as *const ()),
+        SyncPtr(aot_i16x8_mul as *const ()),
+        SyncPtr(aot_i32x4_add as *const ()),
+        SyncPtr(aot_i32x4_sub as *const ()),
+        SyncPtr(aot_i32x4_mul as *const ()),
+        SyncPtr(aot_i64x2_add as *const ()),
+        SyncPtr(aot_i64x2_sub as *const ()),
+        SyncPtr(aot_i64x2_mul as *const ()),
+        SyncPtr(aot_f32x4_add as *const ()),
+        SyncPtr(aot_f32x4_sub as *const ()),
+        SyncPtr(aot_f32x4_mul as *const ()),
+        SyncPtr(aot_f32x4_div as *const ()),
+        SyncPtr(aot_f32x4_min as *const ()),
+        SyncPtr(aot_f32x4_max as *const ()),
+        SyncPtr(aot_f32x4_pmin as *const ()),
+        SyncPtr(aot_f32x4_pmax as *const ()),
+        SyncPtr(aot_f64x2_add as *const ()),
+        SyncPtr(aot_f64x2_sub as *const ()),
+        SyncPtr(aot_f64x2_mul as *const ()),
+        SyncPtr(aot_f64x2_div as *const ()),
+        SyncPtr(aot_f64x2_min as *const ()),
+        SyncPtr(aot_f64x2_max as *const ()),
+        SyncPtr(aot_f64x2_pmin as *const ()),
+        SyncPtr(aot_f64x2_pmax as *const ()),
+        SyncPtr(aot_i8x16_eq as *const ()),
+        SyncPtr(aot_i8x16_ne as *const ()),
+        SyncPtr(aot_i8x16_lt_s as *const ()),
+        SyncPtr(aot_i8x16_lt_u as *const ()),
+        SyncPtr(aot_i8x16_gt_s as *const ()),
+        SyncPtr(aot_i8x16_gt_u as *const ()),
+        SyncPtr(aot_i8x16_le_s as *const ()),
+        SyncPtr(aot_i8x16_le_u as *const ()),
+        SyncPtr(aot_i8x16_ge_s as *const ()),
+        SyncPtr(aot_i8x16_ge_u as *const ()),
+        SyncPtr(aot_i16x8_eq as *const ()),
+        SyncPtr(aot_i16x8_ne as *const ()),
+        SyncPtr(aot_i16x8_lt_s as *const ()),
+        SyncPtr(aot_i16x8_lt_u as *const ()),
+        SyncPtr(aot_i16x8_gt_s as *const ()),
+        SyncPtr(aot_i16x8_gt_u as *const ()),
+        SyncPtr(aot_i16x8_le_s as *const ()),
+        SyncPtr(aot_i16x8_le_u as *const ()),
+        SyncPtr(aot_i16x8_ge_s as *const ()),
+        SyncPtr(aot_i16x8_ge_u as *const ()),
+        SyncPtr(aot_i32x4_eq as *const ()),
+        SyncPtr(aot_i32x4_ne as *const ()),
+        SyncPtr(aot_i32x4_lt_s as *const ()),
+        SyncPtr(aot_i32x4_lt_u as *const ()),
+        SyncPtr(aot_i32x4_gt_s as *const ()),
+        SyncPtr(aot_i32x4_gt_u as *const ()),
+        SyncPtr(aot_i32x4_le_s as *const ()),
+        SyncPtr(aot_i32x4_le_u as *const ()),
+        SyncPtr(aot_i32x4_ge_s as *const ()),
+        SyncPtr(aot_i32x4_ge_u as *const ()),
+        SyncPtr(aot_i64x2_eq as *const ()),
+        SyncPtr(aot_i64x2_ne as *const ()),
+        SyncPtr(aot_i64x2_lt_s as *const ()),
+        SyncPtr(aot_i64x2_gt_s as *const ()),
+        SyncPtr(aot_i64x2_le_s as *const ()),
+        SyncPtr(aot_i64x2_ge_s as *const ()),
+        SyncPtr(aot_f32x4_eq as *const ()),
+        SyncPtr(aot_f32x4_ne as *const ()),
+        SyncPtr(aot_f32x4_lt as *const ()),
+        SyncPtr(aot_f32x4_gt as *const ()),
+        SyncPtr(aot_f32x4_le as *const ()),
+        SyncPtr(aot_f32x4_ge as *const ()),
+        SyncPtr(aot_f64x2_eq as *const ()),
+        SyncPtr(aot_f64x2_ne as *const ()),
+        SyncPtr(aot_f64x2_lt as *const ()),
+        SyncPtr(aot_f64x2_gt as *const ()),
+        SyncPtr(aot_f64x2_le as *const ()),
+        SyncPtr(aot_f64x2_ge as *const ()),
+        SyncPtr(aot_i8x16_neg as *const ()),
+        SyncPtr(aot_i8x16_abs as *const ()),
+        SyncPtr(aot_i16x8_neg as *const ()),
+        SyncPtr(aot_i16x8_abs as *const ()),
+        SyncPtr(aot_i32x4_neg as *const ()),
+        SyncPtr(aot_i32x4_abs as *const ()),
+        SyncPtr(aot_i64x2_neg as *const ()),
+        SyncPtr(aot_i64x2_abs as *const ()),
+        SyncPtr(aot_f32x4_neg as *const ()),
+        SyncPtr(aot_f32x4_abs as *const ()),
+        SyncPtr(aot_f32x4_sqrt as *const ()),
+        SyncPtr(aot_f32x4_ceil as *const ()),
+        SyncPtr(aot_f32x4_floor as *const ()),
+        SyncPtr(aot_f32x4_trunc as *const ()),
+        SyncPtr(aot_f32x4_nearest as *const ()),
+        SyncPtr(aot_f64x2_neg as *const ()),
+        SyncPtr(aot_f64x2_abs as *const ()),
+        SyncPtr(aot_f64x2_sqrt as *const ()),
+        SyncPtr(aot_f64x2_ceil as *const ()),
+        SyncPtr(aot_f64x2_floor as *const ()),
+        SyncPtr(aot_f64x2_trunc as *const ()),
+        SyncPtr(aot_f64x2_nearest as *const ()),
+        SyncPtr(aot_v128_andnot as *const ()),
+        SyncPtr(aot_i8x16_min_s as *const ()),
+        SyncPtr(aot_i8x16_min_u as *const ()),
+        SyncPtr(aot_i8x16_max_s as *const ()),
+        SyncPtr(aot_i8x16_max_u as *const ()),
+        SyncPtr(aot_i16x8_min_s as *const ()),
+        SyncPtr(aot_i16x8_min_u as *const ()),
+        SyncPtr(aot_i16x8_max_s as *const ()),
+        SyncPtr(aot_i16x8_max_u as *const ()),
+        SyncPtr(aot_i32x4_min_s as *const ()),
+        SyncPtr(aot_i32x4_min_u as *const ()),
+        SyncPtr(aot_i32x4_max_s as *const ()),
+        SyncPtr(aot_i32x4_max_u as *const ()),
+        SyncPtr(aot_i8x16_avgr_u as *const ()),
+        SyncPtr(aot_i16x8_avgr_u as *const ()),
+        SyncPtr(aot_i8x16_add_sat_s as *const ()),
+        SyncPtr(aot_i8x16_add_sat_u as *const ()),
+        SyncPtr(aot_i8x16_sub_sat_s as *const ()),
+        SyncPtr(aot_i8x16_sub_sat_u as *const ()),
+        SyncPtr(aot_i16x8_add_sat_s as *const ()),
+        SyncPtr(aot_i16x8_add_sat_u as *const ()),
+        SyncPtr(aot_i16x8_sub_sat_s as *const ()),
+        SyncPtr(aot_i16x8_sub_sat_u as *const ()),
+        SyncPtr(aot_i8x16_popcnt as *const ()),
+        SyncPtr(aot_v128_bitmask_i16x8 as *const ()),
+        SyncPtr(aot_v128_bitmask_i32x4 as *const ()),
+        SyncPtr(aot_v128_bitmask_i64x2 as *const ()),
+        SyncPtr(aot_v128_all_true_i8x16 as *const ()),
+        SyncPtr(aot_v128_all_true_i16x8 as *const ()),
+        SyncPtr(aot_v128_all_true_i32x4 as *const ()),
+        SyncPtr(aot_v128_all_true_i64x2 as *const ()),
+        SyncPtr(aot_i8x16_narrow_i16x8_s as *const ()),
+        SyncPtr(aot_i8x16_narrow_i16x8_u as *const ()),
+        SyncPtr(aot_i16x8_narrow_i32x4_s as *const ()),
+        SyncPtr(aot_i16x8_narrow_i32x4_u as *const ()),
+        SyncPtr(aot_i16x8_extend_low_i8x16_s as *const ()),
+        SyncPtr(aot_i16x8_extend_high_i8x16_s as *const ()),
+        SyncPtr(aot_i16x8_extend_low_i8x16_u as *const ()),
+        SyncPtr(aot_i16x8_extend_high_i8x16_u as *const ()),
+        SyncPtr(aot_i32x4_extend_low_i16x8_s as *const ()),
+        SyncPtr(aot_i32x4_extend_high_i16x8_s as *const ()),
+        SyncPtr(aot_i32x4_extend_low_i16x8_u as *const ()),
+        SyncPtr(aot_i32x4_extend_high_i16x8_u as *const ()),
+        SyncPtr(aot_i64x2_extend_low_i32x4_s as *const ()),
+        SyncPtr(aot_i64x2_extend_high_i32x4_s as *const ()),
+        SyncPtr(aot_i64x2_extend_low_i32x4_u as *const ()),
+        SyncPtr(aot_i64x2_extend_high_i32x4_u as *const ()),
+        SyncPtr(aot_i16x8_extmul_low_i8x16_s as *const ()),
+        SyncPtr(aot_i16x8_extmul_high_i8x16_s as *const ()),
+        SyncPtr(aot_i16x8_extmul_low_i8x16_u as *const ()),
+        SyncPtr(aot_i16x8_extmul_high_i8x16_u as *const ()),
+        SyncPtr(aot_i32x4_extmul_low_i16x8_s as *const ()),
+        SyncPtr(aot_i32x4_extmul_high_i16x8_s as *const ()),
+        SyncPtr(aot_i32x4_extmul_low_i16x8_u as *const ()),
+        SyncPtr(aot_i32x4_extmul_high_i16x8_u as *const ()),
+        SyncPtr(aot_i64x2_extmul_low_i32x4_s as *const ()),
+        SyncPtr(aot_i64x2_extmul_high_i32x4_s as *const ()),
+        SyncPtr(aot_i64x2_extmul_low_i32x4_u as *const ()),
+        SyncPtr(aot_i64x2_extmul_high_i32x4_u as *const ()),
+        SyncPtr(aot_i16x8_extadd_pairwise_i8x16_s as *const ()),
+        SyncPtr(aot_i16x8_extadd_pairwise_i8x16_u as *const ()),
+        SyncPtr(aot_i32x4_extadd_pairwise_i16x8_s as *const ()),
+        SyncPtr(aot_i32x4_extadd_pairwise_i16x8_u as *const ()),
+        SyncPtr(aot_i32x4_dot_i16x8_s as *const ()),
+        SyncPtr(aot_i16x8_q15mulrsat_s as *const ()),
+        SyncPtr(aot_i32x4_trunc_sat_f32x4_s as *const ()),
+        SyncPtr(aot_i32x4_trunc_sat_f32x4_u as *const ()),
+        SyncPtr(aot_f32x4_convert_i32x4_s as *const ()),
+        SyncPtr(aot_f32x4_convert_i32x4_u as *const ()),
+        SyncPtr(aot_i32x4_trunc_sat_f64x2_s_zero as *const ()),
+        SyncPtr(aot_i32x4_trunc_sat_f64x2_u_zero as *const ()),
+        SyncPtr(aot_f64x2_convert_low_i32x4_s as *const ()),
+        SyncPtr(aot_f64x2_convert_low_i32x4_u as *const ()),
+        SyncPtr(aot_v128_not as *const ()),
+        SyncPtr(aot_v128_load8x8_s as *const ()),
+        SyncPtr(aot_v128_load8x8_u as *const ()),
+        SyncPtr(aot_v128_load16x4_s as *const ()),
+        SyncPtr(aot_v128_load16x4_u as *const ()),
+        SyncPtr(aot_v128_load32x2_s as *const ()),
+        SyncPtr(aot_v128_load32x2_u as *const ()),
+    ];
+    TABLE.as_ptr() as *const usize
 }

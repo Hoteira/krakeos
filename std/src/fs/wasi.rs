@@ -185,12 +185,12 @@ crate::export_method!(
                 let base = ret_ptr + 8;
                 let _ = write_u64(store, base, stat.dev);
                 let _ = write_u64(store, base + 8, stat.ino);
-                let _ = write_u32(store, base + 16, 0);
-                let _ = write_u32(store, base + 20, stat.nlink as u32);
-                let _ = write_u64(store, base + 24, stat.size);
-                let _ = write_u64(store, base + 32, stat.atime / 1_000_000_000);
-                let _ = write_u64(store, base + 40, stat.mtime / 1_000_000_000);
-                let _ = write_u64(store, base + 48, stat.ctime / 1_000_000_000);
+                let _ = write_bytes(store, base + 16, &[stat.filetype]);
+                let _ = write_u64(store, base + 24, stat.nlink);
+                let _ = write_u64(store, base + 32, stat.size);
+                let _ = write_u64(store, base + 40, stat.atime / 1_000_000_000);
+                let _ = write_u64(store, base + 48, stat.mtime / 1_000_000_000);
+                let _ = write_u64(store, base + 56, stat.ctime / 1_000_000_000);
             }
             Err(e) => {
                 let _ = write_u32(store, ret_ptr, 1);
@@ -321,12 +321,11 @@ crate::export_method!(
                     let payload_ptr = ret_ptr + 8;
                     let _ = write_bytes(store, payload_ptr, &[ty]);
 
-                    // write_u64 for 64-bit pointers and sizes?
-                    // Actually, let's just write them carefully:
-                    let _ = write_u32(store, payload_ptr + 4, name_ptr); // The pointer (32-bit WASM view)
-                    let _ = write_u32(store, payload_ptr + 12, name_bytes.len() as u32); // The len
+                    let _ = write_u32(store, payload_ptr + 4, name_ptr); 
+                    let _ = write_u32(store, payload_ptr + 12, name_bytes.len() as u32); 
                     let _ = write_u64(store, payload_ptr + 16, inode);
-                    } else {                    let _ = write_u32(store, ret_ptr, 0); // Ok Result
+                    } else {
+                    let _ = write_u32(store, ret_ptr, 0); // Ok Result
                     let _ = write_u32(store, ret_ptr + 4, 0); // None Option
                 }
             }
@@ -373,12 +372,12 @@ crate::export_method!(
                 let base = ret_ptr + 8;
                 let _ = write_u64(store, base, stat.dev);
                 let _ = write_u64(store, base + 8, stat.ino);
-                let _ = write_u32(store, base + 16, 0);
-                let _ = write_u32(store, base + 20, stat.nlink as u32);
-                let _ = write_u64(store, base + 24, stat.size);
-                let _ = write_u64(store, base + 32, stat.atime / 1_000_000_000);
-                let _ = write_u64(store, base + 40, stat.mtime / 1_000_000_000);
-                let _ = write_u64(store, base + 48, stat.ctime / 1_000_000_000);
+                let _ = write_bytes(store, base + 16, &[stat.filetype]);
+                let _ = write_u64(store, base + 24, stat.nlink);
+                let _ = write_u64(store, base + 32, stat.size);
+                let _ = write_u64(store, base + 40, stat.atime / 1_000_000_000);
+                let _ = write_u64(store, base + 48, stat.mtime / 1_000_000_000);
+                let _ = write_u64(store, base + 56, stat.ctime / 1_000_000_000);
             }
             Err(e) => {
                 let _ = write_u32(store, ret_ptr, 1);
@@ -978,8 +977,8 @@ crate::export_method!(
         let s_ptr = match args.get(1) { Some(Value::I32(x)) => *x as u32, _ => 0 };
         match wasi_ctx(store).env.fd_fdstat_get(fd) {
             Ok(s) => {
-                let _ = write_u32(store, s_ptr, s.filetype as u32);
-                let _ = write_u32(store, s_ptr + 4, s.flags as u32);
+                let _ = write_bytes(store, s_ptr, &[s.filetype]);
+                let _ = write_bytes(store, s_ptr + 2, &s.flags.to_le_bytes());
                 let _ = write_u64(store, s_ptr + 8, s.rights_base);
                 let _ = write_u64(store, s_ptr + 16, s.rights_inheriting);
                 Ok(vec![Value::I32(0)])
@@ -1000,12 +999,12 @@ crate::export_method!(
             Ok(s) => {
                 let _ = write_u64(store, s_ptr, s.dev);
                 let _ = write_u64(store, s_ptr + 8, s.ino);
-                let _ = write_u32(store, s_ptr + 16, s.filetype as u32);
-                let _ = write_u32(store, s_ptr + 20, s.nlink as u32);
-                let _ = write_u64(store, s_ptr + 24, s.size);
-                let _ = write_u64(store, s_ptr + 32, s.atime);
-                let _ = write_u64(store, s_ptr + 40, s.mtime);
-                let _ = write_u64(store, s_ptr + 48, s.ctime);
+                let _ = write_bytes(store, s_ptr + 16, &[s.filetype]);
+                let _ = write_u64(store, s_ptr + 24, s.nlink);
+                let _ = write_u64(store, s_ptr + 32, s.size);
+                let _ = write_u64(store, s_ptr + 40, s.atime);
+                let _ = write_u64(store, s_ptr + 48, s.mtime);
+                let _ = write_u64(store, s_ptr + 56, s.ctime);
                 Ok(vec![Value::I32(0)])
             }
             Err(e) => Ok(vec![Value::I32(e as u32)]),
@@ -1292,7 +1291,7 @@ crate::export_method!(
         match wasi_ctx(store).env.fd_readdir(fd, cookie) {
             Ok(entries) => {
                 let mut written = 0u32;
-                for (name, kind, ino) in entries {
+                for (name, kind, next_cookie) in entries {
                     let name_bytes = name.as_bytes();
                     let entry_len = 24 + name_bytes.len() as u32;
                     if written + entry_len > len {
@@ -1300,10 +1299,10 @@ crate::export_method!(
                     }
 
                     let base = ptr + written;
-                    let _ = write_u64(store, base, cookie + (written as u64) + 1); // next cookie (stub)
-                    let _ = write_u64(store, base + 8, ino);
+                    let _ = write_u64(store, base, next_cookie); 
+                    let _ = write_u64(store, base + 8, 0); // inode stub
                     let _ = write_u32(store, base + 16, name_bytes.len() as u32);
-                    let _ = write_u32(store, base + 20, kind as u32);
+                    let _ = write_bytes(store, base + 20, &[kind]);
                     let _ = write_bytes(store, base + 24, name_bytes);
                     written += entry_len;
                 }
@@ -1420,12 +1419,12 @@ crate::export_method!(
             Ok(s) => {
                 let _ = write_u64(store, s_ptr, s.dev);
                 let _ = write_u64(store, s_ptr + 8, s.ino);
-                let _ = write_u32(store, s_ptr + 16, s.filetype as u32);
-                let _ = write_u32(store, s_ptr + 20, s.nlink as u32);
-                let _ = write_u64(store, s_ptr + 24, s.size);
-                let _ = write_u64(store, s_ptr + 32, s.atime);
-                let _ = write_u64(store, s_ptr + 40, s.mtime);
-                let _ = write_u64(store, s_ptr + 48, s.ctime);
+                let _ = write_bytes(store, s_ptr + 16, &[s.filetype]);
+                let _ = write_u64(store, s_ptr + 24, s.nlink);
+                let _ = write_u64(store, s_ptr + 32, s.size);
+                let _ = write_u64(store, s_ptr + 40, s.atime);
+                let _ = write_u64(store, s_ptr + 48, s.mtime);
+                let _ = write_u64(store, s_ptr + 56, s.ctime);
                 Ok(vec![Value::I32(0)])
             }
             Err(e) => Ok(vec![Value::I32(e as u32)]),

@@ -1,5 +1,6 @@
 use crate::fs;
 use crate::alloc::boxed::Box;
+use crate::alloc::borrow::ToOwned;
 use crate::alloc::collections::BTreeMap;
 use crate::alloc::format;
 use crate::alloc::string::String;
@@ -213,12 +214,13 @@ impl KrakeosWasiEnv {
             next_fd: 4,
             random_state: 0,
             args,
-            root_path,
+            root_path: root_path.trim().to_owned(),
             env_vars,
         }
     }
 
     fn resolve_path(&self, dirfd: i32, path: &str) -> Result<String, i32> {
+        let path = path.trim();
         if path.starts_with("/dev/udp") {
             return Ok(String::from(path));
         }
@@ -844,6 +846,9 @@ impl WasiEnv for KrakeosWasiEnv {
     }
 
     fn fd_readdir(&mut self, fd: i32, cookie: u64) -> Result<Vec<(String, u8, u64)>, i32> {
+        if fd >= 0 && fd <= 2 {
+            return Err(54); // ENOTDIR
+        }
         let p = if fd == 3 {
             self.root_path.as_str()
         } else if let Some(wf) = self.fd_table.get(&fd) {
@@ -863,20 +868,15 @@ impl WasiEnv for KrakeosWasiEnv {
                 let mut entries = Vec::new();
                 for (i, e) in re.iter().enumerate() {
                     let wt = match e.file_type {
-                        crate::fs::FileType::File => 6,
-                        crate::fs::FileType::Directory => 3,
-                        crate::fs::FileType::Device => 2,
+                        crate::fs::FileType::File => 4, // REGULAR_FILE
+                        crate::fs::FileType::Directory => 3, // DIRECTORY
+                        crate::fs::FileType::Device => 2, // CHARACTER_DEVICE
                         _ => 0,
                     };
                     entries.push((e.name.clone(), wt, (i + 1) as u64));
                 }
-                crate::debugln!(
-                    "[WASI] fd_readdir: {} total entries, returning {} (after cookie {})",
-                    entries.len(),
-                    entries.len().saturating_sub(cookie as usize),
-                    cookie
-                );
-                if cookie >= entries.len() as u64 {
+                
+                if cookie as usize >= entries.len() {
                     return Ok(Vec::new());
                 }
                 Ok(entries.into_iter().skip(cookie as usize).collect())
@@ -889,32 +889,6 @@ impl WasiEnv for KrakeosWasiEnv {
     }
 
     fn random_get(&mut self, buf: &mut [u8]) -> Result<(), i32> {
-        #[cfg(target_arch = "x86_64")]
-        {
-            let mut i = 0;
-            while i + 8 <= buf.len() {
-                let mut val = 0u64;
-                if unsafe { core::arch::x86_64::_rdrand64_step(&mut val) } == 1 {
-                    buf[i..i + 8].copy_from_slice(&val.to_le_bytes());
-                    i += 8;
-                } else {
-                    break;
-                }
-            }
-            while i < buf.len() {
-                let mut val = 0u32;
-                if unsafe { core::arch::x86_64::_rdrand32_step(&mut val) } == 1 {
-                    buf[i] = val as u8;
-                    i += 1;
-                } else {
-                    break;
-                }
-            }
-            if i == buf.len() {
-                return Ok(());
-            }
-        }
-
         // Fallback or wasm32-hosted execution
         for b in buf.iter_mut() {
             self.random_state = self

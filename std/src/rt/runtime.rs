@@ -68,6 +68,7 @@ pub unsafe extern "C" fn rust_start(stack: *const usize) -> ! {
     crate::os::exit(result as u64);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 unsafe extern "C" {
     fn main(argc: i32, argv: *const *const u8) -> i32;
 }

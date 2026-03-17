@@ -109,7 +109,7 @@ pub fn run_in_container<'a, T: Config>(
 pub fn run_with_buffer(
     name: &str,
     buffer: &[u8],
-    args: Vec<String>,
+    mut args: Vec<String>,
     root_path: &str,
     fds: &[(u8, u8)],
     env_vars: Vec<(String, String)>,
@@ -118,6 +118,47 @@ pub fn run_with_buffer(
     slot_id: u16,
 ) -> i32 {
     debugln!("[wasm-runner] Starting buffer {} (AOT: {})...", name, aot);
+
+    // Parse runtime-specific arguments
+    let mut actual_root_path = root_path.to_string();
+    let mut overrides: Vec<(usize, String)> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--dir" && i + 1 < args.len() {
+            args.remove(i);
+            actual_root_path = args.remove(i);
+        } else if args[i].starts_with("--arg") && args[i].contains('=') {
+            let eq_idx = args[i].find('=').unwrap();
+            if let Ok(n) = args[i][5..eq_idx].parse::<usize>() {
+                let val = args[i][eq_idx + 1..].to_string();
+                args.remove(i);
+                overrides.push((n, val));
+            } else {
+                i += 1;
+            }
+        } else if args[i].starts_with("--arg") {
+            if let Ok(n) = args[i][5..].parse::<usize>() {
+                if i + 1 < args.len() {
+                    args.remove(i);
+                    let val = args.remove(i);
+                    overrides.push((n, val));
+                } else {
+                    i += 1;
+                }
+            } else {
+                i += 1;
+            }
+        } else {
+            i += 1;
+        }
+    }
+
+    for (n, val) in overrides {
+        while args.len() <= n {
+            args.push(String::new());
+        }
+        args[n] = val;
+    }
 
     unsafe {
         crate::wasm::wasi::ICRNL = true;
@@ -169,7 +210,7 @@ pub fn run_with_buffer(
                 None,
                 sas_base.unwrap_or(0),
                 initial_mem_size as u64,
-                1024 * 1024 * 1024,
+                4 * 1024 * 1024 * 1024, // 4 GiB max
                 slot_info.code_base,
                 slot_info.stack_base,
             );
@@ -182,7 +223,7 @@ pub fn run_with_buffer(
 
             store.wasi_ctx = Some(WasiCtx::new_with_env(
                 args,
-                root_path.to_string(),
+                actual_root_path,
                 fds,
                 env_vars,
             ));
@@ -272,13 +313,54 @@ pub fn run_with_buffer(
 
 pub fn run_with_env(
     path: &str,
-    args: Vec<String>,
+    mut args: Vec<String>,
     root_path: &str,
     fds: &[(u8, u8)],
     env_vars: Vec<(String, String)>,
     aot: bool,
 ) -> i32 {
     debugln!("[wasm-runner] Starting {} (AOT: {})...", path, aot);
+
+    // Parse runtime-specific arguments
+    let mut actual_root_path = root_path.to_string();
+    let mut overrides: Vec<(usize, String)> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--dir" && i + 1 < args.len() {
+            args.remove(i);
+            actual_root_path = args.remove(i);
+        } else if args[i].starts_with("--arg") && args[i].contains('=') {
+            let eq_idx = args[i].find('=').unwrap();
+            if let Ok(n) = args[i][5..eq_idx].parse::<usize>() {
+                let val = args[i][eq_idx + 1..].to_string();
+                args.remove(i);
+                overrides.push((n, val));
+            } else {
+                i += 1;
+            }
+        } else if args[i].starts_with("--arg") {
+            if let Ok(n) = args[i][5..].parse::<usize>() {
+                if i + 1 < args.len() {
+                    args.remove(i);
+                    let val = args.remove(i);
+                    overrides.push((n, val));
+                } else {
+                    i += 1;
+                }
+            } else {
+                i += 1;
+            }
+        } else {
+            i += 1;
+        }
+    }
+
+    for (n, val) in overrides {
+        while args.len() <= n {
+            args.push(String::new());
+        }
+        args[n] = val;
+    }
 
     if let Ok(mut file) = File::open(path) {
         let size = file.size();
@@ -316,7 +398,7 @@ pub fn run_with_env(
                         None,
                         sas_base.unwrap_or(0),
                         initial_mem_size as u64,
-                        1024 * 1024 * 1024,
+                        4 * 1024 * 1024 * 1024, // 4 GiB max
                         slot_info.code_base,
                         slot_info.stack_base,
                     );
@@ -329,7 +411,7 @@ pub fn run_with_env(
 
                     store.wasi_ctx = Some(WasiCtx::new_with_env(
                         args,
-                        root_path.to_string(),
+                        actual_root_path,
                         fds,
                         env_vars,
                     ));

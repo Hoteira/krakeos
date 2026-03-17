@@ -1,5 +1,0 @@
-[package]
-name = "elfic"
-version.workspace = true
-authors.workspace = true
-edition.workspace = true

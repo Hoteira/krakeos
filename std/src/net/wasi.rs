@@ -850,7 +850,7 @@ pub fn register_wasi<T: Config + Clone>(linker: &mut crate::wasm::Linker, store:
     [],
     vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
     pub fn sock_accept_p1<T: Config>(_: &mut Store<'_, T>, _: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-        panic!("WASI P1 sock_accept called - NOT IMPLEMENTED");
+        Ok(vec![Value::I32(58)]) // ENOTSUP
     }
     );
 

@@ -1,0 +1,179 @@
+[+] Loading stage 3 ...
+[+] Loading stage 4 ...
+[+] Loading kernel ...
+[+] Jumping to protected mode ...
+[+] Jumping to long mode ...
+[+] FB Addr: 0xfd000000
+[+] FB Size: 0x384000
+Stage 4 loaded.
+SIGNPOST: Initializing Memory...
+PMM: Detected 5120MB RAM. Metadata needs 2560KB.
+PMM: Selected map_phys=0x1000000 from entry base=0x100000 len=0xbfedd000
+PMM: Page Map Virtual Address: 0xffff800001000000. Zeroing...
+PMM: Page Map zeroed successfully (1310720 descriptors).
+PMM: Starting to add free regions...
+PMM: Processing mmap entry 0: 0x0 -> 0x9fc00
+PMM: Skipping entry 0 (fully below 16MB or invalid)
+PMM: Processing mmap entry 3: 0x100000 -> 0xbffdd000
+PMM: Entry overlaps Page Map. Splitting. Map is 0x1000000 -> 0x1280000
+PMM: Remaining region after map: 0x1280000 -> 0xbffdd000
+PMM: Adding free region: 0x1280000 -> 0xbffdd000
+PMM: Processing mmap entry 7: 0x100000000 -> 0x140000000
+PMM: Region 0x100000000 -> 0x140000000 is above 4GB, skipping for now.
+PMM: Buddy Allocator initialized. Free: 5120MB
+VMM: Relocated PML4 from 0x20000 to 0xbffdc000
+VMM: Mapping entire physical RAM into HHDM...
+VMM: Physical memory mapping complete.
+PMM: Expanding discovery to all available RAM...
+PMM: Adding extended free region: 0x100000000 -> 0x140000000
+PMM: Expansion complete. Free: 5119MB
+SIGNPOST: Initializing ISTs...
+SIGNPOST: Loading IDT...
+SIGNPOST: Kernel fully initialized.
+SIGNPOST: Heap initialized.
+VirtIO Block: Found device at Bus 0, Device 4, Func 0
+VirtIO Block: Bus mastering enabled.
+VirtIO Block: Remapped BAR 4 to 0xc0000000
+VirtIO Block: Notify mapped at 0xffffa00000000000 -> Phys 0xc0003000
+VirtIO Block: Common Config mapped at 0xffffa00000200000 -> Phys 0xc0000000
+VirtIO Block: Negotiating features...
+VirtIO Block: Initialized successfully.
+[VMA] Track PID 0 region 0x4320000000..0x4ae0000000
+[VMA] Pushing to BTreeMap...
+[VMA] Push successful!
+[VMA] Track PID 0 region 0x100000000..0x104000000
+[VMA] Pushing to BTreeMap...
+[VMA] Push successful!
+[VMA] Track PID 0 region 0x4100000000..0x4100200000
+[VMA] Pushing to BTreeMap...
+[VMA] Push successful!
+Process::new: allocating Arc<Self>...
+Process::new: allocated successfully.
+SIGNPOST: TaskManager initialized.
+SIGNPOST: Calling DISPLAY_SERVER.init()...
+VirtIO GPU: Device not found.
+DisplayServer: Using VBE fallback
+SIGNPOST: DISPLAY_SERVER initialized.
+SIGNPOST: Drivers initialized.
+Mouse: Initializing PS/2 Mouse...
+Mouse: VMMouse initialized successfully (Absolute Mode).
+Mouse: Initialized (ID: 0).
+Mounting Ext2...
+Ext2: Reading superblock...
+Ext2: Superblock read.
+Ext2: Magic: 0xef53
+Ext2: Mounted. Block Size: 1024, Inode Size: 128
+Mounting at index 224, fs box: Pointer { addr: 0xffff8000b80007b0, metadata: DynMetadata(0xffffffff002838b0) }
+Spawning init process (WASM)...
+[spawn_process] path='@0xE0/sys/bin/init.wasm'
+[VMA] Track PID 1 region 0x4ae0000000..0x52a0000000
+[VMA] Pushing to BTreeMap...
+[VMA] Push successful!
+[VMA] Track PID 1 region 0x104000000..0x108000000
+[VMA] Pushing to BTreeMap...
+[VMA] Push successful!
+[VMA] Track PID 1 region 0x4100200000..0x4100400000
+[VMA] Pushing to BTreeMap...
+[VMA] Push successful!
+Process::new: allocating Arc<Self>...
+Process::new: allocated successfully.
+[Spawn] Spawning WASM kernel thread for PID 1 (slot 1) at 0xffffffff00139db0...
+Init process spawned with PID 1
+Kernel initialized, entering idle loop...
+KM[wasm-runner] Starting buffer @0xE0/sys/bin/init.wasm (AOT: true)...
+[std] LinearMemory: new_sas base=0x4ae0000000 size=3997696 (61 pages)
+[MMAP] addr=0x4ae0000000 len=0x3d0000
+[MMAP] pid=1 mem_base=0x4ae0000000 heap_limit=0x529ffff000
+[MMAP] Mapping 3997696 bytes at 0x4ae0000000..0x4ae03d0000
+[MMAP] OK: mapped at 0x4ae0000000
+[AOT] code_base=0x104000000 offset=0 code_len=11207186 (10 MB)
+[MMAP] addr=0x0 len=0x400000
+[MMAP] pid=1 mem_base=0x4ae0000000 heap_limit=0x529ffff000
+[MMAP] Mapping 4194304 bytes at 0x4be0000000..0x4be0400000
+[MMAP] OK: mapped at 0x4be0000000
+[MMAP] addr=0x0 len=0x10000
+[MMAP] pid=1 mem_base=0x4ae0000000 heap_limit=0x529ffff000
+[MMAP] Mapping 65536 bytes at 0x4be0400000..0x4be0410000
+[MMAP] OK: mapped at 0x4be0400000
+[MMAP] addr=0x4ae03d0000 len=0x100000
+[MMAP] pid=1 mem_base=0x4ae0000000 heap_limit=0x529ffff000
+[MMAP] Mapping 1048576 bytes at 0x4ae03d0000..0x4ae04d0000
+[MMAP] OK: mapped at 0x4ae03d0000
+[Init] Starting WASM Userland...
+[Init] Detected Screen Size: 1280x720
+[Init] Calling Window::new...
+[inkui] Creating window 'Wallpaper' with pid 1
+[EventQueue] PID 1 registered queue: header=0x4ae03d0010 buf=0x4ae03d03e8 cap=128
+[inkui] FrameBuffer::new: allocating...
+[MMAP] addr=0x4ae04d0000 len=0x390000
+[MMAP] pid=1 mem_base=0x4ae0000000 heap_limit=0x529ffff000
+[MMAP] Mapping 3735552 bytes at 0x4ae04d0000..0x4ae0860000
+[MMAP] OK: mapped at 0x4ae04d0000
+[inkui] FrameBuffer::new: front done
+[MMAP] addr=0x4ae0860000 len=0x390000
+[MMAP] pid=1 mem_base=0x4ae0000000 heap_limit=0x529ffff000
+[MMAP] Mapping 3735552 bytes at 0x4ae0860000..0x4ae0bf0000
+[MMAP] OK: mapped at 0x4ae0860000
+[inkui] FrameBuffer::new: back done
+[Init] Window::new returned.
+[Init] Loading wallpaper...
+[std::fs::read] Opening '@0xE0/sys/img/wallpaper2.raw'...
+[std::fs::read] File size: 2359296 bytes
+[MMAP] addr=0x4ae0bf0000 len=0x250000
+[MMAP] pid=1 mem_base=0x4ae0000000 heap_limit=0x529ffff000
+[MMAP] Mapping 2424832 bytes at 0x4ae0bf0000..0x4ae0e40000
+[MMAP] OK: mapped at 0x4ae0bf0000
+[std::fs::read] Reading at offset 0 (remaining 2359296)...
+[std::fs::read] Finished reading 2359296 bytes
+[Init] Wallpaper loaded (2359296 bytes).
+[MMAP] addr=0x4ae0e40000 len=0x250000
+[MMAP] pid=1 mem_base=0x4ae0000000 heap_limit=0x529ffff000
+[MMAP] Mapping 2424832 bytes at 0x4ae0e40000..0x4ae1090000
+[MMAP] OK: mapped at 0x4ae0e40000
+[Syscall] handle_add_window called! ptr=0x4be03ff9c8
+[Init] About to spawn dummy.wasm (WASIP1)...
+[Syscall] handle_spawn called! path_len=21
+[spawn_process] path='@0xE0/apps/dummy.wasm'
+[VMA] Track PID 3 region 0x52a0000000..0x5a60000000
+[VMA] Pushing to BTreeMap...
+[VMA] Push successful!
+[VMA] Track PID 3 region 0x108000000..0x10c000000
+[VMA] Pushing to BTreeMap...
+[VMA] Push successful!
+[VMA] Track PID 3 region 0x4100400000..0x4100600000
+[VMA] Pushing to BTreeMap...
+[VMA] Push successful!
+Process::new: allocating Arc<Self>...
+Process::new: allocated successfully.
+[Spawn] Spawning WASM kernel thread for PID 3 (slot 2) at 0xffffffff00139db0...
+[Init] Dummy app spawned with PID 3
+[Init] System ready.
+[wasm-runner] Starting buffer @0xE0/apps/dummy.wasm (AOT: true)...
+[std] LinearMemory: new_sas base=0x52a0000000 size=1114112 (17 pages)
+[MMAP] addr=0x52a0000000 len=0x110000
+[MMAP] pid=3 mem_base=0x52a0000000 heap_limit=0x5a5ffff000
+[MMAP] Mapping 1114112 bytes at 0x52a0000000..0x52a0110000
+[MMAP] OK: mapped at 0x52a0000000
+[AOT] code_base=0x108000000 offset=0 code_len=6247327 (5 MB)
+[MMAP] addr=0x0 len=0x400000
+[MMAP] pid=3 mem_base=0x52a0000000 heap_limit=0x5a5ffff000
+[MMAP] Mapping 4194304 bytes at 0x53a0000000..0x53a0400000
+[MMAP] OK: mapped at 0x53a0000000
+[MMAP] addr=0x0 len=0x10000
+[MMAP] pid=3 mem_base=0x52a0000000 heap_limit=0x5a5ffff000
+[MMAP] Mapping 65536 bytes at 0x53a0400000..0x53a0410000
+[MMAP] OK: mapped at 0x53a0400000
+[MMAP] addr=0x52a0110000 len=0x100000
+[MMAP] pid=3 mem_base=0x52a0000000 heap_limit=0x5a5ffff000
+[MMAP] Mapping 1048576 bytes at 0x52a0110000..0x52a0210000
+[MMAP] OK: mapped at 0x52a0110000
+Hello from dummy app (WASIP1)!
+Arguments:
+Environment variables:
+  PATH=@0xE0/sys/bin;@0xE0/apps
+  HOME=/
+  PWD=/
+  USER=racap
+Dummy app execution finished.
+[wasm-runner] Finished buffer @0xE0/apps/dummy.wasm.
+[Syscall] Process exited with code 0

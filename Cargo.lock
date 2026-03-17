@@ -33,8 +33,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "elfic"
+name = "dummy"
 version = "0.1.0"
+dependencies = [
+ "std",
+]
 
 [[package]]
 name = "fps_test"
@@ -65,7 +68,6 @@ dependencies = [
 name = "kernel"
 version = "0.1.0"
 dependencies = [
- "elfic",
  "std",
 ]
 

@@ -9,7 +9,6 @@ members = [
     "apps/cat",
     "apps/taskbar",
     "libs/libc",
-    "elfic",
     "inkui",
     "kernel",
     "std",
@@ -19,6 +18,7 @@ members = [
     "apps/container_test",
     "apps/wasm_loader",
     "apps/init",
+    "apps/dummy",
     "userland",
 ]
 

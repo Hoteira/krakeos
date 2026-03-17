@@ -194,18 +194,18 @@ crate::export_method!(
 crate::export_method!(
     "krakeos:system/process@0.2.0", "file-write",
     [],
-    vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32), ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I64)],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I32), ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I32)],
     pub fn file_write<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
-        let fd = match args.get(0) { Some(Value::I64(v)) => *v, _ => return Ok(vec![Value::I64(-1i64 as u64)]) };
-        let ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I64(-1i64 as u64)]) };
-        let len = match args.get(2) { Some(Value::I64(v)) => *v, _ => return Ok(vec![Value::I64(-1i64 as u64)]) };
+        let fd = match args.get(0) { Some(Value::I32(v)) => *v as usize, _ => return Ok(vec![Value::I32(-1i32 as u32)]) };
+        let ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I32(-1i32 as u32)]) };
+        let len = match args.get(2) { Some(Value::I32(v)) => *v as usize, _ => return Ok(vec![Value::I32(-1i32 as u32)]) };
 
         let mut buf = crate::alloc::vec![0u8; len as usize];
         if let Err(_) = read_mem(store, ptr, &mut buf) {
-            return Ok(vec![Value::I64(-1i64 as u64)]);
+            return Ok(vec![Value::I32(-1i32 as u32)]);
         }
-        let res = host::process_file_write(fd, buf.as_ptr(), len);
-        Ok(vec![Value::I64(res as u64)])
+        let res = host::process_file_write(fd as u64, buf.as_ptr(), len as u64);
+        Ok(vec![Value::I32(res as u32)])
     }
 );
 

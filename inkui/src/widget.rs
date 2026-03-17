@@ -701,7 +701,7 @@ impl Widget {
             }
             Widget::Image { geometry, source_data, rasterized_buffer, last_raster_size } => {
                 if geometry.width > 0 && geometry.height > 0 {
-                    if geometry.width != last_raster_size.0 || geometry.height != last_raster_size.1 {
+                    if (geometry.width != last_raster_size.0 || geometry.height != last_raster_size.1) && !source_data.is_empty() {
                         std::debugln!("Image Layout: geometry {}x{}, last {}x{}", geometry.width, geometry.height, last_raster_size.0, last_raster_size.1);
                         std::debugln!("Image: Rasterizing {}x{}...", geometry.width, geometry.height);
 
@@ -724,7 +724,9 @@ impl Widget {
                         }
                     }
                 } else {
-                    std::debugln!("Image Layout: geometry dimensions are ZERO! w={} h={}", geometry.width, geometry.height);
+                    if geometry.width == 0 || geometry.height == 0 {
+                        // std::debugln!("Image Layout: geometry dimensions are ZERO! w={} h={}", geometry.width, geometry.height);
+                    }
                 }
             }
             _ => {}
