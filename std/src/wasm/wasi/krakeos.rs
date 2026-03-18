@@ -1,10 +1,10 @@
-use crate::fs;
-use crate::alloc::boxed::Box;
 use crate::alloc::borrow::ToOwned;
+use crate::alloc::boxed::Box;
 use crate::alloc::collections::BTreeMap;
 use crate::alloc::format;
 use crate::alloc::string::String;
 use crate::alloc::vec::Vec;
+use crate::fs;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::sys::{syscall1, syscall4, syscall5, syscall6};
 use crate::wasm::wasi::env::{FdStat, FileStat, WasiEnv};
@@ -95,6 +95,7 @@ impl WasiFile for WasiSocket {
             Err(58) // ENOTSUP
         }
     }
+
     fn write(&mut self, buf: &[u8]) -> Result<usize, i32> {
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -304,24 +305,7 @@ impl WasiEnv for KrakeosWasiEnv {
                 vars.push((String::from("PYTHONHOME"), String::from("/")));
             }
             if !vars.iter().any(|(k, _)| k == "PYTHONPATH") {
-                vars.push((
-                    String::from("PYTHONPATH"),
-                    String::from("/apps/python/lib/python3.13"),
-                ));
-            }
-            if !vars.iter().any(|(k, _)| k == "PYTHONDONTWRITEBYTECODE") {
-                vars.push((String::from("PYTHONDONTWRITEBYTECODE"), String::from("1")));
-            }
-            // Force UTF-8 mode - on WASI, libc locale detection (nl_langinfo)
-            // doesn't work, so Python can't auto-detect the filesystem encoding.
-            if !vars.iter().any(|(k, _)| k == "PYTHONUTF8") {
-                vars.push((String::from("PYTHONUTF8"), String::from("1")));
-            }
-            if !vars.iter().any(|(k, _)| k == "PYTHONIOENCODING") {
-                vars.push((String::from("PYTHONIOENCODING"), String::from("utf-8")));
-            }
-            if !vars.iter().any(|(k, _)| k == "LC_ALL") {
-                vars.push((String::from("LC_ALL"), String::from("C.UTF-8")));
+                vars.push((String::from("PYTHONPATH"), String::from("/lib/python3.13")));
             }
         }
         Ok(vars)
@@ -792,6 +776,34 @@ impl WasiEnv for KrakeosWasiEnv {
         let full_new = self.resolve_path(new_fd, new_path)?;
         crate::fs::rename(&full_old, &full_new).map_err(|_| 28)
     }
+    }
+    Err(_) => {
+        crate::debugln!("[WASI] path_open FAILED: '{}'", full_path);
+        Err(44)
+    }
+}
+}
+
+fn path_create_directory(&mut self, dirfd: i32, path: &str) -> Result<(), i32> {
+let full_path = self.resolve_path(dirfd, path)?;
+if crate::fs::create_dir(&full_path).is_ok() {
+    Ok(())
+} else {
+    Err(5)
+}
+}
+
+fn path_remove_directory(&mut self, dirfd: i32, path: &str) -> Result<(), i32> {
+let full_path = self.resolve_path(dirfd, path)?;
+if crate::fs::remove_dir(&full_path).is_ok() {
+    Ok(())
+} else {
+    Err(5)
+}
+}
+
+fn path_unlink_file(&mut self, dirfd: i32, path: &str) -> Result<(), i32> {
+let full_path = self.resolve_path(dirfd, path)?;
 
     fn path_readlink(&mut self, _dirfd: i32, _path: &str, _buf: &mut [u8]) -> Result<usize, i32> {
         Err(58)
@@ -868,14 +880,14 @@ impl WasiEnv for KrakeosWasiEnv {
                 let mut entries = Vec::new();
                 for (i, e) in re.iter().enumerate() {
                     let wt = match e.file_type {
-                        crate::fs::FileType::File => 4, // REGULAR_FILE
+                        crate::fs::FileType::File => 4,      // REGULAR_FILE
                         crate::fs::FileType::Directory => 3, // DIRECTORY
-                        crate::fs::FileType::Device => 2, // CHARACTER_DEVICE
+                        crate::fs::FileType::Device => 2,    // CHARACTER_DEVICE
                         _ => 0,
                     };
                     entries.push((e.name.clone(), wt, (i + 1) as u64));
                 }
-                
+
                 if cookie as usize >= entries.len() {
                     return Ok(Vec::new());
                 }

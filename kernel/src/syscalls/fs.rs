@@ -80,7 +80,7 @@ pub fn handle_read(context: &mut CPUState) {
     let is_nonblock = {
         let tm = crate::task::TASK_MANAGER.int_lock();
         if let Some(idx) = tm.current_task_idx() {
-            tm.tasks.get(&(idx)).unwrap().process.as_ref().unwrap().fd_nonblock.lock()[fd]
+            tm.tasks.get(&(idx)).unwrap().process.as_ref().unwrap().fd_nonblock.lock().get(fd).copied().unwrap_or(false)
         } else { false }
     };
 
@@ -156,25 +156,28 @@ pub fn handle_poll(context: &mut CPUState) {
                 if !KEYBOARD_BUFFER.lock().is_empty() {
                     pfd.revents |= POLLIN;
                 }
-            } else if pfd.fd >= 0 && (pfd.fd as usize) < 16 {
+            } else if pfd.fd >= 0 {
                 let proc = tm.tasks.get(&(current_idx)).unwrap().process.as_ref().unwrap();
-                let gfd = proc.fd_table.lock()[pfd.fd as usize];
-                if gfd != -1 {
-                    if let Some(handle) = crate::fs::vfs::get_file(gfd as usize) {
-                        use crate::fs::vfs::FileHandle;
-                        match handle {
-                            FileHandle::Pipe { pipe } => {
-                                em.register(current_idx, crate::task::event_manager::AsyncEvent::IO(pipe.id()));
-                                if (pfd.events & POLLIN) != 0 && pipe.available() > 0 { pfd.revents |= POLLIN; }
-                                if (pfd.events & POLLOUT) != 0 && pipe.available() < 4096 { pfd.revents |= POLLOUT; }
+                let fd_table = proc.fd_table.lock();
+                if (pfd.fd as usize) < fd_table.len() {
+                    let gfd = fd_table[pfd.fd as usize];
+                    if gfd != -1 {
+                        if let Some(handle) = crate::fs::vfs::get_file(gfd as usize) {
+                            use crate::fs::vfs::FileHandle;
+                            match handle {
+                                FileHandle::Pipe { pipe } => {
+                                    em.register(current_idx, crate::task::event_manager::AsyncEvent::IO(pipe.id()));
+                                    if (pfd.events & POLLIN) != 0 && pipe.available() > 0 { pfd.revents |= POLLIN; }
+                                    if (pfd.events & POLLOUT) != 0 && pipe.available() < 4096 { pfd.revents |= POLLOUT; }
+                                }
+                                FileHandle::File { .. } => {
+                                    // Regular files are always ready
+                                    if (pfd.events & POLLIN) != 0 { pfd.revents |= POLLIN; }
+                                    if (pfd.events & POLLOUT) != 0 { pfd.revents |= POLLOUT; }
+                                }
                             }
-                            FileHandle::File { .. } => {
-                                // Regular files are always ready
-                                if (pfd.events & POLLIN) != 0 { pfd.revents |= POLLIN; }
-                                if (pfd.events & POLLOUT) != 0 { pfd.revents |= POLLOUT; }
-                            }
-                        }
-                    } else { pfd.revents = POLLERR; }
+                        } else { pfd.revents = POLLERR; }
+                    } else { pfd.revents = POLLNVAL; }
                 } else { pfd.revents = POLLNVAL; }
             } else { pfd.revents = POLLNVAL; }
 
@@ -359,13 +362,16 @@ pub fn assign_local_fd(global_fd: usize) -> u64 {
         if let Some(thread) = tm.tasks.get_mut(&(current as usize)) {
             let proc = thread.process.as_ref().expect("Thread has no process");
             let mut fd_table = proc.fd_table.lock();
-            for i in 0..16 {
+            for i in 0..fd_table.len() {
                 if fd_table[i] == -1 {
                     fd_table[i] = global_fd as i16;
                     return i as u64;
                 }
             }
-            crate::debugln!("[Kernel] Process {} reached the maximum number of open file descriptors (16)!", proc.pid);
+            // No free slots found, expand the vector
+            let new_fd = fd_table.len();
+            fd_table.push(global_fd as i16);
+            return new_fd as u64;
         }
     }
     u64::MAX
@@ -484,10 +490,13 @@ pub fn handle_read_file(context: &mut CPUState) {
     let global_fd_opt = {
         let tm = crate::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
-        if current >= 0 && local_fd < 16 {
+        if current >= 0 {
             if let Some(thread) = tm.tasks.get(&(current as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
-                Some(proc.fd_table.lock()[local_fd])
+                let fd_table = proc.fd_table.lock();
+                if local_fd < fd_table.len() {
+                    Some(fd_table[local_fd])
+                } else { None }
             } else { None }
         } else { None }
     };
@@ -505,7 +514,7 @@ pub fn handle_read_file(context: &mut CPUState) {
         let is_nonblock = {
             let tm = crate::task::TASK_MANAGER.int_lock();
             if let Some(idx) = tm.current_task_idx() {
-                tm.tasks.get(&(idx)).unwrap().process.as_ref().unwrap().fd_nonblock.lock()[local_fd]
+                tm.tasks.get(&(idx)).unwrap().process.as_ref().unwrap().fd_nonblock.lock().get(local_fd).copied().unwrap_or(false)
             } else { false }
         };
 
@@ -571,10 +580,13 @@ pub fn handle_write_file(context: &mut CPUState) {
     let global_fd_opt = {
         let tm = crate::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
-        if current >= 0 && local_fd < 16 {
+        if current >= 0 {
             if let Some(thread) = tm.tasks.get(&(current as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
-                Some(proc.fd_table.lock()[local_fd])
+                let fd_table = proc.fd_table.lock();
+                if local_fd < fd_table.len() {
+                    Some(fd_table[local_fd])
+                } else { None }
             } else { None }
         } else { None }
     };
@@ -643,10 +655,13 @@ pub fn handle_read_dir(context: &mut CPUState) {
     let global_fd_opt = {
         let tm = crate::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
-        if current >= 0 && local_fd < 16 {
+        if current >= 0 {
             if let Some(thread) = tm.tasks.get(&(current as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
-                Some(proc.fd_table.lock()[local_fd])
+                let fd_table = proc.fd_table.lock();
+                if local_fd < fd_table.len() {
+                    Some(fd_table[local_fd])
+                } else { None }
             } else { None }
         } else { None }
     };
@@ -715,11 +730,13 @@ pub fn handle_stat(context: &mut CPUState, is_fstat: bool) {
         let local_fd = context.rdi as usize;
         let tm = crate::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
-        if current >= 0 && local_fd < 16 {
+        if current >= 0 {
             if let Some(thread) = tm.tasks.get(&(current as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
-                let gfd = proc.fd_table.lock()[local_fd];
-                if gfd != -1 {
+                let fd_table = proc.fd_table.lock();
+                if local_fd < fd_table.len() {
+                    let gfd = fd_table[local_fd];
+                    if gfd != -1 {
                     acquire_fs_lock();
                     let handle_opt = crate::fs::vfs::get_file(gfd as usize);
                     let stat_res = if let Some(handle) = handle_opt {
@@ -735,6 +752,7 @@ pub fn handle_stat(context: &mut CPUState, is_fstat: bool) {
                 } else { None }
             } else { None }
         } else { None }
+    } else { None }
     };
 
     match stat {
@@ -759,11 +777,13 @@ pub fn handle_ftruncate(context: &mut CPUState) {
     let length = context.rsi as u64;
     let tm = crate::task::TASK_MANAGER.int_lock();
     let current = tm.current_task;
-    if current >= 0 && local_fd < 16 {
+    if current >= 0 {
         if let Some(thread) = tm.tasks.get(&(current as usize)) {
             let proc = thread.process.as_ref().expect("Thread has no process");
-            let gfd = proc.fd_table.lock()[local_fd];
-            if gfd != -1 {
+            let fd_table = proc.fd_table.lock();
+            if local_fd < fd_table.len() {
+                let gfd = fd_table[local_fd];
+                if gfd != -1 {
                 acquire_fs_lock();
                 let handle_opt = crate::fs::vfs::get_file(gfd as usize);
                 let res = if let Some(handle) = handle_opt {
@@ -783,6 +803,7 @@ pub fn handle_ftruncate(context: &mut CPUState) {
                 }
             } else { context.rax = u64::MAX }
         } else { context.rax = u64::MAX }
+    } else { context.rax = u64::MAX }
     } else { context.rax = u64::MAX }
 }
 
@@ -840,7 +861,7 @@ pub fn handle_close(context: &mut CPUState) {
         if let Some(thread) = tm.tasks.get_mut(&(current)) {
             let proc = thread.process.as_ref().expect("Thread has no process");
             let mut fd_table = proc.fd_table.lock();
-            if local_fd < 16 {
+            if local_fd < fd_table.len() {
                 let global = fd_table[local_fd];
                 if global != -1 {
                     // We cannot use FS_LOCK because we hold Task Lock.
@@ -865,8 +886,10 @@ pub fn handle_seek(context: &mut CPUState) {
     if let Some(current) = tm.current_task_idx() {
         if let Some(thread) = tm.tasks.get(&(current)) {
             let proc = thread.process.as_ref().expect("Thread has no process");
-            let gfd = proc.fd_table.lock()[local_fd];
-            if gfd != -1 {
+            let fd_table = proc.fd_table.lock();
+            if local_fd < fd_table.len() {
+                let gfd = fd_table[local_fd];
+                if gfd != -1 {
                 acquire_fs_lock();
                 let handle_opt = crate::fs::vfs::get_file(gfd as usize);
                 let res = if let Some(handle) = handle_opt {
@@ -897,6 +920,7 @@ pub fn handle_seek(context: &mut CPUState) {
                 }
             } else { context.rax = u64::MAX; }
         } else { context.rax = u64::MAX; }
+    } else { context.rax = u64::MAX; }
     } else { context.rax = u64::MAX; }
 }
 
@@ -974,11 +998,13 @@ pub fn handle_mmap_file(context: &mut CPUState) {
 
         let current = tm.current_task;
 
-        if current >= 0 && local_fd < 16 {
+        if current >= 0 {
             if let Some(thread) = tm.tasks.get(&(current as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
-
-                Some(proc.fd_table.lock()[local_fd])
+                let fd_table = proc.fd_table.lock();
+                if local_fd < fd_table.len() {
+                    Some(fd_table[local_fd])
+                } else { None }
             } else { None }
         } else { None }
     };
@@ -1022,10 +1048,13 @@ pub fn handle_pread64(context: &mut CPUState) {
     let global_fd_opt = {
         let tm = crate::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
-        if current >= 0 && local_fd < 16 {
+        if current >= 0 {
             if let Some(thread) = tm.tasks.get(&(current as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
-                Some(proc.fd_table.lock()[local_fd])
+                let fd_table = proc.fd_table.lock();
+                if local_fd < fd_table.len() {
+                    Some(fd_table[local_fd])
+                } else { None }
             } else { None }
         } else { None }
     };
@@ -1067,10 +1096,13 @@ pub fn handle_pwrite64(context: &mut CPUState) {
     let global_fd_opt = {
         let tm = crate::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
-        if current >= 0 && local_fd < 16 {
+        if current >= 0 {
             if let Some(thread) = tm.tasks.get(&(current as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
-                Some(proc.fd_table.lock()[local_fd])
+                let fd_table = proc.fd_table.lock();
+                if local_fd < fd_table.len() {
+                    Some(fd_table[local_fd])
+                } else { None }
             } else { None }
         } else { None }
     };
@@ -1210,11 +1242,13 @@ pub fn handle_set_nonblock(context: &mut CPUState) {
     if let Some(current) = tm.current_task_idx() {
         if let Some(thread) = tm.tasks.get_mut(&(current)) {
             let proc = thread.process.as_ref().expect("Thread has no process");
-            if fd < 16 {
-                proc.fd_nonblock.lock()[fd] = nonblock;
-                context.rax = 0;
-                return;
+            let mut fd_nonblock = proc.fd_nonblock.lock();
+            if fd >= fd_nonblock.len() {
+                fd_nonblock.resize(fd + 1, false);
             }
+            fd_nonblock[fd] = nonblock;
+            context.rax = 0;
+            return;
         }
     }
     context.rax = u64::MAX;
@@ -1236,7 +1270,7 @@ pub fn handle_readlinkat(context: &mut CPUState) {
 
     let base_path = if dirfd == -100 { // AT_FDCWD
         get_current_cwd()
-    } else if dirfd >= 0 && (dirfd as usize) < 16 {
+    } else if dirfd >= 0 {
         let tm = crate::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
         if current >= 0 {
@@ -1249,19 +1283,22 @@ pub fn handle_readlinkat(context: &mut CPUState) {
                 String::from_utf8_lossy(&cwd[..cwd_len]).into_owned()
             };
 
-            let gfd = proc.fd_table.lock()[dirfd as usize];
-            if gfd != -1 {
-                acquire_fs_lock();
-                let handle_opt = crate::fs::vfs::get_file(gfd as usize);
-                release_fs_lock();
+            let fd_table = proc.fd_table.lock();
+            if (dirfd as usize) < fd_table.len() {
+                let gfd = fd_table[dirfd as usize];
+                if gfd != -1 {
+                    acquire_fs_lock();
+                    let handle_opt = crate::fs::vfs::get_file(gfd as usize);
+                    release_fs_lock();
 
-                if let Some(handle) = handle_opt {
-                    if let crate::fs::vfs::FileHandle::File { node, .. } = handle {
-                        if node.inode() == 2 {
-                            String::from("@0xE0/")
-                        } else {
-                            get_proc_cwd()
-                        }
+                    if let Some(handle) = handle_opt {
+                        if let crate::fs::vfs::FileHandle::File { node, .. } = handle {
+                            if node.inode() == 2 {
+                                String::from("@0xE0/")
+                            } else {
+                                get_proc_cwd()
+                            }
+                        } else { get_proc_cwd() }
                     } else { get_proc_cwd() }
                 } else { get_proc_cwd() }
             } else { get_proc_cwd() }

@@ -383,6 +383,10 @@ pub fn create_wasi_p2_imports<T: Config + Clone + Send + 'static>(linker: &mut L
             vec![],
             vec![],
             crate::os::krakeos::wasi::thread_exit_host);
+        define(linker, store, module, "chdir",
+            vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64)],
+            vec![ValType::NumType(NumType::I32)],
+            crate::os::krakeos::wasi::chdir_host);
     }
     // krakeos:system/memory@0.2.0
     {

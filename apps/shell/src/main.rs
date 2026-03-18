@@ -211,27 +211,23 @@ pub fn main() {
                         let args_refs: Vec<&str> = parsed.args.iter().map(|s| s.as_str()).collect();
 
                         if prog_path.ends_with(".wasm") {
-                            let mut wasm_args = Vec::new();
-                            let mut root_path = None;
-                            let mut use_aot = false;
+                            let mut final_wasm_args = Vec::new();
                             let mut idx = 0;
 
                             while idx < parsed.args.len() {
                                 if parsed.args[idx] == "--dir" && idx + 1 < parsed.args.len() {
-                                    root_path = Some(resolve_path(&cwd, &parsed.args[idx + 1]));
+                                    final_wasm_args.push(String::from("--dir"));
+                                    final_wasm_args.push(resolve_path(&cwd, &parsed.args[idx + 1]));
                                     idx += 2;
-                                } else if parsed.args[idx] == "--aot" {
-                                    use_aot = true;
-                                    idx += 1;
                                 } else {
-                                    wasm_args.push(parsed.args[idx].clone());
+                                    final_wasm_args.push(parsed.args[idx].clone());
                                     idx += 1;
                                 }
                             }
 
                             let mut final_args = Vec::new();
                             final_args.push(parsed.cmd.clone());
-                            final_args.extend(wasm_args);
+                            final_args.extend(final_wasm_args);
                             
                             let final_args_refs: Vec<&str> = final_args.iter().map(|s| s.as_str()).collect();
 

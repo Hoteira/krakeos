@@ -755,6 +755,23 @@ crate::export_method!(
     }
 );
 
+crate::export_method!(
+    "krakeos:system/process@0.2.0", "chdir",
+    [],
+    vec![ValType::NumType(NumType::I32), ValType::NumType(NumType::I64)], vec![ValType::NumType(NumType::I32)],
+    pub fn chdir_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
+        let ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I32(-1i32 as u32)]) };
+        let len = match args.get(1) { Some(Value::I64(v)) => *v, _ => return Ok(vec![Value::I32(-1i32 as u32)]) };
+        
+        let mut buf = crate::alloc::vec![0u8; len as usize];
+        if let Err(_) = read_mem(store, ptr, &mut buf) {
+            return Ok(vec![Value::I32(-1i32 as u32)]);
+        }
+        let path = crate::alloc::string::String::from_utf8_lossy(&buf);
+        Ok(vec![Value::I32(host::chdir(&path) as u32)])
+    }
+);
+
 pub fn register_wasi<T: Config + Clone + Send + 'static>(linker: &mut crate::wasm::Linker, store: &mut crate::wasm::Store<'_, T>) {
     get_screen_width_host::register(linker, store);
     get_screen_height_host::register(linker, store);
@@ -791,6 +808,7 @@ pub fn register_wasi<T: Config + Clone + Send + 'static>(linker: &mut crate::was
     syscall_host::register(linker, store);
     spawn_thread_host::register(linker, store);
     thread_exit_host::register(linker, store);
+    chdir_host::register(linker, store);
     dump_vma_host::register(linker, store);
     get_memory_usage_host::register(linker, store);
 }

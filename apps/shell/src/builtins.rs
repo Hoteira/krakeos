@@ -72,23 +72,28 @@ WASM:
     } else if cmd == "wasm" {
         let mut actual_args = args.to_vec();
         let mut i = 0;
+        let mut prog_idx = None;
+
         while i < actual_args.len() {
-            if actual_args[i] == "--dir" || actual_args[i] == "--env" {
+            if actual_args[i] == "--dir" {
                 if i + 1 < actual_args.len() {
-                    actual_args.remove(i);
-                    actual_args.remove(i);
+                    actual_args[i + 1] = resolve_path(cwd, &actual_args[i + 1]);
+                    i += 2;
                 } else {
                     i += 1;
                 }
-            } else if actual_args[i] == "--aot" {
-                actual_args.remove(i);
+            } else if actual_args[i].starts_with("--") {
+                i += 1;
             } else {
+                if prog_idx.is_none() {
+                    prog_idx = Some(i);
+                }
                 i += 1;
             }
         }
 
-        if !actual_args.is_empty() {
-            let prog_name = actual_args[0].clone();
+        if let Some(idx) = prog_idx {
+            let prog_name = actual_args[idx].clone();
             let mut prog_path = resolve_path(cwd, &prog_name);
 
             if std::fs::File::open(&prog_path).is_err() && !prog_name.starts_with('@') && !prog_name.contains('/') {
@@ -109,13 +114,12 @@ WASM:
                 }
             }
 
-            let mut final_args = Vec::new();
-            final_args.push(prog_name);
-            final_args.extend(actual_args.into_iter().skip(1));
-            
-            let args_refs: Vec<&str> = final_args.iter().map(|s| s.as_str()).collect();
+            // Prepare arguments: we pass ALL of them, including flags.
+            // But we need to make sure the wasm runner gets them in a sensible way.
+            // Actually, the wasm runner in std/src/wasm/runner.rs parses flags from the beginning.
+            let args_refs: Vec<&str> = actual_args.iter().map(|s| s.as_str()).collect();
             let pid = std::os::spawn_with_fds(&prog_path, &args_refs, &[(0, in_fd as u8), (1, out_fd as u8), (2, 2)]);
-            
+
             if pid != usize::MAX {
                 return std::os::waitpid(pid as u64) as i32;
             } else {
@@ -125,7 +129,8 @@ WASM:
             }
         }
         return 1;
-    } else if cmd == "export" {
+    }
+ else if cmd == "export" {
         if !args.is_empty() {
             let arg = &args[0];
             if arg.starts_with("PATH=") {
@@ -206,11 +211,7 @@ WASM:
         let target = if args.is_empty() { "@0xE0" } else { &args[0] };
         let new_path = resolve_path(cwd, target);
         
-        let path_c = format!("{}\0", new_path);
-        let fd = std::os::native_file_open(path_c.as_ptr(), path_c.len() as u64 - 1, 0);
-        if fd >= 0 {
-            // Success, it exists. Close handle and update CWD.
-            std::os::file_close(fd as usize);
+        if std::os::chdir(&new_path) == 0 {
             *cwd = new_path;
             return 0;
         } else {

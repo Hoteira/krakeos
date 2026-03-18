@@ -1,7 +1,0 @@
-[package]
-name = "wasm_loader"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-std = { path = "../../std" }

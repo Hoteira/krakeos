@@ -70,18 +70,21 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
 
         let (new_fd_table, term_size) = {
             let tm = crate::task::TASK_MANAGER.int_lock();
-            let mut fds = [-1i16; 16];
+            let mut fds = alloc::vec![-1i16; 16];
             let mut size = (80u16, 25u16);
             if tm.current_task >= 0 {
                 if let Some(thread) = tm.tasks.get(&(tm.current_task as usize)) {
                     let proc = thread.process.as_ref().expect("Thread has no process");
-                    fds = *proc.fd_table.lock();
+                    fds = proc.fd_table.lock().clone();
                     size = (*proc.terminal_width.lock(), *proc.terminal_height.lock());
 
                     if let Some(map) = fd_inheritance {
-                        let mut custom_fds = [-1i16; 16];
+                        let mut custom_fds = alloc::vec![-1i16; fds.len()];
                         for &(child_fd, parent_fd) in map {
-                            if (parent_fd as usize) < 16 && (child_fd as usize) < 16 {
+                            if (parent_fd as usize) < fds.len() {
+                                if (child_fd as usize) >= custom_fds.len() {
+                                    custom_fds.resize((child_fd as usize) + 1, -1);
+                                }
                                 custom_fds[child_fd as usize] = fds[parent_fd as usize];
                             }
                         }
@@ -114,6 +117,8 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
             path_len: usize,
             buf_ptr: *mut u8,
             buf_len: usize,
+            cwd_ptr: *mut u8,
+            cwd_len: usize,
             pid: u64,
             slot_id: u16,
             wasm_args: *mut Vec<String>,
@@ -125,6 +130,9 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
             let path_slice = unsafe { core::slice::from_raw_parts(args.path_ptr, args.path_len) };
             let path = alloc::string::String::from_utf8_lossy(path_slice).into_owned();
 
+            let cwd_slice = unsafe { core::slice::from_raw_parts(args.cwd_ptr, args.cwd_len) };
+            let cwd = alloc::string::String::from_utf8_lossy(cwd_slice).into_owned();
+
             let buffer = unsafe { core::slice::from_raw_parts(args.buf_ptr, args.buf_len) };
 
             let wasm_args = unsafe { *alloc::boxed::Box::from_raw(args.wasm_args) };
@@ -133,7 +141,7 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
                 &path,
                 buffer,
                 wasm_args,
-                "@0xE0/",
+                &cwd,
                 &[],
                 alloc::vec::Vec::new(),
                 true, // AOT
@@ -143,6 +151,7 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
 
             unsafe {
                 alloc::alloc::dealloc(args.path_ptr, core::alloc::Layout::from_size_align(args.path_len, 1).unwrap());
+                alloc::alloc::dealloc(args.cwd_ptr, core::alloc::Layout::from_size_align(args.cwd_len, 1).unwrap());
                 alloc::alloc::dealloc(args.buf_ptr, core::alloc::Layout::from_size_align(args.buf_len, 1).unwrap());
 
                 crate::syscalls::syscall_dispatcher(
@@ -161,6 +170,10 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
         let path_ptr = unsafe { alloc::alloc::alloc(core::alloc::Layout::from_size_align(path_bytes.len(), 1).unwrap()) };
         unsafe { core::ptr::copy_nonoverlapping(path_bytes.as_ptr(), path_ptr, path_bytes.len()) };
 
+        let cwd_bytes = cwd_str.as_bytes();
+        let cwd_ptr = unsafe { alloc::alloc::alloc(core::alloc::Layout::from_size_align(cwd_bytes.len(), 1).unwrap()) };
+        unsafe { core::ptr::copy_nonoverlapping(cwd_bytes.as_ptr(), cwd_ptr, cwd_bytes.len()) };
+
         let buf_ptr = unsafe { alloc::alloc::alloc(core::alloc::Layout::from_size_align(file_buf.len(), 1).unwrap()) };
         unsafe { core::ptr::copy_nonoverlapping(file_buf.as_ptr(), buf_ptr, file_buf.len()) };
 
@@ -169,6 +182,8 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
             path_len: path_bytes.len(),
             buf_ptr,
             buf_len: file_buf.len(),
+            cwd_ptr,
+            cwd_len: cwd_bytes.len(),
             pid,
             slot_id,
             wasm_args: Box::into_raw(Box::new(wasm_args_vec)),
@@ -191,18 +206,21 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
 
     let (new_fd_table_elf, term_size_elf) = {
         let tm = crate::task::TASK_MANAGER.int_lock();
-        let mut fds = [-1i16; 16];
+        let mut fds = alloc::vec![-1i16; 16];
         let mut size = (80u16, 25u16);
         if tm.current_task >= 0 {
             if let Some(thread) = tm.tasks.get(&(tm.current_task as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
-                fds = *proc.fd_table.lock();
+                fds = proc.fd_table.lock().clone();
                 size = (*proc.terminal_width.lock(), *proc.terminal_height.lock());
 
                 if let Some(map) = fd_inheritance {
-                    let mut custom_fds = [-1i16; 16];
+                    let mut custom_fds = alloc::vec![-1i16; fds.len()];
                     for &(child_fd, parent_fd) in map {
-                        if (parent_fd as usize) < 16 && (child_fd as usize) < 16 {
+                        if (parent_fd as usize) < fds.len() {
+                            if (child_fd as usize) >= custom_fds.len() {
+                                custom_fds.resize((child_fd as usize) + 1, -1);
+                            }
                             custom_fds[child_fd as usize] = fds[parent_fd as usize];
                         }
                     }
@@ -327,7 +345,7 @@ pub fn handle_exit(context: &mut CPUState) {
 
                 let proc = thread.process.as_ref().expect("Thread has no process");
                 let mut fd_table = proc.fd_table.lock();
-                for i in 0..16 {
+                for i in 0..fd_table.len() {
                     let global = fd_table[i];
                     if global != -1 {
                         crate::fs::vfs::close_file(global as usize);

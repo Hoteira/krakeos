@@ -377,6 +377,16 @@ pub fn sleep(ms: u64) {
     crate::time::sleep(core::time::Duration::from_millis(ms));
 }
 
+method_export!("krakeos:system/process@0.2.0", "chdir",
+    pub fn process_chdir(path_ptr: *const u8, path_len: u64) -> i32 {
+        crate::sys::syscall(80, path_ptr as u64, path_len, 0) as i32
+    }
+);
+
+pub fn chdir(path: &str) -> i32 {
+    process_chdir(path.as_ptr(), path.len() as u64)
+}
+
 pub fn yield_task() {
     process_yield();
 }

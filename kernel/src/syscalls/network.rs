@@ -62,13 +62,17 @@ pub fn handle_socket(context: &mut CPUState) {
         if let Some(thread) = tm.tasks.get_mut(&(current)) {
             let proc = thread.process.as_ref().unwrap();
             let mut table = proc.socket_table.lock();
-            for i in 0..16 {
+            for i in 0..table.len() {
                 if table[i].is_none() {
                     table[i] = Some(socket_id);
                     context.rax = i as u64;
                     return;
                 }
             }
+            let new_fd = table.len();
+            table.push(Some(socket_id));
+            context.rax = new_fd as u64;
+            return;
         }
     }
     context.rax = u64::MAX;
@@ -211,13 +215,17 @@ pub fn handle_accept(context: &mut CPUState) {
         if let Some(current) = tm.current_task_idx() {
             let proc = tm.tasks.get(&(current)).unwrap().process.as_ref().unwrap();
             let mut table = proc.socket_table.lock();
-            for i in 0..16 {
+            for i in 0..table.len() {
                 if table[i].is_none() {
                     table[i] = Some(new_sid);
                     context.rax = i as u64;
                     return;
                 }
             }
+            let new_fd = table.len();
+            table.push(Some(new_sid));
+            context.rax = new_fd as u64;
+            return;
         }
     }
     context.rax = u64::MAX;
@@ -282,7 +290,7 @@ pub fn handle_close_socket(context: &mut CPUState) {
     if let Some(current) = tm.current_task_idx() {
         let proc = tm.tasks.get(&(current)).unwrap().process.as_ref().unwrap();
         let mut table = proc.socket_table.lock();
-        if fd < 16 {
+        if fd < table.len() {
             table[fd] = None;
             context.rax = 0;
             return;
@@ -360,5 +368,5 @@ fn get_socket_id(context: &CPUState, fd: usize) -> Option<usize> {
     let tm = crate::task::TASK_MANAGER.int_lock();
     let current = tm.current_task_idx()?;
     let proc = tm.tasks.get(&(current))?.process.as_ref()?;
-    proc.socket_table.lock()[fd]
+    proc.socket_table.lock().get(fd).copied().flatten()
 }

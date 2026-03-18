@@ -143,7 +143,7 @@ impl TaskManager {
         }
     }
 
-    pub fn init_user_task(&mut self, slot: usize, entry_point: u64, _pml4: u64, args: Option<&[&str]>, fd_table: Option<[i16; 16]>, name: &[u8], terminal_size: (u16, u16), parent_pid: Option<u64>) -> Result<(), pmm::FrameError> {
+    pub fn init_user_task(&mut self, slot: usize, entry_point: u64, _pml4: u64, args: Option<&[&str]>, fd_table: Option<Vec<i16>>, name: &[u8], terminal_size: (u16, u16), parent_pid: Option<u64>) -> Result<(), pmm::FrameError> {
         let pid = slot as u64;
         let mut thread = Thread::new(name);
 

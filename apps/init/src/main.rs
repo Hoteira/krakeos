@@ -25,10 +25,10 @@ pub fn main() {
     win.y = 0;
 
     debugln!("[Init] Loading wallpaper...");
-    match std::fs::read("@0xE0/sys/img/wallpaper2.raw") {
+    match std::fs::read("@0xE0/sys/img/wallpaper2.png") {
         Ok(bytes) => {
             debugln!("[Init] Wallpaper loaded ({} bytes).", bytes.len());
-            let img = inkui::Widget::raw_image(1, &bytes, 1024, 576)
+            let img = inkui::Widget::image(1, &bytes)
                 .width(inkui::Size::Relative(100))
                 .height(inkui::Size::Relative(100));
             win.children.push(img);

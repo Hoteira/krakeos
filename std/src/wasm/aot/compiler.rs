@@ -173,6 +173,19 @@ impl<'a> AotCompiler<'a> {
             crate::wasm::common::validation::code::read_declared_locals(&mut reader).unwrap();
         let total_locals = param_count + locals.len();
 
+        // Stack limit check BEFORE allocating locals to prevent writing below the stack
+        // on overflow. Check: RSP - total_locals*16 - margin > stack_limit
+        {
+            let locals_bytes = (total_locals * 16) as u32;
+            // Compute future RSP in RAX = RSP - locals_bytes - 4096 (margin for WASM stack)
+            self.emitter.mov_reg_reg(Reg::RAX, Reg::RSP);
+            self.emitter.sub_reg_imm32(Reg::RAX, locals_bytes);
+            self.emitter.sub_reg_imm32(Reg::RAX, 4096); // margin for WASM execution stack
+            self.emitter.mov_reg_mem64(Reg::RCX, Reg::RDI, 56); // stack_limit
+            self.emitter.cmp_reg_reg(Reg::RAX, Reg::RCX);
+            self.emitter.jcc_label(0x86, self.trap_stack_overflow_label); // jbe trap
+        }
+
         // Locals area on stack
         self.emitter
             .sub_reg_imm32(Reg::RSP, (total_locals * 16) as u32);
@@ -209,11 +222,6 @@ impl<'a> AotCompiler<'a> {
         self.emitter.mov_mem64_reg(Reg::RSP, 0, Reg::RAX);
         self.emitter.ldmxcsr_mem(Reg::RSP, 0);
         self.emitter.add_reg_imm32(Reg::RSP, 16);
-
-        // Stack limit check
-        self.emitter.mov_reg_mem64(Reg::RAX, Reg::RDI, 56);
-        self.emitter.cmp_reg_reg(Reg::RSP, Reg::RAX);
-        self.emitter.jcc_label(0x86, self.trap_stack_overflow_label);
 
         self.emit_fuel_check(10);
 
@@ -294,6 +302,21 @@ impl<'a> AotCompiler<'a> {
         self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48);
         // Force reload memory base (R14) from context [RDI + 16]
         self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16);
+    }
+
+    fn emit_sp_sanity_check(&mut self) {
+        // After 'mov RSP, RAX', verify RSP is within the AOT stack bounds.
+        // Load stack_limit from context and check RSP > stack_limit.
+        // Also check RSP is below a reasonable upper bound (stack_base + 4MB).
+        self.emitter.mov_reg_mem64(Reg::RCX, Reg::RDI, 56); // stack_limit (base)
+        self.emitter.cmp_reg_reg(Reg::RSP, Reg::RCX);
+        self.emitter.jcc_label(0x86, self.trap_stack_overflow_label); // jbe = RSP <= stack_limit
+        // Check RSP is not absurdly high (ctx.stack_base + stack_size)
+        // stack_base is at offset 32
+        self.emitter.mov_reg_mem64(Reg::RCX, Reg::RDI, 32); // stack_base
+        self.emitter.add_reg_imm32(Reg::RCX, 4 * 1024 * 1024); // + 4MB
+        self.emitter.cmp_reg_reg(Reg::RSP, Reg::RCX);
+        self.emitter.jcc_label(0x87, self.trap_stack_overflow_label); // ja = RSP > upper bound
     }
 
     fn emit_call_trampoline(&mut self, trampoline: crate::wasm::aot::runtime::AotTrampoline) {
@@ -1033,6 +1056,7 @@ impl<'a> AotCompiler<'a> {
                     self.emitter.add_reg_imm32(Reg::RSP, 8); // Balance align
                     self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16);
                     self.emitter.mov_reg_reg(Reg::RSP, Reg::RAX);
+                    self.emit_sp_sanity_check();
                     // Check trap_code
                     self.emitter.mov_reg_mem64(Reg::RAX, Reg::RDI, 64); // trap_code pointer
                     self.emitter.cmp_mem32_imm32(Reg::RAX, 0, 0); // cmp dword ptr [rax], 0
@@ -1047,8 +1071,10 @@ impl<'a> AotCompiler<'a> {
                         label_id: label,
                         kind: crate::wasm::aot::emitter::RelocKind::Call32,
                     });
+                    self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48);
                     self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16);
                     self.emitter.mov_reg_reg(Reg::RSP, Reg::RAX);
+                    self.emit_sp_sanity_check();
 
                     // Check trap_code
                     self.emitter.mov_reg_mem64(Reg::RAX, Reg::RDI, 64); // trap_code pointer
@@ -1082,6 +1108,7 @@ impl<'a> AotCompiler<'a> {
                 self.emitter.add_reg_imm32(Reg::RSP, 8); // Balance align
                 self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16);
                 self.emitter.mov_reg_reg(Reg::RSP, Reg::RAX);
+                self.emit_sp_sanity_check();
 
                 // Check trap_code
                 self.emitter.mov_reg_mem64(Reg::RAX, Reg::RDI, 64); // trap_code pointer

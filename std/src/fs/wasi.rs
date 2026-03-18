@@ -1295,11 +1295,27 @@ crate::export_method!(
                     let name_bytes = name.as_bytes();
                     let entry_len = 24 + name_bytes.len() as u32;
                     if written + entry_len > len {
+                        // Entry doesn't fit completely. Write a partial entry to fill
+                        // the buffer so bufused == buflen, signaling "more entries"
+                        // per the WASI spec (bufused < buflen means end-of-directory).
+                        let remaining = (len - written) as usize;
+                        if remaining > 0 {
+                            let base = ptr + written;
+                            let mut full = crate::alloc::vec![0u8; entry_len as usize];
+                            full[0..8].copy_from_slice(&next_cookie.to_le_bytes());
+                            full[16..20].copy_from_slice(&(name_bytes.len() as u32).to_le_bytes());
+                            full[20] = kind;
+                            if !name_bytes.is_empty() {
+                                full[24..24 + name_bytes.len()].copy_from_slice(name_bytes);
+                            }
+                            let _ = write_bytes(store, base, &full[..remaining]);
+                            written = len;
+                        }
                         break;
                     }
 
                     let base = ptr + written;
-                    let _ = write_u64(store, base, next_cookie); 
+                    let _ = write_u64(store, base, next_cookie);
                     let _ = write_u64(store, base + 8, 0); // inode stub
                     let _ = write_u32(store, base + 16, name_bytes.len() as u32);
                     let _ = write_bytes(store, base + 20, &[kind]);

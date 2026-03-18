@@ -48,7 +48,7 @@ cargo build -Z json-target-spec --package=kernel --target=swiftboot/bits64.json
 
 Custom linker targets:
 - **`swiftboot/bits64.json`** — bare metal x86_64 kernel
-- **`bits64pie.json`** — position-independent native userland (wasm_loader)
+- **`bits64pie.json`** — position-independent native userland
 
 ## Architecture
 

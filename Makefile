@@ -29,7 +29,7 @@ QEMU_OPTS := -drive file=$(BUILD_DIR)/disk.img,format=raw,if=virtio \
              -display sdl,gl=on -vga none -m 4G \
              -accel kvm
 
-.PHONY: all clean run swiftboot kernel wasm_loader userland fs
+.PHONY: all clean run swiftboot kernel userland fs
 
 all: fs
 
@@ -44,11 +44,6 @@ kernel: $(BUILD_DIR) swiftboot
 	$(CARGO) build $(UNSTABLE_FLAGS) --package=kernel --target=$(KERNEL_TARGET)
 	$(OBJCOPY) -O binary $(TARGET_DIR)/bits64/debug/kernel $(BUILD_DIR)/kernel.bin
 	$(DD) if=$(BUILD_DIR)/kernel.bin of=$(BUILD_DIR)/disk.img seek=6144 bs=512 conv=notrunc
-
-wasm_loader:
-	$(CARGO) build $(UNSTABLE_FLAGS) --package=wasm_loader --target=$(PIE_TARGET) --release
-	mkdir -p $(SYS_BIN_DIR)
-	cp $(TARGET_DIR)/bits64pie/release/wasm_loader $(SYS_BIN_DIR)/wasm_loader.elf
 
 # Userland applications
 SYS_WASM_APPS := init sysmon fps_test tmap cat
@@ -74,7 +69,7 @@ build-dummy:
 	mkdir -p $(APPS_DIR)
 	cp $(TARGET_DIR)/wasm32-wasip1/release/dummy.wasm $(APPS_DIR)/dummy.wasm
 
-fs: swiftboot kernel wasm_loader userland
+fs: swiftboot kernel userland
 	$(GENEXT2FS) -d $(TREE_DIR) -b 262144 -B 1024 $(BUILD_DIR)/disk2.img
 	$(DD) if=$(BUILD_DIR)/disk2.img of=$(BUILD_DIR)/disk.img seek=16384 bs=512 conv=notrunc
 
