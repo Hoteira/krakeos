@@ -301,7 +301,7 @@ memory operations. No separate VA region needed.
   3. Harvests the return value
   4. Prints `"Container test: child returned {value}"` to serial
 - Add to `Cargo.toml` workspace members
-- Add spawn in userland: `std::wasm::run("@0xE0/apps/container_test.wasm", ...)`
+- Add spawn in userland: `std::wasm::run("/apps/container_test.wasm", ...)`
 - Update `make.bat` to build it
 
 **Verify:** Build + boot. See "Container test: child returned 42" on serial. All other apps work.
@@ -657,10 +657,10 @@ memory operations. No separate VA region needed.
 ### Step 32 -- PATH resolution for WASM modules
 **Files:** `kernel/src/interrupts/syscalls/process.rs` or new `kernel/src/fs/path.rs`
 **Changes:**
-- Default PATH: `@0xE0/sys/bin;@0xE0/apps`
+- Default PATH: `/sys/bin;/apps`
 - When `spawn("shell")` called without full path:
-  1. Try `@0xE0/sys/bin/shell.wasm`
-  2. Try `@0xE0/apps/shell.wasm`
+  1. Try `/sys/bin/shell.wasm`
+  2. Try `/apps/shell.wasm`
   3. Try without extension
 - Store PATH in process environment (inheritable)
 
