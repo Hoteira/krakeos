@@ -1,4 +1,4 @@
-use super::window::{Items, Window, NULL_WINDOW};
+use super::window::{Items, NULL_WINDOW, Window};
 use crate::debugln;
 use crate::window_manager::display::{DISPLAY_SERVER, VIRTIO_ACTIVE};
 use crate::window_manager::input::CLICKED_WINDOW_ID;
@@ -224,11 +224,12 @@ impl Composer {
                 return;
             }
 
-
             self.windows[idx].z = 1;
 
             for i in 0..self.windows.len() {
-                if i == idx { continue; }
+                if i == idx {
+                    continue;
+                }
                 match self.windows[i].w_type {
                     Items::Bar | Items::Popup | Items::Null | Items::Wallpaper => {}
                     _ => {
@@ -239,9 +240,11 @@ impl Composer {
 
             self.windows.sort_by_key(|w| w.z);
 
-
             let (sw, sh) = unsafe {
-                ((*(&raw mut DISPLAY_SERVER)).width as u32, (*(&raw mut DISPLAY_SERVER)).height as u32)
+                (
+                    (*(&raw mut DISPLAY_SERVER)).width as u32,
+                    (*(&raw mut DISPLAY_SERVER)).height as u32,
+                )
             };
             self.update_window_area_rect(0, 0, sw, sh);
         }
@@ -249,7 +252,10 @@ impl Composer {
 
     pub fn update_tiling(&mut self) {
         let (screen_w, screen_h) = unsafe {
-            ((*(&raw mut DISPLAY_SERVER)).width as usize, (*(&raw mut DISPLAY_SERVER)).height as usize)
+            (
+                (*(&raw mut DISPLAY_SERVER)).width as usize,
+                (*(&raw mut DISPLAY_SERVER)).height as usize,
+            )
         };
 
         for i in 0..self.windows.len() {
@@ -258,7 +264,6 @@ impl Composer {
                 self.windows[i].can_resize = true;
             }
         }
-
 
         self.update_window_area_rect(0, 0, screen_w as u32, screen_h as u32);
     }
@@ -275,6 +280,12 @@ impl Composer {
     pub fn add_window(&mut self, mut w: Window) -> usize {
         let wtype = w.w_type;
 
+        w.id = self.check_id(w.buffer as u64);
+        w.prev_x = 0;
+        w.prev_y = 0;
+        w.prev_width = 0;
+        w.prev_height = 0;
+
         if wtype == Items::Wallpaper {
             w.z = 255;
             w.transparent = false;
@@ -283,47 +294,42 @@ impl Composer {
             w.can_resize = false;
             w.id = self.check_id(w.buffer as u64);
             self.wallpaper = w;
-            
+
             let (sw, sh) = unsafe {
-                ((*(&raw mut DISPLAY_SERVER)).width as u32, (*(&raw mut DISPLAY_SERVER)).height as u32)
+                (
+                    (*(&raw mut DISPLAY_SERVER)).width as u32,
+                    (*(&raw mut DISPLAY_SERVER)).height as u32,
+                )
             };
             self.update_window_area_rect(0, 0, sw, sh);
             return w.id;
-        }
-
-        if wtype == Items::Bar || wtype == Items::Popup {
+        } else if wtype == Items::Bar || wtype == Items::Popup {
             w.z = 0;
             w.can_move = false;
             w.can_resize = false;
         } else {
             w.z = 1;
-        }
 
-        w.id = self.check_id(w.buffer as u64);
-        w.prev_x = 0;
-        w.prev_y = 0;
-        w.prev_width = 0;
-        w.prev_height = 0;
-
-
-        if wtype == Items::Window {
-            let mut count = 0;
-            for i in 0..self.windows.len() {
-                if self.windows[i].w_type == Items::Window {
-                    count += 1;
+            if wtype == Items::Window {
+                let mut count = 0;
+                for i in 0..self.windows.len() {
+                    if self.windows[i].w_type == Items::Window {
+                        count += 1;
+                    }
                 }
+
+                let offset = 30;
+                let start_x = 50;
+                let start_y = 50;
+
+                w.x = (start_x + (count * offset)) as isize;
+                w.y = (start_y + (count * offset)) as isize;
+
+                w.can_move = true;
+                w.can_resize = true;
+
+                self.focus_window(w.id);
             }
-
-            let offset = 30;
-            let start_x = 50;
-            let start_y = 50;
-
-            w.x = (start_x + (count * offset)) as isize;
-            w.y = (start_y + (count * offset)) as isize;
-
-
-            w.can_move = true;
-            w.can_resize = true;
         }
 
         for i in 0..self.windows.len() {
@@ -337,7 +343,9 @@ impl Composer {
         }
 
         for i in 0..self.windows.len() {
-            if self.windows[i].id == w.id { continue; }
+            if self.windows[i].id == w.id {
+                continue;
+            }
 
             match self.windows[i].w_type {
                 Items::Bar | Items::Popup => {
@@ -346,7 +354,9 @@ impl Composer {
                 Items::Null => {}
                 _ => {
                     if wtype == Items::Bar || wtype == Items::Popup {
-                        if self.windows[i].z == 0 { self.windows[i].z = 1; }
+                        if self.windows[i].z == 0 {
+                            self.windows[i].z = 1;
+                        }
                     } else {
                         self.windows[i].z = self.windows[i].z.saturating_add(1);
                     }
@@ -380,16 +390,13 @@ impl Composer {
                 self.windows[i].back_buffer = w.back_buffer;
                 self.windows[i].flipped = w.flipped;
 
-
                 let old_x = self.windows[i].x;
                 let old_y = self.windows[i].y;
                 let old_w = self.windows[i].width;
                 let old_h = self.windows[i].height;
 
-
                 self.windows[i].width = w.width;
                 self.windows[i].height = w.height;
-
 
                 if self.windows[i].w_type != Items::Window {
                     self.windows[i].x = w.x;
@@ -399,7 +406,6 @@ impl Composer {
 
                 self.windows[i].transparent = w.transparent;
                 self.windows[i].treat_as_transparent = w.treat_as_transparent;
-
 
                 let current_x = self.windows[i].x;
                 let current_y = self.windows[i].y;
@@ -425,7 +431,13 @@ impl Composer {
         }
     }
 
-    pub fn update_window_area_rect(&mut self, dirty_x: i32, dirty_y: i32, dirty_w: u32, dirty_h: u32) {
+    pub fn update_window_area_rect(
+        &mut self,
+        dirty_x: i32,
+        dirty_y: i32,
+        dirty_w: u32,
+        dirty_h: u32,
+    ) {
         unsafe {
             (*(&raw mut DISPLAY_SERVER)).mark_dirty(dirty_x, dirty_y, dirty_w, dirty_h);
         }
@@ -444,7 +456,14 @@ impl Composer {
         self.recompose_area_except(dirty_x, dirty_y, dirty_w, dirty_h, 0);
     }
 
-    pub fn recompose_area_except(&mut self, dirty_x: i32, dirty_y: i32, dirty_w: u32, dirty_h: u32, ignore_id: usize) {
+    pub fn recompose_area_except(
+        &mut self,
+        dirty_x: i32,
+        dirty_y: i32,
+        dirty_w: u32,
+        dirty_h: u32,
+        ignore_id: usize,
+    ) {
         unsafe {
             let display_server = &mut *(&raw mut DISPLAY_SERVER);
 
@@ -452,13 +471,16 @@ impl Composer {
             let mut occluded = false;
             for i in 0..self.windows.len() {
                 let w = &self.windows[i];
-                if w.w_type == Items::Null || w.id == ignore_id { continue; }
+                if w.w_type == Items::Null || w.id == ignore_id {
+                    continue;
+                }
 
-                if !w.treat_as_transparent &&
-                    w.x as i32 <= dirty_x &&
-                    w.y as i32 <= dirty_y &&
-                    (w.x as i32 + w.width as i32) >= (dirty_x + dirty_w as i32) &&
-                    (w.y as i32 + w.height as i32) >= (dirty_y + dirty_h as i32) {
+                if !w.treat_as_transparent
+                    && w.x as i32 <= dirty_x
+                    && w.y as i32 <= dirty_y
+                    && (w.x as i32 + w.width as i32) >= (dirty_x + dirty_w as i32)
+                    && (w.y as i32 + w.height as i32) >= (dirty_y + dirty_h as i32)
+                {
                     start_index = i;
                     occluded = true;
                     break;
@@ -484,7 +506,10 @@ impl Composer {
                             self.wallpaper.get_active_buffer(),
                             self.wallpaper.x as i32,
                             self.wallpaper.y as i32,
-                            dirty_x, dirty_y, dirty_w, dirty_h,
+                            dirty_x,
+                            dirty_y,
+                            dirty_w,
+                            dirty_h,
                             None,
                             self.wallpaper.treat_as_transparent,
                         );
@@ -501,21 +526,27 @@ impl Composer {
             }
 
             for i in (0..=start_index).rev() {
-                if self.windows[i].id == ignore_id { continue; }
+                if self.windows[i].id == ignore_id {
+                    continue;
+                }
                 match self.windows[i].w_type {
                     Items::Null => {}
                     _ => {
                         let w = &self.windows[i];
-                        
+
                         // SKIP IF NOT INTERSECTING
-                        if (w.x as i32) >= (dirty_x + dirty_w as i32) || 
-                           (w.x as i32 + w.width as i32) <= dirty_x ||
-                           (w.y as i32) >= (dirty_y + dirty_h as i32) ||
-                           (w.y as i32 + w.height as i32) <= dirty_y {
+                        if (w.x as i32) >= (dirty_x + dirty_w as i32)
+                            || (w.x as i32 + w.width as i32) <= dirty_x
+                            || (w.y as i32) >= (dirty_y + dirty_h as i32)
+                            || (w.y as i32 + w.height as i32) <= dirty_y
+                        {
                             continue;
                         }
 
-                        let is_resizing = w.id == crate::window_manager::input::RESIZING_WINDOW.load(core::sync::atomic::Ordering::Relaxed) as usize;
+                        let is_resizing = w.id
+                            == crate::window_manager::input::RESIZING_WINDOW
+                                .load(core::sync::atomic::Ordering::Relaxed)
+                                as usize;
 
                         let border_color = if w.w_type == Items::Window && !is_resizing {
                             if w.id == CLICKED_WINDOW_ID {
@@ -533,7 +564,10 @@ impl Composer {
                             w.get_active_buffer(),
                             w.x as i32,
                             w.y as i32,
-                            dirty_x, dirty_y, dirty_w, dirty_h,
+                            dirty_x,
+                            dirty_y,
+                            dirty_w,
+                            dirty_h,
                             border_color,
                             w.treat_as_transparent,
                         );
@@ -611,7 +645,12 @@ impl Composer {
                 Some(rect) => rect,
                 None => {
                     if self.wallpaper.id == id && self.wallpaper.w_type != Items::Null {
-                        (self.wallpaper.x as i32, self.wallpaper.y as i32, self.wallpaper.width as u32, self.wallpaper.height as u32)
+                        (
+                            self.wallpaper.x as i32,
+                            self.wallpaper.y as i32,
+                            self.wallpaper.width as u32,
+                            self.wallpaper.height as u32,
+                        )
                     } else {
                         return;
                     }
@@ -626,13 +665,16 @@ impl Composer {
             let mut occluded = false;
             for i in 0..self.windows.len() {
                 let w = &self.windows[i];
-                if w.w_type == Items::Null { continue; }
+                if w.w_type == Items::Null {
+                    continue;
+                }
 
-                if !w.treat_as_transparent &&
-                    w.x as i32 <= dirty_x &&
-                    w.y as i32 <= dirty_y &&
-                    (w.x as i32 + w.width as i32) >= (dirty_x + dirty_w as i32) &&
-                    (w.y as i32 + w.height as i32) >= (dirty_y + dirty_h as i32) {
+                if !w.treat_as_transparent
+                    && w.x as i32 <= dirty_x
+                    && w.y as i32 <= dirty_y
+                    && (w.x as i32 + w.width as i32) >= (dirty_x + dirty_w as i32)
+                    && (w.y as i32 + w.height as i32) >= (dirty_y + dirty_h as i32)
+                {
                     start_index = i;
                     occluded = true;
                     break;
@@ -658,7 +700,10 @@ impl Composer {
                             self.wallpaper.get_active_buffer(),
                             self.wallpaper.x as i32,
                             self.wallpaper.y as i32,
-                            dirty_x, dirty_y, dirty_w, dirty_h,
+                            dirty_x,
+                            dirty_y,
+                            dirty_w,
+                            dirty_h,
                             None,
                             self.wallpaper.treat_as_transparent,
                         );
@@ -695,7 +740,10 @@ impl Composer {
                             w.get_active_buffer(),
                             w.x as i32,
                             w.y as i32,
-                            dirty_x, dirty_y, dirty_w, dirty_h,
+                            dirty_x,
+                            dirty_y,
+                            dirty_w,
+                            dirty_h,
                             border_color,
                             w.treat_as_transparent,
                         );
@@ -770,7 +818,12 @@ impl Composer {
                 }
             }
 
-            display_server.mark_dirty(0, 0, display_server.width as u32, display_server.height as u32);
+            display_server.mark_dirty(
+                0,
+                0,
+                display_server.width as u32,
+                display_server.height as u32,
+            );
             display_server.copy();
         }
         self.update_tiling();
@@ -838,10 +891,16 @@ impl Composer {
                         );
                     }
                 }
-                display_server.mark_dirty(0, 0, display_server.width as u32, display_server.height as u32);
+                display_server.mark_dirty(
+                    0,
+                    0,
+                    display_server.width as u32,
+                    display_server.height as u32,
+                );
                 display_server.copy();
             }
             self.update_tiling();
         }
     }
 }
+

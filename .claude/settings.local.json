@@ -24,7 +24,8 @@
       "Bash(/root/.cargo/bin/wasm-tools dump:)",
       "Bash(/root/.cargo/bin/wasm-tools dump:*)",
       "Bash(/tmp/audit_rdi.txt:*)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(find /home/hoteira/Desktop/krakeos/kernel/src/drivers -name *virtio* -type f)"
     ]
   }
 }

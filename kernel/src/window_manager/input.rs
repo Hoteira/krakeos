@@ -232,6 +232,10 @@ impl Mouse {
             if let Some(ws) = w {
                 let is_super = crate::drivers::peripherals::keyboard::is_super_active();
 
+                if ws.w_type != Items::Window {
+                    return;
+                }
+
                 unsafe {
                     let old_id = CLICKED_WINDOW_ID;
                     let new_id = ws.id;
@@ -330,73 +334,7 @@ impl Mouse {
 
         let _w = unsafe { (*(&raw mut COMPOSER)).find_window(self.x as usize, self.y as usize) };
 
-        if RESIZING_WINDOW.load(Ordering::Relaxed) != 0 {
-            let (w_id, w_x, w_y, w_width, w_height, min_w, min_h) = unsafe {
-                let composer = &mut *(&raw mut COMPOSER);
-                let w = composer
-                    .find_window_id(RESIZING_WINDOW.load(Ordering::Relaxed) as usize)
-                    .unwrap();
-                (
-                    w.id,
-                    w.x,
-                    w.y,
-                    w.width,
-                    w.height,
-                    w.min_width.max(50),
-                    w.min_height.max(50),
-                )
-            };
-
-            let mut old_w_val = unsafe { W_WIDTH };
-            let mut old_h_val = unsafe { W_HEIGHT };
-
-            let cur_w: usize;
-            let cur_h: usize;
-
-            unsafe {
-                if W_WIDTH == 0 || W_HEIGHT == 0 {
-                    W_WIDTH = w_width;
-                    W_HEIGHT = w_height;
-                    old_w_val = w_width;
-                    old_h_val = w_height;
-                }
-
-                let dx = self.x as isize - old_x as isize;
-                let dy = self.y as isize - old_y as isize;
-
-                let new_w = (W_WIDTH as isize + dx).max(min_w as isize);
-                let new_h = (W_HEIGHT as isize + dy).max(min_h as isize);
-
-                let max_w = ((*(&raw mut DISPLAY_SERVER)).width as isize).saturating_sub(w_x);
-                let max_h = ((*(&raw mut DISPLAY_SERVER)).height as isize).saturating_sub(w_y);
-
-                W_WIDTH = new_w.min(max_w) as usize;
-                W_HEIGHT = new_h.min(max_h) as usize;
-                cur_w = W_WIDTH;
-                cur_h = W_HEIGHT;
-            }
-
-            let dirty_w = (w_width.max(old_w_val).max(cur_w) + 32) as u32;
-            let dirty_h = (w_height.max(old_h_val).max(cur_h) + 32) as u32;
-
-            unsafe {
-                let composer = &mut *(&raw mut COMPOSER);
-                let ds = &mut *(&raw mut DISPLAY_SERVER);
-
-                composer.recompose_area(w_x as i32, w_y as i32, dirty_w as u32, dirty_h as u32);
-
-                (*(&raw mut MOUSE)).draw_resize_border(
-                    w_x as u16,
-                    w_y as u16,
-                    cur_w as u16,
-                    cur_h as u16,
-                    Color::rgb(255, 255, 255),
-                    3,
-                );
-
-                ds.present_rect(w_x as i32, w_y as i32, dirty_w as u32, dirty_h as u32);
-            }
-        } else if DRAGGING_WINDOW.load(Ordering::Relaxed) != 0 {
+        if DRAGGING_WINDOW.load(Ordering::Relaxed) != 0 {
             let composer = unsafe { &mut *(&raw mut COMPOSER) };
             let display_server = unsafe { &mut *(&raw mut DISPLAY_SERVER) };
             let wid = DRAGGING_WINDOW.load(Ordering::Relaxed) as usize;
@@ -538,66 +476,6 @@ impl Mouse {
                 }
             }
         };
-    }
-
-    fn is_bottom_right(
-        &self,
-        w_x: u16,
-        w_y: u16,
-        w_width: u16,
-        w_height: u16,
-        mouse_x: u16,
-        mouse_y: u16,
-    ) -> bool {
-        let x_min = w_x.wrapping_add(w_width.wrapping_sub(8));
-        let x_max = w_x.wrapping_add(w_width.wrapping_sub(0));
-        let y_min = w_y.wrapping_add(w_height.wrapping_sub(8));
-        let y_max = w_y.wrapping_add(w_height.wrapping_sub(0));
-
-        (mouse_x >= x_min && mouse_x <= x_max) && (mouse_y >= y_min && mouse_y <= y_max)
-    }
-
-    pub fn draw_resize_border(
-        &self,
-        x: u16,
-        y: u16,
-        width: u16,
-        height: u16,
-        color: Color,
-        thickness: u16,
-    ) {
-        let start_x = x as u32;
-        let start_y = y as u32;
-        let end_x = start_x + width as u32;
-        let end_y = start_y + height as u32;
-        let t = thickness as u32;
-
-        unsafe {
-            // Top
-            for row in start_y..start_y + t {
-                for col in start_x..end_x {
-                    (*(&raw mut DISPLAY_SERVER)).write_pixel_db(row, col, color);
-                }
-            }
-            // Bottom
-            for row in end_y.saturating_sub(t)..end_y {
-                for col in start_x..end_x {
-                    (*(&raw mut DISPLAY_SERVER)).write_pixel_db(row, col, color);
-                }
-            }
-            // Left
-            for row in start_y..end_y {
-                for col in start_x..start_x + t {
-                    (*(&raw mut DISPLAY_SERVER)).write_pixel_db(row, col, color);
-                }
-            }
-            // Right
-            for row in start_y..end_y {
-                for col in end_x.saturating_sub(t)..end_x {
-                    (*(&raw mut DISPLAY_SERVER)).write_pixel_db(row, col, color);
-                }
-            }
-        }
     }
 
     fn clamp_mx(&self, n: i16) -> u16 {
