@@ -167,7 +167,11 @@ WASM:
             let mut buf = [0u8; 1024];
             loop {
                 let n = std::os::file_read(in_fd, &mut buf);
-                if n == 0 { break; }
+                if n == 0 || n == usize::MAX { break; }
+                if n == usize::MAX - 1 {
+                    std::os::yield_task();
+                    continue;
+                }
                 std::os::file_write(out_fd, &buf[0..n]);
             }
         } else {
@@ -180,6 +184,10 @@ WASM:
                     loop {
                         let n = std::os::file_read(fd as usize, &mut buf);
                         if n == 0 || n == usize::MAX { break; }
+                        if n == usize::MAX - 1 {
+                            std::os::yield_task();
+                            continue;
+                        }
                         std::os::file_write(out_fd, &buf[0..n]);
                     }
                     std::os::file_close(fd as usize);

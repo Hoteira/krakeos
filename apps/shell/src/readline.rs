@@ -27,6 +27,21 @@ impl LineReader {
         self.history_index = self.history.len();
     }
 
+    fn read_byte(&self) -> Option<u8> {
+        let mut b = [0u8; 1];
+        loop {
+            let n = file_read(STDIN, &mut b);
+            if n == 0 || n == usize::MAX {
+                return None;
+            }
+            if n == usize::MAX - 1 {
+                std::os::yield_task();
+                continue;
+            }
+            return Some(b[0]);
+        }
+    }
+
     pub fn read_line(&mut self, prompt: &str) -> Option<String> {
         file_write(STDOUT, prompt.as_bytes());
         
@@ -35,12 +50,10 @@ impl LineReader {
         self.history_index = self.history.len();
 
         loop {
-            let mut b = [0u8; 1];
-            if file_read(STDIN, &mut b) == 0 {
-                std::os::yield_task();
-                continue;
-            }
-            let byte = b[0];
+            let byte = match self.read_byte() {
+                Some(b) => b,
+                None => return None,
+            };
 
             match byte {
                 b'\r' | b'\n' => {
@@ -76,41 +89,43 @@ impl LineReader {
                     }
                 }
                 0x1B => { // Escape sequence
-                    if file_read(STDIN, &mut b) > 0 && b[0] == b'[' {
-                        if file_read(STDIN, &mut b) > 0 {
-                            match b[0] {
-                                b'A' => { // Up
-                                    if self.history_index > 0 {
-                                        self.history_index -= 1;
-                                        buffer = self.history[self.history_index].chars().collect();
+                    if let Some(b1) = self.read_byte() {
+                        if b1 == b'[' {
+                            if let Some(b2) = self.read_byte() {
+                                match b2 {
+                                    b'A' => { // Up
+                                        if self.history_index > 0 {
+                                            self.history_index -= 1;
+                                            buffer = self.history[self.history_index].chars().collect();
+                                            cursor = buffer.len();
+                                            self.redraw_line(prompt, &buffer, cursor);
+                                        }
+                                    }
+                                    b'B' => { // Down
+                                        if self.history_index + 1 < self.history.len() {
+                                            self.history_index += 1;
+                                            buffer = self.history[self.history_index].chars().collect();
+                                        } else {
+                                            self.history_index = self.history.len();
+                                            buffer.clear();
+                                        }
                                         cursor = buffer.len();
                                         self.redraw_line(prompt, &buffer, cursor);
                                     }
-                                }
-                                b'B' => { // Down
-                                    if self.history_index + 1 < self.history.len() {
-                                        self.history_index += 1;
-                                        buffer = self.history[self.history_index].chars().collect();
-                                    } else {
-                                        self.history_index = self.history.len();
-                                        buffer.clear();
+                                    b'D' => { // Left
+                                        if cursor > 0 {
+                                            cursor -= 1;
+                                            file_write(STDOUT, b"\x1B[D");
+                                        }
                                     }
-                                    cursor = buffer.len();
-                                    self.redraw_line(prompt, &buffer, cursor);
-                                }
-                                b'D' => { // Left
-                                    if cursor > 0 {
-                                        cursor -= 1;
-                                        file_write(STDOUT, b"\x1B[D");
+                                    b'C' => { // Right
+                                        if cursor < buffer.len() {
+                                            cursor += 1;
+                                            file_write(STDOUT, b"\x1B[C");
+                                        }
                                     }
+                                    _ => {}
                                 }
-                                b'C' => { // Right
-                                    if cursor < buffer.len() {
-                                        cursor += 1;
-                                        file_write(STDOUT, b"\x1B[C");
-                                    }
-                                }
-                                _ => {}
                             }
                         }
                     }
@@ -127,8 +142,8 @@ impl LineReader {
 
                     if expected_len > 1 {
                         for _ in 1..expected_len {
-                            if file_read(STDIN, &mut b) > 0 {
-                                utf8_buf.push(b[0]);
+                            if let Some(next_b) = self.read_byte() {
+                                utf8_buf.push(next_b);
                             }
                         }
                     }

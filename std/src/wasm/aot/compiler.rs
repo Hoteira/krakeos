@@ -440,10 +440,70 @@ impl<'a> AotCompiler<'a> {
             Instruction::I32Add => self.emit_binop_i32(|e| e.add_reg32_reg32(Reg::RAX, Reg::RBX)),
             Instruction::I32Sub => self.emit_binop_i32(|e| e.sub_reg32_reg32(Reg::RAX, Reg::RBX)),
             Instruction::I32Mul => self.emit_binop_i32(|e| e.imul_reg32_reg32(Reg::RAX, Reg::RBX)),
-            Instruction::I32DivS => self.emit_trampoline_binop(AotTrampoline::I32DivS),
-            Instruction::I32DivU => self.emit_trampoline_binop(AotTrampoline::I32DivU),
-            Instruction::I32RemS => self.emit_trampoline_binop(AotTrampoline::I32RemS),
-            Instruction::I32RemU => self.emit_trampoline_binop(AotTrampoline::I32RemU),
+            Instruction::I32DivS => {
+                self.emitter.pop_wasm_stack(Reg::RBX); // divisor
+                self.emitter.pop_wasm_stack(Reg::RAX); // dividend
+                // Check division by zero
+                self.emitter.test_reg32_reg32(Reg::RBX, Reg::RBX);
+                self.emitter.jcc_label(0x84, self.trap_label); // je trap (ZF=1 means RBX==0)
+                // Check signed overflow: INT_MIN / -1
+                let no_overflow = self.emitter.new_label();
+                self.emitter.cmp_reg32_imm32(Reg::RAX, 0x80000000u32);
+                self.emitter.jcc_label(0x85, no_overflow); // jne no_overflow
+                self.emitter.cmp_reg32_imm32(Reg::RBX, 0xFFFFFFFFu32); // -1
+                self.emitter.jcc_label(0x84, self.trap_label); // je trap (overflow)
+                self.emitter.bind_label(no_overflow);
+                // Perform division
+                self.emitter.cdq(); // sign-extend EAX to EDX:EAX
+                self.emitter.idiv_reg32(Reg::RBX);
+                self.emitter.push_wasm_stack(Reg::RAX);
+                self.stack_depth -= 1;
+            }
+            Instruction::I32DivU => {
+                self.emitter.pop_wasm_stack(Reg::RBX); // divisor
+                self.emitter.pop_wasm_stack(Reg::RAX); // dividend
+                self.emitter.test_reg32_reg32(Reg::RBX, Reg::RBX);
+                self.emitter.jcc_label(0x84, self.trap_label); // je trap
+                self.emitter.xor_reg32_reg32(Reg::RDX, Reg::RDX); // zero EDX
+                self.emitter.div_reg32(Reg::RBX);
+                self.emitter.push_wasm_stack(Reg::RAX);
+                self.stack_depth -= 1;
+            }
+            Instruction::I32RemS => {
+                self.emitter.pop_wasm_stack(Reg::RBX); // divisor
+                self.emitter.pop_wasm_stack(Reg::RAX); // dividend
+                self.emitter.test_reg32_reg32(Reg::RBX, Reg::RBX);
+                self.emitter.jcc_label(0x84, self.trap_label); // je trap
+                // Special case: INT_MIN % -1 = 0 (no trap, result is 0)
+                let do_div = self.emitter.new_label();
+                let done = self.emitter.new_label();
+                self.emitter.cmp_reg32_imm32(Reg::RAX, 0x80000000u32);
+                self.emitter.jcc_label(0x85, do_div); // jne do_div
+                self.emitter.cmp_reg32_imm32(Reg::RBX, 0xFFFFFFFFu32);
+                self.emitter.jcc_label(0x85, do_div); // jne do_div
+                // INT_MIN % -1 = 0
+                self.emitter.xor_reg32_reg32(Reg::RDX, Reg::RDX);
+                self.emitter.jmp_label(done);
+                self.emitter.bind_label(do_div);
+                self.emitter.cdq();
+                self.emitter.idiv_reg32(Reg::RBX);
+                self.emitter.bind_label(done);
+                // Remainder is in EDX
+                self.emitter.mov_reg32_reg32(Reg::RAX, Reg::RDX);
+                self.emitter.push_wasm_stack(Reg::RAX);
+                self.stack_depth -= 1;
+            }
+            Instruction::I32RemU => {
+                self.emitter.pop_wasm_stack(Reg::RBX);
+                self.emitter.pop_wasm_stack(Reg::RAX);
+                self.emitter.test_reg32_reg32(Reg::RBX, Reg::RBX);
+                self.emitter.jcc_label(0x84, self.trap_label);
+                self.emitter.xor_reg32_reg32(Reg::RDX, Reg::RDX);
+                self.emitter.div_reg32(Reg::RBX);
+                self.emitter.mov_reg32_reg32(Reg::RAX, Reg::RDX);
+                self.emitter.push_wasm_stack(Reg::RAX);
+                self.stack_depth -= 1;
+            }
             Instruction::I32And => self.emit_binop_i32(|e| e.and_reg32_reg32(Reg::RAX, Reg::RBX)),
             Instruction::I32Or => self.emit_binop_i32(|e| e.or_reg32_reg32(Reg::RAX, Reg::RBX)),
             Instruction::I32Xor => self.emit_binop_i32(|e| e.xor_reg32_reg32(Reg::RAX, Reg::RBX)),
@@ -463,10 +523,68 @@ impl<'a> AotCompiler<'a> {
             Instruction::I64Add => self.emit_binop_i64(|e| e.add_reg_reg(Reg::RAX, Reg::RBX)),
             Instruction::I64Sub => self.emit_binop_i64(|e| e.sub_reg_reg(Reg::RAX, Reg::RBX)),
             Instruction::I64Mul => self.emit_binop_i64(|e| e.imul_reg_reg(Reg::RAX, Reg::RBX)),
-            Instruction::I64DivS => self.emit_trampoline_binop(AotTrampoline::I64DivS),
-            Instruction::I64DivU => self.emit_trampoline_binop(AotTrampoline::I64DivU),
-            Instruction::I64RemS => self.emit_trampoline_binop(AotTrampoline::I64RemS),
-            Instruction::I64RemU => self.emit_trampoline_binop(AotTrampoline::I64RemU),
+            Instruction::I64DivS => {
+                self.emitter.pop_wasm_stack(Reg::RBX); // divisor
+                self.emitter.pop_wasm_stack(Reg::RAX); // dividend
+                self.emitter.test_reg_reg(Reg::RBX, Reg::RBX);
+                self.emitter.jcc_label(0x84, self.trap_label); // je trap
+                let no_overflow = self.emitter.new_label();
+                self.emitter.mov_reg_imm64(Reg::RCX, 0x8000000000000000);
+                self.emitter.cmp_reg_reg(Reg::RAX, Reg::RCX);
+                self.emitter.jcc_label(0x85, no_overflow); // jne
+                self.emitter.cmp_reg_imm32(Reg::RBX, 0xFFFFFFFF);
+                self.emitter.jcc_label(0x84, self.trap_label); // je
+                self.emitter.bind_label(no_overflow);
+                self.emitter.cqo();
+                self.emitter.idiv_reg64(Reg::RBX);
+                self.emitter.push_wasm_stack(Reg::RAX);
+                self.stack_depth -= 1;
+            }
+            Instruction::I64DivU => {
+                self.emitter.pop_wasm_stack(Reg::RBX); // divisor
+                self.emitter.pop_wasm_stack(Reg::RAX); // dividend
+                self.emitter.test_reg_reg(Reg::RBX, Reg::RBX);
+                self.emitter.jcc_label(0x84, self.trap_label); // je trap
+                self.emitter.xor_reg_reg(Reg::RDX, Reg::RDX); // zero RDX
+                self.emitter.div_reg64(Reg::RBX);
+                self.emitter.push_wasm_stack(Reg::RAX);
+                self.stack_depth -= 1;
+            }
+            Instruction::I64RemS => {
+                self.emitter.pop_wasm_stack(Reg::RBX); // divisor
+                self.emitter.pop_wasm_stack(Reg::RAX); // dividend
+                self.emitter.test_reg_reg(Reg::RBX, Reg::RBX);
+                self.emitter.jcc_label(0x84, self.trap_label); // je trap
+                let do_div = self.emitter.new_label();
+                let done = self.emitter.new_label();
+                self.emitter.mov_reg_imm64(Reg::RCX, 0x8000000000000000);
+                self.emitter.cmp_reg_reg(Reg::RAX, Reg::RCX);
+                self.emitter.jcc_label(0x85, do_div); // jne do_div
+                self.emitter.cmp_reg_imm32(Reg::RBX, 0xFFFFFFFF);
+                self.emitter.jcc_label(0x85, do_div); // jne do_div
+                // INT_MIN % -1 = 0
+                self.emitter.xor_reg_reg(Reg::RDX, Reg::RDX);
+                self.emitter.jmp_label(done);
+                self.emitter.bind_label(do_div);
+                self.emitter.cqo();
+                self.emitter.idiv_reg64(Reg::RBX);
+                self.emitter.bind_label(done);
+                // Remainder is in RDX
+                self.emitter.mov_reg_reg(Reg::RAX, Reg::RDX);
+                self.emitter.push_wasm_stack(Reg::RAX);
+                self.stack_depth -= 1;
+            }
+            Instruction::I64RemU => {
+                self.emitter.pop_wasm_stack(Reg::RBX);
+                self.emitter.pop_wasm_stack(Reg::RAX);
+                self.emitter.test_reg_reg(Reg::RBX, Reg::RBX);
+                self.emitter.jcc_label(0x84, self.trap_label);
+                self.emitter.xor_reg_reg(Reg::RDX, Reg::RDX);
+                self.emitter.div_reg64(Reg::RBX);
+                self.emitter.mov_reg_reg(Reg::RAX, Reg::RDX);
+                self.emitter.push_wasm_stack(Reg::RAX);
+                self.stack_depth -= 1;
+            }
             Instruction::I64And => self.emit_binop_i64(|e| e.and_reg_reg(Reg::RAX, Reg::RBX)),
             Instruction::I64Or => self.emit_binop_i64(|e| e.or_reg_reg(Reg::RAX, Reg::RBX)),
             Instruction::I64Xor => self.emit_binop_i64(|e| e.xor_reg_reg(Reg::RAX, Reg::RBX)),
@@ -567,19 +685,19 @@ impl<'a> AotCompiler<'a> {
             Instruction::I64GeS => self.emit_relop_i64(0x9D),
             Instruction::I64GeU => self.emit_relop_i64(0x93),
 
-            Instruction::F32Eq => self.emit_trampoline_relop_f32(AotTrampoline::F32Eq),
-            Instruction::F32Ne => self.emit_trampoline_relop_f32(AotTrampoline::F32Ne),
-            Instruction::F32Lt => self.emit_trampoline_relop_f32(AotTrampoline::F32Lt),
-            Instruction::F32Gt => self.emit_trampoline_relop_f32(AotTrampoline::F32Gt),
-            Instruction::F32Le => self.emit_trampoline_relop_f32(AotTrampoline::F32Le),
-            Instruction::F32Ge => self.emit_trampoline_relop_f32(AotTrampoline::F32Ge),
+            Instruction::F32Eq => self.emit_f32_relop(0),
+            Instruction::F32Ne => self.emit_f32_relop(1),
+            Instruction::F32Lt => self.emit_f32_relop(2),
+            Instruction::F32Gt => self.emit_f32_relop(3),
+            Instruction::F32Le => self.emit_f32_relop(4),
+            Instruction::F32Ge => self.emit_f32_relop(5),
 
-            Instruction::F64Eq => self.emit_trampoline_relop_f64(AotTrampoline::F64Eq),
-            Instruction::F64Ne => self.emit_trampoline_relop_f64(AotTrampoline::F64Ne),
-            Instruction::F64Lt => self.emit_trampoline_relop_f64(AotTrampoline::F64Lt),
-            Instruction::F64Gt => self.emit_trampoline_relop_f64(AotTrampoline::F64Gt),
-            Instruction::F64Le => self.emit_trampoline_relop_f64(AotTrampoline::F64Le),
-            Instruction::F64Ge => self.emit_trampoline_relop_f64(AotTrampoline::F64Ge),
+            Instruction::F64Eq => self.emit_f64_relop(0),
+            Instruction::F64Ne => self.emit_f64_relop(1),
+            Instruction::F64Lt => self.emit_f64_relop(2),
+            Instruction::F64Gt => self.emit_f64_relop(3),
+            Instruction::F64Le => self.emit_f64_relop(4),
+            Instruction::F64Ge => self.emit_f64_relop(5),
 
             Instruction::F32Add => {
                 self.emit_binop_f32(|e| e.addss_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1))
@@ -827,7 +945,27 @@ impl<'a> AotCompiler<'a> {
                 self.emitter.push_v128(XmmReg::XMM0);
             }
             Instruction::F32ConvertI64U => {
-                self.emit_trampoline_unop(AotTrampoline::F32ConvertI64U);
+                self.emitter.pop_wasm_stack(Reg::RAX);
+                self.emitter.test_reg_reg(Reg::RAX, Reg::RAX);
+                let is_neg = self.emitter.new_label();
+                let done = self.emitter.new_label();
+                self.emitter.jcc_label(0x88, is_neg); // js (sign bit set -> >= 2^63)
+                
+                self.emitter.cvtsi2ss_xmm_reg(XmmReg::XMM0, Reg::RAX);
+                self.emitter.jmp_label(done);
+                
+                self.emitter.bind_label(is_neg);
+                self.emitter.mov_reg_reg(Reg::RCX, Reg::RAX);
+                self.emitter.shr_reg32_imm32(Reg::RCX, 1); // logical right shift
+                self.emitter.mov_reg_reg(Reg::RDX, Reg::RAX);
+                self.emitter.and_reg32_imm32(Reg::RDX, 1);
+                self.emitter.or_reg_reg(Reg::RCX, Reg::RDX); // (val >> 1) | (val & 1)
+                
+                self.emitter.cvtsi2ss_xmm_reg(XmmReg::XMM0, Reg::RCX);
+                self.emitter.addss_xmm_xmm(XmmReg::XMM0, XmmReg::XMM0); // multiply by 2
+                
+                self.emitter.bind_label(done);
+                self.emitter.push_v128(XmmReg::XMM0);
             }
             Instruction::F64ConvertI32S => {
                 self.emitter.pop_wasm_stack(Reg::RAX);
@@ -847,7 +985,27 @@ impl<'a> AotCompiler<'a> {
                 self.emitter.push_v128(XmmReg::XMM0);
             }
             Instruction::F64ConvertI64U => {
-                self.emit_trampoline_unop(AotTrampoline::F64ConvertI64U);
+                self.emitter.pop_wasm_stack(Reg::RAX);
+                self.emitter.test_reg_reg(Reg::RAX, Reg::RAX);
+                let is_neg = self.emitter.new_label();
+                let done = self.emitter.new_label();
+                self.emitter.jcc_label(0x88, is_neg); // js
+                
+                self.emitter.cvtsi2sd_xmm_reg(XmmReg::XMM0, Reg::RAX);
+                self.emitter.jmp_label(done);
+                
+                self.emitter.bind_label(is_neg);
+                self.emitter.mov_reg_reg(Reg::RCX, Reg::RAX);
+                self.emitter.shr_reg_imm32(Reg::RCX, 1); // 64-bit logical right shift
+                self.emitter.mov_reg_reg(Reg::RDX, Reg::RAX);
+                self.emitter.and_reg32_imm32(Reg::RDX, 1);
+                self.emitter.or_reg_reg(Reg::RCX, Reg::RDX); // (val >> 1) | (val & 1)
+                
+                self.emitter.cvtsi2sd_xmm_reg(XmmReg::XMM0, Reg::RCX);
+                self.emitter.addsd_xmm_xmm(XmmReg::XMM0, XmmReg::XMM0); // multiply by 2
+                
+                self.emitter.bind_label(done);
+                self.emitter.push_v128(XmmReg::XMM0);
             }
             Instruction::F32DemoteF64 => {
                 self.emitter.pop_v128(XmmReg::XMM0);
@@ -865,7 +1023,26 @@ impl<'a> AotCompiler<'a> {
                 self.emitter.push_wasm_stack(Reg::RAX);
             }
             Instruction::I32TruncF32U => {
-                self.emit_trampoline_unop_f32_to_i32(AotTrampoline::I32TruncF32U);
+                self.emitter.pop_v128(XmmReg::XMM0);
+                self.emitter.mov_reg_imm64(Reg::RAX, 0x4F000000); // 2^31 as f32
+                self.emitter.movd_xmm_reg(XmmReg::XMM1, Reg::RAX);
+                self.emitter.ucomiss_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1);
+                let over_limit = self.emitter.new_label();
+                let done = self.emitter.new_label();
+                self.emitter.jcc_label(0x83, over_limit); // jae (CF=0) -> >= 2^31
+                
+                // Normal signed conversion for < 2^31
+                self.emitter.cvttss2si_reg32_xmm(Reg::RAX, XmmReg::XMM0);
+                self.emitter.jmp_label(done);
+                
+                self.emitter.bind_label(over_limit);
+                self.emitter.subss_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1);
+                self.emitter.cvttss2si_reg32_xmm(Reg::RAX, XmmReg::XMM0);
+                self.emitter.mov_reg_imm64(Reg::RCX, 0x80000000);
+                self.emitter.add_reg32_reg32(Reg::RAX, Reg::RCX);
+                
+                self.emitter.bind_label(done);
+                self.emitter.push_wasm_stack(Reg::RAX);
             }
             Instruction::I32TruncF64S => {
                 self.emitter.pop_v128(XmmReg::XMM0);
@@ -873,7 +1050,25 @@ impl<'a> AotCompiler<'a> {
                 self.emitter.push_wasm_stack(Reg::RAX);
             }
             Instruction::I32TruncF64U => {
-                self.emit_trampoline_unop_f64_to_i32(AotTrampoline::I32TruncF64U);
+                self.emitter.pop_v128(XmmReg::XMM0);
+                self.emitter.mov_reg_imm64(Reg::RAX, 0x41E0000000000000); // 2^31 as f64
+                self.emitter.movq_xmm_reg(XmmReg::XMM1, Reg::RAX);
+                self.emitter.ucomisd_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1);
+                let over_limit = self.emitter.new_label();
+                let done = self.emitter.new_label();
+                self.emitter.jcc_label(0x83, over_limit);
+                
+                self.emitter.cvttsd2si_reg32_xmm(Reg::RAX, XmmReg::XMM0);
+                self.emitter.jmp_label(done);
+                
+                self.emitter.bind_label(over_limit);
+                self.emitter.subsd_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1);
+                self.emitter.cvttsd2si_reg32_xmm(Reg::RAX, XmmReg::XMM0);
+                self.emitter.mov_reg_imm64(Reg::RCX, 0x80000000);
+                self.emitter.add_reg32_reg32(Reg::RAX, Reg::RCX);
+                
+                self.emitter.bind_label(done);
+                self.emitter.push_wasm_stack(Reg::RAX);
             }
             Instruction::I64TruncF32S => {
                 self.emitter.pop_v128(XmmReg::XMM0);
@@ -881,7 +1076,25 @@ impl<'a> AotCompiler<'a> {
                 self.emitter.push_wasm_stack(Reg::RAX);
             }
             Instruction::I64TruncF32U => {
-                self.emit_trampoline_unop_f32_to_i64(AotTrampoline::I64TruncF32U);
+                self.emitter.pop_v128(XmmReg::XMM0);
+                self.emitter.mov_reg_imm64(Reg::RAX, 0x5F000000); // 2^63 as f32
+                self.emitter.movd_xmm_reg(XmmReg::XMM1, Reg::RAX);
+                self.emitter.ucomiss_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1);
+                let over_limit = self.emitter.new_label();
+                let done = self.emitter.new_label();
+                self.emitter.jcc_label(0x83, over_limit);
+                
+                self.emitter.cvttss2si_reg_xmm(Reg::RAX, XmmReg::XMM0);
+                self.emitter.jmp_label(done);
+                
+                self.emitter.bind_label(over_limit);
+                self.emitter.subss_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1);
+                self.emitter.cvttss2si_reg_xmm(Reg::RAX, XmmReg::XMM0);
+                self.emitter.mov_reg_imm64(Reg::RCX, 0x8000000000000000);
+                self.emitter.add_reg_reg(Reg::RAX, Reg::RCX);
+                
+                self.emitter.bind_label(done);
+                self.emitter.push_wasm_stack(Reg::RAX);
             }
             Instruction::I64TruncF64S => {
                 self.emitter.pop_v128(XmmReg::XMM0);
@@ -889,7 +1102,25 @@ impl<'a> AotCompiler<'a> {
                 self.emitter.push_wasm_stack(Reg::RAX);
             }
             Instruction::I64TruncF64U => {
-                self.emit_trampoline_unop_f64_to_i64(AotTrampoline::I64TruncF64U);
+                self.emitter.pop_v128(XmmReg::XMM0);
+                self.emitter.mov_reg_imm64(Reg::RAX, 0x43E0000000000000); // 2^63 as f64
+                self.emitter.movq_xmm_reg(XmmReg::XMM1, Reg::RAX);
+                self.emitter.ucomisd_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1);
+                let over_limit = self.emitter.new_label();
+                let done = self.emitter.new_label();
+                self.emitter.jcc_label(0x83, over_limit);
+                
+                self.emitter.cvttsd2si_reg_xmm(Reg::RAX, XmmReg::XMM0);
+                self.emitter.jmp_label(done);
+                
+                self.emitter.bind_label(over_limit);
+                self.emitter.subsd_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1);
+                self.emitter.cvttsd2si_reg_xmm(Reg::RAX, XmmReg::XMM0);
+                self.emitter.mov_reg_imm64(Reg::RCX, 0x8000000000000000);
+                self.emitter.add_reg_reg(Reg::RAX, Reg::RCX);
+                
+                self.emitter.bind_label(done);
+                self.emitter.push_wasm_stack(Reg::RAX);
             }
 
             Instruction::I32Load(memarg) => self.emit_load_i32(memarg),
@@ -1337,6 +1568,17 @@ impl<'a> AotCompiler<'a> {
         self.stack_depth -= 1;
     }
 
+    fn emit_binop_v128<F>(&mut self, op: F)
+    where
+        F: FnOnce(&mut X64Emitter),
+    {
+        self.emitter.pop_v128(XmmReg::XMM1);
+        self.emitter.pop_v128(XmmReg::XMM0);
+        op(&mut self.emitter);
+        self.emitter.push_v128(XmmReg::XMM0);
+        self.stack_depth -= 1;
+    }
+
     fn emit_shift_i32<F>(&mut self, op: F)
     where
         F: FnOnce(&mut X64Emitter),
@@ -1535,6 +1777,90 @@ impl<'a> AotCompiler<'a> {
         self.emitter.add_reg_imm32(Reg::RSP, 8);
         self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48);
         self.emitter.add_reg_imm32(Reg::RSP, 8); // Balance align
+        self.emitter.push_wasm_stack(Reg::RAX);
+        self.stack_depth -= 1;
+    }
+
+    fn emit_f32_relop(&mut self, op: u8) {
+        self.emitter.pop_v128(XmmReg::XMM0); // right
+        self.emitter.pop_v128(XmmReg::XMM1); // left
+        self.emitter.xor_reg32_reg32(Reg::RAX, Reg::RAX);
+        
+        match op {
+            0 => { // Eq
+                self.emitter.xor_reg32_reg32(Reg::RDX, Reg::RDX);
+                self.emitter.ucomiss_xmm_xmm(XmmReg::XMM1, XmmReg::XMM0);
+                self.emitter.setcc(0x9B, Reg::RAX); // setnp
+                self.emitter.setcc(0x94, Reg::RDX); // sete
+                self.emitter.and_reg32_reg32(Reg::RAX, Reg::RDX);
+            }
+            1 => { // Ne
+                self.emitter.xor_reg32_reg32(Reg::RDX, Reg::RDX);
+                self.emitter.ucomiss_xmm_xmm(XmmReg::XMM1, XmmReg::XMM0);
+                self.emitter.setcc(0x9A, Reg::RAX); // setp
+                self.emitter.setcc(0x95, Reg::RDX); // setne
+                self.emitter.or_reg32_reg32(Reg::RAX, Reg::RDX);
+            }
+            2 => { // Lt (xmm1 < xmm0  <=>  xmm0 > xmm1)
+                self.emitter.ucomiss_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1);
+                self.emitter.setcc(0x97, Reg::RAX); // seta
+            }
+            3 => { // Gt (xmm1 > xmm0)
+                self.emitter.ucomiss_xmm_xmm(XmmReg::XMM1, XmmReg::XMM0);
+                self.emitter.setcc(0x97, Reg::RAX); // seta
+            }
+            4 => { // Le (xmm1 <= xmm0 <=> xmm0 >= xmm1)
+                self.emitter.ucomiss_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1);
+                self.emitter.setcc(0x93, Reg::RAX); // setae
+            }
+            5 => { // Ge (xmm1 >= xmm0)
+                self.emitter.ucomiss_xmm_xmm(XmmReg::XMM1, XmmReg::XMM0);
+                self.emitter.setcc(0x93, Reg::RAX); // setae
+            }
+            _ => unreachable!()
+        }
+        self.emitter.push_wasm_stack(Reg::RAX);
+        self.stack_depth -= 1;
+    }
+
+    fn emit_f64_relop(&mut self, op: u8) {
+        self.emitter.pop_v128(XmmReg::XMM0); // right
+        self.emitter.pop_v128(XmmReg::XMM1); // left
+        self.emitter.xor_reg32_reg32(Reg::RAX, Reg::RAX);
+        
+        match op {
+            0 => { // Eq
+                self.emitter.xor_reg32_reg32(Reg::RDX, Reg::RDX);
+                self.emitter.ucomisd_xmm_xmm(XmmReg::XMM1, XmmReg::XMM0);
+                self.emitter.setcc(0x9B, Reg::RAX); // setnp
+                self.emitter.setcc(0x94, Reg::RDX); // sete
+                self.emitter.and_reg32_reg32(Reg::RAX, Reg::RDX);
+            }
+            1 => { // Ne
+                self.emitter.xor_reg32_reg32(Reg::RDX, Reg::RDX);
+                self.emitter.ucomisd_xmm_xmm(XmmReg::XMM1, XmmReg::XMM0);
+                self.emitter.setcc(0x9A, Reg::RAX); // setp
+                self.emitter.setcc(0x95, Reg::RDX); // setne
+                self.emitter.or_reg32_reg32(Reg::RAX, Reg::RDX);
+            }
+            2 => { // Lt 
+                self.emitter.ucomisd_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1);
+                self.emitter.setcc(0x97, Reg::RAX); // seta
+            }
+            3 => { // Gt 
+                self.emitter.ucomisd_xmm_xmm(XmmReg::XMM1, XmmReg::XMM0);
+                self.emitter.setcc(0x97, Reg::RAX); // seta
+            }
+            4 => { // Le 
+                self.emitter.ucomisd_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1);
+                self.emitter.setcc(0x93, Reg::RAX); // setae
+            }
+            5 => { // Ge 
+                self.emitter.ucomisd_xmm_xmm(XmmReg::XMM1, XmmReg::XMM0);
+                self.emitter.setcc(0x93, Reg::RAX); // setae
+            }
+            _ => unreachable!()
+        }
         self.emitter.push_wasm_stack(Reg::RAX);
         self.stack_depth -= 1;
     }
@@ -1966,25 +2292,16 @@ impl<'a> AotCompiler<'a> {
             I32X4_SUB => self.emit_simd_padd(0xFA),
             I64X2_SUB => self.emit_simd_padd(0xFB),
             V128_AND => {
-                self.emitter.pop_v128(XmmReg::XMM1);
-                self.emitter.pop_v128(XmmReg::XMM0);
-                self.emitter.andps_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1);
-                self.emitter.push_v128(XmmReg::XMM0);
-                self.stack_depth -= 1;
+                self.emit_binop_v128(|e| e.andps_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1))
             }
             V128_OR => {
-                self.emitter.pop_v128(XmmReg::XMM1);
-                self.emitter.pop_v128(XmmReg::XMM0);
-                self.emitter.orps_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1);
-                self.emitter.push_v128(XmmReg::XMM0);
-                self.stack_depth -= 1;
+                self.emit_binop_v128(|e| e.orps_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1))
             }
             V128_XOR => {
-                self.emitter.pop_v128(XmmReg::XMM1);
-                self.emitter.pop_v128(XmmReg::XMM0);
-                self.emitter.xorps_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1);
-                self.emitter.push_v128(XmmReg::XMM0);
-                self.stack_depth -= 1;
+                self.emit_binop_v128(|e| e.xorps_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1))
+            }
+            V128_ANDNOT => {
+                self.emit_binop_v128(|e| e.pandn_xmm_xmm(XmmReg::XMM1, XmmReg::XMM0))
             }
             V128_NOT => {
                 self.emitter.pop_v128(XmmReg::XMM0);
@@ -1992,7 +2309,14 @@ impl<'a> AotCompiler<'a> {
                 self.emitter.pandn_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1);
                 self.emitter.push_v128(XmmReg::XMM0);
             }
-            V128_ANDNOT => self.emit_simd_trampoline_binop(AotTrampoline::V128Andnot),
+            F32X4_ADD => self.emit_binop_v128(|e| e.addps_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1)),
+            F32X4_SUB => self.emit_binop_v128(|e| e.subps_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1)),
+            F32X4_MUL => self.emit_binop_v128(|e| e.mulps_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1)),
+            F32X4_DIV => self.emit_binop_v128(|e| e.divps_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1)),
+            F64X2_ADD => self.emit_binop_v128(|e| e.addpd_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1)),
+            F64X2_SUB => self.emit_binop_v128(|e| e.subpd_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1)),
+            F64X2_MUL => self.emit_binop_v128(|e| e.mulpd_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1)),
+            F64X2_DIV => self.emit_binop_v128(|e| e.divpd_xmm_xmm(XmmReg::XMM0, XmmReg::XMM1)),
             V128_BITSELECT => self.emit_simd_trampoline_ternary(AotTrampoline::V128Bitselect),
             V128_ANY_TRUE => self.emit_simd_trampoline_reduction(AotTrampoline::V128AnyTrue),
             I8X16_ALL_TRUE => self.emit_simd_trampoline_reduction(AotTrampoline::V128AllTrueI8x16),

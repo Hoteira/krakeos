@@ -110,9 +110,12 @@ impl EventQueue {
         if tail == self.header.head.load(Ordering::Acquire) {
             return None;
         }
+        
+        let tail_idx = (tail % self.header.capacity) as usize;
+        
         // Safety: kernel wrote this slot with Release before advancing head;
         // we observed head != tail so the slot is initialised.
-        let event = unsafe { self.buf.as_ptr().add(tail as usize).read() };
+        let event = unsafe { self.buf.as_ptr().add(tail_idx).read() };
         self.header
             .tail
             .store((tail + 1) % self.header.capacity, Ordering::Release);

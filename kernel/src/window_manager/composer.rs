@@ -426,6 +426,9 @@ impl Composer {
     }
 
     pub fn update_window_area_rect(&mut self, dirty_x: i32, dirty_y: i32, dirty_w: u32, dirty_h: u32) {
+        unsafe {
+            (*(&raw mut DISPLAY_SERVER)).mark_dirty(dirty_x, dirty_y, dirty_w, dirty_h);
+        }
         self.recompose_area(dirty_x, dirty_y, dirty_w, dirty_h);
         unsafe {
             let ds = &mut *(&raw mut DISPLAY_SERVER);
@@ -489,7 +492,9 @@ impl Composer {
                         for y in start_y..end_y {
                             let row_offset = y as usize * pitch_u32;
                             let row_ptr = db_ptr.add(row_offset + start_x as usize);
-                            core::ptr::write_bytes(row_ptr as *mut u8, 0, (end_x - start_x) as usize * 4);
+                            for x in 0..(end_x - start_x) as usize {
+                                *row_ptr.add(x) = 0xFF333333;
+                            }
                         }
                     }
                 }
@@ -510,7 +515,9 @@ impl Composer {
                             continue;
                         }
 
-                        let border_color = if w.w_type == Items::Window {
+                        let is_resizing = w.id == crate::window_manager::input::RESIZING_WINDOW.load(core::sync::atomic::Ordering::Relaxed) as usize;
+
+                        let border_color = if w.w_type == Items::Window && !is_resizing {
                             if w.id == CLICKED_WINDOW_ID {
                                 Some(0xFFFFFFFF)
                             } else {
@@ -659,7 +666,9 @@ impl Composer {
                         for y in start_y..end_y {
                             let row_offset = y as usize * pitch_u32;
                             let row_ptr = db_ptr.add(row_offset + start_x as usize);
-                            core::ptr::write_bytes(row_ptr as *mut u8, 0, (end_x - start_x) as usize * 4);
+                            for x in 0..(end_x - start_x) as usize {
+                                *row_ptr.add(x) = 0xFF333333;
+                            }
                         }
                     }
                 }

@@ -282,22 +282,27 @@ pub fn main() {
                             b'A' => {
                                 let n = if seq.is_empty() { 1 } else { seq.parse::<usize>().unwrap_or(1) };
                                 term_buffer.cursor_row = term_buffer.cursor_row.saturating_sub(n);
+                                term_buffer.dirty = true;
                             }
                             b'B' => {
                                 let n = if seq.is_empty() { 1 } else { seq.parse::<usize>().unwrap_or(1) };
                                 term_buffer.cursor_row += n;
+                                term_buffer.dirty = true;
                             }
                             b'C' => {
                                 let n = if seq.is_empty() { 1 } else { seq.parse::<usize>().unwrap_or(1) };
                                 term_buffer.cursor_col += n;
+                                term_buffer.dirty = true;
                             }
                             b'D' => {
                                 let n = if seq.is_empty() { 1 } else { seq.parse::<usize>().unwrap_or(1) };
                                 term_buffer.cursor_col = term_buffer.cursor_col.saturating_sub(n);
+                                term_buffer.dirty = true;
                             }
                             b'G' => {
                                 let n = if seq.is_empty() { 1 } else { seq.parse::<usize>().unwrap_or(1) };
                                 term_buffer.cursor_col = n.saturating_sub(1);
+                                term_buffer.dirty = true;
                             }
                             b'J' => {
                                 if seq == "2" {
@@ -324,10 +329,12 @@ pub fn main() {
                                         term_buffer.cursor_col = 0;
                                     }
                                 }
+                                term_buffer.dirty = true;
                             }
                             b'd' => {
                                 let n = if seq.is_empty() { 1 } else { seq.parse::<usize>().unwrap_or(1) };
                                 term_buffer.cursor_row = n.saturating_sub(1);
+                                term_buffer.dirty = true;
                             }
                             b'K' => {
                                 if seq == "1" {
@@ -337,11 +344,13 @@ pub fn main() {
                                             current[term_buffer.cursor_row][i] = Cell::default();
                                         }
                                     }
+                                    term_buffer.dirty = true;
                                 } else if seq == "2" {
                                     let current = if term_buffer.is_alt { &mut term_buffer.alt_lines } else { &mut term_buffer.lines };
                                     if term_buffer.cursor_row < current.len() {
                                         current[term_buffer.cursor_row].clear();
                                     }
+                                    term_buffer.dirty = true;
                                 } else {
                                     term_buffer.clear_line();
                                 }

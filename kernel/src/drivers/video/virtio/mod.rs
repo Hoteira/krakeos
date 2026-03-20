@@ -336,9 +336,9 @@ pub fn transfer_and_flush(resource_id: u32, width: u32, height: u32, wait: bool)
     }
 }
 
-pub fn flush(x: u32, y: u32, width: u32, height: u32, _screen_width: u32, resource_id: u32, wait: bool) {
+pub fn flush(x: u32, y: u32, width: u32, height: u32, screen_width: u32, resource_id: u32, wait: bool) {
     unsafe {
-        let offset = 0;
+        let offset = (y * screen_width + x) * 4;
         let idx = REQ_IDX % 128;
         REQ_IDX += 1;
 
@@ -346,7 +346,7 @@ pub fn flush(x: u32, y: u32, width: u32, height: u32, _screen_width: u32, resour
         *req_transfer = VirtioGpuTransferToHost2d {
             hdr: VirtioGpuCtrlHeader { type_: VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D, flags: 0, fence_id: 0, ctx_id: 0, ring_idx: 0, padding: [0; 3] },
             r: VirtioGpuRect { x, y, width, height },
-            offset,
+            offset: offset as u64,
             resource_id,
             padding: 0,
         };

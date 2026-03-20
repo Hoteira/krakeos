@@ -312,6 +312,79 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
             if key == 'p' as u32 {
                 crate::memory::vma::GLOBAL_VMA.lock().dump();
                 handled_globally = true;
+            } else if key == 'x' as u32 {
+                unsafe {
+                    let active_id = crate::window_manager::input::CLICKED_WINDOW_ID;
+                    if active_id != 0 {
+                        (*(&raw mut crate::window_manager::composer::COMPOSER)).remove_window(active_id);
+                        crate::window_manager::input::CLICKED_WINDOW_ID = 0;
+                    }
+                }
+                handled_globally = true;
+            } else if key == 'z' as u32 {
+                unsafe {
+                    let active_id = crate::window_manager::input::CLICKED_WINDOW_ID;
+                    if active_id != 0 {
+                        if let Some(w) = (*(&raw mut crate::window_manager::composer::COMPOSER)).find_window_id(active_id) {
+                            if w.can_resize {
+                                let screen_w = (*(&raw mut crate::window_manager::display::DISPLAY_SERVER)).width as usize;
+                                let screen_h = (*(&raw mut crate::window_manager::display::DISPLAY_SERVER)).height as usize;
+                                
+                                if w.width == screen_w && w.height == screen_h {
+                                    // Restore
+                                    w.width = w.prev_width.max(100);
+                                    w.height = w.prev_height.max(100);
+                                    w.x = w.prev_x;
+                                    w.y = w.prev_y;
+                                } else {
+                                    // Maximize
+                                    w.prev_width = w.width;
+                                    w.prev_height = w.height;
+                                    w.prev_x = w.x;
+                                    w.prev_y = w.y;
+                                    w.width = screen_w;
+                                    w.height = screen_h;
+                                    w.x = 0;
+                                    w.y = 0;
+                                }
+                                
+                                // Send resize event to the application
+                                let event = crate::window_manager::events::Event::Resize(
+                                    crate::window_manager::events::ResizeEvent {
+                                        wid: w.id as u32,
+                                        width: w.width as u32,
+                                        height: w.height as u32,
+                                    }
+                                );
+                                let pid = w.pid;
+                                let tm = crate::task::TASK_MANAGER.int_lock();
+                                if !crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&*tm, pid, event) {
+                                    crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().add_event(event);
+                                }
+                            }
+                        }
+                    }
+                }
+                handled_globally = true;
+            } else if key == 'c' as u32 {
+                unsafe {
+                    let active_id = crate::window_manager::input::CLICKED_WINDOW_ID;
+                    if active_id != 0 {
+                        if let Some(w) = (*(&raw mut crate::window_manager::composer::COMPOSER)).find_window_id(active_id) {
+                            if w.can_resize {
+                                crate::window_manager::input::RESIZING_WINDOW.store(
+                                    w.id as u16, 
+                                    core::sync::atomic::Ordering::Relaxed
+                                );
+                            }
+                        }
+                    }
+                }
+                handled_globally = true;
+            } else if key == 't' as u32 {
+                // Spawn terminal
+                let _ = crate::syscalls::process::spawn_process("@0xE0/sys/bin/term.wasm", None, None, None);
+                handled_globally = true;
             }
         }
 

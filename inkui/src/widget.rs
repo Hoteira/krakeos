@@ -400,9 +400,13 @@ impl Widget {
                     text.text.pop();
                 }
             } else if key == '\n' || key == '\r' {
-                text.text.push('\n');
+                if text.max_len.map_or(true, |m| text.text.len() < m) {
+                    text.text.push('\n');
+                }
             } else {
-                text.text.push(key);
+                if text.max_len.map_or(true, |m| text.text.len() < m) {
+                    text.text.push(key);
+                }
             }
 
             // Autoscroll to bottom

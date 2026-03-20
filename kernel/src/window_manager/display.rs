@@ -139,24 +139,27 @@ impl DisplayServer {
 
                 // Map framebuffers as uncacheable MMIO so the GPU sees updates immediately
                 let b1_virt = crate::memory::vmm::map_mmio(b1, size_bytes);
-                let b2_virt = crate::memory::vmm::map_mmio(b2, size_bytes);
+                
+                // Use standard cached RAM for the double buffer to make alpha blending (read-modify-write) 100x faster
+                let ram_db = crate::memory::pmm::allocate_frames(pages).expect("Failed to allocate RAM buffer");
+                let ram_virt = ram_db + crate::memory::paging::HHDM_OFFSET;
 
                 unsafe {
                     let b1_ptr = b1_virt as *mut u32;
-                    let b2_ptr = b2_virt as *mut u32;
+                    let db_ptr = ram_virt as *mut u32;
                     for i in 0..(self.width * self.height) as usize {
                         *b1_ptr.add(i) = 0xFF333333; // Dark gray
-                        *b2_ptr.add(i) = 0xFF444444; // Slightly lighter gray
+                        *db_ptr.add(i) = 0xFF333333; 
                     }
                 }
 
                 self.buffer1_phys = b1;
                 self.buffer2_phys = b2;
                 self.buffer1_virt = b1_virt;
-                self.buffer2_virt = b2_virt;
+                self.buffer2_virt = 0; // Unused in single-buffer mode
 
                 self.framebuffer = b1_virt;
-                self.double_buffer = b2_virt;
+                self.double_buffer = ram_virt;
                 self.active_resource_id = 1;
 
                 virtio::start_gpu(self.width as u32, self.height as u32, self.buffer1_phys, self.buffer2_phys);
@@ -220,7 +223,7 @@ impl DisplayServer {
     pub fn force_full_sync(&mut self) {
         unsafe {
             let fb_len = (self.pitch * self.height) as usize;
-            let src = self.framebuffer as *const u8;
+            let src = self.double_buffer as *const u8;
             
             if self.vbe_framebuffer != 0 {
                 core::ptr::copy_nonoverlapping(src, self.vbe_framebuffer as *mut u8, fb_len);
@@ -235,10 +238,6 @@ impl DisplayServer {
     pub fn copy(&mut self) {
         unsafe {
             if VIRTIO_ACTIVE {
-                let next_resource = if self.active_resource_id == 1 { 2 } else { 1 };
-                let next_buffer_virt = if self.active_resource_id == 1 { self.buffer2_virt } else { self.buffer1_virt };
-                let current_buffer_virt = if self.active_resource_id == 1 { self.buffer1_virt } else { self.buffer2_virt };
-
                 if self.has_damage {
                     // 1. Calculate a single bounding box for all damage this frame
                     let mut min_x = self.width as i32;
@@ -257,32 +256,28 @@ impl DisplayServer {
 
                     let sx = min_x.max(0) as u32;
                     let sy = min_y.max(0) as u32;
-                    let sw = (max_x as u32).saturating_sub(sx).min(self.width as u32);
-                    let sh = (max_y as u32).saturating_sub(sy).min(self.height as u32);
+                    let ex = max_x.min(self.width as i32).max(0) as u32;
+                    let ey = max_y.min(self.height as i32).max(0) as u32;
+                    
+                    let sw = ex.saturating_sub(sx);
+                    let sh = ey.saturating_sub(sy);
 
                     if sw > 0 && sh > 0 {
-                        // NON-BLOCKING transfer and flush
-                        virtio::flush(sx, sy, sw, sh, self.width as u32, next_resource, false);
-                        
-                        // Switch scanout and commit the frame (also non-blocking)
-                        virtio::set_scanout(next_resource, self.width as u32, self.height as u32);
-                        virtio::transfer_and_flush(next_resource, self.width as u32, self.height as u32, false);
-
-                        // Swap internal pointers
-                        self.active_resource_id = next_resource;
-                        self.framebuffer = next_buffer_virt;
-                        self.double_buffer = current_buffer_virt;
-
-                        // Sync the change back to the now-hidden buffer to prevent trails
                         let pitch = self.pitch as usize;
+                        let src = self.double_buffer as *const u8;
+                        let dst = self.framebuffer as *mut u8;
                         for row in 0..sh {
                             let offset = (sy + row) as usize * pitch + (sx as usize * 4);
                             core::ptr::copy_nonoverlapping(
-                                (self.framebuffer as *const u8).add(offset),
-                                (self.double_buffer as *mut u8).add(offset),
+                                src.add(offset),
+                                dst.add(offset),
                                 (sw * 4) as usize,
                             );
                         }
+
+                        // NON-BLOCKING transfer and flush to the single active resource
+                        virtio::flush(sx, sy, sw, sh, self.width as u32, self.active_resource_id, false);
+                        self.sync_vbe_rect(sx, sy, sw, sh);
                     }
                     
                     self.reset_dirty();
@@ -1054,7 +1049,7 @@ impl DisplayServer {
                 if self.vbe_framebuffer != 0 {
                     let bpp = 4;
                     let pitch = self.pitch as usize;
-                    let src = self.framebuffer as *const u8;
+                    let src = self.double_buffer as *const u8;
                     let vbe = self.vbe_framebuffer as *mut u8;
 
                     if sx == 0 && sw == self.width as u32 {
@@ -1097,7 +1092,7 @@ impl DisplayServer {
         if self.vbe_framebuffer == 0 || w == 0 || h == 0 { return; }
         unsafe {
             let pitch = self.pitch as usize;
-            let src = self.framebuffer as *const u8;
+            let src = self.double_buffer as *const u8;
             let dst = self.vbe_framebuffer as *mut u8;
             let fb_len = pitch * self.height as usize;
             for row in 0..h {
@@ -1110,7 +1105,7 @@ impl DisplayServer {
         }
     }
 
-    pub fn draw_mouse(&self, x: u16, y: u16, dragging_window: bool) {
+    pub fn draw_mouse(&self, x: u16, y: u16, _dragging_window: bool) {
         use crate::drivers::peripherals::mouse::{CURSOR_BUFFER, CURSOR_HEIGHT, CURSOR_WIDTH};
 
         let pitch_bytes = self.pitch as usize;
@@ -1121,7 +1116,8 @@ impl DisplayServer {
         let mx = x as usize;
         let my = y as usize;
 
-        let bg_src = if dragging_window { fb_ptr as *const u32 } else { db_ptr };
+        // Always read from RAM double_buffer to avoid catastrophic MMIO read stalls
+        let bg_src = db_ptr;
 
         unsafe {
             let fb_pitch_u32 = pitch_bytes / 4;
@@ -1141,7 +1137,8 @@ impl DisplayServer {
 
                     if cursor_color != 0 {
                         *fb_ptr.add(fb_row_start + col) = cursor_color;
-                    } else if !dragging_window {
+                    } else {
+                        // ALWAYS restore from db_ptr so mouse erasing works perfectly
                         let bg_color = *bg_src.add(fb_row_start + col);
                         *fb_ptr.add(fb_row_start + col) = bg_color;
                     }

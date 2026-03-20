@@ -57,6 +57,9 @@ impl TerminalBuffer {
     }
 
     pub fn ensure_row(&mut self) {
+        if self.cursor_row > 10000 {
+            self.cursor_row = 10000;
+        }
         let current = if self.is_alt { &mut self.alt_lines } else { &mut self.lines };
         while current.len() <= self.cursor_row {
             current.push(Vec::new());
@@ -64,6 +67,9 @@ impl TerminalBuffer {
     }
 
     pub fn write_char(&mut self, c: char) {
+        if self.cursor_col > 500 {
+            self.cursor_col = 500;
+        }
         self.ensure_row();
         let current = if self.is_alt { &mut self.alt_lines } else { &mut self.lines };
         let line = &mut current[self.cursor_row];
@@ -182,7 +188,13 @@ impl TerminalBuffer {
 
 
                 if self.cursor_visible && i == self.cursor_row && j == self.cursor_col {
-                    cell.c = '▆';
+                    let inverted_fg = if cell.bg == 255 { 0 } else { cell.bg };
+                    let inverted_bg = if cell.fg == 255 { 7 } else { cell.fg };
+                    cell.fg = inverted_fg;
+                    cell.bg = inverted_bg;
+                    if cell.c == '\0' || cell.c == ' ' {
+                        cell.c = ' ';
+                    }
                 }
 
 
