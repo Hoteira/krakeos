@@ -250,24 +250,6 @@ impl Composer {
         }
     }
 
-    pub fn update_tiling(&mut self) {
-        let (screen_w, screen_h) = unsafe {
-            (
-                (*(&raw mut DISPLAY_SERVER)).width as usize,
-                (*(&raw mut DISPLAY_SERVER)).height as usize,
-            )
-        };
-
-        for i in 0..self.windows.len() {
-            if self.windows[i].w_type == Items::Window {
-                self.windows[i].can_move = true;
-                self.windows[i].can_resize = true;
-            }
-        }
-
-        self.update_window_area_rect(0, 0, screen_w as u32, screen_h as u32);
-    }
-
     pub fn check_id(&self, _rng_seed: u64) -> usize {
         static mut NEXT_ID: usize = 1;
         unsafe {
@@ -365,8 +347,7 @@ impl Composer {
         }
 
         self.windows.sort_by_key(|w| w.z);
-        debugln!("add_window: sorted, updating tiling...");
-        self.update_tiling();
+
         debugln!("add_window: tiling updated, returning ID.");
         w.id
     }
@@ -420,10 +401,6 @@ impl Composer {
 
                 if dirty_w > 0 && dirty_h > 0 {
                     self.update_window_area_rect(min_x as i32, min_y as i32, dirty_w, dirty_h);
-                }
-
-                if self.windows[i].w_type == Items::Window {
-                    self.update_tiling();
                 }
 
                 break;
@@ -826,7 +803,6 @@ impl Composer {
             );
             display_server.copy();
         }
-        self.update_tiling();
     }
 
     pub fn remove_windows_by_pid(&mut self, pid: u64) {
@@ -899,8 +875,6 @@ impl Composer {
                 );
                 display_server.copy();
             }
-            self.update_tiling();
         }
     }
 }
-
