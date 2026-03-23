@@ -331,7 +331,7 @@ impl TaskManager {
             }
             push_u64(arg_ptrs.len() as u64);
 
-            (*state_ptr).rax = 0;
+            core::ptr::write_bytes(state_ptr, 0, 1); // Zero all GPRs
             (*state_ptr).rip = entry_point;
             (*state_ptr).rdi = arg;
             (*state_ptr).cs = 0x23;

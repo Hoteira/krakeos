@@ -154,6 +154,26 @@ unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
                 .end_interrupt(crate::arch::x86_64::exceptions::TIMER_INT);
         }
 
+        // Validate the CPUState we're about to restore
+        let state_ptr = new_state as *const CPUState;
+        let rip_val = (*state_ptr).rip;
+        let rsp_val = (*state_ptr).rsp;
+        let cs_val = (*state_ptr).cs;
+        // Check for non-canonical RIP (bit 47 set but bits 48-63 not all 1, or vice versa)
+        let bit47 = (rip_val >> 47) & 1;
+        let high_bits = rip_val >> 48;
+        if rip_val != 0 && ((bit47 == 1 && high_bits != 0xFFFF) || (bit47 == 0 && high_bits != 0)) {
+            crate::debugln!("[SCHED] CORRUPT STATE! TID={} rip={:#x} rsp={:#x} cs={:#x} ptr={:#x}",
+                new_task_idx, rip_val, rsp_val, cs_val, new_state as u64);
+            // Print the kernel stack info
+            if new_task_idx >= 0 {
+                if let Some(thread) = tm.tasks.get(&(new_task_idx as usize)) {
+                    crate::debugln!("[SCHED] kernel_stack={:#x} cpu_state_ptr={:#x}",
+                        thread.kernel_stack, thread.cpu_state_ptr);
+                }
+            }
+        }
+
         new_state as u64
     }
 }

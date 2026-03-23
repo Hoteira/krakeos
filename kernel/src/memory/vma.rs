@@ -19,7 +19,7 @@ impl VmaAllocator {
     }
 
     pub fn track(&mut self, start: u64, size: u64, pid: u64) {
-        crate::debugln!("[VMA] Track PID {} region {:#x}..{:#x}", pid, start, start + size);
+        //crate::debugln!("[VMA] Track PID {} region {:#x}..{:#x}", pid, start, start + size);
         let end = start + size;
         for r in self.regions.values() {
             let r_end = r.start + r.size;
@@ -28,9 +28,9 @@ impl VmaAllocator {
                     pid, start, end, r.pid, r.start, r_end);
             }
         }
-        crate::debugln!("[VMA] Pushing to BTreeMap...");
+        //crate::debugln!("[VMA] Pushing to BTreeMap...");
         self.regions.insert(start, VmaRegion { start, size, pid });
-        crate::debugln!("[VMA] Push successful!");
+        //crate::debugln!("[VMA] Push successful!");
     }
 
     pub fn is_mapped(&self, addr: u64) -> bool {

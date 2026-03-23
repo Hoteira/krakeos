@@ -299,6 +299,12 @@ impl<'a> AotCompiler<'a> {
         self.emitter.add_reg_imm32(Reg::RAX, (16 + param_count * 16) as u32);
         self.emitter.sub_reg_imm32(Reg::RAX, (self.result_count * 16) as u32);
 
+        // IMPORTANT: Restore caller's RBP BEFORE writing results.
+        // When result_count > param_count, RAX can overlap [RBP], so
+        // writing results would corrupt the saved RBP if we pop it later.
+        self.emitter.mov_reg_reg(Reg::RSP, Reg::RBP);
+        self.emitter.pop_reg(Reg::RBP);
+
         if self.result_count > 0 {
             let skip_results = self.emitter.new_label();
             self.emitter.test_reg_reg(Reg::R11, Reg::R11);
@@ -317,8 +323,6 @@ impl<'a> AotCompiler<'a> {
             self.emitter.bind_label(skip_results);
         }
 
-        self.emitter.mov_reg_reg(Reg::RSP, Reg::RBP);
-        self.emitter.pop_reg(Reg::RBP);
         self.emitter.mov_reg_reg(Reg::RSP, Reg::RAX); // Set final SP
 
         self.emitter.sub_reg_imm32(Reg::RSP, 8); // Space for ret_addr

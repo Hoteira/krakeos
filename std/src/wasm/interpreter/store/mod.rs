@@ -696,7 +696,7 @@ impl<'a, T: Config> Store<'a, T> {
                         let func_type = wasm_func_inst.function_type.clone();
                         let module_addr = wasm_func_inst.module_addr;
 
-                        if self.aot_enabled && aot_ptr.is_some() {
+                        if false && self.aot_enabled && aot_ptr.is_some() {
                             let aot_ptr = aot_ptr.unwrap();
                             let mut fuel = maybe_fuel.unwrap_or(u32::MAX);
                             

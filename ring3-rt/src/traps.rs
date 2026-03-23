@@ -158,7 +158,13 @@ pub extern "C" fn trap_unimplemented_atomic(_ctx: &mut Ring3Context, _sp: *mut u
 /// Called when the AOT entry point function returns (via the return address we push on the stack).
 /// Reads trap_code from the Ring3Context to determine exit code.
 #[no_mangle]
-pub extern "C" fn process_exit() -> ! {
-    unsafe { syscall1(SYS_EXIT, 0); }
+pub extern "C" fn process_exit(ctx: *const Ring3Context) -> ! {
+    let mut exit_code = 0;
+    if !ctx.is_null() {
+        unsafe {
+            exit_code = *(*ctx).trap_code;
+        }
+    }
+    unsafe { syscall1(SYS_EXIT, exit_code as u64); }
     loop {}
 }

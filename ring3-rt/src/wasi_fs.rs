@@ -123,19 +123,6 @@ pub extern "C" fn call_host_dispatch(ctx: &mut Ring3Context, sp: *mut u128, idx:
         let jump_table = blob_base as *const u64;
         let stub_addr = *jump_table.add(stub_idx as usize);
 
-        {
-            let msg = "  stub_addr=";
-            crate::syscall::syscall3(999, msg.as_ptr() as u64, msg.len() as u64, 0);
-            let hex = b"0123456789abcdef";
-            let mut buf = [b'0'; 16];
-            for i in 0..16 {
-                buf[i] = hex[((stub_addr >> (60 - i * 4)) & 0xf) as usize];
-            }
-            crate::syscall::syscall3(999, buf.as_ptr() as u64, 16, 0);
-            let nl = "\n";
-            crate::syscall::syscall3(999, nl.as_ptr() as u64, 1, 0);
-        }
-
         if stub_addr == 0 {
              let result_sp = sp.sub(1);
              *result_sp = 1u128;

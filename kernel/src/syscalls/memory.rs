@@ -69,13 +69,9 @@ pub fn handle_memory_size(context: &mut CPUState) {
 
 pub fn handle_memory_grow(context: &mut CPUState) {
     let n_pages = context.rdi as u32;
-    let caller_rip = context.rip;
-    let caller_rsp = context.rsp;
-    crate::debugln!("[MEMORY_GROW] n_pages={} caller_rip={:#x} rsp={:#x}", n_pages, caller_rip, caller_rsp);
     if let Some(proc) = super::get_current_process() {
         let mut mem_size = proc.linear_memory_size.lock();
         let old_pages = (*mem_size / 65536) as u32;
-        crate::debugln!("[MEMORY_GROW] old_pages={} mem_base={:#x} current_size={:#x}", old_pages, proc.linear_memory_base, *mem_size);
 
         use crate::memory::address_space::LINEAR_MEMORY_SLOT_SIZE;
         let new_size = (*mem_size as u64) + (n_pages as u64 * 65536);
@@ -122,10 +118,7 @@ pub fn handle_mmap(context: &mut CPUState) {
     let _fd = context.r8;
     let _offset = context.r9;
 
-    crate::debugln!("[MMAP] addr={:#x} len={:#x}", addr, len);
-
     if len == 0 {
-        crate::debugln!("[MMAP] REJECTED: len=0");
         context.rax = u64::MAX;
         return;
     }
@@ -147,8 +140,6 @@ pub fn handle_mmap(context: &mut CPUState) {
             return;
         }
     };
-
-    crate::debugln!("[MMAP] pid={} mem_base={:#x} heap_limit={:#x}", pid, mem_base, heap_limit);
 
     let target_addr = if addr == 0 {
         let tm = crate::task::TASK_MANAGER.int_lock();
@@ -201,8 +192,6 @@ pub fn handle_mmap(context: &mut CPUState) {
     let mut current_virt = start_page;
     let mut remaining_bytes = (end_page - start_page) as usize;
 
-    crate::debugln!("[MMAP] Mapping {} bytes at {:#x}..{:#x}", remaining_bytes, start_page, end_page);
-
     while remaining_bytes > 0 {
         let is_2mb_aligned = (current_virt % 0x200000 == 0) && (remaining_bytes >= 0x200000);
         
@@ -239,7 +228,6 @@ pub fn handle_mmap(context: &mut CPUState) {
         }
     }
 
-    crate::debugln!("[MMAP] OK: mapped at {:#x}", target_addr);
     context.rax = target_addr;
 }
 

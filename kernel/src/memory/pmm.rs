@@ -115,7 +115,7 @@ pub fn init() {
 
         for i in 0..32 {
             let entry = mmap.entries[i];
-            if entry.length > 0 {
+            if entry.memory_type == 1 && entry.length > 0 {
                 let end = entry.base + entry.length;
                 if end > max_addr { max_addr = end; }
             }

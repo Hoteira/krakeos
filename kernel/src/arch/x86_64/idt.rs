@@ -94,7 +94,9 @@ impl Idt {
         self.entries[13].set_ist(3);
 
         self.entries[14].set(crate::arch::x86_64::exceptions::page_fault as u64);
-        self.entries[14].set_ist(2);
+        // IST 2 removed: use per-task kernel stack for page faults to avoid
+        // shared IST corruption when preempted during demand paging
+        // self.entries[14].set_ist(2);
 
         self.entries[16].set(crate::arch::x86_64::exceptions::fpu_error as u64);
         self.entries[19].set(crate::arch::x86_64::exceptions::simd_error as u64);

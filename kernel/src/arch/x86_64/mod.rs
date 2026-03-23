@@ -40,7 +40,8 @@ pub fn init_pat() {
 pub fn init_syscall_msrs() {
     unsafe {
         let mut efer = rdmsr(EFER_MSR);
-        efer |= 1;
+        efer |= 1; // SCE
+        efer |= 1 << 11; // NXE
         wrmsr(EFER_MSR, efer);
         let sysret_cs_base = 0x10; // SYSRET: CS = base+16 = 0x20|3, SS = base+8 = 0x18|3
         let syscall_cs_base = 0x08; // SYSCALL: CS = 0x08 (kernel_code_64), SS = 0x10 (kernel_data)

@@ -141,15 +141,105 @@ pub extern "x86-interrupt" fn general_protection_fault(info: &mut StackFrame, er
     }
 }
 
-pub extern "x86-interrupt" fn page_fault(info: &mut StackFrame, error_code: u64) {
-    let cr2: u64;
+/// Naked asm wrapper for #PF — bypasses extern "x86-interrupt" ABI to
+/// guarantee correct exception-frame offsets.
+#[unsafe(naked)]
+pub extern "C" fn page_fault() {
     unsafe {
-        core::arch::asm!("mov {}, cr2", out(reg) cr2);
+        core::arch::naked_asm!(
+            // CPU pushed: SS, RSP, RFLAGS, CS, RIP, error_code
+            // Save all GP registers (same order as timer_handler / CPUState layout)
+            "push rbp",
+            "push rax",
+            "push rbx",
+            "push rcx",
+            "push rdx",
+            "push rsi",
+            "push rdi",
+            "push r8",
+            "push r9",
+            "push r10",
+            "push r11",
+            "push r12",
+            "push r13",
+            "push r14",
+            "push r15",
+            // 15 pushes (120 bytes)
+            // Layout from RSP:
+            //   [RSP+0]   r15  ... [RSP+112] rbp
+            //   [RSP+120] error_code
+            //   [RSP+128] RIP  [RSP+136] CS  [RSP+144] RFLAGS
+            //   [RSP+152] RSP  [RSP+160] SS
+            "mov rdi, rsp",         // arg1 = saved-regs pointer
+            "mov r15, rsp",         // callee-save backup of RSP
+            "and rsp, -16",         // 16-byte align for C call
+            "call page_fault_inner",
+            "mov rsp, r15",         // restore exact RSP
+            // Only reached when demand paging succeeded (inner returned)
+            "pop r15",
+            "pop r14",
+            "pop r13",
+            "pop r12",
+            "pop r11",
+            "pop r10",
+            "pop r9",
+            "pop r8",
+            "pop rdi",
+            "pop rsi",
+            "pop rdx",
+            "pop rcx",
+            "pop rbx",
+            "pop rax",
+            "pop rbp",
+            "add rsp, 8",          // skip error code
+            "iretq",
+        );
     }
-    
-    crate::debugln!("[PageFault] CR2={:#x}, RIP={:#x}, Err={:#x}", cr2, info.instruction_pointer, error_code);
+}
 
-    // Check for guard page hits
+/// Inner handler called from naked page_fault wrapper.
+/// Returns normally ONLY when demand paging succeeded.
+/// All fatal paths call kill_current_task() or halt (never return).
+#[unsafe(no_mangle)]
+pub extern "C" fn page_fault_inner(saved_regs: u64) {
+    let base = saved_regs as *const u64;
+
+    let cr2: u64;
+    unsafe { core::arch::asm!("mov {}, cr2", out(reg) cr2); }
+
+    // Read raw exception frame from known stack offsets
+    let error_code = unsafe { *base.add(15) };
+    let rip        = unsafe { *base.add(16) };
+    let cs         = unsafe { *base.add(17) };
+    let rflags     = unsafe { *base.add(18) };
+    let fault_rsp  = unsafe { *base.add(19) };
+    let ss         = unsafe { *base.add(20) };
+
+    // Read saved GP registers for diagnostics
+    let saved_r14 = unsafe { *base.add(1) };   // r14 = memory_base in AOT
+    let saved_rdi = unsafe { *base.add(8) };    // rdi = ctx_ptr in AOT
+    let saved_rbp = unsafe { *base.add(14) };   // rbp = frame pointer
+
+    // Always print one-line diagnostic with raw frame values
+    serial_print("[PF] CR2=");
+    print_hex(cr2);
+    serial_print(" RIP=");
+    print_hex(rip);
+    serial_print(" CS=");
+    print_hex(cs);
+    serial_print(" RSP=");
+    print_hex(fault_rsp);
+    serial_print(" ERR=");
+    print_hex(error_code);
+    serial_print(" R14=");
+    print_hex(saved_r14);
+    serial_print(" RDI=");
+    print_hex(saved_rdi);
+    serial_print(" RBP=");
+    print_hex(saved_rbp);
+    serial_println("");
+
+    // --- Guard page check ---
     use crate::memory::address_space::*;
     use crate::memory::address::{PhysAddr, VirtAddr};
     use crate::memory::paging::{PageTableFlags, active_level_4_table};
@@ -157,7 +247,6 @@ pub extern "x86-interrupt" fn page_fault(info: &mut StackFrame, error_code: u64)
     use crate::memory::pmm;
 
     let mut is_guard = false;
-    // We only check for guards if CR2 is in the SAS regions
     if cr2 >= CODE_REGION_BASE && cr2 < LINEAR_MEMORY_BASE + (MAX_SLOTS as u64 * LINEAR_MEMORY_SLOT_SIZE) {
         let slot_id = if cr2 < STACK_REGION_BASE {
             ((cr2 - CODE_REGION_BASE) / CODE_SLOT_SIZE) as u16
@@ -174,7 +263,9 @@ pub extern "x86-interrupt" fn page_fault(info: &mut StackFrame, error_code: u64)
 
             if cr2 >= code_base + CODE_SLOT_SIZE - 4096 && cr2 < code_base + CODE_SLOT_SIZE {
                 is_guard = true;
-            } else if (cr2 >= stack_base && cr2 < stack_base + 4096) || (cr2 >= stack_base + STACK_SLOT_SIZE - 4096 && cr2 < stack_base + STACK_SLOT_SIZE) {
+            } else if (cr2 >= stack_base && cr2 < stack_base + 4096)
+                || (cr2 >= stack_base + STACK_SLOT_SIZE - 4096 && cr2 < stack_base + STACK_SLOT_SIZE)
+            {
                 is_guard = true;
             } else if cr2 >= lin_base + LINEAR_MEMORY_SLOT_SIZE - 4096 && cr2 < lin_base + LINEAR_MEMORY_SLOT_SIZE {
                 is_guard = true;
@@ -187,64 +278,83 @@ pub extern "x86-interrupt" fn page_fault(info: &mut StackFrame, error_code: u64)
         print_hex(cr2);
         serial_println(". Terminating task.");
         kill_current_task();
-        return;
+        // never returns
     }
 
-    // Demand Paging Logic
-    let mut vma = crate::memory::vma::GLOBAL_VMA.lock();
-    if vma.is_mapped(cr2) {
-        // Find PID for this region to attribute memory correctly
-        let mut target_pid = 0;
-        for region in vma.get_regions() {
-            if cr2 >= region.start && cr2 < region.start + region.size {
-                target_pid = region.pid;
-                break;
-            }
-        }
+    // --- Demand Paging ---
+    {
+        let mut vma = crate::memory::vma::GLOBAL_VMA.lock();
+        if vma.is_mapped(cr2) {
+            if let Some(frame) = pmm::allocate_frame() {
+                let pml4 = active_level_4_table();
+                let mut mapper = unsafe {
+                    Mapper::new(PhysAddr::new(crate::memory::paging::virt_to_phys(
+                        pml4 as *const _ as u64,
+                    )))
+                };
 
-        if let Some(frame) = pmm::allocate_frame() {
-            let pml4 = active_level_4_table();
-            let mut mapper = unsafe { Mapper::new(PhysAddr::new(crate::memory::paging::virt_to_phys(pml4 as *const _ as u64))) };
-            
-            let mut flags = PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE | PageTableFlags::WRITABLE;
-            
-            // If it's NOT in the code region, set NX
-            if cr2 < STACK_REGION_BASE {
-                // Code region: allow execution (do not set NX)
-            } else {
-                flags |= PageTableFlags::NO_EXECUTE;
-            }
+                let mut flags = PageTableFlags::PRESENT
+                    | PageTableFlags::USER_ACCESSIBLE
+                    | PageTableFlags::WRITABLE;
 
-            let virt = VirtAddr::new(cr2 & !0xFFF);
-            let phys = PhysAddr::new(frame);
-
-            if let Ok(_) = mapper.map(virt, phys, flags) {
-                // Flush TLB
-                unsafe {
-                    core::arch::asm!("invlpg [{}]", in(reg) cr2, options(nostack, preserves_flags));
+                if cr2 >= STACK_REGION_BASE {
+                    flags |= PageTableFlags::NO_EXECUTE;
                 }
-                return;
+
+                let virt = VirtAddr::new(cr2 & !0xFFF);
+                let phys = PhysAddr::new(frame);
+
+                if let Ok(_) = mapper.map(virt, phys, flags) {
+                    unsafe {
+                        core::arch::asm!("invlpg [{}]", in(reg) cr2, options(nostack, preserves_flags));
+                    }
+                    return; // demand paging success → naked wrapper will iretq
+                }
             }
+            // fall through to fatal if allocation or mapping failed
+        } else {
+            serial_print("[PF] Address not in VMA: ");
+            print_hex(cr2);
+            serial_println("");
         }
-    } else {
-        serial_print("[PF] Address not in VMA: ");
-        print_hex(cr2);
-        serial_println("");
     }
 
+    // --- Fatal page fault ---
     serial_println("\n=== PAGE FAULT ===");
-    serial_print("Address (CR2): ");
+    serial_print("CR2: ");
     print_hex(cr2);
-    serial_print("\r\nError Code: ");
+    serial_print(" RIP: ");
+    print_hex(rip);
+    serial_print(" RSP: ");
+    print_hex(fault_rsp);
+    serial_print(" Err: ");
     print_hex(error_code);
-    serial_print("\r\nRIP: ");
-    print_hex(info.instruction_pointer);
+    serial_print(" CS: ");
+    print_hex(cs);
+    {
+        let tm = crate::task::TASK_MANAGER.int_lock();
+        let pid = tm.current_task;
+        serial_print(" PID: ");
+        print_hex(pid as u64);
+        if pid >= 0 {
+            if let Some(thread) = tm.tasks.get(&(pid as usize)) {
+                if let Some(proc) = &thread.process {
+                    serial_print(" code_base: ");
+                    print_hex(proc.code_base);
+                    serial_print(" mem_base: ");
+                    print_hex(proc.linear_memory_base);
+                }
+            }
+        }
+    }
     serial_println("");
 
-    if (info.code_segment & 3) == 3 {
+    if (cs & 3) == 3 {
         serial_println("User mode Page Fault. Terminating task.");
         kill_current_task();
+        // never returns
     } else {
+        serial_println("Kernel Panic: Page Fault in Kernel Mode");
         unsafe {
             core::arch::asm!("cli");
             loop { core::arch::asm!("hlt"); }

@@ -399,8 +399,6 @@ pub fn dispatch_syscall(context: &mut CPUState) -> u64 {
                 func_idx,
                 sp,
             );
-            // Explicitly ensure trap_code is 0 before returning to Ring 3
-            unsafe { *(*ctx_ptr).trap_code = 0; }
             context.rax = new_sp as u64;
         }
 

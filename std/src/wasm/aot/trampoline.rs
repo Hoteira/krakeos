@@ -908,7 +908,6 @@ pub extern "C" fn aot_call_host(ctx: &mut Ring3Context, func_idx: u32, sp: *mut 
         let store_size = store.memories.get(mem_addr).mem.len();
         if ctx.memory_size > store_size {
             let new_pages = (ctx.memory_size / 65536) as u32;
-            crate::os::debug_print(&alloc::format!("[MEM_SYNC] ctx={} > store={}, set_pages({})\n", ctx.memory_size, store_size, new_pages));
             store.memories.get_mut(mem_addr).mem.set_pages(new_pages);
         } else if store_size > ctx.memory_size {
             ctx.memory_base = store.memories.get(mem_addr).mem.get_base_ptr();

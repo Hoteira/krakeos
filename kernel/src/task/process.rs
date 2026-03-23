@@ -43,7 +43,7 @@ impl Process {
         let heap_start = linear_memory_base + 4 * 1024 * 1024 * 1024;
         let heap_limit = linear_memory_base + crate::memory::address_space::LINEAR_MEMORY_SLOT_SIZE - 4096;
 
-        crate::debugln!("Process::new: allocating Arc<Self>...");
+        //crate::debugln!("Process::new: allocating Arc<Self>...");
         let arc = Arc::new(Self {
             pid,
             uid,
@@ -69,7 +69,7 @@ impl Process {
             env_vars: Mutex::new(Vec::new()),
         });
 
-        crate::debugln!("Process::new: allocated successfully.");
+        //crate::debugln!("Process::new: allocated successfully.");
         arc
     }
 }
