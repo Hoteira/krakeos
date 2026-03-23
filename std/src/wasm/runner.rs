@@ -12,7 +12,20 @@ use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 
-pub fn run(path: &str, root_path: &str, fds: &[(u8, u8)], aot: bool) -> i32 {
+pub struct Ring3AotInfo {
+    pub entry_addr: u64,
+    pub ctx_ptr: u64,
+    pub stack_base: u64,
+    pub stack_limit: u64,
+    pub module_addr: usize,
+}
+
+pub enum WasmRunResult {
+    Finished(i32),
+    AotReady(Ring3AotInfo),
+}
+
+pub fn run(path: &str, root_path: &str, fds: &[(u8, u8)], aot: bool) -> WasmRunResult {
     run_with_args(path, vec![path.to_string()], root_path, fds, aot)
 }
 
@@ -22,7 +35,7 @@ pub fn run_with_args(
     root_path: &str,
     fds: &[(u8, u8)],
     aot: bool,
-) -> i32 {
+) -> WasmRunResult {
     run_with_env(path, args, root_path, fds, Vec::new(), aot)
 }
 
@@ -31,78 +44,129 @@ pub fn run_in_container<'a, T: Config>(
     buffer: &'a [u8],
     linker: &mut Linker,
     store: &mut Store<'a, T>,
-) -> i32 {
+) -> WasmRunResult {
     unsafe {
         crate::wasm::wasi::ICRNL = true;
     }
-    match validate(buffer) {
+    let res: Result<WasmRunResult, crate::wasm::RuntimeError> = match validate(buffer) {
         Ok(validation_info) => {
-            let res: Result<i32, crate::wasm::RuntimeError> = if let Some(component) = &validation_info.component {
+            if let Some(component) = &validation_info.component {
                 crate::wasm::interpreter::component_executor::instantiate_component(
                     store, linker, component, buffer,
                 )
-                .map(|_| 0)
+                .map(|_| WasmRunResult::Finished(0))
             } else {
                 linker
-                    .module_instantiate_unchecked(store, &validation_info, None)
-                    .and_then(|instance| {
-                        let entry_point = store
-                            .instance_export_unchecked(instance.module_addr, "wasi:cli/run@0.2.0#run")
-                            .ok()
-                            .and_then(|e| e.as_func())
-                            .or_else(|| {
-                                store
-                                    .instance_export_unchecked(instance.module_addr, "__main_void")
-                                    .ok()
-                                    .and_then(|e| e.as_func())
-                            })
-                            .or_else(|| {
-                                store
-                                    .instance_export_unchecked(instance.module_addr, "run")
-                                    .ok()
-                                    .and_then(|e| e.as_func())
-                            })
-                            .or_else(|| {
-                                store
-                                    .instance_export_unchecked(instance.module_addr, "_start")
-                                    .ok()
-                                    .and_then(|e| e.as_func())
-                            });
+                    .module_instantiate_unchecked(store, &validation_info, None, 0)
+                    .and_then(|instance| handle_instantiation_result(store, instance))
+            }
+        }
+        Err(e) => {
+            crate::debugln!("[wasm-runner] Validation error: {:?}", e);
+            Ok(WasmRunResult::Finished(1))
+        }
+    };
 
-                        if let Some(func_addr) = entry_point {
-                            store.invoke_unchecked(func_addr, Vec::new(), None).map(|run_res| {
-                                if let RunState::Finished { values, .. } = run_res {
-                                    if let Some(Value::I32(val)) = values.first() {
-                                        return *val as i32;
-                                    }
-                                }
-                                0
-                            })
-                        } else {
-                            Ok(0)
-                        }
-                    })
-            };
+    let final_res = match res {
+        Ok(r) => r,
+        Err(crate::wasm::RuntimeError::HostFunctionHaltedExecution(code)) => WasmRunResult::Finished(code),
+        Err(e) => {
+            crate::debugln!("[wasm-runner] Execution error in {}: {:?}", name, e);
+            WasmRunResult::Finished(1)
+        }
+    };
+    unsafe {
+        crate::wasm::wasi::ICRNL = false;
+    }
+    final_res
+}
 
-            let exit_code = match res {
-                Ok(code) => code,
-                Err(crate::wasm::RuntimeError::HostFunctionHaltedExecution(code)) => code,
-                Err(e) => {
-                    crate::debugln!("[wasm-runner] Execution error in {}: {:?}", name, e);
-                    1
+fn handle_instantiation_result<'a, T: Config>(
+    store: &mut Store<'a, T>,
+    instance: crate::wasm::interpreter::store::InstantiationOutcome,
+) -> Result<WasmRunResult, crate::wasm::RuntimeError> {
+    if store.aot_enabled && instance.maybe_ctx_ptr.is_some() {
+        crate::debugln!("[AOT-Runner] AOT enabled, looking for entry point...");
+        let entry_point = store
+            .instance_export_unchecked(instance.module_addr, "wasi:cli/run@0.2.0#run")
+            .ok()
+            .and_then(|e| e.as_func())
+            .or_else(|| {
+                store
+                    .instance_export_unchecked(instance.module_addr, "__main_void")
+                    .ok()
+                    .and_then(|e| e.as_func())
+            })
+            .or_else(|| {
+                store
+                    .instance_export_unchecked(instance.module_addr, "run")
+                    .ok()
+                    .and_then(|e| e.as_func())
+            })
+            .or_else(|| {
+                store
+                    .instance_export_unchecked(instance.module_addr, "_start")
+                    .ok()
+                    .and_then(|e| e.as_func())
+            });
+
+        if let Some(func_addr) = entry_point {
+            crate::debugln!("[AOT-Runner] Found entry point at addr {}", func_addr);
+            let wasm_func = match store.functions.get(func_addr) {
+                crate::wasm::interpreter::store::FuncInst::WasmFunc(f) => f,
+                _ => {
+                    return Err(crate::wasm::RuntimeError::Trap(
+                        crate::wasm::TrapError::ReachedUnreachable,
+                    ))
                 }
             };
-            unsafe {
-                crate::wasm::wasi::ICRNL = false;
-            }
-            exit_code
+            crate::debugln!("[AOT-Runner] AOT ptr: {:#x}", wasm_func.aot_ptr.unwrap_or(0));
+            return Ok(WasmRunResult::AotReady(Ring3AotInfo {
+                entry_addr: wasm_func.aot_ptr.unwrap_or(0) as u64,
+                ctx_ptr: instance.maybe_ctx_ptr.unwrap(),
+                stack_base: store.stack_base,
+                stack_limit: store.stack_limit,
+                module_addr: instance.module_addr,
+            }));
+        } else {
+            crate::debugln!("[AOT-Runner] No AOT entry point found.");
         }
-        Err(_) => {
-            unsafe {
-                crate::wasm::wasi::ICRNL = false;
+    }
+
+    let entry_point = store
+        .instance_export_unchecked(instance.module_addr, "wasi:cli/run@0.2.0#run")
+        .ok()
+        .and_then(|e| e.as_func())
+        .or_else(|| {
+            store
+                .instance_export_unchecked(instance.module_addr, "__main_void")
+                .ok()
+                .and_then(|e| e.as_func())
+        })
+        .or_else(|| {
+            store
+                .instance_export_unchecked(instance.module_addr, "run")
+                .ok()
+                .and_then(|e| e.as_func())
+        })
+        .or_else(|| {
+            store
+                .instance_export_unchecked(instance.module_addr, "_start")
+                .ok()
+                .and_then(|e| e.as_func())
+        });
+
+    if let Some(func_addr) = entry_point {
+        store.invoke_unchecked(func_addr, Vec::new(), None).map(|run_res| {
+            if let RunState::Finished { values, .. } = run_res {
+                if let Some(Value::I32(val)) = values.first() {
+                    return WasmRunResult::Finished(*val as i32);
+                }
             }
-            1
-        }
+            WasmRunResult::Finished(0)
+        })
+    } else {
+        Ok(WasmRunResult::Finished(0))
     }
 }
 
@@ -116,7 +180,7 @@ pub fn run_with_buffer(
     aot: bool,
     container_id: u64,
     slot_id: u16,
-) -> i32 {
+) -> WasmRunResult {
     debugln!("[wasm-runner] Starting buffer {} (AOT: {})...", name, aot);
 
     // Parse runtime-specific arguments
@@ -163,7 +227,7 @@ pub fn run_with_buffer(
     unsafe {
         crate::wasm::wasi::ICRNL = true;
     }
-    match validate(buffer) {
+    let res: Result<WasmRunResult, crate::wasm::RuntimeError> = match validate(buffer) {
         Ok(validation_info) => {
             let mut store = Store::new(());
             store.aot_enabled = aot;
@@ -185,8 +249,6 @@ pub fn run_with_buffer(
                 const CODE_SLOT_SIZE: u64    = 64 * 1024 * 1024;     // 64 MiB
                 const STACK_REGION_BASE: u64 = 0x0000_0041_0000_0000; // 260 GiB
                 const STACK_SLOT_SIZE: u64   = 2 * 1024 * 1024;      // 2 MiB
-                const KERNEL_STACK_REGION_BASE: u64 = 0x0000_0043_0000_0000; // 268 GiB
-                const KERNEL_STACK_SLOT_SIZE: u64   = 128 * 1024;    // 128 KiB
                 const LINEAR_MEMORY_REGION_BASE: u64 = 0x0000_0043_2000_0000; // 268.5 GiB
                 const LINEAR_MEMORY_SLOT_SIZE: u64   = 31 * 1024 * 1024 * 1024; // 31 GiB
 
@@ -201,6 +263,8 @@ pub fn run_with_buffer(
             let sas_base = Some(slot_info.linear_memory_base);
             store.sas_memory_base = sas_base;
             store.code_base = Some(slot_info.code_base);
+            store.stack_base = slot_info.stack_base + 2 * 1024 * 1024; // 2MB stack top
+            store.stack_limit = slot_info.stack_base; // Bottom
 
             // Register container
             let initial_mem_size = validation_info.memories.get(0).map(|m| m.limits.min * 65536).unwrap_or(0);
@@ -228,87 +292,55 @@ pub fn run_with_buffer(
                 env_vars,
             ));
 
-            let res: Result<i32, crate::wasm::RuntimeError> = if let Some(component) = &validation_info.component {
+            if let Some(component) = &validation_info.component {
                 debugln!("[wasm-runner] [COMPONENT] Executing...");
                 crate::wasm::interpreter::component_executor::instantiate_component(
                     &mut store, &linker, component, buffer,
                 )
-                .map(|_| 0)
+                .map(|_| WasmRunResult::Finished(0))
             } else {
-                linker
-                    .module_instantiate_unchecked(&mut store, &validation_info, None)
-                    .and_then(|instance| {
-                        let entry_point = store
-                            .instance_export_unchecked(instance.module_addr, "wasi:cli/run@0.2.0#run")
-                            .ok()
-                            .and_then(|e| e.as_func())
-                            .or_else(|| {
-                                store
-                                    .instance_export_unchecked(instance.module_addr, "__main_void")
-                                    .ok()
-                                    .and_then(|e| e.as_func())
-                            })
-                            .or_else(|| {
-                                store
-                                    .instance_export_unchecked(instance.module_addr, "run")
-                                    .ok()
-                                    .and_then(|e| e.as_func())
-                            })
-                            .or_else(|| {
-                                store
-                                    .instance_export_unchecked(
-                                        instance.module_addr,
-                                        "_start",
-                                    )
-                                    .ok()
-                                    .and_then(|e| e.as_func())
-                            });
+                let result = linker
+                    .module_instantiate_unchecked(&mut store, &validation_info, None, slot_id)
+                    .and_then(|instance| handle_instantiation_result(&mut store, instance));
 
-                        if let Some(func_addr) = entry_point {
-                            store
-                                .invoke_unchecked(func_addr, Vec::new(), None)
-                                .map(|run_res| {
-                                    if let RunState::Finished { values, .. } = run_res {
-                                        if let Some(Value::I32(val)) = values.first() {
-                                            return *val as i32;
-                                        }
-                                    }
-                                    0
-                                })
-                        } else {
-                            debugln!("[wasm-runner] No entry point found.");
-                            Ok(0)
-                        }
-                    })
-            };
+                // Persist the Store for Ring3 host call dispatch
+                if let Ok(WasmRunResult::AotReady(ref info)) = result {
+                    let ctx = unsafe { &mut *(info.ctx_ptr as *mut crate::wasm::aot::runtime::Ring3Context) };
+                    ctx.module_addr = info.module_addr;
+                    let store_raw = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(store));
+                    ctx.store = store_raw as *mut usize;
+                }
 
-            let exit_code = match res {
-                Ok(code) => code,
-                Err(crate::wasm::RuntimeError::HostFunctionHaltedExecution(code)) => {
-                    if code != 0 {
-                        debugln!("[wasm-runner] Process exited with code {}", code);
-                    }
-                    code
-                }
-                Err(e) => {
-                    debugln!("[wasm-runner] Execution error: {:?}", e);
-                    1
-                }
-            };
-            unsafe {
-                crate::wasm::wasi::ICRNL = false;
+                result
             }
-            debugln!("[wasm-runner] Finished buffer {}.", name);
-            unregister_container(container_id, exit_code);
-            return exit_code;
         }
-        Err(e) => debugln!("[wasm-runner] Validation error: {:?}", e),
-    }
+        Err(e) => {
+            debugln!("[wasm-runner] Validation error: {:?}", e);
+            Ok(WasmRunResult::Finished(1))
+        }
+    };
+
+    let final_res = match res {
+        Ok(r) => r,
+        Err(crate::wasm::RuntimeError::HostFunctionHaltedExecution(code)) => {
+            if code != 0 {
+                debugln!("[wasm-runner] Process exited with code {}", code);
+            }
+            WasmRunResult::Finished(code)
+        }
+        Err(e) => {
+            debugln!("[wasm-runner] Execution error in {}: {:?}", name, e);
+            WasmRunResult::Finished(1)
+        }
+    };
     unsafe {
         crate::wasm::wasi::ICRNL = false;
     }
     debugln!("[wasm-runner] Finished buffer {}.", name);
-    1
+    if let WasmRunResult::Finished(exit_code) = &final_res {
+        unregister_container(container_id, *exit_code);
+    }
+    final_res
 }
 
 pub fn run_with_env(
@@ -318,7 +350,7 @@ pub fn run_with_env(
     fds: &[(u8, u8)],
     env_vars: Vec<(String, String)>,
     aot: bool,
-) -> i32 {
+) -> WasmRunResult {
     debugln!("[wasm-runner] Starting {} (AOT: {})...", path, aot);
 
     // Parse runtime-specific arguments
@@ -388,6 +420,8 @@ pub fn run_with_env(
                     let sas_base = Some(slot_info.linear_memory_base);
                     store.sas_memory_base = sas_base;
                     store.code_base = Some(slot_info.code_base);
+                    store.stack_base = slot_info.stack_base + 2 * 1024 * 1024;
+                    store.stack_limit = slot_info.stack_base;
 
                     // Register container
                     let initial_mem_size = validation_info.memories.get(0).map(|m| m.limits.min * 65536).unwrap_or(0);
@@ -416,81 +450,38 @@ pub fn run_with_env(
                         env_vars,
                     ));
 
-                    let res: Result<i32, crate::wasm::RuntimeError> = if let Some(component) = &validation_info.component {
-                        debugln!("[wasm-runner] [COMPONENT] Executing...");
+                    let res: Result<WasmRunResult, crate::wasm::RuntimeError> = if let Some(component) = &validation_info.component {
                         crate::wasm::interpreter::component_executor::instantiate_component(
                             &mut store, &linker, component, &buffer,
                         )
-                        .map(|_| 0)
+                        .map(|_| WasmRunResult::Finished(0))
                     } else {
                         linker
-                            .module_instantiate_unchecked(&mut store, &validation_info, None)
-                            .and_then(|instance| {
-                                let entry_point = store
-                                    .instance_export_unchecked(instance.module_addr, "wasi:cli/run@0.2.0#run")
-                                    .ok()
-                                    .and_then(|e| e.as_func())
-                                    .or_else(|| {
-                                        store
-                                            .instance_export_unchecked(instance.module_addr, "__main_void")
-                                            .ok()
-                                            .and_then(|e| e.as_func())
-                                    })
-                                    .or_else(|| {
-                                        store
-                                            .instance_export_unchecked(instance.module_addr, "run")
-                                            .ok()
-                                            .and_then(|e| e.as_func())
-                                    })
-                                    .or_else(|| {
-                                        store
-                                            .instance_export_unchecked(
-                                                instance.module_addr,
-                                                "_start",
-                                            )
-                                            .ok()
-                                            .and_then(|e| e.as_func())
-                                    });
-
-                                if let Some(func_addr) = entry_point {
-                                    store
-                                        .invoke_unchecked(func_addr, Vec::new(), None)
-                                        .map(|run_res| {
-                                            if let RunState::Finished { values, .. } = run_res {
-                                                if let Some(Value::I32(val)) = values.first() {
-                                                    return *val as i32;
-                                                }
-                                            }
-                                            0
-                                        })
-                                } else {
-                                    debugln!("[wasm-runner] No entry point found.");
-                                    Ok(0)
-                                }
-                            })
+                            .module_instantiate_unchecked(&mut store, &validation_info, None, slot_info.slot_id)
+                            .and_then(|instance| handle_instantiation_result(&mut store, instance))
                     };
 
-                    let exit_code = match res {
-                        Ok(code) => code,
-                        Err(crate::wasm::RuntimeError::HostFunctionHaltedExecution(code)) => {
-                            if code != 0 {
-                                debugln!("[wasm-runner] Process exited with code {}", code);
-                            }
-                            code
-                        }
+                    let final_res = match res {
+                        Ok(r) => r,
+                        Err(crate::wasm::RuntimeError::HostFunctionHaltedExecution(code)) => WasmRunResult::Finished(code),
                         Err(e) => {
-                            debugln!("[wasm-runner] Execution error: {:?}", e);
-                            1
+                            debugln!("[wasm-runner] Execution error in {}: {:?}", path, e);
+                            WasmRunResult::Finished(1)
                         }
                     };
                     unsafe {
                         crate::wasm::wasi::ICRNL = false;
                     }
                     debugln!("[wasm-runner] Finished {}.", path);
-                    unregister_container(container_id, exit_code);
-                    return exit_code;
+                    if let WasmRunResult::Finished(exit_code) = &final_res {
+                        unregister_container(container_id, *exit_code);
+                    }
+                    return final_res;
                 }
-                Err(e) => debugln!("[wasm-runner] Validation error: {:?}", e),
+                Err(e) => {
+                    debugln!("[wasm-runner] Validation error: {:?}", e);
+                    return WasmRunResult::Finished(1);
+                }
             }
             unsafe {
                 crate::wasm::wasi::ICRNL = false;
@@ -500,5 +491,5 @@ pub fn run_with_env(
         debugln!("[wasm-runner] Could not open {}", path);
     }
     debugln!("[wasm-runner] Finished {}.", path);
-    1
+    WasmRunResult::Finished(1)
 }

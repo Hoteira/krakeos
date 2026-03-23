@@ -68,6 +68,8 @@ pub struct Store<'a, T: Config> {
     pub wasi_ctx: Option<crate::wasm::wasi::WasiCtx>,
     pub sas_memory_base: Option<u64>,
     pub code_base: Option<u64>,
+    pub stack_base: u64,
+    pub stack_limit: u64,
     pub next_code_offset: usize,
     pub container_id: Option<u64>,
     pub shm_mappings: BTreeMap<String, u32>,
@@ -96,6 +98,8 @@ impl<'a, T: Config> Store<'a, T> {
             wasi_ctx: None,
             sas_memory_base: None,
             code_base: None,
+            stack_base: 0,
+            stack_limit: 0,
             next_code_offset: 0,
             container_id: None,
             shm_mappings: BTreeMap::new(),
@@ -107,10 +111,12 @@ impl<'a, T: Config> Store<'a, T> {
         validation_info: &ValidationInfo<'a>,
         extern_vals: Vec<ExternVal>,
         maybe_fuel: Option<u32>,
+        slot_id: u16,
     ) -> Result<InstantiationOutcome, RuntimeError> {
         if validation_info.imports.len() != extern_vals.len() {
             return Err(RuntimeError::ExternValsLenMismatch);
         }
+        let mut maybe_ctx_ptr = None;
         let module_inst = ModuleInst {
             types: validation_info.types.clone(),
             func_addrs: extern_vals.iter().funcs().collect(),
@@ -195,7 +201,7 @@ impl<'a, T: Config> Store<'a, T> {
         let global_addrs: Vec<GlobalAddr> = validation_info
             .globals
             .iter()
-            .zip(global_init_vals)
+            .zip(global_init_vals.clone())
             .map(|(g, v)| self.alloc_global(g.ty, v))
             .collect();
         let elem_addrs = validation_info
@@ -317,16 +323,33 @@ impl<'a, T: Config> Store<'a, T> {
             let aot_module = compiler.compile_module();
 
             let final_code_ptr = if let Some(base) = self.code_base {
+                // 1. Copy blob if this is the first module in this code slot
+                if self.next_code_offset == 0 {
+                    crate::debugln!("[AOT] Copying blob to {:#x}...", base);
+                    let blob = crate::wasm::aot::RING3_RT_BLOB;
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(blob.as_ptr(), base as *mut u8, blob.len());
+                        crate::debugln!("[AOT] Blob copied. Fixing jump table...");
+                        // Fix up jump table (1024 entries)
+                        let jump_table = base as *mut u64;
+                        for i in 0..1024 {
+                            *jump_table.add(i) += base;
+                        }
+                        crate::debugln!("[AOT] Jump table fixed.");
+                    }
+                    self.next_code_offset = (blob.len() + 4095) & !4095;
+                }
+
                 let ptr = (base + self.next_code_offset as u64) as *mut u8;
-                let code_len = aot_module.code.len();
+                let code_len = aot_module.code.as_slice().len();
                 crate::debugln!(
-                    "[AOT] code_base={:#x} offset={} code_len={} ({} MB)",
+                    "[AOT] code_base={:#x} offset={} code_len={} ({} KB)",
                     base,
                     self.next_code_offset,
                     code_len,
-                    code_len / (1024 * 1024)
+                    code_len / 1024
                 );
-                const CODE_SLOT_SIZE: usize = 256 * 1024 * 1024;
+                const CODE_SLOT_SIZE: usize = 64 * 1024 * 1024; // 64 MiB as per plan
                 if self.next_code_offset + code_len > CODE_SLOT_SIZE {
                     return Err(RuntimeError::Trap(TrapError::ReachedUnreachable));
                 }
@@ -334,21 +357,184 @@ impl<'a, T: Config> Store<'a, T> {
                 unsafe {
                     core::ptr::copy_nonoverlapping(aot_module.code.as_ptr(), ptr, code_len);
                 }
+                crate::debugln!("[AOT] Module code copied.");
 
                 let res = ptr as usize;
                 // Align next offset to 4KB for isolation
                 self.next_code_offset = (self.next_code_offset + code_len + 4095) & !4095;
+
+                // 2. Set up Data Region after the code
+                let data_region_ptr = (base + self.next_code_offset as u64) as *mut u8;
+                crate::debugln!("[AOT] Data region at {:#x}", data_region_ptr as u64);
+                
+                // Ring3Context at start of data region
+                let ctx_ptr = data_region_ptr as *mut crate::wasm::aot::runtime::Ring3Context;
+                
+                // Collect all global values (imported + local)
+                let mut all_global_vals = Vec::new();
+                for ga in extern_vals.iter().globals() {
+                    all_global_vals.push(self.globals.get(ga).value);
+                }
+                for v in &global_init_vals {
+                    all_global_vals.push(*v);
+                }
+
+                // Allocate space for globals
+                let num_globals = all_global_vals.len();
+                let globals_ptr = unsafe { data_region_ptr.add(256) }; // 256 bytes reserved for context
+                
+                // Allocate space for table 0
+                let table0_addr = *self.modules.get(module_addr).table_addrs.first().unwrap_or(&usize::MAX);
+                let (table0_ptr, table0_size) = if table0_addr != usize::MAX {
+                    let t = self.tables.get(table0_addr);
+                    (unsafe { globals_ptr.add((num_globals * 16 + 15) & !15) as *mut u64 }, t.elem.len() as u32)
+                } else {
+                    (core::ptr::null_mut(), 0)
+                };
+
+                // Resolve imported functions to blob stubs
+                let mut import_stubs = Vec::new();
+                for imp in &validation_info.imports {
+                    if let crate::wasm::common::reader::types::import::ImportDesc::Func(_) = imp.desc {
+                        let stub_idx = match (imp.module_name.as_str(), imp.name.as_str()) {
+                            ("wasi_snapshot_preview1", "fd_write") => 90,
+                            ("wasi_snapshot_preview1", "fd_read") => 91,
+                            ("wasi_snapshot_preview1", "fd_close") => 92,
+                            ("env", "host_serial_print") => 999, // Our manual test
+                            ("wasi_snapshot_preview1", "proc_exit") => 0, // Trap/Exit
+                            _ => u64::MAX, // Forward to kernel via SYS_WASM_HOST_CALL
+                        };
+                        import_stubs.push(stub_idx as u64);
+                    }
+                }
+
+                // Calculate import_stub_table_ptr but DON'T populate yet
+                // (write_bytes zeroes the data region at line below, so we populate after)
+                let import_stub_table_ptr = if !import_stubs.is_empty() {
+                    let ptr = unsafe { (if table0_ptr.is_null() { globals_ptr.add((num_globals * 16 + 15) & !15) } else { table0_ptr.add(table0_size as usize) as *mut u8 }) as *mut u64 };
+                    ptr
+                } else {
+                    core::ptr::null()
+                };
+
+                let num_funcs = self.modules.get(module_addr).func_addrs.len();
+                let func_table_ptr = unsafe { (if import_stub_table_ptr.is_null() { (if table0_ptr.is_null() { globals_ptr.add((num_globals * 16 + 15) & !15) } else { table0_ptr.add(table0_size as usize) as *mut u8 }) } else { import_stub_table_ptr.add(import_stubs.len()) as *mut u8 }) as *mut u64 };
+
+                unsafe {
+                    core::ptr::write_bytes(data_region_ptr, 0, 4096); // Zero out first page of data region
+                    
+                    let mem_addr = *self.modules.get(module_addr).mem_addrs.get(0).unwrap_or(&usize::MAX);
+                    let (memory_base, memory_size) = if mem_addr != usize::MAX {
+                        let mem = &self.memories.get(mem_addr).mem;
+                        (mem.get_base_ptr(), mem.len())
+                    } else {
+                        (core::ptr::null_mut(), 0)
+                    };
+
+                    let mut ring3_ctx = crate::wasm::aot::runtime::Ring3Context {
+                        store: core::ptr::null_mut(),
+                        fuel: core::ptr::null_mut(),
+                        memory_base,
+                        memory_size,
+                        stack_base: core::ptr::null_mut(), // To be set at launch
+                        locals_base: core::ptr::null_mut(), // To be set at launch
+                        module_addr: 0,
+                        stack_limit: 0,
+                        trap_code: &mut (*ctx_ptr).trap_code_storage as *mut i32,
+                        blob_base: base,
+                        globals_ptr,
+                        globals_count: num_globals as u32,
+                        _pad0: 0,
+                        table0_ptr,
+                        table0_size,
+                        _pad1: 0,
+                        func_table_ptr,
+                        func_count: num_funcs as u32,
+                        _pad2: 0,
+                        pid: self.container_id.unwrap_or(0),
+                        slot_id: slot_id,
+                        _pad3: [0; 6],                        trap_code_storage: 0,
+                        _pad4: 0,
+                        num_imported_funcs: import_stubs.len() as u32,
+                        _pad5: 0,
+                        import_stub_table: import_stub_table_ptr,
+                    };
+                    
+                    // Copy initial global values
+                    for (i, val) in all_global_vals.iter().enumerate() {
+                        *(globals_ptr.add(i * 16) as *mut u128) = val.to_u128();
+                    }
+
+                    // Populate import_stub_table AFTER the zero-fill
+                    if !import_stub_table_ptr.is_null() {
+                        let ist_mut = import_stub_table_ptr as *mut u64;
+                        for (i, &stub) in import_stubs.iter().enumerate() {
+                            *ist_mut.add(i) = stub;
+                        }
+                    }
+
+                    core::ptr::write(ctx_ptr, ring3_ctx);
+                    maybe_ctx_ptr = Some(ctx_ptr as u64);
+                }
+
+                self.next_code_offset = (self.next_code_offset + 8192) & !4095; // Reserve 8KB for data region
+                crate::debugln!("[AOT] Context and data region initialized.");
 
                 res
             } else {
                 aot_module.code.as_ptr() as usize
             };
 
-            for (i, offset) in aot_module.func_offsets.iter().enumerate() {
-                let func_idx = validation_info.imports_length.imported_functions + i;
-                let func_addr = self.modules.get(module_addr).func_addrs[func_idx];
-                if let FuncInst::WasmFunc(wasm_func) = self.functions.get_mut(func_addr) {
-                    wasm_func.aot_ptr = Some(final_code_ptr + *offset);
+            // Post-relocation: Populate func_table and table0
+            if let Some(ctx_u64) = maybe_ctx_ptr {
+                let ctx = unsafe { &mut *(ctx_u64 as *mut crate::wasm::aot::runtime::Ring3Context) };
+                for (i, offset) in aot_module.func_offsets.iter().enumerate() {
+                    let func_idx = validation_info.imports_length.imported_functions + i;
+                    let func_addr = self.modules.get(module_addr).func_addrs[func_idx];
+                    let absolute_ptr = final_code_ptr + *offset;
+                    if let FuncInst::WasmFunc(wasm_func) = self.functions.get_mut(func_addr) {
+                        wasm_func.aot_ptr = Some(absolute_ptr);
+                    }
+                    // Update func_table
+                    unsafe {
+                        *ctx.func_table_ptr.add(func_idx) = absolute_ptr as u64;
+                    }
+                }
+                
+                // Populate imported function addresses in func_table
+                for i in 0..validation_info.imports_length.imported_functions {
+                    // For now, imported functions in AOT are called via CallHost trampoline,
+                    // so we don't necessarily need their addresses here unless using CallRef on them.
+                    // But for completeness:
+                    unsafe {
+                        *ctx.func_table_ptr.add(i) = 0; // Or point to a "call host" stub
+                    }
+                }
+
+                // Copy table 0 entries
+                if !ctx.table0_ptr.is_null() {
+                    let table0_addr = *self.modules.get(module_addr).table_addrs.first().unwrap();
+                    let t = self.tables.get(table0_addr);
+                    for (i, entry) in t.elem.iter().enumerate() {
+                        unsafe {
+                            *ctx.table0_ptr.add(i) = match entry {
+                                Ref::Func(addr) => {
+                                    if let FuncInst::WasmFunc(wf) = self.functions.get(*addr) {
+                                        wf.aot_ptr.unwrap_or(0) as u64
+                                    } else { 0 }
+                                }
+                                _ => 0,
+                            };
+                        }
+                    }
+                }
+            } else {
+                for (i, offset) in aot_module.func_offsets.iter().enumerate() {
+                    let func_idx = validation_info.imports_length.imported_functions + i;
+                    let func_addr = self.modules.get(module_addr).func_addrs[func_idx];
+                    if let FuncInst::WasmFunc(wasm_func) = self.functions.get_mut(func_addr) {
+                        wasm_func.aot_ptr = Some(final_code_ptr + *offset);
+                    }
                 }
             }
             self.aot_modules.push(aot_module);
@@ -372,6 +558,7 @@ impl<'a, T: Config> Store<'a, T> {
         Ok(InstantiationOutcome {
             module_addr,
             maybe_remaining_fuel,
+            maybe_ctx_ptr,
         })
     }
     pub fn func_alloc_unchecked(
@@ -512,6 +699,15 @@ impl<'a, T: Config> Store<'a, T> {
                         if self.aot_enabled && aot_ptr.is_some() {
                             let aot_ptr = aot_ptr.unwrap();
                             let mut fuel = maybe_fuel.unwrap_or(u32::MAX);
+                            
+                            // Find the Ring3Context we created during instantiation
+                            let base = self.code_base.unwrap_or(0);
+                            // We need to find the correct offset. In module_instantiate_unchecked we used next_code_offset.
+                            // For now, assume it's at the end of the code slot's used area.
+                            // Actually, we should have stored it in the ModuleInst or FuncInst.
+                            // Let's assume for this PR that we can find it relative to base.
+                            
+                            // Better: create a temporary one on stack if we are still in Ring 0 for testing Phase 8a.
                             let mem_addr = self.modules.get(module_addr).mem_addrs.get(0).copied();
                             let (memory_base, memory_size) = if let Some(mem_addr) = mem_addr {
                                 let mem = &self.memories.get(mem_addr).mem;
@@ -531,9 +727,10 @@ impl<'a, T: Config> Store<'a, T> {
                                 return Err(RuntimeError::StackExhaustion);
                             }
 
-                            let mut trap_code: i32 = 0;
-
-                            let mut ctx = crate::wasm::aot::runtime::AotContext {
+                            let mut trap_code_storage: i32 = 0;
+                            
+                            // We use the new Ring3Context even in Ring 0
+                            let mut ctx = crate::wasm::aot::runtime::Ring3Context {
                                 store: self as *mut _ as *mut usize,
                                 fuel: &mut fuel as *mut u32,
                                 memory_base,
@@ -542,8 +739,26 @@ impl<'a, T: Config> Store<'a, T> {
                                 locals_base: locals_ptr,
                                 module_addr,
                                 stack_limit: stack_ptr as usize,
-                                trap_code: &mut trap_code as *mut i32,
-                                trampolines: crate::wasm::aot::trampoline::get_trampoline_table(),
+                                trap_code: &mut trap_code_storage as *mut i32,
+                                blob_base: base,
+                                // These would point to the data region in Ring 3
+                                globals_ptr: core::ptr::null_mut(), 
+                                globals_count: 0,
+                                _pad0: 0,
+                                table0_ptr: core::ptr::null_mut(),
+                                table0_size: 0,
+                                _pad1: 0,
+                                func_table_ptr: core::ptr::null_mut(),
+                                func_count: 0,
+                                _pad2: 0,
+                                pid: self.container_id.unwrap_or(0),
+                                slot_id: 0,
+                                _pad3: [0; 6],
+                                trap_code_storage: 0,
+                                _pad4: 0,
+                                num_imported_funcs: 0,
+                                _pad5: 0,
+                                import_stub_table: core::ptr::null(),
                             };
 
                             // Prepare AOT stack with parameters
@@ -555,22 +770,20 @@ impl<'a, T: Config> Store<'a, T> {
                                 }
                             }
 
-                            // Use in-thread execution for AOT. 
-                            // Real process spawning via process_spawn_ext is currently disabled due to context sharing issues in SAS.
                             let final_sp: *mut u128;
 
                             #[cfg(not(target_arch = "wasm32"))]
                             unsafe {
                                 core::arch::asm!(
-                                    "mov r12, rsp",       // Save host RSP in R12 (callee-saved, preserved by AOT code)
-                                    "mov rsp, {sp}",      // Switch to AOT stack
-                                    "call {func}",        // Call AOT code
-                                    "mov rsp, r12",       // Restore host RSP from R12
+                                    "mov r12, rsp",       
+                                    "mov rsp, {sp}",      
+                                    "call {func}",        
+                                    "mov rsp, r12",       
                                     sp = in(reg) sp,
                                     func = in(reg) aot_ptr,
                                     inout("rdi") &mut ctx => _,
                                     lateout("rax") final_sp,
-                                    out("r12") _,         // R12 is used as scratch; prevents inputs from being allocated to it
+                                    out("r12") _,         
                                     clobber_abi("C"),
                                 );
                             }
@@ -584,8 +797,8 @@ impl<'a, T: Config> Store<'a, T> {
                             }
 
                             // Collect results BEFORE freeing the stack memory
-                            let aot_result: Result<Vec<Value>, RuntimeError> = if trap_code != 0 {
-                                Err(RuntimeError::HostFunctionHaltedExecution(trap_code))
+                            let aot_result: Result<Vec<Value>, RuntimeError> = if trap_code_storage != 0 {
+                                Err(RuntimeError::HostFunctionHaltedExecution(trap_code_storage))
                             } else {
                                 let num_returns = func_type.returns.valtypes.len();
                                 let mut results = Vec::with_capacity(num_returns);
@@ -881,4 +1094,5 @@ where
 pub struct InstantiationOutcome {
     pub module_addr: ModuleAddr,
     pub maybe_remaining_fuel: Option<u32>,
+    pub maybe_ctx_ptr: Option<u64>,
 }

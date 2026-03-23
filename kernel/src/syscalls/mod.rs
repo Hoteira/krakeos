@@ -1,12 +1,12 @@
+use crate::memory::address_space::{CODE_SLOT_SIZE, LINEAR_MEMORY_SLOT_SIZE, STACK_SLOT_SIZE};
 use crate::task::manager::TASK_MANAGER;
 use crate::task::process::Process;
 use crate::task::thread::CPUState;
-use crate::memory::address_space::{CODE_SLOT_SIZE, LINEAR_MEMORY_SLOT_SIZE, STACK_SLOT_SIZE};
 use alloc::sync::Arc;
 use core::arch::naked_asm;
 
-pub mod fs;
 pub mod event;
+pub mod fs;
 pub mod memory;
 pub mod misc;
 pub mod network;
@@ -67,12 +67,20 @@ pub fn validate_user_buf(context: &mut CPUState, ptr: u64, len: u64) -> bool {
     if is_kernel_thread() {
         return true;
     }
+    // Allow kernel-space pointers (e.g. from host call dispatch via SYS_WASM_HOST_CALL)
+    if ptr >= 0xFFFF_8000_0000_0000 {
+        return true;
+    }
     if let Some(proc) = get_current_process() {
         if validate_user_ptr(&proc, ptr, len) {
             return true;
         }
     }
-    crate::debugln!("[Syscall] REJECTED: invalid user pointer {:#x} len={}", ptr, len);
+    crate::debugln!(
+        "[Syscall] REJECTED: invalid user pointer {:#x} len={}",
+        ptr,
+        len
+    );
     context.rax = u64::MAX;
     false
 }
@@ -161,6 +169,29 @@ pub const SYS_GET_VMA_DUMP: u64 = 136;
 pub const SYS_GET_SLOT_INFO: u64 = 137;
 pub const SYS_GET_DMESG: u64 = 140;
 
+pub const SYS_WASM_HOST_CALL: u64 = 300;
+pub const SYS_WASM_MEMORY_INIT: u64 = 350;
+pub const SYS_WASM_DATA_DROP: u64 = 351;
+pub const SYS_WASM_TABLE_INIT: u64 = 352;
+pub const SYS_WASM_ELEM_DROP: u64 = 353;
+pub const SYS_WASM_TABLE_COPY: u64 = 354;
+pub const SYS_WASM_TABLE_GROW: u64 = 355;
+pub const SYS_WASM_TABLE_SIZE: u64 = 356;
+pub const SYS_WASM_TABLE_FILL: u64 = 357;
+
+pub const SYS_MEMORY_GROW: u64 = 200;
+pub const SYS_MEMORY_SIZE: u64 = 201;
+pub const SYS_ARGS_GET: u64 = 202;
+pub const SYS_ARGS_SIZES_GET: u64 = 203;
+pub const SYS_ENVIRON_GET: u64 = 204;
+pub const SYS_ENVIRON_SIZES_GET: u64 = 205;
+pub const SYS_CLOCK_RES_GET: u64 = 206;
+pub const SYS_CLOCK_TIME_GET: u64 = 207;
+pub const SYS_RANDOM_GET: u64 = 208;
+pub const SYS_FD_PRESTAT_GET: u64 = 209;
+pub const SYS_FD_PRESTAT_DIR_NAME: u64 = 210;
+pub const SYS_PROC_RAISE: u64 = 211;
+
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub extern "C" fn syscall_entry() {
@@ -169,11 +200,11 @@ pub extern "C" fn syscall_entry() {
             "mov [rip + {scratch}], r15",
             "mov r15, rsp",
             "mov rsp, [rip + {kernel_stack_ptr}]",
-            "push QWORD PTR 0x1B", 
-            "push r15",            
-            "push r11",            
-            "push QWORD PTR 0x23", 
-            "push rcx",            
+            "push QWORD PTR 0x1B",
+            "push r15",
+            "push r11",
+            "push QWORD PTR 0x23",
+            "push rcx",
             "mov r15, [rip + {scratch}]",
             "push rbp",
             "push rax",
@@ -192,10 +223,9 @@ pub extern "C" fn syscall_entry() {
             "push r15",
             "cld",
             "mov rdi, rsp",
-            "mov r12, rsp",
             "and rsp, -16",
-            "call syscall_dispatcher",
-            "mov rsp, r12",
+            "call dispatch_syscall",
+            "mov rsp, rax",
             "pop r15",
             "pop r14",
             "pop r13",
@@ -238,16 +268,39 @@ pub extern "C" fn syscall_dispatcher(
         r9: arg6,
         r11: 0,
         rcx: 0,
-        rbp: 0, rbx: 0, r12: 0, r13: 0, r14: 0, r15: 0,
-        rip: 0, cs: 0, rflags: 0, rsp: 0, ss: 0,
+        rbp: 0,
+        rbx: 0,
+        r12: 0,
+        r13: 0,
+        r14: 0,
+        r15: 0,
+        rip: 0,
+        cs: 0,
+        rflags: 0,
+        rsp: 0,
+        ss: 0,
     };
 
-    dispatch_syscall(&mut fake_context);
+    let _ = dispatch_syscall(&mut fake_context);
     fake_context.rax
 }
 
-pub fn dispatch_syscall(context: &mut CPUState) {
+#[unsafe(no_mangle)]
+pub fn dispatch_syscall(context: &mut CPUState) -> u64 {
     let syscall_num = context.rax;
+    let pid = {
+        let tm = TASK_MANAGER.int_lock();
+        tm.current_task
+    };
+
+    {
+        let rdi = context.rdi;
+        let rsi = context.rsi;
+        let rdx = context.rdx;
+        let r10 = context.r10;
+        let r8 = context.r8;
+        let r9 = context.r9;
+    }
 
     context.rax = 0;
 
@@ -334,7 +387,132 @@ pub fn dispatch_syscall(context: &mut CPUState) {
         SYS_GET_SLOT_INFO => process::handle_get_slot_info(context),
         SYS_REGISTER_EVENT_QUEUE => window::handle_register_event_queue(context),
         SYS_DEREGISTER_EVENT_QUEUE => window::handle_deregister_event_queue(context),
-        SYS_YIELD => {
+        SYS_YIELD => {}
+
+        SYS_WASM_HOST_CALL => {
+            // Ring3 AOT host call dispatch: rdi=ctx_ptr, rsi=func_idx, rdx=sp
+            let ctx_ptr = context.rdi as *mut ::std::wasm::aot::runtime::Ring3Context;
+            let func_idx = context.rsi as u32;
+            let sp = context.rdx as *mut u128;
+            let new_sp = ::std::wasm::aot::trampoline::aot_call_host(
+                unsafe { &mut *ctx_ptr },
+                func_idx,
+                sp,
+            );
+            // Explicitly ensure trap_code is 0 before returning to Ring 3
+            unsafe { *(*ctx_ptr).trap_code = 0; }
+            context.rax = new_sp as u64;
+        }
+
+        SYS_WASM_MEMORY_INIT => {
+            let ctx_ptr = context.rdi as *mut ::std::wasm::aot::runtime::Ring3Context;
+            let d = context.rsi as i32;
+            let s = context.rdx as i32;
+            let n = context.r10 as u32;
+            let data_idx = context.r8 as u32;
+            ::std::wasm::aot::trampoline::aot_memory_init(unsafe { &*ctx_ptr }, d, s, n, data_idx);
+        }
+        SYS_WASM_DATA_DROP => {
+            let ctx_ptr = context.rdi as *mut ::std::wasm::aot::runtime::Ring3Context;
+            let data_idx = context.rsi as u32;
+            ::std::wasm::aot::trampoline::aot_data_drop(unsafe { &*ctx_ptr }, data_idx);
+        }
+        SYS_WASM_TABLE_INIT => {
+            let ctx_ptr = context.rdi as *mut ::std::wasm::aot::runtime::Ring3Context;
+            let d = context.rsi as i32;
+            let s = context.rdx as i32;
+            let n = context.r10 as u32;
+            let table_idx = context.r8 as u32;
+            let elem_idx = context.r9 as u32;
+            ::std::wasm::aot::trampoline::aot_table_init(
+                unsafe { &*ctx_ptr },
+                d,
+                s,
+                n,
+                table_idx,
+                elem_idx,
+            );
+        }
+        SYS_WASM_ELEM_DROP => {
+            let ctx_ptr = context.rdi as *mut ::std::wasm::aot::runtime::Ring3Context;
+            let elem_idx = context.rsi as u32;
+            ::std::wasm::aot::trampoline::aot_elem_drop(unsafe { &*ctx_ptr }, elem_idx);
+        }
+        SYS_WASM_TABLE_COPY => {
+            let ctx_ptr = context.rdi as *mut ::std::wasm::aot::runtime::Ring3Context;
+            let d = context.rsi as i32;
+            let s = context.rdx as i32;
+            let n = context.r10 as u32;
+            let table_dst = context.r8 as u32;
+            let table_src = context.r9 as u32;
+            ::std::wasm::aot::trampoline::aot_table_copy(
+                unsafe { &*ctx_ptr },
+                d,
+                s,
+                n,
+                table_dst,
+                table_src,
+            );
+        }
+        SYS_WASM_TABLE_GROW => {
+            let ctx_ptr = context.rdi as *mut ::std::wasm::aot::runtime::Ring3Context;
+            let val = context.rsi as usize;
+            let n = context.rdx as u32;
+            let table_idx = context.r10 as u32;
+            context.rax = ::std::wasm::aot::trampoline::aot_table_grow(
+                unsafe { &*ctx_ptr },
+                val,
+                n,
+                table_idx,
+            ) as u64;
+        }
+        SYS_WASM_TABLE_SIZE => {
+            let ctx_ptr = context.rdi as *mut ::std::wasm::aot::runtime::Ring3Context;
+            let table_idx = context.rsi as u32;
+            context.rax =
+                ::std::wasm::aot::trampoline::aot_table_size(unsafe { &*ctx_ptr }, table_idx)
+                    as u64;
+        }
+        SYS_WASM_TABLE_FILL => {
+            let ctx_ptr = context.rdi as *mut ::std::wasm::aot::runtime::Ring3Context;
+            let d = context.rsi as i32;
+            let val = context.rdx as usize;
+            let n = context.r10 as u32;
+            let table_idx = context.r8 as u32;
+            ::std::wasm::aot::trampoline::aot_table_fill(
+                unsafe { &*ctx_ptr },
+                d,
+                val,
+                n,
+                table_idx,
+            );
+        }
+
+        SYS_MEMORY_GROW => memory::handle_memory_grow(context),
+        SYS_MEMORY_SIZE => memory::handle_memory_size(context),
+        SYS_ARGS_GET => misc::handle_args_get(context),
+        SYS_ARGS_SIZES_GET => misc::handle_args_sizes_get(context),
+        SYS_ENVIRON_GET => misc::handle_environ_get(context),
+        SYS_ENVIRON_SIZES_GET => misc::handle_environ_sizes_get(context),
+        SYS_CLOCK_RES_GET => misc::handle_clock_res_get(context),
+        SYS_CLOCK_TIME_GET => misc::handle_clock_time_get(context),
+        SYS_RANDOM_GET => misc::handle_random_get(context),
+        SYS_FD_PRESTAT_GET => fs::handle_fd_prestat_get(context),
+        SYS_FD_PRESTAT_DIR_NAME => fs::handle_fd_prestat_dir_name(context),
+        SYS_PROC_RAISE => process::handle_exit(context), // Stub for now
+        60 => process::handle_exit(context),             // Map to same handler
+
+        999 => {
+            let rdi = context.rdi;
+            let rsi = context.rsi;
+            let ptr = rdi as *const u8;
+            let len = rsi as usize;
+            let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
+            let serial = crate::debug::SerialDebug::new();
+            for &b in slice {
+                serial.write_byte(b);
+            }
+            context.rax = len as u64;
         }
 
         _ => {
@@ -342,6 +520,9 @@ pub fn dispatch_syscall(context: &mut CPUState) {
             context.rax = u64::MAX;
         }
     }
+
+    let ret_rax = context.rax;
+    context as *mut CPUState as u64
 }
 
 #[derive(Debug, Clone, Copy)]

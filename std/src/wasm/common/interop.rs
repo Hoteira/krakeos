@@ -108,11 +108,13 @@ impl Linker {
         store: &mut Store<'b, T>,
         validation_info: &ValidationInfo<'b>,
         maybe_fuel: Option<u32>,
+        slot_id: u16,
     ) -> Result<InstantiationOutcome, RuntimeError> {
         store.module_instantiate_unchecked(
             validation_info,
             self.instantiate_pre_unchecked(validation_info)?,
             maybe_fuel,
+            slot_id,
         )
     }
 }

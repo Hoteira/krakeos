@@ -25,7 +25,7 @@ impl<'b, T: crate::wasm::common::config::Config> Store<'b, T> {
             .map(|ev| ev.try_unwrap_into_bare(self.id))
             .collect::<Result<Vec<ExternVal>, RuntimeError>>()?;
         let outcome =
-            self.module_instantiate_unchecked(validation_info, extern_vals, maybe_fuel)?;
+            self.module_instantiate_unchecked(validation_info, extern_vals, maybe_fuel, 0)?;
         Ok(unsafe { StoredInstantiationOutcome::from_bare(outcome, self.id) })
     }
     pub fn instance_export(
@@ -386,6 +386,7 @@ impl AbstractStored for StoredInstantiationOutcome {
         InstantiationOutcome {
             module_addr: self.module_addr.into_bare(),
             maybe_remaining_fuel: self.maybe_remaining_fuel,
+            maybe_ctx_ptr: None,
         }
     }
 }

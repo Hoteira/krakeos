@@ -1,6 +1,7 @@
 use crate::sync::Mutex;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use alloc::string::String;
 
 #[derive(Debug)]
 pub struct Process {
@@ -17,12 +18,15 @@ pub struct Process {
     pub terminal_width: Mutex<u16>,
     pub terminal_height: Mutex<u16>,
     pub linear_memory_base: u64,
+    pub linear_memory_size: Mutex<usize>,
     pub code_base: u64,
     pub stack_base: u64,
     pub heap_start: u64,
     pub heap_limit: u64,
     pub heap_end: Mutex<u64>,
     pub event_queue: Mutex<(u64, u64, u32)>,
+    pub args: Mutex<Vec<String>>,
+    pub env_vars: Mutex<Vec<(String, String)>>,
 }
 
 impl Process {
@@ -54,12 +58,15 @@ impl Process {
             terminal_width: Mutex::new(80),
             terminal_height: Mutex::new(25),
             linear_memory_base,
+            linear_memory_size: Mutex::new(0),
             code_base,
             stack_base: stack_top,
             heap_start,
             heap_limit,
             heap_end: Mutex::new(heap_start),
             event_queue: Mutex::new((0, 0, 0)),
+            args: Mutex::new(Vec::new()),
+            env_vars: Mutex::new(Vec::new()),
         });
 
         crate::debugln!("Process::new: allocated successfully.");

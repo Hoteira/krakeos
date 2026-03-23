@@ -3,7 +3,7 @@
 # Tools
 CC := clang
 AR := llvm-ar
-CARGO := cargo
+CARGO := RUSTFLAGS="-Awarnings" cargo --quiet
 OBJCOPY := objcopy
 GENEXT2FS := genext2fs
 DD := dd
@@ -40,13 +40,19 @@ swiftboot: $(BUILD_DIR)
 	cd swiftboot && $(CARGO) compile
 	cp swiftboot/build/disk.img $(BUILD_DIR)/disk.img
 
-kernel: $(BUILD_DIR) swiftboot
+kernel: $(BUILD_DIR) swiftboot ring3-rt
 	$(CARGO) build $(UNSTABLE_FLAGS) --package=kernel --target=$(KERNEL_TARGET)
 	$(OBJCOPY) -O binary $(TARGET_DIR)/bits64/debug/kernel $(BUILD_DIR)/kernel.bin
 	$(DD) if=$(BUILD_DIR)/kernel.bin of=$(BUILD_DIR)/disk.img seek=6144 bs=512 conv=notrunc
 
+ring3-rt: $(BUILD_DIR)
+	$(CARGO) rustc -Z json-target-spec --package ring3-rt --bin ring3_rt --target $(PIE_TARGET) --release \
+		-- -C link-arg=-Tring3-rt/ring3rt.ld -C relocation-model=pic
+	$(OBJCOPY) -O binary $(TARGET_DIR)/bits64pie/release/ring3_rt $(BUILD_DIR)/ring3_rt.bin
+	python3 ring3-rt/apply_relocs.py $(TARGET_DIR)/bits64pie/release/ring3_rt $(BUILD_DIR)/ring3_rt.bin
+
 # Userland applications
-SYS_WASM_APPS := init sysmon fps_test tmap cat
+SYS_WASM_APPS := init sysmon fps_test tmap cat trivial_test
 APP_WASM_APPS := shell term taskbar aot_test net_test container_test
 
 SYS_WASM_TARGETS := $(addprefix build-, $(SYS_WASM_APPS))

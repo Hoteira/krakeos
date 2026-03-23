@@ -16,7 +16,7 @@ pub mod sync;
 pub mod syscalls;
 pub mod task;
 
-use crate::boot::{BootInfo, BOOT_INFO};
+use crate::boot::{BOOT_INFO, BootInfo};
 use crate::fs::ext2::fs::Ext2;
 use crate::memory::address::PhysAddr;
 use crate::memory::paging::phys_to_virt;
@@ -38,7 +38,7 @@ pub unsafe extern "C" fn _start() -> ! {
         "mov rax, rsp",
         "mov rcx, 0xFFFF800000000000",
         "add rax, rcx",
-        "and rax, -16", 
+        "and rax, -16",
         "mov rsp, rax",
         "call rust_main",
         "ud2"
@@ -47,7 +47,9 @@ pub unsafe extern "C" fn _start() -> ! {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rust_main(bootinfo_ptr: u64) -> ! {
-    unsafe { *(&raw mut BOOT_INFO) = *(bootinfo_ptr as *const BootInfo); };
+    unsafe {
+        *(&raw mut BOOT_INFO) = *(bootinfo_ptr as *const BootInfo);
+    };
 
     arch::x86_64::gdt::reload_gdt_high_half();
 
@@ -65,7 +67,8 @@ pub extern "C" fn rust_main(bootinfo_ptr: u64) -> ! {
 
     let heap_size = 0x400_0000; // 64 MiB
     let heap_pages = heap_size / 4096;
-    let heap_phys_addr = pmm::allocate_frames(heap_pages as usize).expect("Failed to allocate heap memory from PMM");
+    let heap_phys_addr =
+        pmm::allocate_frames(heap_pages as usize).expect("Failed to allocate heap memory from PMM");
     let heap_virt_ptr = phys_to_virt(PhysAddr::new(heap_phys_addr)).as_mut_ptr::<u8>();
 
     ALLOCATOR.init(heap_virt_ptr, heap_size as usize);
@@ -81,15 +84,19 @@ pub extern "C" fn rust_main(bootinfo_ptr: u64) -> ! {
     debugln!("SIGNPOST: TaskManager initialized.");
 
     debugln!("SIGNPOST: Calling DISPLAY_SERVER.init()...");
-    unsafe { (*(&raw mut DISPLAY_SERVER)).init(); }
+    unsafe {
+        (*(&raw mut DISPLAY_SERVER)).init();
+    }
     debugln!("SIGNPOST: DISPLAY_SERVER initialized.");
-    unsafe { (*(&raw mut DISPLAY_SERVER)).force_full_sync(); }
+    unsafe {
+        (*(&raw mut DISPLAY_SERVER)).force_full_sync();
+    }
 
     debugln!("SIGNPOST: Drivers initialized.");
 
     drivers::peripherals::keyboard::init();
     drivers::peripherals::mouse::init_mouse();
-    drivers::peripherals::timer::init_pit(100);
+    drivers::peripherals::timer::init_pit(1000);
 
     crate::debugln!("Mounting Ext2...");
     match Ext2::new(0xE0, 16384) {
@@ -100,11 +107,11 @@ pub extern "C" fn rust_main(bootinfo_ptr: u64) -> ! {
         }
     }
 
-    crate::debugln!("Spawning init process (WASM)...");
-    match crate::syscalls::spawn_process("@0xE0/sys/bin/init.wasm", None, None, None) {
-        Ok(pid) => crate::debugln!("Init process spawned with PID {}", pid),
+    crate::debugln!("Spawning trivial test process (WASM)...");
+    match crate::syscalls::spawn_process("/sys/bin/init.wasm", None, None, None) {
+        Ok(pid) => crate::debugln!("Trivial test process spawned with PID {}", pid),
         Err(e) => {
-            crate::debugln!("Failed to spawn init: {}", e);
+            crate::debugln!("Failed to spawn trivial test: {}", e);
             loop {}
         }
     }
@@ -112,11 +119,17 @@ pub extern "C" fn rust_main(bootinfo_ptr: u64) -> ! {
     arch::x86_64::init_syscall_msrs();
 
     crate::debugln!("Kernel initialized, entering idle loop...");
-    unsafe { asm!("sti"); }
+    unsafe {
+        asm!("sti");
+    }
 
     loop {
-        unsafe { asm!("int 0x81"); }
-        unsafe { asm!("hlt"); }
+        unsafe {
+            asm!("int 0x81");
+        }
+        unsafe {
+            asm!("hlt");
+        }
     }
 }
 

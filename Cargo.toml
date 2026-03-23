@@ -16,7 +16,8 @@ members = [
     "apps/container_test",
     "apps/init",
     "apps/dummy",
-    "userland",
+    "apps/trivial_test",
+    "userland", "ring3-rt",
 ]
 
 resolver = "2"
@@ -33,6 +34,7 @@ lto = false
 
 [profile.release]
 panic = "abort"
-opt-level = 2
-lto = false
+opt-level = "z"
+lto = true
+codegen-units = 1
 

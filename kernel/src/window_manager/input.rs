@@ -207,6 +207,8 @@ impl Mouse {
                         wid: resizing_id as u32,
                         width: final_w as u32,
                         height: final_h as u32,
+                        x: w.x as i32,
+                        y: w.y as i32,
                     });
 
                     let tm = crate::task::TASK_MANAGER.int_lock();

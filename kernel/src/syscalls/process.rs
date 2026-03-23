@@ -63,7 +63,7 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
         crate::debugln!("[spawn_process] Error: File not found"); return Err(String::from("File not found"));
     }
 
-    // WASM Detection and Execution via Native Kernel Thread
+    // WASM Detection and Execution
     if file_buf.len() > 4 && &file_buf[0..4] == b"\0asm" {
         let pid_idx = crate::task::TASK_MANAGER.int_lock().reserve_pid().map_err(|_| String::from("No free process slots"))?;
         let pid = pid_idx as u64;
@@ -101,104 +101,81 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
             }
         }
 
-        let slot_id = {
-            let mut tm = crate::task::TASK_MANAGER.int_lock();
-            tm.init_user_task(pid_idx, 0, 0, args, Some(new_fd_table), process_name_bytes, term_size, parent_pid).map_err(|_| String::from("Failed to init task"))?;
-            
-            // FORCE the parent thread to not be scheduled at all
-            let proc = tm.tasks.get(&(pid_idx)).unwrap().process.as_ref().unwrap().clone();
-            tm.tasks.get_mut(&(pid_idx)).unwrap().state = crate::task::ThreadState::Null;
-            
-            proc.slot_id
-        };
-
-        struct WasmThreadArgs {
-            path_ptr: *mut u8,
-            path_len: usize,
-            buf_ptr: *mut u8,
-            buf_len: usize,
-            cwd_ptr: *mut u8,
-            cwd_len: usize,
-            pid: u64,
-            slot_id: u16,
-            wasm_args: *mut Vec<String>,
-        }
-
-        extern "C" fn wasm_thread_entry(args_ptr: u64) {
-            let args = unsafe { alloc::boxed::Box::from_raw(args_ptr as *mut WasmThreadArgs) };
-
-            let path_slice = unsafe { core::slice::from_raw_parts(args.path_ptr, args.path_len) };
-            let path = alloc::string::String::from_utf8_lossy(path_slice).into_owned();
-
-            let cwd_slice = unsafe { core::slice::from_raw_parts(args.cwd_ptr, args.cwd_len) };
-            let cwd = alloc::string::String::from_utf8_lossy(cwd_slice).into_owned();
-
-            let buffer = unsafe { core::slice::from_raw_parts(args.buf_ptr, args.buf_len) };
-
-            let wasm_args = unsafe { *alloc::boxed::Box::from_raw(args.wasm_args) };
-
-            let res = std::wasm::runner::run_with_buffer(
-                &path,
-                buffer,
-                wasm_args,
-                &cwd,
-                &[],
-                alloc::vec::Vec::new(),
-                true, // AOT
-                args.pid,
-                args.slot_id,
-            );
-
-            unsafe {
-                alloc::alloc::dealloc(args.path_ptr, core::alloc::Layout::from_size_align(args.path_len, 1).unwrap());
-                alloc::alloc::dealloc(args.cwd_ptr, core::alloc::Layout::from_size_align(args.cwd_len, 1).unwrap());
-                alloc::alloc::dealloc(args.buf_ptr, core::alloc::Layout::from_size_align(args.buf_len, 1).unwrap());
-
-                crate::syscalls::syscall_dispatcher(
-                    crate::syscalls::SYS_EXIT,
-                    res as u64,
-                    0, 0, 0, 0, 0
-                );
-            }
-        }
-
-        // Build args vec from what spawn_with_fds passed (already includes argv[0])
-        let wasm_args_vec: Vec<String> = args.unwrap_or(&[]).iter().map(|s| String::from(*s)).collect();
-
-        // Leak strings/buffers manually to avoid large boxed structs
-        let path_bytes = path.as_bytes();
-        let path_ptr = unsafe { alloc::alloc::alloc(core::alloc::Layout::from_size_align(path_bytes.len(), 1).unwrap()) };
-        unsafe { core::ptr::copy_nonoverlapping(path_bytes.as_ptr(), path_ptr, path_bytes.len()) };
-
-        let cwd_bytes = cwd_str.as_bytes();
-        let cwd_ptr = unsafe { alloc::alloc::alloc(core::alloc::Layout::from_size_align(cwd_bytes.len(), 1).unwrap()) };
-        unsafe { core::ptr::copy_nonoverlapping(cwd_bytes.as_ptr(), cwd_ptr, cwd_bytes.len()) };
-
-        let buf_ptr = unsafe { alloc::alloc::alloc(core::alloc::Layout::from_size_align(file_buf.len(), 1).unwrap()) };
-        unsafe { core::ptr::copy_nonoverlapping(file_buf.as_ptr(), buf_ptr, file_buf.len()) };
-
-        let thread_args = Box::into_raw(Box::new(WasmThreadArgs {
-            path_ptr,
-            path_len: path_bytes.len(),
-            buf_ptr,
-            buf_len: file_buf.len(),
-            cwd_ptr,
-            cwd_len: cwd_bytes.len(),
-            pid,
-            slot_id,
-            wasm_args: Box::into_raw(Box::new(wasm_args_vec)),
-        }));
-
-        crate::debugln!("[Spawn] Spawning WASM kernel thread for PID {} (slot {}) at {:#x}...", pid, slot_id, wasm_thread_entry as u64);
-
+        // We need a slot_id to do AOT compilation
+        // init_user_task creates the Process and assigns slot_id
         {
             let mut tm = crate::task::TASK_MANAGER.int_lock();
-            tm.spawn_thread(pid_idx, wasm_thread_entry as u64, 0, thread_args as u64).map_err(|_| String::from("Failed to spawn WASM thread"))?;
+            tm.init_user_task(pid_idx, 0, 0, 0, args, Some(new_fd_table), process_name_bytes, term_size, parent_pid).map_err(|_| String::from("Failed to init task"))?;
         }
 
-        return Ok(pid);
-        }
+        let slot_id = {
+            let tm = crate::task::TASK_MANAGER.int_lock();
+            tm.tasks.get(&pid_idx).unwrap().process.as_ref().unwrap().slot_id
+        };
 
+        let wasm_args_vec: Vec<String> = args.unwrap_or(&[]).iter().map(|s| String::from(*s)).collect();
+
+        // Perform Synchronous AOT Compilation
+        let res = std::wasm::runner::run_with_buffer(
+            path,
+            &file_buf,
+            wasm_args_vec,
+            &cwd_str,
+            &[],
+            alloc::vec::Vec::new(),
+            true, // AOT
+            pid,
+            slot_id,
+        );
+
+        match res {
+            std::wasm::runner::WasmRunResult::AotReady(info) => {
+                crate::debugln!("[spawn_process] AOT ready for PID {}. Entry={:#x} ctx={:#x}", pid, info.entry_addr, info.ctx_ptr);
+                // Now re-initialize the task with the real entry point and context!
+                let mut tm = crate::task::TASK_MANAGER.int_lock();
+                // We don't want to re-create the process object, just update the task state.
+                if let Some(task) = tm.tasks.get_mut(&pid_idx) {
+                    unsafe {
+                        let state = &mut *(task.cpu_state_ptr as *mut crate::task::CPUState);
+                        state.rip = info.entry_addr;
+                        state.rdi = info.ctx_ptr;
+                        state.cs = 0x23; // User code
+                        state.ss = 0x1B; // User data
+                        state.rflags = 0x202; // IF=1
+
+                        // Initialize Ring3Context stack fields
+                        let ctx = &mut *(info.ctx_ptr as *mut ::std::wasm::aot::runtime::Ring3Context);
+                        ctx.stack_base = info.stack_base as *mut u128;
+                        ctx.stack_limit = info.stack_limit as usize;
+                        ctx.locals_base = (info.stack_base - 1024 * 1024) as *mut u128;
+
+                        // Push exit stub as return address so the entry function can return cleanly.
+                        // The exit stub is at jump_table[1023] in the blob.
+                        let jump_table = ctx.blob_base as *const u64;
+                        let exit_fn_addr = *jump_table.add(1023);
+                        let rsp = (info.stack_base & !15) - 8;
+                        *(rsp as *mut u64) = exit_fn_addr;
+                        state.rsp = rsp;
+
+                        // Initialize linear_memory_size from Ring3Context
+                        let proc = task.process.as_ref().expect("Thread has no process");
+                        *proc.linear_memory_size.lock() = ctx.memory_size;
+                        crate::debugln!("[spawn_process] Set linear_memory_size={} ({} pages)", ctx.memory_size, ctx.memory_size / 65536);
+                    }
+                    task.state = crate::task::ThreadState::Ready;
+                    tm.push_to_run_queue(pid_idx);
+                }
+                return Ok(pid);
+            }
+            std::wasm::runner::WasmRunResult::Finished(exit_code) => {
+                crate::debugln!("[spawn_process] WASM finished immediately with code {}", exit_code);
+                // Task is already in map, but we might want to kill it or let it be.
+                // If it finished during instantiation, it's effectively dead.
+                crate::task::TASK_MANAGER.int_lock().kill_process(pid);
+                return Ok(pid);
+            }
+        }
+    }
 
     let pid_idx_elf = crate::task::TASK_MANAGER.int_lock().reserve_pid().map_err(|_| String::from("No free process slots"))?;
     let pid_elf = pid_idx_elf as u64;
@@ -241,7 +218,7 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
     {
         let mut tm = crate::task::TASK_MANAGER.int_lock();
 
-        tm.init_user_task(pid_idx_elf, 0, 0, args, Some(new_fd_table_elf), process_name_bytes, term_size_elf, parent_pid).map_err(|_| String::from("Failed to init task"))?;
+        tm.init_user_task(pid_idx_elf, 0, 0, 0, args, Some(new_fd_table_elf), process_name_bytes, term_size_elf, parent_pid).map_err(|_| String::from("Failed to init task"))?;
     }
 
 
@@ -283,7 +260,7 @@ pub fn spawn_ext_process(name: &str, state: CPUState, parent_pid: Option<u64>) -
 
     {
         let mut tm = crate::task::TASK_MANAGER.int_lock();
-        tm.init_user_task(pid_idx, 0, 0, None, None, process_name_bytes, term_size, parent_pid).map_err(|_| String::from("Failed to init task"))?;
+        tm.init_user_task(pid_idx, 0, 0, 0, None, None, process_name_bytes, term_size, parent_pid).map_err(|_| String::from("Failed to init task"))?;
         
         let task = tm.tasks.get_mut(&(pid_idx)).unwrap();
         unsafe {

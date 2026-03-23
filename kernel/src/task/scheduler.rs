@@ -30,12 +30,10 @@ pub extern "C" fn timer_handler() {
             "push r13",
             "push r14",
             "push r15",
-
             "mov rdi, rsp",
             "and rsp, -16",
             "call switch_timer",
             "mov rsp, rax",
-
             "pop r15",
             "pop r14",
             "pop r13",
@@ -51,7 +49,6 @@ pub extern "C" fn timer_handler() {
             "pop rbx",
             "pop rax",
             "pop rbp",
-
             "iretq",
         );
     }
@@ -76,12 +73,10 @@ pub extern "C" fn yield_handler() {
             "push r13",
             "push r14",
             "push r15",
-
             "mov rdi, rsp",
             "and rsp, -16",
             "call switch_yield",
             "mov rsp, rax",
-
             "pop r15",
             "pop r14",
             "pop r13",
@@ -97,7 +92,6 @@ pub extern "C" fn yield_handler() {
             "pop rbx",
             "pop rax",
             "pop rbp",
-
             "iretq",
         );
     }
@@ -116,7 +110,7 @@ pub extern "C" fn switch_yield(rsp: u64) -> u64 {
 unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
     unsafe {
         if is_timer {
-            SYSTEM_TICKS = SYSTEM_TICKS.wrapping_add(10);
+            SYSTEM_TICKS = SYSTEM_TICKS.wrapping_add(1);
         }
 
         crate::drivers::network::virtio::poll_rx();
@@ -125,7 +119,9 @@ unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
         let current_task_idx = tm.current_task;
 
         if is_timer {
-            crate::task::event_manager::EVENT_MANAGER.lock().check_timers(&mut tm, SYSTEM_TICKS);
+            crate::task::event_manager::EVENT_MANAGER
+                .lock()
+                .check_timers(&mut tm, SYSTEM_TICKS);
         }
 
         if current_task_idx >= 0 {
@@ -137,7 +133,7 @@ unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
             }
         }
 
-        let (new_state, k_stack) = tm.schedule(rsp as *mut CPUState);
+        let (new_state, k_stack) = tm.schedule(rsp as *mut CPUState, is_timer);
         let new_task_idx = tm.current_task;
 
         if new_task_idx >= 0 {
@@ -154,7 +150,8 @@ unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
         }
 
         if is_timer {
-            (*(&raw const crate::arch::x86_64::pic::PICS)).end_interrupt(crate::arch::x86_64::exceptions::TIMER_INT);
+            (*(&raw const crate::arch::x86_64::pic::PICS))
+                .end_interrupt(crate::arch::x86_64::exceptions::TIMER_INT);
         }
 
         new_state as u64

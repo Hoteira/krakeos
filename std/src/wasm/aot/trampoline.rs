@@ -2,7 +2,7 @@ use crate::alloc::format;
 use crate::alloc::vec::Vec;
 use crate::math::FloatMath;
 use crate::os::debug_print;
-use crate::wasm::aot::runtime::AotContext;
+use crate::wasm::aot::runtime::Ring3Context;
 use crate::wasm::common::runtime_error::RuntimeError;
 use crate::wasm::common::value::{F32, F64, Ref, Value};
 use crate::wasm::interpreter::resumable::RunState;
@@ -61,7 +61,7 @@ pub extern "C" fn aot_trap_stack_overflow() -> ! {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_trap_host(ctx: &AotContext) -> ! {
+pub extern "C" fn aot_trap_host(ctx: &Ring3Context) -> ! {
     let code = unsafe { *ctx.trap_code };
     if code == -1 {
         crate::os::exit(0);
@@ -526,7 +526,7 @@ pub extern "C" fn aot_i64_trunc_sat_f64_u(a: f64) -> u64 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_memory_init(ctx: &AotContext, d: i32, s: i32, n: u32, data_idx: u32) {
+pub extern "C" fn aot_memory_init(ctx: &Ring3Context, d: i32, s: i32, n: u32, data_idx: u32) {
     let store = unsafe { &mut *(ctx.store as *mut Store<()>) };
     let module_addr = ctx.module_addr;
     crate::wasm::interpreter::loop_executor::memory_init(
@@ -544,7 +544,7 @@ pub extern "C" fn aot_memory_init(ctx: &AotContext, d: i32, s: i32, n: u32, data
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_data_drop(ctx: &AotContext, data_idx: u32) {
+pub extern "C" fn aot_data_drop(ctx: &Ring3Context, data_idx: u32) {
     let store = unsafe { &mut *(ctx.store as *mut Store<()>) };
     let module_addr = ctx.module_addr;
     crate::wasm::interpreter::loop_executor::data_drop(
@@ -557,7 +557,7 @@ pub extern "C" fn aot_data_drop(ctx: &AotContext, data_idx: u32) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_memory_copy(ctx: &AotContext, d: i32, s: i32, n: u32) {
+pub extern "C" fn aot_memory_copy(ctx: &Ring3Context, d: i32, s: i32, n: u32) {
     let store = unsafe { &mut *(ctx.store as *mut Store<()>) };
     let module_addr = ctx.module_addr;
     let mem_addr = store.modules.get(module_addr).mem_addrs[0];
@@ -568,7 +568,7 @@ pub extern "C" fn aot_memory_copy(ctx: &AotContext, d: i32, s: i32, n: u32) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_memory_fill(ctx: &AotContext, d: i32, val: u32, n: u32) {
+pub extern "C" fn aot_memory_fill(ctx: &Ring3Context, d: i32, val: u32, n: u32) {
     let store = unsafe { &mut *(ctx.store as *mut Store<()>) };
     let module_addr = ctx.module_addr;
     let mem_addr = store.modules.get(module_addr).mem_addrs[0];
@@ -578,7 +578,7 @@ pub extern "C" fn aot_memory_fill(ctx: &AotContext, d: i32, val: u32, n: u32) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_table_init(
-    ctx: &AotContext,
+    ctx: &Ring3Context,
     d: i32,
     s: i32,
     n: u32,
@@ -602,7 +602,7 @@ pub extern "C" fn aot_table_init(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_elem_drop(ctx: &AotContext, elem_idx: u32) {
+pub extern "C" fn aot_elem_drop(ctx: &Ring3Context, elem_idx: u32) {
     let store = unsafe { &mut *(ctx.store as *mut Store<()>) };
     let module_addr = ctx.module_addr;
     crate::wasm::interpreter::loop_executor::elem_drop(
@@ -618,7 +618,7 @@ pub extern "C" fn aot_elem_drop(ctx: &AotContext, elem_idx: u32) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_table_copy(
-    ctx: &AotContext,
+    ctx: &Ring3Context,
     d: i32,
     s: i32,
     n: u32,
@@ -652,7 +652,7 @@ pub extern "C" fn aot_table_copy(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_table_grow(ctx: &AotContext, val: usize, n: u32, table_idx: u32) -> i32 {
+pub extern "C" fn aot_table_grow(ctx: &Ring3Context, val: usize, n: u32, table_idx: u32) -> i32 {
     let store = unsafe { &mut *(ctx.store as *mut Store<()>) };
     let module_addr = ctx.module_addr;
     let t_addr = store.modules.get(module_addr).table_addrs[table_idx as usize];
@@ -664,7 +664,7 @@ pub extern "C" fn aot_table_grow(ctx: &AotContext, val: usize, n: u32, table_idx
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_table_size(ctx: &AotContext, table_idx: u32) -> u32 {
+pub extern "C" fn aot_table_size(ctx: &Ring3Context, table_idx: u32) -> u32 {
     let store = unsafe { &*(ctx.store as *const Store<()>) };
     let module_addr = ctx.module_addr;
     let t_addr = store.modules.get(module_addr).table_addrs[table_idx as usize];
@@ -672,7 +672,7 @@ pub extern "C" fn aot_table_size(ctx: &AotContext, table_idx: u32) -> u32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_table_fill(ctx: &AotContext, d: i32, val: usize, n: u32, table_idx: u32) {
+pub extern "C" fn aot_table_fill(ctx: &Ring3Context, d: i32, val: usize, n: u32, table_idx: u32) {
     let store = unsafe { &mut *(ctx.store as *mut Store<()>) };
     let module_addr = ctx.module_addr;
     let t_addr = store.modules.get(module_addr).table_addrs[table_idx as usize];
@@ -683,7 +683,7 @@ pub extern "C" fn aot_table_fill(ctx: &AotContext, d: i32, val: usize, n: u32, t
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_memory_size(ctx: &AotContext) -> u32 {
+pub extern "C" fn aot_memory_size(ctx: &Ring3Context) -> u32 {
     let store = unsafe { &*(ctx.store as *const Store<()>) };
     let module_addr = ctx.module_addr;
     let mem_addr = store.modules.get(module_addr).mem_addrs[0];
@@ -691,7 +691,7 @@ pub extern "C" fn aot_memory_size(ctx: &AotContext) -> u32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_memory_grow(ctx: &mut AotContext, n: u32) -> u32 {
+pub extern "C" fn aot_memory_grow(ctx: &mut Ring3Context, n: u32) -> u32 {
     let store = unsafe { &mut *(ctx.store as *mut Store<()>) };
     let module_addr = ctx.module_addr;
     let mem_addr = store.modules.get(module_addr).mem_addrs[0];
@@ -708,7 +708,7 @@ pub extern "C" fn aot_memory_grow(ctx: &mut AotContext, n: u32) -> u32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_global_get(ctx: &AotContext, idx: u32, out: *mut [u8; 16]) {
+pub extern "C" fn aot_global_get(ctx: &Ring3Context, idx: u32, out: *mut [u8; 16]) {
     let store = unsafe { &*(ctx.store as *const Store<()>) };
     let module_addr = ctx.module_addr;
     let global_addr = store.modules.get(module_addr).global_addrs[idx as usize];
@@ -719,7 +719,7 @@ pub extern "C" fn aot_global_get(ctx: &AotContext, idx: u32, out: *mut [u8; 16])
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_global_set(ctx: &AotContext, idx: u32, data: *const [u8; 16]) {
+pub extern "C" fn aot_global_set(ctx: &Ring3Context, idx: u32, data: *const [u8; 16]) {
     let store = unsafe { &mut *(ctx.store as *mut Store<()>) };
     let module_addr = ctx.module_addr;
     let global_addr = store.modules.get(module_addr).global_addrs[idx as usize];
@@ -731,7 +731,7 @@ pub extern "C" fn aot_global_set(ctx: &AotContext, idx: u32, data: *const [u8; 1
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_table_get(ctx: &AotContext, table_idx: u32, i: u32) -> usize {
+pub extern "C" fn aot_table_get(ctx: &Ring3Context, table_idx: u32, i: u32) -> usize {
     let store = unsafe { &*(ctx.store as *const Store<()>) };
     let module_addr = ctx.module_addr;
     let table_addr = store.modules.get(module_addr).table_addrs[table_idx as usize];
@@ -745,7 +745,7 @@ pub extern "C" fn aot_table_get(ctx: &AotContext, table_idx: u32, i: u32) -> usi
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_table_set(ctx: &AotContext, table_idx: u32, i: u32, val: usize) {
+pub extern "C" fn aot_table_set(ctx: &Ring3Context, table_idx: u32, i: u32, val: usize) {
     let store = unsafe { &mut *(ctx.store as *mut Store<()>) };
     let module_addr = ctx.module_addr;
     let table_addr = store.modules.get(module_addr).table_addrs[table_idx as usize];
@@ -757,7 +757,7 @@ pub extern "C" fn aot_table_set(ctx: &AotContext, table_idx: u32, i: u32, val: u
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_call_indirect(
-    ctx: &AotContext,
+    ctx: &Ring3Context,
     table_idx: u32,
     type_idx: u32,
     i: u32,
@@ -831,7 +831,7 @@ pub extern "C" fn aot_call_indirect(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_call_host(ctx: &mut AotContext, func_idx: u32, sp: *mut u128) -> *mut u128 {
+pub extern "C" fn aot_call_host(ctx: &mut Ring3Context, func_idx: u32, sp: *mut u128) -> *mut u128 {
     if ctx.store.is_null() {
         unsafe {
             aot_trap();
@@ -903,11 +903,17 @@ pub extern "C" fn aot_call_host(ctx: &mut AotContext, func_idx: u32, sp: *mut u1
     };
     store.caller_module = None;
 
-    // Refresh context in case the host function caused memory to grow
+    // Sync memory state between ctx and Store.
     if let Some(&mem_addr) = store.modules.get(module_addr).mem_addrs.first() {
-        let mem = &store.memories.get(mem_addr).mem;
-        ctx.memory_base = mem.get_base_ptr();
-        ctx.memory_size = mem.len();
+        let store_size = store.memories.get(mem_addr).mem.len();
+        if ctx.memory_size > store_size {
+            let new_pages = (ctx.memory_size / 65536) as u32;
+            crate::os::debug_print(&alloc::format!("[MEM_SYNC] ctx={} > store={}, set_pages({})\n", ctx.memory_size, store_size, new_pages));
+            store.memories.get_mut(mem_addr).mem.set_pages(new_pages);
+        } else if store_size > ctx.memory_size {
+            ctx.memory_base = store.memories.get(mem_addr).mem.get_base_ptr();
+            ctx.memory_size = store_size;
+        }
     }
 
     let n_results = results.len();
@@ -920,15 +926,15 @@ pub extern "C" fn aot_call_host(ctx: &mut AotContext, func_idx: u32, sp: *mut u1
     }
 
     /*crate::os::debug_print(&format!(
-        "AOT: host call done. sp={:p} n_params={} n_results={} returned_sp={:p}\n",
-        sp, n_params, n_results, current_sp
+        "AOT: host idx={} n_params={} n_results={} sp={:p} returned_sp={:p}\n",
+        func_idx, n_params, n_results, sp, current_sp
     ));*/
 
     current_sp
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aot_ref_func(ctx: &AotContext, func_idx: u32) -> usize {
+pub extern "C" fn aot_ref_func(ctx: &Ring3Context, func_idx: u32) -> usize {
     let store = unsafe { &*(ctx.store as *const Store<()>) };
     let module_addr = ctx.module_addr;
     store.modules.get(module_addr).func_addrs[func_idx as usize]
@@ -936,7 +942,7 @@ pub extern "C" fn aot_ref_func(ctx: &AotContext, func_idx: u32) -> usize {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_v128_load_lane(
-    ctx: &AotContext,
+    ctx: &Ring3Context,
     addr: u32,
     offset: u32,
     lane_idx: u8,
@@ -971,7 +977,7 @@ pub extern "C" fn aot_v128_load_lane(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aot_v128_store_lane(
-    ctx: &AotContext,
+    ctx: &Ring3Context,
     addr: u32,
     offset: u32,
     lane_idx: u8,

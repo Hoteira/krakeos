@@ -150,13 +150,30 @@ impl X64Emitter {
         });
     }
 
+    pub fn call_label(&mut self, label_id: usize) {
+        self.emit_u8(0xE8);
+        let pos = self.code.len();
+        self.emit_u32(0);
+        self.relocs.push(Reloc {
+            pos,
+            label_id,
+            kind: RelocKind::Call32,
+        });
+    }
+
     pub fn finalize(&mut self) {
         let mut relocs = core::mem::take(&mut self.relocs);
         for reloc in relocs.drain(..) {
             let target = self.label_offsets[reloc.label_id].expect("Unbound label");
+            // The relative offset is from the end of the 4-byte immediate.
+            // pos points to the start of the 4-byte immediate.
             let offset = (target as isize - (reloc.pos as isize + 4)) as i32;
             let bytes = offset.to_le_bytes();
-            self.code[reloc.pos..reloc.pos + 4].copy_from_slice(&bytes);
+            let p = reloc.pos;
+            self.code[p] = bytes[0];
+            self.code[p + 1] = bytes[1];
+            self.code[p + 2] = bytes[2];
+            self.code[p + 3] = bytes[3];
         }
     }
 
@@ -389,6 +406,13 @@ impl X64Emitter {
         self.rex(true, 0, 0, reg as u8);
         self.emit_u8(0xC1);
         self.modrm(3, 5, reg as u8);
+        self.emit_u8(imm);
+    }
+
+    pub fn shl_reg_imm32(&mut self, reg: Reg, imm: u8) {
+        self.rex(true, 0, 0, reg as u8);
+        self.emit_u8(0xC1);
+        self.modrm(3, 4, reg as u8);
         self.emit_u8(imm);
     }
 

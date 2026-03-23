@@ -104,7 +104,7 @@ impl Window {
 
         let pid = std::process::get_pid();
         std::debugln!("[inkui] Creating window '{}' with pid {}", title, pid);
-        let event_queue = std::os::EventQueue::new(128);
+        let event_queue = std::os::EventQueue::new(512);
         event_queue.register();
 
         Window {
@@ -218,10 +218,10 @@ impl Window {
         self.draw();
     }
 
-    pub fn update(&mut self) {
-        if self.dirty {
-            self.draw();
-        }
+    /// Notify the compositor of current window state (dimensions, buffer pointers)
+    /// without redrawing content. Must be called after buffer reallocation so the
+    /// compositor doesn't hold dangling pointers.
+    fn sync_window(&self) {
         let std_window = graphics::Window {
             id: self.id,
             buffer: self.buffer.front.as_ptr() as usize,
@@ -249,22 +249,34 @@ impl Window {
         graphics::update_window(&std_window);
     }
 
+    pub fn update(&mut self) {
+        if self.dirty {
+            self.draw();
+        }
+        self.sync_window();
+    }
+
     pub fn update_area(&mut self, x: usize, y: usize, w: usize, h: usize) {
         graphics::update_window_area(self.id, x, y, w, h);
     }
 
-    pub fn resize(&mut self, width: usize, height: usize, can_move: bool) {
+    pub fn resize(&mut self, width: usize, height: usize, x: isize, y: isize, can_move: bool) {
         if !self.can_resize { return; }
-        std::debugln!("[inkui] Resizing window '{}' to {}x{}", self.title, width, height);
+        std::debugln!("[inkui] Resizing window '{}' to {}x{} at ({}, {})", self.title, width, height, x, y);
         self.width = width;
         self.height = height;
+        self.x = x;
+        self.y = y;
         self.can_move = can_move;
 
         let new_size = width * height * 4 + 4;
         self.buffer.resize(new_size);
 
         self.mark_dirty();
-        self.update();
+        // Must immediately notify compositor of new buffer pointers after
+        // reallocation, otherwise it reads freed memory (GPF).
+        // No draw here — caller triggers the redraw after processing all events.
+        self.sync_window();
     }
 
     pub fn poll_events(&mut self) -> Vec<Event> {
@@ -306,6 +318,17 @@ impl Window {
                 vec.push(e);
             }
         }
+
+        // 4. Coalesce resize events: only keep the last one
+        let resize_count = vec.iter().filter(|e| matches!(e, Event::Resize(_))).count();
+        if resize_count > 1 {
+            let last_resize = vec.iter().rev().find(|e| matches!(e, Event::Resize(_))).copied();
+            vec.retain(|e| !matches!(e, Event::Resize(_)));
+            if let Some(r) = last_resize {
+                vec.push(r);
+            }
+        }
+
         vec
     }
 
@@ -343,18 +366,12 @@ impl Window {
     }
 
     pub fn event_loop(&mut self) {
-        let mut events: [Event; 64] = [Event::None; 64];
+        let events = self.poll_events();
         let mut any_redraw = false;
-
-        graphics::get_events(self.id, &mut events);
 
         for event in events.iter() {
             match event {
-                Event::Resize(e) => {
-                    if e.width > 0 && e.height > 0 && self.can_resize {
-                        self.resize(e.width as usize, e.height as usize, self.can_move);
-                    }
-                }
+                Event::Resize(_) => {} // handled below after all other events
                 Event::Mouse(e) => {
                     let target_id = if let Some(widget) = self.find_interactive_widget_at(e.x as usize, e.y as usize) {
                         Some(widget.get_id())
@@ -461,6 +478,14 @@ impl Window {
                     }
                 }
                 _ => {}
+            }
+        }
+
+        // Apply only the last resize event (poll_events already coalesced)
+        if let Some(Event::Resize(e)) = events.iter().rev().find(|e| matches!(e, Event::Resize(_))) {
+            if e.width > 0 && e.height > 0 && self.can_resize {
+                self.resize(e.width as usize, e.height as usize, e.x as isize, e.y as isize, self.can_move);
+                any_redraw = true;
             }
         }
 

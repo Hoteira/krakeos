@@ -102,7 +102,7 @@ impl Idt {
 
 
     pub fn hardware_interrupts(&mut self) {
-        self.add_ring_3(exceptions::TIMER_INT as usize, task::timer_handler as u64);
+        self.add(exceptions::TIMER_INT as usize, task::timer_handler as u64);
         self.add_ring_3(exceptions::YIELD_INT as usize, task::yield_handler as u64);
         self.add(exceptions::KEYBOARD_INT as usize, exceptions::keyboard_handler as u64);
         self.add(exceptions::MOUSE_INT as usize, exceptions::mouse_handler as u64);

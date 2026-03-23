@@ -17,10 +17,13 @@ pub fn copy_string_from_user(ptr: *const u8, len: usize) -> String {
 
     // Kernel threads (WASM runtime) are trusted — skip validation
     if !super::is_kernel_thread() {
-        if let Some(proc) = super::get_current_process() {
-            if !super::validate_user_ptr(&proc, ptr as u64, len as u64) {
-                crate::debugln!("[Syscall] REJECTED: invalid string pointer {:#x} len={}", ptr as u64, len);
-                return String::new();
+        // Allow kernel-space pointers (e.g. from host call dispatch via SYS_WASM_HOST_CALL)
+        if (ptr as u64) < 0xFFFF_8000_0000_0000 {
+            if let Some(proc) = super::get_current_process() {
+                if !super::validate_user_ptr(&proc, ptr as u64, len as u64) {
+                    crate::debugln!("[Syscall] REJECTED: invalid string pointer {:#x} len={}", ptr as u64, len);
+                    return String::new();
+                }
             }
         }
     }
@@ -1339,4 +1342,38 @@ pub fn handle_readlinkat(context: &mut CPUState) {
         }
         Err(_) => context.rax = u64::MAX,
     }
-}
+    }
+
+    pub fn handle_fd_prestat_get(context: &mut CPUState) {
+    let fd = context.rdi as i32;
+    let buf_ptr = context.rsi as *mut u32;
+    if !super::validate_user_buf(context, buf_ptr as u64, 8) { return; }
+
+    if fd == 3 {
+        unsafe {
+            core::ptr::write_unaligned(buf_ptr, 0); // type dir
+            core::ptr::write_unaligned(buf_ptr.add(1), 1); // len of "/"
+        }
+        context.rax = 0;
+    } else {
+        context.rax = 8; // EBADF
+    }
+    }
+
+    pub fn handle_fd_prestat_dir_name(context: &mut CPUState) {
+    let fd = context.rdi as i32;
+    let buf_ptr = context.rsi as *mut u8;
+    let len = context.rdx as usize;
+
+    if fd == 3 {
+        if len < 1 {
+            context.rax = 28; // EINVAL
+            return;
+        }
+        if !super::validate_user_buf(context, buf_ptr as u64, 1) { return; }
+        unsafe { *buf_ptr = b'/'; }
+        context.rax = 0;
+    } else {
+        context.rax = 8; // EBADF
+    }
+    }

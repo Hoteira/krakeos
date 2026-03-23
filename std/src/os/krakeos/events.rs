@@ -27,6 +27,8 @@ pub struct ResizeEvent {
     pub wid: u32,
     pub width: u32,
     pub height: u32,
+    pub x: i32,
+    pub y: i32,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]

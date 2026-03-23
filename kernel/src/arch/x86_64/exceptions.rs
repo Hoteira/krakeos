@@ -146,6 +146,8 @@ pub extern "x86-interrupt" fn page_fault(info: &mut StackFrame, error_code: u64)
     unsafe {
         core::arch::asm!("mov {}, cr2", out(reg) cr2);
     }
+    
+    crate::debugln!("[PageFault] CR2={:#x}, RIP={:#x}, Err={:#x}", cr2, info.instruction_pointer, error_code);
 
     // Check for guard page hits
     use crate::memory::address_space::*;
@@ -290,6 +292,7 @@ pub const TIMER_INT: u8 = 32;
 pub const KEYBOARD_INT: u8 = 33;
 
 static mut IN_IRQ: bool = false;
+static mut LAST_KEY_GLOBAL: u32 = 0;
 
 pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
     unsafe {
@@ -307,83 +310,112 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
         let is_super = crate::drivers::peripherals::keyboard::is_super_active();
         let mut handled_globally = false;
 
+        // Reset shortcut debounce when super is released
+        if !is_super {
+            unsafe { LAST_KEY_GLOBAL = 0; }
+        }
+
+        // Swallow all key releases while super is held — they belong to
+        // shortcuts, not the app (also prevents QEMU down/up repeat leak)
+        if is_super && !pressed {
+            handled_globally = true;
+        }
+
         // Check for keyboard shortcuts
         if is_super && pressed {
-            if key == 'p' as u32 {
-                crate::memory::vma::GLOBAL_VMA.lock().dump();
-                handled_globally = true;
-            } else if key == 'x' as u32 {
-                unsafe {
-                    let active_id = crate::window_manager::input::CLICKED_WINDOW_ID;
-                    if active_id != 0 {
-                        (*(&raw mut crate::window_manager::composer::COMPOSER)).remove_window(active_id);
-                        crate::window_manager::input::CLICKED_WINDOW_ID = 0;
+            // DEBOUNCE: Only fire once per key while super is held.
+            // LAST_KEY_GLOBAL is only cleared when super is released,
+            // so QEMU-style down/up auto-repeat can't re-trigger.
+            let is_new_press = unsafe { LAST_KEY_GLOBAL != key };
+
+            if is_new_press {
+                if key == 'p' as u32 {
+                    crate::memory::vma::GLOBAL_VMA.lock().dump();
+                    handled_globally = true;
+                    unsafe { LAST_KEY_GLOBAL = key; }
+                } else if key == 'x' as u32 || key == 'w' as u32 {
+                    unsafe {
+                        let active_id = crate::window_manager::input::CLICKED_WINDOW_ID;
+                        if active_id != 0 {
+                            (*(&raw mut crate::window_manager::composer::COMPOSER)).remove_window(active_id);
+                            crate::window_manager::input::CLICKED_WINDOW_ID = 0;
+                        }
                     }
-                }
-                handled_globally = true;
-            } else if key == 'z' as u32 {
-                unsafe {
-                    let active_id = crate::window_manager::input::CLICKED_WINDOW_ID;
-                    if active_id != 0 {
-                        if let Some(w) = (*(&raw mut crate::window_manager::composer::COMPOSER)).find_window_id(active_id) {
-                            if w.can_resize {
-                                let screen_w = (*(&raw mut crate::window_manager::display::DISPLAY_SERVER)).width as usize;
-                                let screen_h = (*(&raw mut crate::window_manager::display::DISPLAY_SERVER)).height as usize;
-                                
-                                if w.width == screen_w && w.height == screen_h {
-                                    // Restore
-                                    w.width = w.prev_width.max(100);
-                                    w.height = w.prev_height.max(100);
-                                    w.x = w.prev_x;
-                                    w.y = w.prev_y;
-                                } else {
-                                    // Maximize
-                                    w.prev_width = w.width;
-                                    w.prev_height = w.height;
-                                    w.prev_x = w.x;
-                                    w.prev_y = w.y;
-                                    w.width = screen_w;
-                                    w.height = screen_h;
-                                    w.x = 0;
-                                    w.y = 0;
-                                }
-                                
-                                // Send resize event to the application
-                                let event = crate::window_manager::events::Event::Resize(
-                                    crate::window_manager::events::ResizeEvent {
-                                        wid: w.id as u32,
-                                        width: w.width as u32,
-                                        height: w.height as u32,
+                    handled_globally = true;
+                    unsafe { LAST_KEY_GLOBAL = key; }
+                } else if key == 'z' as u32 || key == 'f' as u32 {
+                    unsafe {
+                        let active_id = crate::window_manager::input::CLICKED_WINDOW_ID;
+                        if active_id != 0 {
+                            if let Some(w) = (*(&raw mut crate::window_manager::composer::COMPOSER)).find_window_id(active_id) {
+                                if w.can_resize {
+                                    let screen_w = (*(&raw mut crate::window_manager::display::DISPLAY_SERVER)).width as usize;
+                                    let screen_h = (*(&raw mut crate::window_manager::display::DISPLAY_SERVER)).height as usize;
+                                    
+                                    let (target_x, target_y, target_w, target_h) = if w.width == screen_w && w.height == screen_h {
+                                        // Restore
+                                        (w.prev_x, w.prev_y, w.prev_width.max(100), w.prev_height.max(100))
+                                    } else {
+                                        // Maximize
+                                        let tx = 0;
+                                        let ty = 0;
+                                        let tw = screen_w;
+                                        let th = screen_h;
+                                        
+                                        // Store current state for future restore
+                                        w.prev_width = w.width;
+                                        w.prev_height = w.height;
+                                        w.prev_x = w.x;
+                                        w.prev_y = w.y;
+                                        
+                                        (tx as isize, ty as isize, tw, th)
+                                    };
+                                    
+                                    // Send resize event to the application with target dimensions AND position
+                                    let event = crate::window_manager::events::Event::Resize(
+                                        crate::window_manager::events::ResizeEvent {
+                                            wid: w.id as u32,
+                                            width: target_w as u32,
+                                            height: target_h as u32,
+                                            x: target_x as i32,
+                                            y: target_y as i32,
+                                        }
+                                    );
+                                    let pid = w.pid;
+                                    let tm = crate::task::TASK_MANAGER.int_lock();
+                                    if !crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&*tm, pid, event) {
+                                        crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().add_event(event);
                                     }
-                                );
-                                let pid = w.pid;
-                                let tm = crate::task::TASK_MANAGER.int_lock();
-                                if !crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&*tm, pid, event) {
-                                    crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().add_event(event);
                                 }
                             }
                         }
                     }
-                }
-                handled_globally = true;
-            } else if key == 'c' as u32 {
-                unsafe {
-                    let active_id = crate::window_manager::input::CLICKED_WINDOW_ID;
-                    if active_id != 0 {
-                        if let Some(w) = (*(&raw mut crate::window_manager::composer::COMPOSER)).find_window_id(active_id) {
-                            if w.can_resize {
-                                crate::window_manager::input::RESIZING_WINDOW.store(
-                                    w.id as u16, 
-                                    core::sync::atomic::Ordering::Relaxed
-                                );
+                    handled_globally = true;
+                    unsafe { LAST_KEY_GLOBAL = key; }
+                } else if key == 'c' as u32 {
+                    unsafe {
+                        let active_id = crate::window_manager::input::CLICKED_WINDOW_ID;
+                        if active_id != 0 {
+                            if let Some(w) = (*(&raw mut crate::window_manager::composer::COMPOSER)).find_window_id(active_id) {
+                                if w.can_resize {
+                                    crate::window_manager::input::RESIZING_WINDOW.store(
+                                        w.id as u16, 
+                                        core::sync::atomic::Ordering::Relaxed
+                                    );
+                                }
                             }
                         }
                     }
+                    handled_globally = true;
+                    unsafe { LAST_KEY_GLOBAL = key; }
+                } else if key == 't' as u32 {
+                    // Spawn terminal
+                    let _ = crate::syscalls::process::spawn_process("@0xE0/sys/bin/term.wasm", None, None, None);
+                    handled_globally = true;
+                    unsafe { LAST_KEY_GLOBAL = key; }
                 }
-                handled_globally = true;
-            } else if key == 't' as u32 {
-                // Spawn terminal
-                let _ = crate::syscalls::process::spawn_process("@0xE0/sys/bin/term.wasm", None, None, None);
+            } else {
+                // If it's a repeat of a key already handled globally, just swallow it
                 handled_globally = true;
             }
         }

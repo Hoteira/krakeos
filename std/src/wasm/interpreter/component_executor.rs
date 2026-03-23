@@ -225,7 +225,7 @@ fn instantiate_component_internal<'a, T: Config>(
                         }
 
                         if let Ok(outcome) =
-                            store.module_instantiate_unchecked(&validation_info, extern_vals, None)
+                            store.module_instantiate_unchecked(&validation_info, extern_vals, None, 0)
                         {
                             let module_inst = store.modules.get(outcome.module_addr);
                             core_instances.push(module_inst.exports.clone());
@@ -385,6 +385,7 @@ fn instantiate_component_internal<'a, T: Config>(
                             &validation_info,
                             extern_vals.clone(),
                             None,
+                            0,
                         ) {
                             let module_inst = store.modules.get(outcome.module_addr);
                             instances.push(module_inst.exports.clone());

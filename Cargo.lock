@@ -85,6 +85,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ring3-rt"
+version = "0.1.0"
+
+[[package]]
 name = "shell"
 version = "0.1.0"
 dependencies = [
@@ -138,6 +142,10 @@ version = "0.1.0"
 dependencies = [
  "std",
 ]
+
+[[package]]
+name = "trivial_test"
+version = "0.1.0"
 
 [[package]]
 name = "userland"

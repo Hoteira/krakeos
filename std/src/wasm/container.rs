@@ -135,7 +135,11 @@ pub fn plant<T: Config + Clone + Send + 'static>(
             &mut linker,
             &mut child_store,
         );
-        unregister_container(child_id, res);
+        let exit_code = match res {
+            crate::wasm::runner::WasmRunResult::Finished(code) => code,
+            crate::wasm::runner::WasmRunResult::AotReady(_) => 0, // Should not happen for nested yet
+        };
+        unregister_container(child_id, exit_code);
     });
 
     Ok(child_id)

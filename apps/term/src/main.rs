@@ -190,7 +190,7 @@ pub fn main() {
                     }
                 }
                 inkui::Event::Resize(e) => {
-                    win.resize(e.width as usize, e.height as usize, true);
+                    win.resize(e.width as usize, e.height as usize, e.x as isize, e.y as isize, true);
                     update_term_size(&win);
                     needs_redraw = true;
                 }

@@ -59,6 +59,61 @@ pub fn handle_brk(context: &mut CPUState) {
     }
 }
 
+pub fn handle_memory_size(context: &mut CPUState) {
+    if let Some(proc) = super::get_current_process() {
+        context.rax = (*proc.linear_memory_size.lock() / 65536) as u64;
+    } else {
+        context.rax = u64::MAX;
+    }
+}
+
+pub fn handle_memory_grow(context: &mut CPUState) {
+    let n_pages = context.rdi as u32;
+    let caller_rip = context.rip;
+    let caller_rsp = context.rsp;
+    crate::debugln!("[MEMORY_GROW] n_pages={} caller_rip={:#x} rsp={:#x}", n_pages, caller_rip, caller_rsp);
+    if let Some(proc) = super::get_current_process() {
+        let mut mem_size = proc.linear_memory_size.lock();
+        let old_pages = (*mem_size / 65536) as u32;
+        crate::debugln!("[MEMORY_GROW] old_pages={} mem_base={:#x} current_size={:#x}", old_pages, proc.linear_memory_base, *mem_size);
+
+        use crate::memory::address_space::LINEAR_MEMORY_SLOT_SIZE;
+        let new_size = (*mem_size as u64) + (n_pages as u64 * 65536);
+        if new_size > LINEAR_MEMORY_SLOT_SIZE {
+            context.rax = u64::MAX;
+            return;
+        }
+
+        // Map physical pages for the grown region
+        let mem_base = proc.linear_memory_base;
+        let grow_start = mem_base + *mem_size as u64;
+        let grow_bytes = n_pages as u64 * 65536;
+
+        let mut current_virt = grow_start;
+        let end_virt = grow_start + grow_bytes;
+
+        while current_virt < end_virt {
+            if let Some(phys) = pmm::allocate_frame() {
+                let flags = paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_USER;
+                unsafe {
+                    vmm::map_page(current_virt, PhysAddr::new(phys), flags, None);
+                    core::ptr::write_bytes(current_virt as *mut u8, 0, 4096);
+                }
+                current_virt += 4096;
+            } else {
+                // OOM - don't update size, return failure
+                context.rax = u64::MAX;
+                return;
+            }
+        }
+
+        *mem_size = new_size as usize;
+        context.rax = old_pages as u64;
+    } else {
+        context.rax = u64::MAX;
+    }
+}
+
 pub fn handle_mmap(context: &mut CPUState) {
     let addr = context.rdi;
     let len = context.rsi;
@@ -117,14 +172,27 @@ pub fn handle_mmap(context: &mut CPUState) {
             return;
         }
     } else {
-        // Check if within SAS slot
-        use crate::memory::address_space::LINEAR_MEMORY_SLOT_SIZE;
-        if addr < mem_base || addr + len > mem_base + LINEAR_MEMORY_SLOT_SIZE {
-            crate::debugln!("[MMAP] REJECTED: out of SAS bounds addr={:#x} mem_base={:#x} slot_size={:#x}", addr, mem_base, LINEAR_MEMORY_SLOT_SIZE);
-            context.rax = u64::MAX;
-            return;
+        // SAS Check
+        use crate::memory::address_space::{LINEAR_MEMORY_BASE, LINEAR_MEMORY_SLOT_SIZE, STACK_REGION_BASE};
+        
+        // If kernel context (PID 0 or CS==0 fake context from kernel-mode syscall), allow mapping anywhere
+        if pid == 0 || context.cs == 0 {
+             if addr < 0x1000 { // Protect null
+                 crate::debugln!("[MMAP] REJECTED: kernel tried to map null page");
+                 context.rax = u64::MAX;
+                 return;
+             }
+             // For kernel, we trust the caller (std::wasm) to provide a valid SAS address for some process.
+             addr
+        } else {
+            // Check if within current process SAS slot
+            if addr < mem_base || addr + len > mem_base + LINEAR_MEMORY_SLOT_SIZE {
+                crate::debugln!("[MMAP] REJECTED: out of SAS bounds addr={:#x} mem_base={:#x} slot_size={:#x}", addr, mem_base, LINEAR_MEMORY_SLOT_SIZE);
+                context.rax = u64::MAX;
+                return;
+            }
+            addr
         }
-        addr
     };
 
     let start_page = target_addr & !0xFFF;

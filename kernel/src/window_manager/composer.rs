@@ -310,6 +310,9 @@ impl Composer {
                 w.can_move = true;
                 w.can_resize = true;
 
+                unsafe {
+                    CLICKED_WINDOW_ID = w.id;
+                }
                 self.focus_window(w.id);
             }
         }
@@ -379,11 +382,9 @@ impl Composer {
                 self.windows[i].width = w.width;
                 self.windows[i].height = w.height;
 
-                if self.windows[i].w_type != Items::Window {
-                    self.windows[i].x = w.x;
-                    self.windows[i].y = w.y;
-                    self.windows[i].can_move = w.can_move;
-                }
+                self.windows[i].x = w.x;
+                self.windows[i].y = w.y;
+                self.windows[i].can_move = w.can_move;
 
                 self.windows[i].transparent = w.transparent;
                 self.windows[i].treat_as_transparent = w.treat_as_transparent;

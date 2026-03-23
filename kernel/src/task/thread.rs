@@ -23,6 +23,9 @@ pub struct Thread {
     pub wake_ticks: u64,
     pub exit_code: u64,
     pub name: [u8; 32],
+    pub uid: u32,
+    pub gid: u32,
+    pub is_queued: bool,
     pub process: Option<Arc<Process>>,
 }
 
@@ -75,6 +78,9 @@ impl Thread {
             wake_ticks: 0,
             exit_code: 0,
             name: t_name,
+            uid: 0,
+            gid: 0,
+            is_queued: false,
             process: None,
         }
     }

@@ -145,6 +145,19 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
         }
     }
 
+    /// Update current_pages directly (used to sync Ring 3 memory grows into the Store)
+    pub fn set_pages(&self, new_pages: PageCountTy) {
+        let mut lock_guard = self.storage.write();
+        match &mut *lock_guard {
+            LinearMemoryStorage::Sas { current_pages, .. } => {
+                *current_pages = new_pages;
+            }
+            LinearMemoryStorage::Managed(_) | LinearMemoryStorage::Nested { .. } => {
+                // Only SAS memories are used in Ring 3 AOT
+            }
+        }
+    }
+
     pub fn pages(&self) -> PageCountTy {
         let lock_guard = self.storage.read();
         match &*lock_guard {
