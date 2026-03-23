@@ -397,9 +397,9 @@ impl<'a, T: Config> Store<'a, T> {
                 for imp in &validation_info.imports {
                     if let crate::wasm::common::reader::types::import::ImportDesc::Func(_) = imp.desc {
                         let stub_idx = match (imp.module_name.as_str(), imp.name.as_str()) {
-                            ("wasi_snapshot_preview1", "fd_write") => 90,
-                            ("wasi_snapshot_preview1", "fd_read") => 91,
-                            ("wasi_snapshot_preview1", "fd_close") => 92,
+                            ("wasi_snapshot_preview1", "fd_write") => 300,
+                            ("wasi_snapshot_preview1", "fd_read") => 301,
+                            ("wasi_snapshot_preview1", "fd_close") => 302,
                             ("env", "host_serial_print") => 999, // Our manual test
                             ("wasi_snapshot_preview1", "proc_exit") => 0, // Trap/Exit
                             _ => u64::MAX, // Forward to kernel via SYS_WASM_HOST_CALL

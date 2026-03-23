@@ -4,9 +4,9 @@ extern crate alloc;
 
 use alloc::vec;
 use inkui::Window;
-use std::os::{sleep, Items};
-use std::io::Read;
 use std::debugln;
+use std::io::Read;
+use std::os::{sleep, Items};
 
 pub fn main() {
     std::allocator::debug_allocator();
@@ -43,18 +43,18 @@ pub fn main() {
 
     // Spawn system apps
     /*debugln!("[Init] Spawning Taskbar...");
-    
+
     match std::os::spawn_with_fds("@0xE0/apps/taskbar.wasm", &[], &[(0, 0), (1, 1), (2, 2)]) {
         pid if pid != usize::MAX => debugln!("[Init] Taskbar spawned into its own slot with PID {}", pid),
         _ => debugln!("[Init] Failed to spawn taskbar"),
     }*/
 
-    /*sleep(500);
+    sleep(500);
 
     match std::os::spawn_with_fds("@0xE0/apps/aot_test.wasm", &[], &[(0, 0), (1, 1), (2, 2)]) {
         pid if pid != usize::MAX => debugln!("[Init] TAOT test into its own slot with PID {}", pid),
         _ => debugln!("[Init] Failed to spawn tests"),
-    }*/
+    }
 
     sleep(500);
     debugln!("[Init] About to spawn dummy.wasm (WASIP1)...");
@@ -64,10 +64,11 @@ pub fn main() {
         _ => debugln!("[Init] Failed to spawn tsk app"),
     }
 
+    /*
     match std::os::spawn_with_fds("@0xE0/apps/term.wasm", &[], &[(0, 0), (1, 1), (2, 2)]) {
         pid if pid != usize::MAX => debugln!("[Init] Term app spawned with PID {}", pid),
         _ => debugln!("[Init] Failed to spawn term app"),
-    }
+    }*/
 
     debugln!("[Init] System ready.");
 

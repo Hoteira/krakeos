@@ -199,8 +199,7 @@ pub fn phys_to_virt(phys: PhysAddr) -> super::address::VirtAddr {
 pub fn virt_to_phys(virt: u64) -> u64 {
     if virt >= 0xFFFFFFFF00000000 {
         virt - 0xFFFFFFFF00000000
-    } else if virt >= HHDM_OFFSET && virt < HHDM_OFFSET + 0x1_0000_0000 {
-        // Only use the direct map for addresses within the first 4GB of physical RAM
+    } else if virt >= HHDM_OFFSET {
         virt - HHDM_OFFSET
     } else {
         let cr3: u64;
