@@ -40,12 +40,24 @@ impl Mapper {
         let entry = &mut table[index];
 
         if entry.flags().contains(PageTableFlags::HUGE_PAGE) {
-            return Err("Huge page encountered while walking");
-        }
+            // Shatter the huge page into a table of 4KB entries so demand
+            // paging can map individual pages with correct permissions.
+            let frame = pmm::allocate_frame().ok_or("OOM: Failed to shatter huge page")?;
+            let base_phys = entry.addr().as_u64();
+            let new_table_virt = phys_to_virt(PhysAddr::new(frame));
+            let new_table = unsafe { &mut *(new_table_virt.as_mut_ptr() as *mut PageTable) };
+            let leaf_flags = entry.flags() & !PageTableFlags::HUGE_PAGE;
+            for i in 0..512 {
+                let mut e = super::paging::PageTableEntry::new();
+                e.set_addr(PhysAddr::new(base_phys + (i as u64 * 4096)), leaf_flags);
+                new_table[i] = e;
+            }
+            let table_flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER_ACCESSIBLE;
+            entry.set_addr(PhysAddr::new(frame), table_flags);
 
-        if entry.is_unused() {
+            Ok(new_table)
+        } else if entry.is_unused() {
             let frame = pmm::allocate_frame().ok_or("OOM: Failed to allocate page table")?;
-
 
             let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER_ACCESSIBLE;
 
@@ -56,6 +68,13 @@ impl Mapper {
             table.zero();
             Ok(table)
         } else {
+            // Upgrade existing entry to include USER_ACCESSIBLE if missing
+            let mut flags = entry.flags();
+            if !flags.contains(PageTableFlags::USER_ACCESSIBLE) {
+                flags |= PageTableFlags::USER_ACCESSIBLE;
+                entry.set_flags(flags);
+            }
+
             let phys = entry.addr();
             let virt = phys_to_virt(phys);
             Ok(unsafe { &mut *(virt.as_mut_ptr() as *mut PageTable) })

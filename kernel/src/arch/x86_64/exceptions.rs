@@ -285,23 +285,24 @@ pub extern "C" fn page_fault_inner(saved_regs: u64) {
     {
         let mut vma = crate::memory::vma::GLOBAL_VMA.lock();
         if vma.is_mapped(cr2) {
+            let pml4 = active_level_4_table();
+            let mut mapper = unsafe {
+                Mapper::new(PhysAddr::new(crate::memory::paging::virt_to_phys(
+                    pml4 as *const _ as u64,
+                )))
+            };
+
+            let mut flags = PageTableFlags::PRESENT
+                | PageTableFlags::USER_ACCESSIBLE
+                | PageTableFlags::WRITABLE;
+
+            if cr2 >= STACK_REGION_BASE {
+                flags |= PageTableFlags::NO_EXECUTE;
+            }
+
+            let virt = VirtAddr::new(cr2 & !0xFFF);
+
             if let Some(frame) = pmm::allocate_frame() {
-                let pml4 = active_level_4_table();
-                let mut mapper = unsafe {
-                    Mapper::new(PhysAddr::new(crate::memory::paging::virt_to_phys(
-                        pml4 as *const _ as u64,
-                    )))
-                };
-
-                let mut flags = PageTableFlags::PRESENT
-                    | PageTableFlags::USER_ACCESSIBLE
-                    | PageTableFlags::WRITABLE;
-
-                if cr2 >= STACK_REGION_BASE {
-                    flags |= PageTableFlags::NO_EXECUTE;
-                }
-
-                let virt = VirtAddr::new(cr2 & !0xFFF);
                 let phys = PhysAddr::new(frame);
 
                 if let Ok(_) = mapper.map(virt, phys, flags) {
@@ -309,9 +310,19 @@ pub extern "C" fn page_fault_inner(saved_regs: u64) {
                         core::arch::asm!("invlpg [{}]", in(reg) cr2, options(nostack, preserves_flags));
                     }
                     return; // demand paging success → naked wrapper will iretq
+                } else {
+                    // mapper.map failed — page already exists.  Free the
+                    // unused frame.  The Mapper's traversal already upgraded
+                    // USER_ACCESSIBLE on all intermediate entries (including
+                    // shattered huge pages), so just flush and retry.
+                    pmm::free_frame(frame);
+                    unsafe {
+                        core::arch::asm!("invlpg [{}]", in(reg) cr2, options(nostack, preserves_flags));
+                    }
+                    return;
                 }
             }
-            // fall through to fatal if allocation or mapping failed
+            // fall through to fatal if frame allocation failed
         } else {
             serial_print("[PF] Address not in VMA: ");
             print_hex(cr2);

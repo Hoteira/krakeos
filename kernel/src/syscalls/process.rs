@@ -147,7 +147,7 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
                         let ctx = &mut *(info.ctx_ptr as *mut ::std::wasm::aot::runtime::Ring3Context);
                         ctx.stack_base = info.stack_base as *mut u128;
                         ctx.stack_limit = info.stack_limit as usize;
-                        ctx.locals_base = (info.stack_base - 1024 * 1024) as *mut u128;
+                        ctx.locals_base = (info.stack_base - 8 * 1024 * 1024) as *mut u128;
 
                         // Push exit stub as return address so the entry function can return cleanly.
                         // The exit stub is at jump_table[1023] in the blob.

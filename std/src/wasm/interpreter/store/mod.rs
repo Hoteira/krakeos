@@ -73,6 +73,13 @@ pub struct Store<'a, T: Config> {
     pub next_code_offset: usize,
     pub container_id: Option<u64>,
     pub shm_mappings: BTreeMap<String, u32>,
+    /// Raw pointer to the Ring3Context during aot_call_host processing.
+    /// Set before calling host functions so that invoke_unchecked can
+    /// call back into AOT-compiled WASM functions instead of the interpreter.
+    pub ring3_ctx: Option<*mut crate::wasm::aot::runtime::Ring3Context>,
+    /// The user-space WASM stack pointer at the time of the host call.
+    #[allow(dead_code)]
+    pub ring3_sp: Option<*mut u128>,
 }
 
 unsafe impl<'a, T: Config + Send> Send for Store<'a, T> {}
@@ -103,6 +110,8 @@ impl<'a, T: Config> Store<'a, T> {
             next_code_offset: 0,
             container_id: None,
             shm_mappings: BTreeMap::new(),
+            ring3_ctx: None,
+            ring3_sp: None,
         }
     }
 
@@ -694,140 +703,11 @@ impl<'a, T: Config> Store<'a, T> {
                     FuncInst::WasmFunc(wasm_func_inst) => {
                         let aot_ptr = wasm_func_inst.aot_ptr;
                         let func_type = wasm_func_inst.function_type.clone();
-                        let module_addr = wasm_func_inst.module_addr;
+                        let _module_addr = wasm_func_inst.module_addr;
 
-                        if false && self.aot_enabled && aot_ptr.is_some() {
-                            let aot_ptr = aot_ptr.unwrap();
-                            let mut fuel = maybe_fuel.unwrap_or(u32::MAX);
-                            
-                            // Find the Ring3Context we created during instantiation
-                            let base = self.code_base.unwrap_or(0);
-                            // We need to find the correct offset. In module_instantiate_unchecked we used next_code_offset.
-                            // For now, assume it's at the end of the code slot's used area.
-                            // Actually, we should have stored it in the ModuleInst or FuncInst.
-                            // Let's assume for this PR that we can find it relative to base.
-                            
-                            // Better: create a temporary one on stack if we are still in Ring 0 for testing Phase 8a.
-                            let mem_addr = self.modules.get(module_addr).mem_addrs.get(0).copied();
-                            let (memory_base, memory_size) = if let Some(mem_addr) = mem_addr {
-                                let mem = &self.memories.get(mem_addr).mem;
-                                (mem.get_base_ptr(), mem.len())
-                            } else {
-                                (core::ptr::null_mut(), 0)
-                            };
-
-                            let stack_size = 1024 * 1024 * 4; // 4MB stack
-                            let stack_ptr =
-                                crate::memory::mmap(0, stack_size as u64) as *mut u128;
-                            let locals_size = 1024 * 64; // 64KB locals
-                            let locals_ptr =
-                                crate::memory::mmap(0, locals_size as u64) as *mut u128;
-
-                            if stack_ptr as u64 == u64::MAX || locals_ptr as u64 == u64::MAX {
-                                return Err(RuntimeError::StackExhaustion);
-                            }
-
-                            let mut trap_code_storage: i32 = 0;
-                            
-                            // We use the new Ring3Context even in Ring 0
-                            let mut ctx = crate::wasm::aot::runtime::Ring3Context {
-                                store: self as *mut _ as *mut usize,
-                                fuel: &mut fuel as *mut u32,
-                                memory_base,
-                                memory_size,
-                                stack_base: stack_ptr,
-                                locals_base: locals_ptr,
-                                module_addr,
-                                stack_limit: stack_ptr as usize,
-                                trap_code: &mut trap_code_storage as *mut i32,
-                                blob_base: base,
-                                // These would point to the data region in Ring 3
-                                globals_ptr: core::ptr::null_mut(), 
-                                globals_count: 0,
-                                _pad0: 0,
-                                table0_ptr: core::ptr::null_mut(),
-                                table0_size: 0,
-                                _pad1: 0,
-                                func_table_ptr: core::ptr::null_mut(),
-                                func_count: 0,
-                                _pad2: 0,
-                                pid: self.container_id.unwrap_or(0),
-                                slot_id: 0,
-                                _pad3: [0; 6],
-                                trap_code_storage: 0,
-                                _pad4: 0,
-                                num_imported_funcs: 0,
-                                _pad5: 0,
-                                import_stub_table: core::ptr::null(),
-                            };
-
-                            // Prepare AOT stack with parameters
-                            let mut sp = unsafe { stack_ptr.add(stack_size / 16) };
-                            for param in params.iter() {
-                                sp = unsafe { sp.sub(1) };
-                                unsafe {
-                                    *sp = param.to_u128();
-                                }
-                            }
-
-                            let final_sp: *mut u128;
-
-                            #[cfg(not(target_arch = "wasm32"))]
-                            unsafe {
-                                core::arch::asm!(
-                                    "mov r12, rsp",       
-                                    "mov rsp, {sp}",      
-                                    "call {func}",        
-                                    "mov rsp, r12",       
-                                    sp = in(reg) sp,
-                                    func = in(reg) aot_ptr,
-                                    inout("rdi") &mut ctx => _,
-                                    lateout("rax") final_sp,
-                                    out("r12") _,         
-                                    clobber_abi("C"),
-                                );
-                            }
-
-                            #[cfg(target_arch = "wasm32")]
-                            {
-                                let _ = sp;
-                                let _ = aot_ptr;
-                                let _ = &mut ctx;
-                                panic!("AOT execution only supported on native targets");
-                            }
-
-                            // Collect results BEFORE freeing the stack memory
-                            let aot_result: Result<Vec<Value>, RuntimeError> = if trap_code_storage != 0 {
-                                Err(RuntimeError::HostFunctionHaltedExecution(trap_code_storage))
-                            } else {
-                                let num_returns = func_type.returns.valtypes.len();
-                                let mut results = Vec::with_capacity(num_returns);
-                                for i in 0..num_returns {
-                                    let val_ptr = unsafe { final_sp.add(i) };
-                                    let val_type = func_type.returns.valtypes[num_returns - 1 - i];
-                                    let val = Value::from_u128(unsafe { *val_ptr }, val_type);
-                                    results.push(val);
-                                }
-                                results.reverse();
-                                Ok(results)
-                            };
-
-                            // Free the AOT stack and locals
-                            crate::memory::munmap(stack_ptr as u64, stack_size as u64);
-                            crate::memory::munmap(locals_ptr as u64, locals_size as u64);
-
-                            return match aot_result {
-                                Ok(values) => Ok(RunState::Finished {
-                                    values,
-                                    maybe_remaining_fuel: if maybe_fuel.is_some() {
-                                        Some(fuel)
-                                    } else {
-                                        None
-                                    },
-                                }),
-                                Err(e) => Err(e),
-                            };
-                        }
+                        // NOTE: We cannot run AOT code from kernel mode because
+                        // the AOT trampolines use `syscall` which would cause
+                        // re-entrant syscalls. Fall through to interpreter instead.
 
                         // Fallback to interpreter
                         let mut stack = Stack::new();

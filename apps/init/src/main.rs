@@ -51,24 +51,24 @@ pub fn main() {
 
     sleep(500);
 
-    match std::os::spawn_with_fds("@0xE0/apps/aot_test.wasm", &[], &[(0, 0), (1, 1), (2, 2)]) {
+    match std::os::spawn("@0xE0/apps/aot_test.wasm") {
         pid if pid != usize::MAX => debugln!("[Init] TAOT test into its own slot with PID {}", pid),
         _ => debugln!("[Init] Failed to spawn tests"),
     }
 
     sleep(500);
-    debugln!("[Init] About to spawn dummy.wasm (WASIP1)...");
 
-    match std::os::spawn_with_fds("@0xE0/apps/taskbar.wasm", &[], &[(0, 0), (1, 1), (2, 2)]) {
+    match std::os::spawn("@0xE0/apps/taskbar.wasm") {
         pid if pid != usize::MAX => debugln!("[Init] Taskbar app spawned with PID {}", pid),
         _ => debugln!("[Init] Failed to spawn tsk app"),
     }
 
-    /*
-    match std::os::spawn_with_fds("@0xE0/apps/term.wasm", &[], &[(0, 0), (1, 1), (2, 2)]) {
+    sleep(500);
+
+    match std::os::spawn("@0xE0/apps/term.wasm") {
         pid if pid != usize::MAX => debugln!("[Init] Term app spawned with PID {}", pid),
         _ => debugln!("[Init] Failed to spawn term app"),
-    }*/
+    }
 
     debugln!("[Init] System ready.");
 

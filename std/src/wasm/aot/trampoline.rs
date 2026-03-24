@@ -863,12 +863,26 @@ pub extern "C" fn aot_call_host(ctx: &mut Ring3Context, func_idx: u32, sp: *mut 
     }
 
     store.caller_module = Some(module_addr);
+
+    // Sync memory: user-mode code may have grown memory since the last host call.
+    if let Some(&mem_a) = store.modules.get(module_addr).mem_addrs.first() {
+        let store_size = store.memories.get(mem_a).mem.len();
+        if ctx.memory_size > store_size {
+            let new_pages = (ctx.memory_size / 65536) as u32;
+            store.memories.get_mut(mem_a).mem.set_pages(new_pages);
+        }
+    }
+
+    store.ring3_ctx = Some(ctx as *mut Ring3Context);
+    store.ring3_sp = Some(sp);
     let results = match func_inst {
         FuncInst::HostFunc(h) => {
             let hostcode = h.hostcode;
             match hostcode(store, params.clone()) {
                 Ok(res) => res,
                 Err(crate::wasm::interpreter::store::HaltExecutionError(code)) => {
+                    store.ring3_ctx = None;
+                    store.ring3_sp = None;
                     unsafe {
                         *ctx.trap_code = if code == 0 { -1 } else { code };
                     }
@@ -876,31 +890,50 @@ pub extern "C" fn aot_call_host(ctx: &mut Ring3Context, func_idx: u32, sp: *mut 
                 }
             }
         }
-        FuncInst::WasmFunc(_) => {
-            let fuel = unsafe { *ctx.fuel };
-            let run_state = store.invoke_unchecked(func_addr, params, Some(fuel));
-            match run_state {
-                Ok(RunState::Finished {
-                    values,
-                    maybe_remaining_fuel,
-                }) => {
-                    if let Some(rem) = maybe_remaining_fuel {
+        FuncInst::WasmFunc(wf) => {
+            if let Some(aot_ptr) = wf.aot_ptr {
+                // Call the AOT-compiled function directly
+                let run_state = store.invoke_unchecked(func_addr, params, None);
+                match run_state {
+                    Ok(RunState::Finished { values, .. }) => values,
+                    Err(RuntimeError::HostFunctionHaltedExecution(code)) => {
+                        store.ring3_ctx = None;
+                        store.ring3_sp = None;
                         unsafe {
-                            *ctx.fuel = rem;
+                            *ctx.trap_code = if code == 0 { -1 } else { code };
                         }
+                        return sp;
                     }
-                    values
-                }
-                Err(RuntimeError::HostFunctionHaltedExecution(code)) => {
-                    unsafe {
-                        *ctx.trap_code = if code == 0 { -1 } else { code };
+                    _ => {
+                        store.ring3_ctx = None;
+                        store.ring3_sp = None;
+                        unsafe { aot_trap_host(ctx) }
                     }
-                    return sp;
                 }
-                _ => unsafe { aot_trap_host(ctx) },
+            } else {
+                // No AOT pointer — fallback to interpreter
+                let run_state = store.invoke_unchecked(func_addr, params, None);
+                match run_state {
+                    Ok(RunState::Finished { values, .. }) => values,
+                    Err(RuntimeError::HostFunctionHaltedExecution(code)) => {
+                        store.ring3_ctx = None;
+                        store.ring3_sp = None;
+                        unsafe {
+                            *ctx.trap_code = if code == 0 { -1 } else { code };
+                        }
+                        return sp;
+                    }
+                    _ => {
+                        store.ring3_ctx = None;
+                        store.ring3_sp = None;
+                        unsafe { aot_trap_host(ctx) }
+                    }
+                }
             }
         }
     };
+    store.ring3_ctx = None;
+    store.ring3_sp = None;
     store.caller_module = None;
 
     // Sync memory state between ctx and Store.

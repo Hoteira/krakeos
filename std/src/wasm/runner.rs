@@ -248,8 +248,8 @@ pub fn run_with_buffer(
                 const CODE_REGION_BASE: u64  = 0x0000_0001_0000_0000; // 4 GiB
                 const CODE_SLOT_SIZE: u64    = 64 * 1024 * 1024;     // 64 MiB
                 const STACK_REGION_BASE: u64 = 0x0000_0041_0000_0000; // 260 GiB
-                const STACK_SLOT_SIZE: u64   = 2 * 1024 * 1024;      // 2 MiB
-                const LINEAR_MEMORY_REGION_BASE: u64 = 0x0000_0043_2000_0000; // 268.5 GiB
+                const STACK_SLOT_SIZE: u64   = 16 * 1024 * 1024;     // 16 MiB
+                const LINEAR_MEMORY_REGION_BASE: u64 = 0x0000_0051_2000_0000; // 324.5 GiB
                 const LINEAR_MEMORY_SLOT_SIZE: u64   = 31 * 1024 * 1024 * 1024; // 31 GiB
 
                 slot_info.linear_memory_base = LINEAR_MEMORY_REGION_BASE + (slot_id as u64) * LINEAR_MEMORY_SLOT_SIZE;
@@ -263,7 +263,7 @@ pub fn run_with_buffer(
             let sas_base = Some(slot_info.linear_memory_base);
             store.sas_memory_base = sas_base;
             store.code_base = Some(slot_info.code_base);
-            store.stack_base = slot_info.stack_base + 2 * 1024 * 1024; // 2MB stack top
+            store.stack_base = slot_info.stack_base + 16 * 1024 * 1024; // 16MB stack top
             store.stack_limit = slot_info.stack_base; // Bottom
 
             // Register container
@@ -292,27 +292,62 @@ pub fn run_with_buffer(
                 env_vars,
             ));
 
+            // For component binaries, extract the first core module and
+            // run it directly through AOT instead of using the interpreter-
+            // based component executor.
+            let effective_validation;
+            let effective_buffer;
             if let Some(component) = &validation_info.component {
-                debugln!("[wasm-runner] [COMPONENT] Executing...");
-                crate::wasm::interpreter::component_executor::instantiate_component(
-                    &mut store, &linker, component, buffer,
-                )
-                .map(|_| WasmRunResult::Finished(0))
-            } else {
-                let result = linker
-                    .module_instantiate_unchecked(&mut store, &validation_info, None, slot_id)
-                    .and_then(|instance| handle_instantiation_result(&mut store, instance));
-
-                // Persist the Store for Ring3 host call dispatch
-                if let Ok(WasmRunResult::AotReady(ref info)) = result {
-                    let ctx = unsafe { &mut *(info.ctx_ptr as *mut crate::wasm::aot::runtime::Ring3Context) };
-                    ctx.module_addr = info.module_addr;
-                    let store_raw = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(store));
-                    ctx.store = store_raw as *mut usize;
+                use crate::wasm::component::types::ComponentItem;
+                let first_module = component.items.iter().find_map(|item| {
+                    if let ComponentItem::Module(m) = item { Some(m) } else { None }
+                });
+                if let Some(core_mod) = first_module {
+                    let core_bytes = &buffer[core_mod.content.from
+                        ..core_mod.content.from + core_mod.content.len];
+                    debugln!("[wasm-runner] [COMPONENT] Extracting core module ({} bytes) for AOT...",
+                        core_bytes.len());
+                    match validate(core_bytes) {
+                        Ok(vi) => {
+                            effective_validation = vi;
+                            effective_buffer = core_bytes;
+                        }
+                        Err(e) => {
+                            debugln!("[wasm-runner] Core module validation error: {:?}", e);
+                            return WasmRunResult::Finished(1);
+                        }
+                    }
+                } else {
+                    debugln!("[wasm-runner] [COMPONENT] No core module found, falling back to component executor...");
+                    return match crate::wasm::interpreter::component_executor::instantiate_component(
+                        &mut store, &linker, component, buffer,
+                    ) {
+                        Ok(_) => WasmRunResult::Finished(0),
+                        Err(e) => {
+                            debugln!("[wasm-runner] Component error: {:?}", e);
+                            WasmRunResult::Finished(1)
+                        }
+                    };
                 }
-
-                result
+            } else {
+                effective_validation = validation_info;
+                effective_buffer = buffer;
             }
+            let _ = effective_buffer; // core bytes lifetime held by outer buffer
+
+            let result = linker
+                .module_instantiate_unchecked(&mut store, &effective_validation, None, slot_id)
+                .and_then(|instance| handle_instantiation_result(&mut store, instance));
+
+            // Persist the Store for Ring3 host call dispatch
+            if let Ok(WasmRunResult::AotReady(ref info)) = result {
+                let ctx = unsafe { &mut *(info.ctx_ptr as *mut crate::wasm::aot::runtime::Ring3Context) };
+                ctx.module_addr = info.module_addr;
+                let store_raw = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(store));
+                ctx.store = store_raw as *mut usize;
+            }
+
+            result
         }
         Err(e) => {
             debugln!("[wasm-runner] Validation error: {:?}", e);
@@ -420,7 +455,7 @@ pub fn run_with_env(
                     let sas_base = Some(slot_info.linear_memory_base);
                     store.sas_memory_base = sas_base;
                     store.code_base = Some(slot_info.code_base);
-                    store.stack_base = slot_info.stack_base + 2 * 1024 * 1024;
+                    store.stack_base = slot_info.stack_base + 16 * 1024 * 1024;
                     store.stack_limit = slot_info.stack_base;
 
                     // Register container
@@ -450,14 +485,40 @@ pub fn run_with_env(
                         env_vars,
                     ));
 
-                    let res: Result<WasmRunResult, crate::wasm::RuntimeError> = if let Some(component) = &validation_info.component {
-                        crate::wasm::interpreter::component_executor::instantiate_component(
-                            &mut store, &linker, component, &buffer,
-                        )
-                        .map(|_| WasmRunResult::Finished(0))
-                    } else {
+                    let res: Result<WasmRunResult, crate::wasm::RuntimeError> = {
+                        // For component binaries, extract core module for AOT
+                        let effective_vi;
+                        if let Some(component) = &validation_info.component {
+                            use crate::wasm::component::types::ComponentItem;
+                            let first_module = component.items.iter().find_map(|item| {
+                                if let ComponentItem::Module(m) = item { Some(m) } else { None }
+                            });
+                            if let Some(core_mod) = first_module {
+                                let core_bytes = &buffer[core_mod.content.from
+                                    ..core_mod.content.from + core_mod.content.len];
+                                match validate(core_bytes) {
+                                    Ok(vi) => { effective_vi = vi; }
+                                    Err(e) => {
+                                        debugln!("[wasm-runner] Core module validation error: {:?}", e);
+                                        return WasmRunResult::Finished(1);
+                                    }
+                                }
+                            } else {
+                                return match crate::wasm::interpreter::component_executor::instantiate_component(
+                                    &mut store, &linker, component, &buffer,
+                                ) {
+                                    Ok(_) => WasmRunResult::Finished(0),
+                                    Err(e) => {
+                                        debugln!("[wasm-runner] Component error: {:?}", e);
+                                        WasmRunResult::Finished(1)
+                                    }
+                                };
+                            }
+                        } else {
+                            effective_vi = validation_info;
+                        }
                         linker
-                            .module_instantiate_unchecked(&mut store, &validation_info, None, slot_info.slot_id)
+                            .module_instantiate_unchecked(&mut store, &effective_vi, None, slot_info.slot_id)
                             .and_then(|instance| handle_instantiation_result(&mut store, instance))
                     };
 

@@ -516,6 +516,40 @@ pub(crate) fn find_cabi_realloc<T: Config>(store: &Store<'_, T>) -> Option<FuncA
 }
 
 pub(crate) fn call_cabi_realloc<T: Config>(store: &mut Store<'_, T>, new_size: u32, align: u32) -> Result<u32, HaltExecutionError> {
+    // When running under AOT (ring3_ctx is set), we cannot call back into WASM
+    // because the AOT code's trampolines use `syscall` and we're already in
+    // kernel mode. Instead, bump-allocate directly from the top of linear memory.
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(ctx_ptr) = store.ring3_ctx {
+        let module_addr = store.caller_module.ok_or(HaltExecutionError(1))?;
+        let mem_addr = *store.modules.get(module_addr).mem_addrs.get(0).ok_or(HaltExecutionError(1))?;
+        let mem = store.memories.get_mut(mem_addr);
+
+        // Sync the Store's memory with the Ring3Context — user-mode code
+        // may have called memory.grow since the last host call.
+        let ctx = unsafe { &mut *ctx_ptr };
+        if ctx.memory_size > mem.mem.len() {
+            mem.mem.set_pages((ctx.memory_size / 65536) as u32);
+        }
+
+        let current_size = mem.mem.len() as u32;
+
+        // Align the allocation pointer
+        let align = align.max(1);
+        let aligned_ptr = (current_size + align - 1) & !(align - 1);
+        let needed = aligned_ptr + new_size;
+
+        // Grow memory if needed (in 64KB pages)
+        if needed as usize > mem.mem.len() {
+            let needed_pages = ((needed as usize - mem.mem.len()) + 65535) / 65536;
+            let current_pages = (mem.mem.len() / 65536) as u32;
+            mem.mem.set_pages(current_pages + needed_pages as u32);
+            ctx.memory_size = mem.mem.len();
+        }
+
+        return Ok(aligned_ptr);
+    }
+
     let cabi_realloc_addr = find_cabi_realloc(store).ok_or(HaltExecutionError(1))?;
     let args = vec![Value::I32(0), Value::I32(0), Value::I32(align), Value::I32(new_size)];
     match store.invoke_unchecked(cabi_realloc_addr, args, None) {

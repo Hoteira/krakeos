@@ -49,7 +49,31 @@
       "Bash(tee /tmp/krakeos_serial2.log)",
       "Bash(tee /tmp/krakeos_serial3.log)",
       "Bash(timeout 30 qemu-system-x86_64 -drive file=build/disk.img,format=raw,if=virtio -serial file:/tmp/krakeos_serial.log --no-reboot -device virtio-gpu-gl-pci,xres=1024,yres=576 -display sdl,gl=on -vga none -m 4G -accel kvm)",
-      "Bash(rustc:*)"
+      "Bash(rustc:*)",
+      "Bash(find /home/hoteira/Desktop/krakeos -type f -name *trap*)",
+      "Bash(find /home/hoteira/Desktop/krakeos -path */.git -prune -o -name *.rs -type f -exec grep -l \"memory.*operations\\\\|float.*operations\\\\|simd\" {})",
+      "Bash(2)",
+      "Bash(timeout 30 qemu-system-x86_64 -drive format=raw,file=build/disk.img -m 4G -smp 4 -serial stdio -display none -device virtio-mouse-pci -device virtio-keyboard-pci -device virtio-net-pci,netdev=net0 -netdev user,id=net0)",
+      "Bash(timeout 30 qemu-system-x86_64 -drive format=raw,file=build/disk.img -m 4G -smp 4 -serial file:/tmp/krakeos_serial.log -display none -device virtio-mouse-pci -device virtio-keyboard-pci -device virtio-net-pci,netdev=net0 -netdev user,id=net0)",
+      "Bash(git stash:*)",
+      "Bash(timeout 30 qemu-system-x86_64 -drive format=raw,file=build/disk.img -m 4G -smp 4 -serial file:/tmp/krakeos_serial3.log -display none -device virtio-mouse-pci -device virtio-keyboard-pci -device virtio-net-pci,netdev=net0 -netdev user,id=net0)",
+      "Bash(timeout 60 qemu-system-x86_64 -drive format=raw,file=build/disk.img -m 4G -smp 4 -serial file:/tmp/krakeos_serial4.log -display none -device virtio-mouse-pci -device virtio-keyboard-pci -device virtio-net-pci,netdev=net0 -netdev user,id=net0)",
+      "Bash(timeout 120 qemu-system-x86_64 -drive format=raw,file=build/disk.img -m 4G -smp 4 -serial file:/tmp/krakeos_serial5.log -display none -device virtio-mouse-pci -device virtio-keyboard-pci -device virtio-net-pci,netdev=net0 -netdev user,id=net0)",
+      "Bash(timeout 120 qemu-system-x86_64 -drive format=raw,file=build/disk.img -m 4G -smp 4 -serial file:/tmp/krakeos_serial6.log -display none -device virtio-mouse-pci -device virtio-keyboard-pci -device virtio-net-pci,netdev=net0 -netdev user,id=net0)",
+      "Bash(timeout 60 qemu-system-x86_64 -drive format=raw,file=build/disk.img -m 4G -smp 4 -serial file:/tmp/krakeos_serial7.log -display none -device virtio-mouse-pci -device virtio-keyboard-pci -device virtio-net-pci,netdev=net0 -netdev user,id=net0)",
+      "Bash(timeout 60 qemu-system-x86_64 -drive format=raw,file=build/disk.img -m 4G -smp 4 -serial file:/tmp/krakeos_serial8.log -display none -device virtio-mouse-pci -device virtio-keyboard-pci -device virtio-net-pci,netdev=net0 -netdev user,id=net0)",
+      "Bash(timeout 30 qemu-system-x86_64 -drive format=raw,file=build/disk.img -m 4G -smp 4 -serial file:/tmp/krakeos_serial9.log -display none -device virtio-mouse-pci -device virtio-keyboard-pci -device virtio-net-pci,netdev=net0 -netdev user,id=net0)",
+      "Bash(pkill -9 -f \"qemu-system-x86_64\")",
+      "Bash(kill -9 983282)",
+      "Bash(kill -9 987732)",
+      "Bash(killall -9 qemu-system-x86_64)",
+      "Bash(killall -9 make)",
+      "Bash(kill -9 988298)",
+      "Bash(xargs -r kill -9)",
+      "Bash(pkill -f qemu-system-x86_64.*disk.img)",
+      "Bash(pkill -9 -f qemu-system-x86_64)",
+      "Bash(pkill -9 -f qemu)",
+      "Bash(fuser build/disk.img)"
     ]
   }
 }

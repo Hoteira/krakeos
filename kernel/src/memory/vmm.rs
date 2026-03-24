@@ -38,6 +38,23 @@ pub fn init() {
             core::ptr::write_bytes(pdpt_virt.as_mut_ptr::<u8>(), 0, 4096);
         }
 
+        // The bootloader shares one PDPT between PML4[0] (user SAS), PML4[256]
+        // (HHDM) and PML4[511].  map_physical_memory() will fill the shared PDPT
+        // with kernel-only huge pages, which poisons user-space code/stack/linear
+        // memory regions that live under PML4[0].  Give PML4[0] its own empty PDPT
+        // so the two address ranges are independent.
+        {
+            let user_pdpt_frame = pmm::allocate_frame().expect("VMM: OOM for user PDPT");
+            let user_pdpt_virt = paging::phys_to_virt(PhysAddr::new(user_pdpt_frame));
+            core::ptr::write_bytes(user_pdpt_virt.as_mut_ptr::<u8>(), 0, 4096);
+
+            let mut entry = paging::PageTableEntry::new();
+            entry.set_addr(PhysAddr::new(user_pdpt_frame),
+                           paging::PageTableFlags::PRESENT
+                               | paging::PageTableFlags::WRITABLE
+                               | paging::PageTableFlags::USER_ACCESSIBLE);
+            pml4[0] = entry;
+        }
 
         asm!("mov cr3, {}", in(reg) new_pml4_phys);
 

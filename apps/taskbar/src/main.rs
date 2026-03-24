@@ -33,12 +33,13 @@ pub fn main() {
         }
     }
 
+    println!("PORCODIOOOOOOOOO");
+
     let mut root = Widget::frame(1)
         .width(Size::Relative(100))
         .height(Size::Relative(100))
         .background_color(Color::rgba(20, 20, 20, 255))
         .set_display(Display::None);
-
 
     let unit = screen_h as f32 / 8.0;
     let font_size = unit * 4.0;
