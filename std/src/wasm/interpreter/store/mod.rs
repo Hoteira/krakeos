@@ -406,12 +406,136 @@ impl<'a, T: Config> Store<'a, T> {
                 for imp in &validation_info.imports {
                     if let crate::wasm::common::reader::types::import::ImportDesc::Func(_) = imp.desc {
                         let stub_idx = match (imp.module_name.as_str(), imp.name.as_str()) {
+                            // WASI Preview 1 (300+)
                             ("wasi_snapshot_preview1", "fd_write") => 300,
                             ("wasi_snapshot_preview1", "fd_read") => 301,
                             ("wasi_snapshot_preview1", "fd_close") => 302,
-                            ("env", "host_serial_print") => 999, // Our manual test
-                            ("wasi_snapshot_preview1", "proc_exit") => 0, // Trap/Exit
-                            _ => u64::MAX, // Forward to kernel via SYS_WASM_HOST_CALL
+                            ("wasi_snapshot_preview1", "proc_exit") => 303,
+                            ("wasi_snapshot_preview1", "args_sizes_get") => 304,
+                            ("wasi_snapshot_preview1", "args_get") => 305,
+                            ("wasi_snapshot_preview1", "environ_sizes_get") => 306,
+                            ("wasi_snapshot_preview1", "environ_get") => 307,
+                            ("wasi_snapshot_preview1", "clock_time_get") => 308,
+                            ("wasi_snapshot_preview1", "random_get") => 309,
+                            ("wasi_snapshot_preview1", "fd_prestat_get") => 310,
+                            ("wasi_snapshot_preview1", "fd_prestat_dir_name") => 311,
+                            ("wasi_snapshot_preview1", "fd_fdstat_get") => 312,
+                            ("wasi_snapshot_preview1", "fd_filestat_get") => 313,
+                            ("wasi_snapshot_preview1", "fd_filestat_set_size") => 314,
+                            ("wasi_snapshot_preview1", "fd_seek") => 315,
+                            ("wasi_snapshot_preview1", "fd_pread") => 316,
+                            ("wasi_snapshot_preview1", "fd_readdir") => 317,
+                            ("wasi_snapshot_preview1", "path_open") => 318,
+                            ("wasi_snapshot_preview1", "path_filestat_get") => 319,
+                            ("wasi_snapshot_preview1", "path_create_directory") => 320,
+                            ("wasi_snapshot_preview1", "path_unlink_file") => 321,
+                            ("wasi_snapshot_preview1", "path_remove_directory") => 322,
+                            ("wasi_snapshot_preview1", "path_rename") => 323,
+                            ("wasi_snapshot_preview1", "path_link") => 324,
+                            ("wasi_snapshot_preview1", "path_symlink") => 325,
+                            ("wasi_snapshot_preview1", "path_readlink") => 326,
+                            ("wasi_snapshot_preview1", "poll_oneoff") => 327,
+                            ("wasi_snapshot_preview1", "sched_yield") => 328,
+                            ("wasi_snapshot_preview1", "clock_res_get") => 329,
+
+                            // KrakeOS Graphics (400+)
+                            ("krakeos:graphics/screen@0.2.0", "get-width") => 400,
+                            ("krakeos:graphics/screen@0.2.0", "get-height") => 401,
+
+                            // KrakeOS Window (410+)
+                            ("krakeos:system/window@0.2.0", "create") => 410,
+                            ("krakeos:system/window@0.2.0", "update") => 411,
+                            ("krakeos:system/window@0.2.0", "update-area") => 412,
+                            ("krakeos:system/window@0.2.0", "get-events") => 413,
+                            ("krakeos:system/window@0.2.0", "register-event-queue") => 414,
+                            ("krakeos:system/window@0.2.0", "deregister-event-queue") => 415,
+
+                            // KrakeOS Process (420+)
+                            ("krakeos:system/process@0.2.0", "get-pid") => 420,
+                            ("krakeos:system/process@0.2.0", "debug-print") => 421,
+                            ("krakeos:system/process@0.2.0", "yield") => 422,
+                            ("krakeos:system/process@0.2.0", "spawn") => 423,
+                            ("krakeos:system/process@0.2.0", "waitpid") => 424,
+                            ("krakeos:system/process@0.2.0", "pipe") => 425,
+                            ("krakeos:system/process@0.2.0", "native-file-open") => 426,
+                            ("krakeos:system/process@0.2.0", "native-file-stat") => 427,
+                            ("krakeos:system/process@0.2.0", "file-read") => 428,
+                            ("krakeos:system/process@0.2.0", "file-write") => 429,
+                            ("krakeos:system/process@0.2.0", "kill") => 430,
+                            ("krakeos:system/process@0.2.0", "get-list") => 431,
+                            ("krakeos:system/process@0.2.0", "chdir") => 432,
+                            ("krakeos:system/process@0.2.0", "get-slot-info") => 433,
+                            ("krakeos:system/process@0.2.0", "ioctl") => 434,
+                            ("krakeos:system/process@0.2.0", "set-nonblock") => 435,
+                            ("krakeos:system/process@0.2.0", "poll") => 436,
+                            ("krakeos:system/process@0.2.0", "get-current-user") => 437,
+                            ("krakeos:system/process@0.2.0", "spawn-ext") => 438,
+                            ("krakeos:system/process@0.2.0", "spawn-thread") => 439,
+                            ("krakeos:system/process@0.2.0", "thread-exit") => 440,
+                            ("krakeos:system/process@0.2.0", "syscall") => 441,
+
+                            // KrakeOS Terminal (463+)
+                            ("krakeos:system/terminal@0.1.0", "set-window-size") => 463,
+                            ("krakeos:system/terminal@0.1.0", "get-window-size") => 464,
+
+                            // KrakeOS Container (470+)
+                            ("krakeos:system/container@0.1.0", "plant") => 470,
+                            ("krakeos:system/container@0.1.0", "plant-from-path") => 471,
+                            ("krakeos:system/container@0.1.0", "harvest") => 472,
+                            ("krakeos:system/container@0.1.0", "list-children") => 473,
+                            ("krakeos:system/container@0.1.0", "kill-child") => 474,
+
+                            // KrakeOS Debug (480+)
+                            ("krakeos:system/debug@0.1.0", "get-process-list") => 480,
+                            ("krakeos:system/debug@0.1.0", "kill") => 481,
+                            ("krakeos:system/debug@0.1.0", "dump-vma") => 482,
+                            ("krakeos:system/debug@0.1.0", "get-memory-usage") => 483,
+
+                            // KrakeOS Memory (450+)
+                            ("krakeos:system/memory@0.2.0", "shm-get") => 450,
+                            ("krakeos:system/memory@0.2.0", "brk") => 451,
+                            ("krakeos:system/memory@0.2.0", "get-total-mem") => 452,
+                            ("krakeos:system/memory@0.2.0", "get-used-mem") => 453,
+                            ("krakeos:system/memory@0.2.0", "get-vma-dump") => 454,
+
+                            // WASI Preview 2 (500+)
+                            ("wasi:cli/exit@0.2.0", "exit") => 500,
+                            ("wasi:cli/stdout@0.2.0", "get-stdout") => 501,
+                            ("wasi:cli/stdin@0.2.0", "get-stdin") => 502,
+                            ("wasi:cli/stderr@0.2.0", "get-stderr") => 503,
+                            ("wasi:io/streams@0.2.0", "[method]output-stream.write") => 504,
+                            ("wasi:io/streams@0.2.0", "[method]output-stream.blocking-write") => 504,
+                            ("wasi:io/streams@0.2.0", "[method]output-stream.blocking-write-and-flush") => 504,
+                            ("wasi:io/streams@0.2.0", "[method]input-stream.read") => 505,
+                            ("wasi:io/streams@0.2.0", "[method]input-stream.blocking-read") => 505,
+                            ("wasi:io/poll@0.2.0", "poll") => 506,
+                            ("wasi:io/poll@0.2.0", "[method]pollable.block") => 507,
+                            ("wasi:io/poll@0.2.0", "[resource-drop]pollable") => 508,
+                            ("wasi:io/error@0.2.0", "[resource-drop]error") => 509,
+                            ("wasi:clocks/monotonic-clock@0.2.0", "now") => 510,
+                            ("wasi:clocks/monotonic-clock@0.2.0", "resolution") => 511,
+                            ("wasi:clocks/monotonic-clock@0.2.0", "subscribe-duration") => 512,
+                            ("wasi:clocks/monotonic-clock@0.2.0", "subscribe-instant") => 512,
+                            ("wasi:clocks/wall-clock@0.2.0", "now") => 513,
+                            ("wasi:filesystem/types@0.2.0", "[resource-drop]descriptor") => 514,
+                            ("wasi:filesystem/types@0.2.0", "[method]descriptor.open-at") => 515,
+                            ("wasi:filesystem/types@0.2.0", "[method]descriptor.stat") => 516,
+                            ("wasi:filesystem/types@0.2.0", "[method]descriptor.set-size") => 517,
+                            ("wasi:filesystem/types@0.2.0", "[method]descriptor.seek") => 518,
+                            ("wasi:filesystem/types@0.2.0", "[method]descriptor.create-directory-at") => 519,
+                            ("wasi:filesystem/types@0.2.0", "[method]descriptor.unlink-file-at") => 520,
+                            ("wasi:filesystem/types@0.2.0", "[method]descriptor.remove-directory-at") => 521,
+                            ("wasi:filesystem/types@0.2.0", "[method]descriptor.rename-at") => 522,
+                            ("wasi:filesystem/types@0.2.0", "[method]descriptor.read-directory") => 523,
+                            ("wasi:filesystem/types@0.2.0", "[resource-drop]directory-entry-stream") => 524,
+                            ("wasi:random/random@0.2.0", "get-random-bytes") => 525,
+                            ("wasi:sockets/instance-network@0.2.0", "instance-network") => 526,
+
+                            // Internal / Special
+                            ("env", "__wasi_init_tp") => 460,
+                            ("env", "__wasm_call_dtors") => 460,
+                            ("env", "host_serial_print") => 999,
+                            _ => u64::MAX, // Unknown import — will return NOSYS
                         };
                         import_stubs.push(stub_idx as u64);
                     }
@@ -430,7 +554,7 @@ impl<'a, T: Config> Store<'a, T> {
                 let func_table_ptr = unsafe { (if import_stub_table_ptr.is_null() { (if table0_ptr.is_null() { globals_ptr.add((num_globals * 16 + 15) & !15) } else { table0_ptr.add(table0_size as usize) as *mut u8 }) } else { import_stub_table_ptr.add(import_stubs.len()) as *mut u8 }) as *mut u64 };
 
                 unsafe {
-                    core::ptr::write_bytes(data_region_ptr, 0, 4096); // Zero out first page of data region
+                    core::ptr::write_bytes(data_region_ptr, 0, 1024 * 1024); // Zero out entire 1MB data region
                     
                     let mem_addr = *self.modules.get(module_addr).mem_addrs.get(0).unwrap_or(&usize::MAX);
                     let (memory_base, memory_size) = if mem_addr != usize::MAX {
@@ -462,7 +586,8 @@ impl<'a, T: Config> Store<'a, T> {
                         _pad2: 0,
                         pid: self.container_id.unwrap_or(0),
                         slot_id: slot_id,
-                        _pad3: [0; 6],                        trap_code_storage: 0,
+                        _pad3: [0; 6],
+                        trap_code_storage: 0,
                         _pad4: 0,
                         num_imported_funcs: import_stubs.len() as u32,
                         _pad5: 0,
@@ -486,7 +611,7 @@ impl<'a, T: Config> Store<'a, T> {
                     maybe_ctx_ptr = Some(ctx_ptr as u64);
                 }
 
-                self.next_code_offset = (self.next_code_offset + 8192) & !4095; // Reserve 8KB for data region
+                self.next_code_offset = (self.next_code_offset + 1024 * 1024) & !4095; // Reserve 1MB for data region
                 crate::debugln!("[AOT] Context and data region initialized.");
 
                 res

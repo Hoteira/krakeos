@@ -121,7 +121,13 @@ WASM:
             let pid = std::os::spawn_with_fds(&prog_path, &args_refs, &[(0, in_fd as u8), (1, out_fd as u8), (2, 2)]);
 
             if pid != usize::MAX {
-                return std::os::waitpid(pid as u64) as i32;
+                loop {
+                    let code = std::os::waitpid(pid as u64);
+                    if code != -1 {
+                        return code;
+                    }
+                    std::os::yield_task();
+                }
             } else {
                 let err = format!("wasm: failed to spawn {}\n", prog_path);
                 std::os::file_write(out_fd, err.as_bytes());

@@ -1,0 +1,436 @@
+cd swiftboot && RUSTFLAGS="-Awarnings" cargo --quiet compile
+cp swiftboot/build/disk.img build/disk.img
+RUSTFLAGS="-Awarnings" cargo --quiet rustc -Z json-target-spec --package ring3-rt --bin ring3_rt --target bits64pie.json --release \
+	-- -C link-arg=-Tring3-rt/ring3rt.ld -C relocation-model=pic
+objcopy -O binary target/bits64pie/release/ring3_rt build/ring3_rt.bin
+python3 ring3-rt/apply_relocs.py target/bits64pie/release/ring3_rt build/ring3_rt.bin
+RUSTFLAGS="-Awarnings" cargo --quiet build -Z json-target-spec --package=kernel --target=swiftboot/bits64.json
+objcopy -O binary target/bits64/debug/kernel build/kernel.bin
+dd if=build/kernel.bin of=build/disk.img seek=6144 bs=512 conv=notrunc
+RUSTFLAGS="-Awarnings" cargo --quiet build --package=init --target=wasm32-wasip2 --release
+mkdir -p tree/sys/bin
+cp target/wasm32-wasip2/release/init.wasm tree/sys/bin/init.wasm
+RUSTFLAGS="-Awarnings" cargo --quiet build --package=sysmon --target=wasm32-wasip2 --release
+mkdir -p tree/sys/bin
+cp target/wasm32-wasip2/release/sysmon.wasm tree/sys/bin/sysmon.wasm
+RUSTFLAGS="-Awarnings" cargo --quiet build --package=fps_test --target=wasm32-wasip2 --release
+mkdir -p tree/sys/bin
+cp target/wasm32-wasip2/release/fps_test.wasm tree/sys/bin/fps_test.wasm
+RUSTFLAGS="-Awarnings" cargo --quiet build --package=tmap --target=wasm32-wasip2 --release
+mkdir -p tree/sys/bin
+cp target/wasm32-wasip2/release/tmap.wasm tree/sys/bin/tmap.wasm
+RUSTFLAGS="-Awarnings" cargo --quiet build --package=cat --target=wasm32-wasip2 --release
+mkdir -p tree/sys/bin
+cp target/wasm32-wasip2/release/cat.wasm tree/sys/bin/cat.wasm
+RUSTFLAGS="-Awarnings" cargo --quiet build --package=trivial_test --target=wasm32-wasip2 --release
+mkdir -p tree/sys/bin
+cp target/wasm32-wasip2/release/trivial_test.wasm tree/sys/bin/trivial_test.wasm
+RUSTFLAGS="-Awarnings" cargo --quiet build --package=shell --target=wasm32-wasip2 --release
+mkdir -p tree/apps
+cp target/wasm32-wasip2/release/shell.wasm tree/apps/shell.wasm
+RUSTFLAGS="-Awarnings" cargo --quiet build --package=term --target=wasm32-wasip2 --release
+mkdir -p tree/apps
+cp target/wasm32-wasip2/release/term.wasm tree/apps/term.wasm
+RUSTFLAGS="-Awarnings" cargo --quiet build --package=taskbar --target=wasm32-wasip2 --release
+mkdir -p tree/apps
+cp target/wasm32-wasip2/release/taskbar.wasm tree/apps/taskbar.wasm
+RUSTFLAGS="-Awarnings" cargo --quiet build --package=aot_test --target=wasm32-wasip2 --release
+mkdir -p tree/apps
+cp target/wasm32-wasip2/release/aot_test.wasm tree/apps/aot_test.wasm
+RUSTFLAGS="-Awarnings" cargo --quiet build --package=net_test --target=wasm32-wasip2 --release
+mkdir -p tree/apps
+cp target/wasm32-wasip2/release/net_test.wasm tree/apps/net_test.wasm
+RUSTFLAGS="-Awarnings" cargo --quiet build --package=container_test --target=wasm32-wasip2 --release
+mkdir -p tree/apps
+cp target/wasm32-wasip2/release/container_test.wasm tree/apps/container_test.wasm
+RUSTFLAGS="-Awarnings" cargo --quiet build --package=dummy --target=wasm32-wasip1 --release
+mkdir -p tree/apps
+cp target/wasm32-wasip1/release/dummy.wasm tree/apps/dummy.wasm
+genext2fs -d tree -b 262144 -B 1024 build/disk2.img
+dd if=build/disk2.img of=build/disk.img seek=16384 bs=512 conv=notrunc
+qemu-system-x86_64 -drive file=build/disk.img,format=raw,if=virtio -serial mon:stdio --no-reboot -device virtio-gpu-gl-pci,xres=1024,yres=576 -display sdl,gl=on -vga none -m 4G -accel kvm
+[+] Loading stage 3 ...
+[+] Loading stage 4 ...
+[+] Loading kernel ...
+[+] Jumping to protected mode ...
+[+] Jumping to long mode ...
+[+] FB Addr: 0x0
+[+] FB Size: 0x0
+Stage 4 loaded.
+SIGNPOST: Initializing Memory...
+PMM: Detected 5120MB RAM. Metadata needs 2560KB.
+PMM: Selected map_phys=0x1000000 from entry base=0x100000 len=0xbfedd000
+PMM: Page Map Virtual Address: 0xffff800001000000. Zeroing...
+PMM: Page Map zeroed successfully (1310720 descriptors).
+PMM: Starting to add free regions...
+PMM: Processing mmap entry 0: 0x0 -> 0x9fc00
+PMM: Skipping entry 0 (fully below 16MB or invalid)
+PMM: Processing mmap entry 3: 0x100000 -> 0xbffdd000
+PMM: Entry overlaps Page Map. Splitting. Map is 0x1000000 -> 0x1280000
+PMM: Remaining region after map: 0x1280000 -> 0xbffdd000
+PMM: Adding free region: 0x1280000 -> 0xbffdd000
+PMM: Processing mmap entry 7: 0x100000000 -> 0x140000000
+PMM: Region 0x100000000 -> 0x140000000 is above 4GB, skipping for now.
+PMM: Buddy Allocator initialized. Free: 5120MB
+VMM: Relocated PML4 from 0x20000 to 0xbffdc000
+VMM: Mapping entire physical RAM into HHDM...
+VMM: Physical memory mapping complete.
+PMM: Expanding discovery to all available RAM...
+PMM: Adding extended free region: 0x100000000 -> 0x140000000
+PMM: Expansion complete. Free: 5119MB
+SIGNPOST: Initializing ISTs...
+SIGNPOST: Loading IDT...
+SIGNPOST: Kernel fully initialized.
+SIGNPOST: Heap initialized.
+VirtIO Block: Found device at Bus 0, Device 4, Func 0
+VirtIO Block: Bus mastering enabled.
+VirtIO Block: Remapped BAR 4 to 0xc0000000
+VirtIO Block: Notify mapped at 0xffffa00000000000 -> Phys 0xc0003000
+VirtIO Block: Common Config mapped at 0xffffa00000200000 -> Phys 0xc0000000
+VirtIO Block: Negotiating features...
+VirtIO Block: Initialized successfully.
+SIGNPOST: TaskManager initialized.
+SIGNPOST: Calling DISPLAY_SERVER.init()...
+VirtIO GPU: Found device at Bus 0, Device 3, Func 0
+VirtIO GPU: Bus mastering enabled.
+VirtIO GPU: Remapped BAR 4 to 0xd0000000 (Notify Area)
+VirtIO GPU: features virGL: true, Cursor: true
+VirtIO GPU: Initialized successfully.
+DisplayServer: VirtIO display info: 937x502
+DisplayServer: Using resolution 937x502
+VirtIO GPU: Creating resource 1 (937x502)
+VirtIO GPU: Attaching backing memory to resource 1 at 0xbfc00000
+VirtIO GPU: Creating resource 2 (937x502)
+VirtIO GPU: Attaching backing memory to resource 2 at 0xbf800000
+VirtIO GPU: Setting scanout to resource 1
+VirtIO GPU: Hardware Cursor Setup & Update Sent (Queue 1).
+DisplayServer: VirtIO GPU active at 937x502
+SIGNPOST: DISPLAY_SERVER initialized.
+SIGNPOST: Drivers initialized.
+Mouse: Initializing PS/2 Mouse...
+Mouse: VMMouse initialized successfully (Absolute Mode).
+Mouse: Initialized (ID: 0).
+Mounting Ext2...
+Ext2: Reading superblock...
+Ext2: Superblock read.
+Ext2: Magic: 0xef53
+Ext2: Mounted. Block Size: 1024, Inode Size: 128
+Mounting at index 224, fs box: Pointer { addr: 0xffff8000b80008a8, metadata: DynMetadata(0xffffffff002968d0) }
+Spawning trivial test process (WASM)...
+[spawn_process] path='/sys/bin/init.wasm'
+[TaskManager] Reserved PID 1 (Thread at 0xffff8000009ff858)
+[TaskManager] Reusing existing task 1
+[TaskManager] Initialized User Task 1 (Thread at 0xffff8000b837bf78, State=Reserved)
+[wasm-runner] Starting buffer /sys/bin/init.wasm (AOT: true)...
+[std] LinearMemory: new_sas base=0x58e0000000 size=3997696 (61 pages)
+[AOT-Compiler] Emitting CallHost for import env:__wasi_init_tp (idx 0)
+[AOT-Compiler] Emitting CallHost for import env:__wasm_call_dtors (idx 1)
+[AOT-Compiler] Emitting CallHost for import krakeos:graphics/screen@0.2.0:get-width (idx 2)
+[AOT-Compiler] Emitting CallHost for import krakeos:graphics/screen@0.2.0:get-height (idx 3)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:get-pid (idx 4)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/window@0.2.0:register-event-queue (idx 5)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:debug-print (idx 6)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:debug-print (idx 6)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:debug-print (idx 6)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:native-file-open (idx 7)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:native-file-stat (idx 8)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:file-read (idx 9)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/window@0.2.0:create (idx 10)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:yield (idx 11)
+[AOT-Compiler] Emitting CallHost for import wasi:filesystem/types@0.2.0:[resource-drop]descriptor (idx 17)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/window@0.2.0:update (idx 21)
+[AOT-Compiler] Emitting CallHost for import wasi:clocks/monotonic-clock@0.2.0:subscribe-duration (idx 18)
+[AOT-Compiler] Emitting CallHost for import wasi:io/poll@0.2.0:[method]pollable.block (idx 19)
+[AOT-Compiler] Emitting CallHost for import wasi:io/poll@0.2.0:[resource-drop]pollable (idx 20)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:spawn (idx 22)
+[AOT-Compiler] Emitting CallHost for import wasi_snapshot_preview1:args_sizes_get (idx 12)
+[AOT-Compiler] Emitting CallHost for import wasi_snapshot_preview1:args_get (idx 13)
+[AOT-Compiler] Emitting CallHost for import wasi_snapshot_preview1:environ_sizes_get (idx 14)
+[AOT-Compiler] Emitting CallHost for import wasi_snapshot_preview1:environ_get (idx 15)
+[AOT-Compiler] Emitting CallHost for import wasi:cli/exit@0.2.0:exit (idx 16)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:debug-print (idx 6)
+[AOT] Copying blob to 0x104000000...
+[AOT] Blob copied. Fixing jump table...
+[AOT] Jump table fixed.
+[AOT] code_base=0x104000000 offset=57344 code_len=7775797 (7593 KB)
+[AOT] Module code copied.
+[AOT] Data region at 0x104779000
+[AOT] Context and data region initialized.
+[AOT-Runner] AOT enabled, looking for entry point...
+[AOT-Runner] Found entry point at addr 380
+[AOT-Runner] AOT ptr: 0x10400e299
+[wasm-runner] Finished buffer /sys/bin/init.wasm.
+[spawn_process] AOT ready for PID 1. Entry=0x10400e299 ctx=0x104779000
+[spawn_process] Set linear_memory_size=3997696 (61 pages)
+Trivial test process spawned with PID 1
+Kernel initialized, entering idle loop...
+KM[Init] Starting WASM Userland...
+[Init] Detected Screen Size: 937x502
+[Init] Calling Window::new...
+[inkui] Creating window 'Wallpaper' with pid 1
+[EventQueue] PID 1 registered queue: header=0x58e03d0010 buf=0x58e03d0038 cap=512
+[inkui] FrameBuffer::new: allocating...
+[inkui] FrameBuffer::new: front done
+[inkui] FrameBuffer::new: back done
+[Init] Window::new returned.
+[Init] Loading wallpaper...
+[std::fs::read] Opening '@0xE0/sys/img/wallpaper2.png'...
+[std::fs::read] File size: 133055 bytes
+[std::fs::read] Reading at offset 0 (remaining 133055)...
+[std::fs::read] Finished reading 133055 bytes
+[Init] Wallpaper loaded (133055 bytes).
+[Syscall] handle_add_window called! ptr=0x58e00ffe18
+Image Layout: geometry 937x502, last 0x0
+Image: Rasterizing 937x502...
+Image: Rasterization successful. Buffer len: 470374
+First pixel: 0xFF2D3246
+Middle pixel: 0xFF2D3246
+[Syscall] REJECTED: invalid user pointer 0x0 len=152
+[Syscall] handle_spawn called! path_len=24
+[spawn_process] path='@0xE0/apps/aot_test.wasm'
+[TaskManager] Reserved PID 2 (Thread at 0xffff8000bf70f6e8)
+[TaskManager] Reusing existing task 2
+[TaskManager] Initialized User Task 2 (Thread at 0xffff8000b837ffd8, State=Reserved)
+[wasm-runner] Starting buffer @0xE0/apps/aot_test.wasm (AOT: true)...
+[std] LinearMemory: new_sas base=0x60a0000000 size=1114112 (17 pages)
+[AOT-Compiler] Emitting CallHost for import env:__wasi_init_tp (idx 0)
+[AOT-Compiler] Emitting CallHost for import env:__wasm_call_dtors (idx 1)
+[AOT-Compiler] Emitting CallHost for import wasi_snapshot_preview1:args_sizes_get (idx 2)
+[AOT-Compiler] Emitting CallHost for import wasi_snapshot_preview1:args_get (idx 3)
+[AOT-Compiler] Emitting CallHost for import wasi_snapshot_preview1:environ_sizes_get (idx 4)
+[AOT-Compiler] Emitting CallHost for import wasi_snapshot_preview1:environ_get (idx 5)
+[AOT-Compiler] Emitting CallHost for import wasi:cli/exit@0.2.0:exit (idx 6)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:debug-print (idx 7)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:file-write (idx 8)
+[AOT] Copying blob to 0x108000000...
+[AOT] Blob copied. Fixing jump table...
+[AOT] Jump table fixed.
+[AOT] code_base=0x108000000 offset=57344 code_len=4398667 (4295 KB)
+[AOT] Module code copied.
+[AOT] Data region at 0x108440000
+[AOT] Context and data region initialized.
+[AOT-Runner] AOT enabled, looking for entry point...
+[AOT-Runner] Found entry point at addr 380
+[AOT-Runner] AOT ptr: 0x10800e299
+[wasm-runner] Finished buffer @0xE0/apps/aot_test.wasm.
+[spawn_process] AOT ready for PID 2. Entry=0x10800e299 ctx=0x108440000
+[spawn_process] Set linear_memory_size=1114112 (17 pages)
+==================== Starting Comprehensive AOT Compiler Test Suite...
+==================== Testing Integer Edge Cases...
+==================== Integer Edge Cases: OK
+==================== Testing Floating Point Precision & Rounding...
+==================== Floating Point: OK
+==================== Testing i32 Arithmetic...
+==================== i32 Arithmetic: OK
+==================== Testing i64 Arithmetic...
+==================== i64 Arithmetic: OK
+==================== Testing f32 Floating Point...
+==================== f32 Math: OK
+==================== Testing f64 Floating Point...
+==================== f64 Math: OK
+==================== Testing Complex Control Flow...
+==================== Complex Control Flow: OK
+==================== Testing Memory Bulk Operations...
+==================== Memory Bulk: OK
+==================== Testing Tables & Globals...
+==================== Tables & Globals: OK
+==================== Testing Memory Access & Bounds...
+==================== Memory Access: OK
+==================== Testing Numeric Conversions...
+==================== Conversions: OK
+==================== Testing SIMD Basic Ops...
+==================== SIMD Basic: OK
+==================== Testing Multi-Value & ABI Stress...
+==================== ABI Stress: OK
+==================== Testing SIMD Intrinsics...
+==================== SIMD Intrinsics: OK
+==================== Testing Atomics...
+==================== Atomics: OK
+====================
+==================== ALL AOT TESTS PASSED SUCCESSFULLY!
+[Syscall] Process exited with code 0
+[Init] TAOT test into its own slot with PID 2
+[Syscall] handle_spawn called! path_len=23
+[spawn_process] path='@0xE0/apps/taskbar.wasm'
+[TaskManager] Reserved PID 3 (Thread at 0xffff8000bf70f6e8)
+[TaskManager] Reusing existing task 3
+[TaskManager] Initialized User Task 3 (Thread at 0xffff8000b8484290, State=Reserved)
+[wasm-runner] Starting buffer @0xE0/apps/taskbar.wasm (AOT: true)...
+[std] LinearMemory: new_sas base=0x6860000000 size=3997696 (61 pages)
+[AOT-Compiler] Emitting CallHost for import env:__wasi_init_tp (idx 0)
+[AOT-Compiler] Emitting CallHost for import env:__wasm_call_dtors (idx 1)
+[AOT-Compiler] Emitting CallHost for import krakeos:graphics/screen@0.2.0:get-width (idx 2)
+[AOT-Compiler] Emitting CallHost for import krakeos:graphics/screen@0.2.0:get-height (idx 3)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:get-pid (idx 4)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/window@0.2.0:register-event-queue (idx 5)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:debug-print (idx 6)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:debug-print (idx 6)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:debug-print (idx 6)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:native-file-open (idx 7)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:native-file-stat (idx 8)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:file-read (idx 9)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:get-current-user (idx 10)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/window@0.2.0:create (idx 11)
+[AOT-Compiler] Emitting CallHost for import wasi:clocks/wall-clock@0.2.0:now (idx 12)
+[AOT-Compiler] Emitting CallHost for import wasi:clocks/monotonic-clock@0.2.0:subscribe-duration (idx 13)
+[AOT-Compiler] Emitting CallHost for import wasi:io/poll@0.2.0:[method]pollable.block (idx 14)
+[AOT-Compiler] Emitting CallHost for import wasi:io/poll@0.2.0:[resource-drop]pollable (idx 15)
+[AOT-Compiler] Emitting CallHost for import wasi:filesystem/types@0.2.0:[resource-drop]descriptor (idx 21)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/window@0.2.0:update (idx 22)
+[AOT-Compiler] Emitting CallHost for import wasi_snapshot_preview1:args_sizes_get (idx 16)
+[AOT-Compiler] Emitting CallHost for import wasi_snapshot_preview1:args_get (idx 17)
+[AOT-Compiler] Emitting CallHost for import wasi_snapshot_preview1:environ_sizes_get (idx 18)
+[AOT-Compiler] Emitting CallHost for import wasi_snapshot_preview1:environ_get (idx 19)
+[AOT-Compiler] Emitting CallHost for import wasi:cli/exit@0.2.0:exit (idx 20)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:debug-print (idx 6)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:file-write (idx 23)
+[AOT] Copying blob to 0x10c000000...
+[AOT] Blob copied. Fixing jump table...
+[AOT] Jump table fixed.
+[AOT] code_base=0x10c000000 offset=57344 code_len=7816737 (7633 KB)
+[AOT] Module code copied.
+[AOT] Data region at 0x10c783000
+[AOT] Context and data region initialized.
+[AOT-Runner] AOT enabled, looking for entry point...
+[AOT-Runner] Found entry point at addr 380
+[AOT-Runner] AOT ptr: 0x10c00e299
+[wasm-runner] Finished buffer @0xE0/apps/taskbar.wasm.
+[spawn_process] AOT ready for PID 3. Entry=0x10c00e299 ctx=0x10c783000
+[spawn_process] Set linear_memory_size=3997696 (61 pages)
+[inkui] Creating window 'Taskbar' with pid 3
+[EventQueue] PID 3 registered queue: header=0x68603d0010 buf=0x68603d0038 cap=512
+[inkui] FrameBuffer::new: allocating...
+[inkui] FrameBuffer::new: front done
+[inkui] FrameBuffer::new: back done
+Loading font...
+[std::fs::read] Opening '@0xE0/sys/fonts/CaskaydiaNerd.ttf'...
+[std::fs::read] File size: 2764424 bytes
+[std::fs::read] Reading at offset 0 (remaining 2764424)...
+[std::fs::read] Finished reading 2764424 bytes
+[Init] Taskbar app spawned with PID 3
+[Syscall] handle_spawn called! path_len=20
+[spawn_process] path='@0xE0/apps/term.wasm'
+[TaskManager] Reserved PID 4 (Thread at 0xffff8000bf70f6e8)
+[TaskManager] Reusing existing task 4
+[TaskManager] Initialized User Task 4 (Thread at 0xffff8000b83f7680, State=Reserved)
+[wasm-runner] Starting buffer @0xE0/apps/term.wasm (AOT: true)...
+[std] LinearMemory: new_sas base=0x7020000000 size=3997696 (61 pages)
+[AOT-Compiler] Emitting CallHost for import env:__wasi_init_tp (idx 0)
+[AOT-Compiler] Emitting CallHost for import env:__wasm_call_dtors (idx 1)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/terminal@0.1.0:set-window-size (idx 23)
+[AOT-Compiler] Emitting CallHost for import krakeos:graphics/screen@0.2.0:get-width (idx 2)
+[AOT-Compiler] Emitting CallHost for import krakeos:graphics/screen@0.2.0:get-height (idx 3)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:spawn (idx 4)
+[AOT-Compiler] Emitting CallHost for import wasi:filesystem/types@0.2.0:[resource-drop]descriptor (idx 5)
+[AOT-Compiler] Emitting CallHost for import wasi:filesystem/types@0.2.0:[resource-drop]descriptor (idx 5)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:get-pid (idx 6)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/window@0.2.0:register-event-queue (idx 7)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:debug-print (idx 8)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:debug-print (idx 8)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:debug-print (idx 8)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:native-file-open (idx 9)
+[AOT-Compiler] Emitting CallHost for import wasi:filesystem/types@0.2.0:[resource-drop]descriptor (idx 5)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/window@0.2.0:create (idx 10)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:set-nonblock (idx 11)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/window@0.2.0:get-events (idx 12)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:yield (idx 13)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:pipe (idx 22)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:file-read (idx 20)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/window@0.2.0:update (idx 21)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:file-write (idx 19)
+[AOT-Compiler] Emitting CallHost for import wasi_snapshot_preview1:args_sizes_get (idx 14)
+[AOT-Compiler] Emitting CallHost for import wasi_snapshot_preview1:args_get (idx 15)
+[AOT-Compiler] Emitting CallHost for import wasi_snapshot_preview1:environ_sizes_get (idx 16)
+[AOT-Compiler] Emitting CallHost for import wasi_snapshot_preview1:environ_get (idx 17)
+[AOT-Compiler] Emitting CallHost for import wasi:cli/exit@0.2.0:exit (idx 18)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:debug-print (idx 8)
+[AOT] Copying blob to 0x110000000...
+[AOT] Blob copied. Fixing jump table...
+[AOT] Jump table fixed.
+[AOT] code_base=0x110000000 offset=57344 code_len=8025915 (7837 KB)
+[AOT] Module code copied.
+[AOT] Data region at 0x1107b6000
+[AOT] Context and data region initialized.
+[AOT-Runner] AOT enabled, looking for entry point...
+[AOT-Runner] Found entry point at addr 380
+[AOT-Runner] AOT ptr: 0x11000e299
+[wasm-runner] Finished buffer @0xE0/apps/term.wasm.
+[spawn_process] AOT ready for PID 4. Entry=0x11000e299 ctx=0x1107b6000
+[spawn_process] Set linear_memory_size=3997696 (61 pages)
+[Init] Term app spawned with PID WAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+4OCDOSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
+
+OCDOSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
+[Init] System ready.
+[Syscall] handle_spawn called! path_len=21
+[spawn_process] path='@0xE0/apps/shell.wasm'
+[TaskManager] Reserved PID 5 (Thread at 0xffff800006c7f6e8)
+[TaskManager] Reusing existing task 5
+[TaskManager] Initialized User Task 5 (Thread at 0xffff8000b83fbb78, State=Reserved)
+[wasm-runner] Starting buffer @0xE0/apps/shell.wasm (AOT: true)...
+[std] LinearMemory: new_sas base=0x77e0000000 size=1114112 (17 pages)
+[AOT-Compiler] Emitting CallHost for import env:__wasi_init_tp (idx 0)
+[AOT-Compiler] Emitting CallHost for import env:__wasm_call_dtors (idx 1)
+[AOT-Compiler] Emitting CallHost for import wasi:filesystem/types@0.2.0:[resource-drop]descriptor (idx 9)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:pipe (idx 2)
+[AOT-Compiler] Emitting CallHost for import wasi:filesystem/types@0.2.0:[method]descriptor.seek (idx 3)
+[AOT-Compiler] Emitting CallHost for import krakeos:graphics/screen@0.2.0:get-width (idx 4)
+[AOT-Compiler] Emitting CallHost for import krakeos:graphics/screen@0.2.0:get-height (idx 5)
+[AOT-Compiler] Emitting CallHost for import wasi:clocks/monotonic-clock@0.2.0:now (idx 6)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:chdir (idx 7)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:native-file-open (idx 8)
+[AOT-Compiler] Emitting CallHost for import wasi:filesystem/types@0.2.0:[resource-drop]descriptor (idx 9)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:yield (idx 10)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:yield (idx 10)
+[AOT-Compiler] Emitting CallHost for import wasi:clocks/monotonic-clock@0.2.0:subscribe-duration (idx 11)
+[AOT-Compiler] Emitting CallHost for import wasi:io/poll@0.2.0:[method]pollable.block (idx 12)
+[AOT-Compiler] Emitting CallHost for import wasi:io/poll@0.2.0:[resource-drop]pollable (idx 13)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:waitpid (idx 14)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:yield (idx 10)
+[AOT-Compiler] Emitting CallHost for import wasi:filesystem/types@0.2.0:[resource-drop]descriptor (idx 9)
+[AOT-Compiler] Emitting CallHost for import wasi:filesystem/types@0.2.0:[resource-drop]descriptor (idx 9)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:waitpid (idx 14)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:yield (idx 10)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:file-write (idx 25)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:yield (idx 10)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:native-file-open (idx 8)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:native-file-open (idx 8)
+[AOT-Compiler] Emitting CallHost for import wasi:filesystem/types@0.2.0:[method]descriptor.open-at (idx 21)
+[AOT-Compiler] Emitting CallHost for import wasi:filesystem/types@0.2.0:[method]descriptor.read-directory (idx 22)
+[AOT-Compiler] Emitting CallHost for import wasi:filesystem/types@0.2.0:[method]directory-entry-stream.read-directory-entry (idx 23)
+[AOT-Compiler] Emitting CallHost for import wasi:filesystem/types@0.2.0:[resource-drop]descriptor (idx 9)
+[AOT-Compiler] Emitting CallHost for import wasi:filesystem/types@0.2.0:[resource-drop]directory-entry-stream (idx 24)
+[AOT-Compiler] Emitting CallHost for import wasi:filesystem/types@0.2.0:[resource-drop]descriptor (idx 9)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:file-read (idx 26)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:spawn (idx 27)
+[AOT-Compiler] Emitting CallHost for import wasi_snapshot_preview1:args_sizes_get (idx 15)
+[AOT-Compiler] Emitting CallHost for import wasi_snapshot_preview1:args_get (idx 16)
+[AOT-Compiler] Emitting CallHost for import wasi_snapshot_preview1:environ_sizes_get (idx 17)
+[AOT-Compiler] Emitting CallHost for import wasi_snapshot_preview1:environ_get (idx 18)
+[AOT-Compiler] Emitting CallHost for import wasi:cli/exit@0.2.0:exit (idx 19)
+[AOT-Compiler] Emitting CallHost for import krakeos:system/process@0.2.0:debug-print (idx 20)
+[AOT] Copying blob to 0x114000000...
+[AOT] Blob copied. Fixing jump table...
+[AOT] Jump table fixed.
+[AOT] code_base=0x114000000 offset=57344 code_len=5077129 (4958 KB)
+[AOT] Module code copied.
+[AOT] Data region at 0x1144e6000
+[AOT] Context and data region initialized.
+[AOT-Runner] AOT enabled, looking for entry point...
+[AOT-Runner] Found entry point at addr 380
+[AOT-Runner] AOT ptr: 0x11400e299
+[wasm-runner] Finished buffer @0xE0/apps/shell.wasm.
+[spawn_process] AOT ready for PID 5. Entry=0x11400e299 ctx=0x1144e6000
+[spawn_process] Set linear_memory_size=1114112 (17 pages)
+[term] SHell spawned into its own slot with PID 5
+[inkui] Creating window 'krakeOS Term' with pid 4
+[EventQueue] PID 4 registered queue: header=0x70203d0010 buf=0x70203d0038 cap=512
+[inkui] FrameBuffer::new: allocating...
+[inkui] FrameBuffer::new: front done
+[inkui] FrameBuffer::new: back done
+[Syscall] handle_add_window called! ptr=0x70200fe2f8
+[PF] Address not in VMA: 0x3300000044
+
+=== PAGE FAULT ===
+CR2: 0x3300000044 RIP: 0xffffffff00120db3 RSP: 0xffff800006c7fd90 Err: 0x0 CS: 0x8 PID: 0x4 code_base: 0x110000000 mem_base: 0x7020000000
+Kernel Panic: Page Fault in Kernel Mode

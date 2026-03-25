@@ -267,7 +267,14 @@ pub fn main() {
             }
 
             for id in children_pids {
-                last_exit_code = std::os::waitpid(id) as usize;
+                loop {
+                    let code = std::os::waitpid(id);
+                    if code != -1 {
+                        last_exit_code = code as usize;
+                        break;
+                    }
+                    std::os::yield_task();
+                }
             }
 
             if last_exit_code != 0 {

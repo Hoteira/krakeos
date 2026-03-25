@@ -199,8 +199,19 @@ impl TaskManager {
                     thread.state = ThreadState::Zombie;
                     *proc.event_queue.lock() = (0, 0, 0);
                     unsafe {
-                        (*(&raw mut crate::window_manager::composer::COMPOSER))
-                            .remove_windows_by_pid(pid);
+                        let composer = &mut *(&raw mut crate::window_manager::composer::COMPOSER);
+                        let mut to_remove = alloc::vec::Vec::new();
+                        for w in composer.windows.iter() {
+                            if w.pid == pid as u64 {
+                                to_remove.push(w.id);
+                            }
+                        }
+                        if composer.wallpaper.pid == pid as u64 {
+                            to_remove.push(composer.wallpaper.id);
+                        }
+                        for wid in to_remove {
+                            composer.remove_window(wid);
+                        }
                     }
                 }
             }

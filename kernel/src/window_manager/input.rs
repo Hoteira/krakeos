@@ -1,249 +1,61 @@
-use super::composer::COMPOSER;
-use super::events::{Event, GLOBAL_EVENT_QUEUE, ResizeEvent};
-use super::window::Items;
-use crate::debugln;
-use crate::drivers::video::virtio;
-use crate::window_manager::display::{
-    Color, DISPLAY_SERVER, HARDWARE_CURSOR_ACTIVE, State, VIRTIO_ACTIVE,
-};
 use core::sync::atomic::{AtomicU16, Ordering};
+use crate::debugln;
+use crate::window_manager::composer::{COMPOSER, CLICKED_WINDOW_ID};
+use crate::window_manager::display::{DISPLAY_SERVER, HARDWARE_CURSOR_ACTIVE, VIRTIO_ACTIVE};
+use crate::drivers::video::virtio;
+use crate::window_manager::window::Items;
 
-pub static mut MOUSE: Mouse = Mouse {
-    x: 0,
-    y: 0,
-    left: false,
-    center: false,
-    right: false,
-    state: State::Point,
-    dx_accum: 0,
-    dy_accum: 0,
-};
-
-pub struct Mouse {
-    pub x: u16,
-    pub y: u16,
-    pub left: bool,
-    pub center: bool,
-    pub right: bool,
-    pub state: State,
-    dx_accum: i32,
-    dy_accum: i32,
-}
-
-// Mouse sensitivity divisor: raw PS/2 movement is divided by this.
-// Needed because QEMU SDL captures raw DPI-scaled host mouse movement,
-// which can be 10-20x larger than the actual on-screen pixel delta.
-const MOUSE_SENSITIVITY_DIV: i32 = 3;
-
-pub static mut LAST_INPUT: u8 = 0;
 pub static mut DRAGS: u8 = 0;
 pub static mut DRAG: bool = false;
 pub static DRAGGING_WINDOW: AtomicU16 = AtomicU16::new(0);
 pub static RESIZING_WINDOW: AtomicU16 = AtomicU16::new(0);
 pub static mut CLICK_STARTED_IN_TITLEBAR: bool = false;
-pub static mut CLICKED_WINDOW_ID: usize = 0;
 pub static mut CLICK_X_OFFSET: i32 = 0;
 pub static mut CLICK_Y_OFFSET: i32 = 0;
 pub static mut W_WIDTH: usize = 0;
 pub static mut W_HEIGHT: usize = 0;
 pub static mut MOUSE_PENDING: bool = false;
 
-pub fn handle_mouse_update() {
-    unsafe {
-        use crate::drivers::peripherals::mouse::MOUSE_PACKET;
-        (*(&raw mut MOUSE)).cursor(MOUSE_PACKET);
-    }
+pub struct Mouse {
+    pub x: isize,
+    pub y: isize,
+    pub left: bool,
+    pub right: bool,
+    pub center: bool,
 }
 
-pub fn handle_vmmouse(buttons: u32, x: u32, y: u32, z: u32) {
-    //crate::debugln!("[VMMouse] raw: btns={:#x} x={} y={} z={}", buttons, x, y, z);
-    unsafe {
-        (*(&raw mut MOUSE)).vmmouse(buttons, x, y, z);
-    }
-}
+pub static mut MOUSE: Mouse = Mouse {
+    x: 0,
+    y: 0,
+    left: false,
+    right: false,
+    center: false,
+};
 
 impl Mouse {
-    pub fn vmmouse(&mut self, buttons: u32, vmm_x: u32, vmm_y: u32, z: u32) {
-        // VALIDITY CHECK: VMMouse coordinates are strictly 16-bit absolute values.
-        // If high bits are set, the packet is invalid (e.g. sign-extended negatives)
-        // and would cause the mouse to teleport to the opposite edge.
-        if vmm_x > 65535 || vmm_y > 65535 {
-            return;
-        }
-
+    pub fn update(&mut self, dx: isize, dy: isize, left: bool, right: bool, center: bool, is_super: bool) {
         let old_x = self.x;
         let old_y = self.y;
+        let btns_changed = self.left != left || self.right != right || self.center != center;
 
-        let screen_w = unsafe { (*(&raw mut DISPLAY_SERVER)).width } as u32;
-        let screen_h = unsafe { (*(&raw mut DISPLAY_SERVER)).height } as u32;
+        self.x = (self.x + dx).max(0).min(unsafe { (*(&raw mut DISPLAY_SERVER)).width as isize - 1 });
+        self.y = (self.y + dy).max(0).min(unsafe { (*(&raw mut DISPLAY_SERVER)).height as isize - 1 });
 
-        if screen_w > 0 && screen_h > 0 {
-            let x_clamped = vmm_x as u64;
-            let y_clamped = vmm_y as u64;
-
-            self.x = ((x_clamped * screen_w as u64) / 65535) as u16;
-            self.y = ((y_clamped * screen_h as u64) / 65535) as u16;
-
-            if self.x >= screen_w as u16 {
-                self.x = screen_w as u16 - 1;
-            }
-            if self.y >= screen_h as u16 {
-                self.y = screen_h as u16 - 1;
-            }
-        }
-
-        let prev_left = self.left;
-        let prev_right = self.right;
-        let prev_center = self.center;
-
-        // VMMouse button mapping (Standard VMware/QEMU)
-        self.left = (buttons & 0x20) != 0;
-        self.right = (buttons & 0x10) != 0;
-        self.center = (buttons & 0x08) != 0;
-
-        let scroll_val = z as i8;
-
-        self.process_input(old_x, old_y, prev_left, prev_right, prev_center, scroll_val);
-    }
-
-    pub fn cursor(&mut self, data: [u8; 4]) {
-        let old_x = self.x;
-        let old_y = self.y;
-
-        // Check for overflow bits (6 and 7 of first byte)
-        if (data[0] & 0x40) != 0 || (data[0] & 0x80) != 0 {
-            return;
-        }
-
-        let mut x_rel = data[1] as i16;
-        let mut y_rel = data[2] as i16;
-
-        if (data[0] & 0x10) != 0 {
-            x_rel |= 0xFF00u16 as i16;
-        }
-
-        if (data[0] & 0x20) != 0 {
-            y_rel |= 0xFF00u16 as i16;
-        }
-
-        // Apply scaling without a hard integer division bottleneck
-        // We accumulate the remainder to ensure sub-pixel movement isn't lost.
-        self.dx_accum += x_rel as i32;
-        self.dy_accum += -(y_rel as i32);
-
-        let move_x = self.dx_accum / 2; // Divide by 2 instead of 3 for more speed
-        let move_y = self.dy_accum / 2;
-
-        self.dx_accum %= 2;
-        self.dy_accum %= 2;
-
-        self.x = self.clamp_mx(move_x as i16);
-        self.y = self.clamp_my(move_y as i16);
-
-        let prev_left = self.left;
-        let prev_right = self.right;
-        let prev_center = self.center;
-
-        self.left = (data[0] & 0b00000001) != 0;
-        self.right = (data[0] & 0b00000010) != 0;
-        self.center = (data[0] & 0b00000100) != 0;
-
-        let mut scroll_val = (data[3] & 0x0F) as i8;
-        if (scroll_val & 0x08) != 0 {
-            scroll_val |= !0x0F;
-        }
-
-        unsafe {
-            LAST_INPUT = data[0];
-        }
-
-        self.process_input(old_x, old_y, prev_left, prev_right, prev_center, scroll_val);
-    }
-
-    fn process_input(
-        &mut self,
-        old_x: u16,
-        old_y: u16,
-        prev_left: bool,
-        prev_right: bool,
-        prev_center: bool,
-        scroll_val: i8,
-    ) {
         let moved = old_x != self.x || old_y != self.y;
-        let btns_changed =
-            prev_left != self.left || prev_right != self.right || prev_center != self.center;
+        let clicked = !self.left && left;
+        self.left = left;
+        self.right = right;
+        self.center = center;
 
-        if btns_changed {
-            crate::debugln!(
-                "[Mouse] Buttons: L={} R={} C={}",
-                self.left,
-                self.right,
-                self.center
-            );
-        }
-        if scroll_val != 0 {
-            crate::debugln!("[Mouse] Scroll: {}", scroll_val);
-        }
-
-        if !moved && !btns_changed && scroll_val == 0 {
-            return;
-        }
-
-        unsafe {
-            if VIRTIO_ACTIVE && HARDWARE_CURSOR_ACTIVE && moved {
-                virtio::cursor::move_cursor(self.x as u32, self.y as u32);
-            }
-        }
-
-        let resizing_id = RESIZING_WINDOW.load(Ordering::Relaxed);
-        if resizing_id != 0 && self.left && !prev_left {
-            let final_w = unsafe { W_WIDTH };
-            let final_h = unsafe { W_HEIGHT };
-
-            unsafe {
-                let composer = &mut *(&raw mut COMPOSER);
-                if let Some(w) = composer.find_window_id(resizing_id as usize) {
-                    let event = Event::Resize(ResizeEvent {
-                        wid: resizing_id as u32,
-                        width: final_w as u32,
-                        height: final_h as u32,
-                        x: w.x as i32,
-                        y: w.y as i32,
-                    });
-
-                    let tm = crate::task::TASK_MANAGER.int_lock();
-                    if !GLOBAL_EVENT_QUEUE
-                        .int_lock()
-                        .push_to_process(&*tm, w.pid, event)
-                    {
-                        GLOBAL_EVENT_QUEUE.int_lock().add_event(event);
-                    }
-                }
-            }
-
-            RESIZING_WINDOW.store(0, Ordering::Relaxed);
-            unsafe {
-                W_WIDTH = 0;
-                W_HEIGHT = 0;
-            }
-            return;
-        }
-
-        if self.left && !prev_left {
-            let w = unsafe { (*(&raw mut COMPOSER)).find_window(self.x as usize, self.y as usize) };
-            if let Some(ws) = w {
-                let is_super = crate::drivers::peripherals::keyboard::is_super_active();
-
-                if ws.w_type != Items::Window {
-                    return;
-                }
-
+        if clicked {
+            let ws_opt = unsafe { (*(&raw mut COMPOSER)).find_window(self.x as usize, self.y as usize) };
+            if let Some(ws) = ws_opt {
                 unsafe {
                     let old_id = CLICKED_WINDOW_ID;
                     let new_id = ws.id;
 
-                    if old_id != new_id {
-                        CLICKED_WINDOW_ID = new_id;
+                    if old_id != new_id as usize {
+                        CLICKED_WINDOW_ID = new_id as usize;
                         (*(&raw mut COMPOSER)).focus_window(new_id);
                     }
 
@@ -284,16 +96,16 @@ impl Mouse {
                 DRAG = false;
 
                 if DRAGGING_WINDOW.load(Ordering::Relaxed) != 0 {
-                    let wid = DRAGGING_WINDOW.load(Ordering::Relaxed) as usize;
+                    let wid = DRAGGING_WINDOW.load(Ordering::Relaxed) as u64;
                     let composer = &mut *(&raw mut COMPOSER);
                     let display_server = &mut *(&raw mut DISPLAY_SERVER);
 
-                    let w = composer.find_window_id(wid);
-                    if w.is_none() {
+                    let w_opt = composer.find_window_id(wid);
+                    if w_opt.is_none() {
                         return;
                     }
 
-                    let w = w.unwrap();
+                    let w = w_opt.unwrap();
                     let win_x = w.x;
                     let win_y = w.y;
                     let win_width = w.width;
@@ -311,7 +123,7 @@ impl Mouse {
                     );
 
                     if !HARDWARE_CURSOR_ACTIVE {
-                        display_server.draw_mouse(self.x, self.y, false);
+                        display_server.draw_mouse(self.x as u16, self.y as u16, false);
                     }
 
                     DRAGGING_WINDOW.store(0, Ordering::Relaxed);
@@ -327,19 +139,17 @@ impl Mouse {
         unsafe {
             if DRAG && CLICK_STARTED_IN_TITLEBAR {
                 if DRAGGING_WINDOW.load(Ordering::Relaxed) == 0 {
-                    let wid = CLICKED_WINDOW_ID;
+                    let wid = CLICKED_WINDOW_ID as u64;
                     DRAGGING_WINDOW.store(wid as u16, Ordering::Relaxed);
                     (*(&raw mut COMPOSER)).recompose_except(wid);
                 }
             }
         }
 
-        let _w = unsafe { (*(&raw mut COMPOSER)).find_window(self.x as usize, self.y as usize) };
-
         if DRAGGING_WINDOW.load(Ordering::Relaxed) != 0 {
             let composer = unsafe { &mut *(&raw mut COMPOSER) };
             let display_server = unsafe { &mut *(&raw mut DISPLAY_SERVER) };
-            let wid = DRAGGING_WINDOW.load(Ordering::Relaxed) as usize;
+            let wid = DRAGGING_WINDOW.load(Ordering::Relaxed) as u64;
 
             if !moved && !btns_changed {
                 return;
@@ -367,8 +177,8 @@ impl Mouse {
                 let new_x = target_win_x.max(-((width as i32) - 20)).min(screen_w - 20);
                 let new_y = target_win_y.max(0).min(screen_h - 20);
 
-                w.x = new_x as isize;
-                w.y = new_y as isize;
+                w.x = new_x as i64;
+                w.y = new_y as i64;
 
                 (old_x, old_y, width, height)
             };
@@ -383,8 +193,8 @@ impl Mouse {
                 // Calculate the total area that needs updating (Union of old and new)
                 let min_x = old_x_pos.min(new_x_pos) as i32;
                 let min_y = old_y_pos.min(new_y_pos) as i32;
-                let max_x = (old_x_pos + width as isize).max(new_x_pos + width as isize) as i32;
-                let max_y = (old_y_pos + height as isize).max(new_y_pos + height as isize) as i32;
+                let max_x = (old_x_pos + width as i64).max(new_x_pos + width as i64) as i32;
+                let max_y = (old_y_pos + height as i64).max(new_y_pos + height as i64) as i32;
 
                 let update_w = (max_x - min_x) as u32;
                 let update_h = (max_y - min_y) as u32;
@@ -398,7 +208,7 @@ impl Mouse {
             let display_server = &mut *(&raw mut DISPLAY_SERVER);
             if !HARDWARE_CURSOR_ACTIVE {
                 display_server.copy_to_fb(old_x as i32, old_y as i32, 32, 32);
-                display_server.draw_mouse(self.x, self.y, false);
+                display_server.draw_mouse(self.x as u16, self.y as u16, false);
             }
 
             if VIRTIO_ACTIVE {
@@ -436,8 +246,8 @@ impl Mouse {
 
             if let Some(w) = (*(&raw mut COMPOSER)).find_window(self.x as usize, self.y as usize) {
                 if w.event_handler != 0 {
-                    let local_x = (self.x as isize - w.x).max(0) as usize;
-                    let local_y = (self.y as isize - w.y).max(0) as usize;
+                    let local_x = (self.x as i64 - w.x).max(0) as usize;
+                    let local_y = (self.y as i64 - w.y).max(0) as usize;
 
                     use crate::window_manager::events::{Event, GLOBAL_EVENT_QUEUE, MouseEvent};
 
@@ -449,82 +259,55 @@ impl Mouse {
                     if local_x != unsafe { LAST_X }
                         || local_y != unsafe { LAST_Y }
                         || btns != unsafe { LAST_BTNS }
-                        || scroll_val != 0
                     {
+                        let mut event_queue = GLOBAL_EVENT_QUEUE.lock();
+                        event_queue.add_event(Event::Mouse(MouseEvent {
+                            wid: w.id as u32,
+                            x: local_x as u32,
+                            y: local_y as u32,
+                            buttons: btns,
+                            scroll: 0,
+                        }));
                         unsafe {
                             LAST_X = local_x;
                             LAST_Y = local_y;
                             LAST_BTNS = btns;
                         }
-
-                        let event = Event::Mouse(MouseEvent {
-                            wid: w.id as u32,
-                            x: local_x as u32,
-                            y: local_y as u32,
-                            buttons: btns,
-                            scroll: scroll_val,
-                        });
-
-                        {
-                            let tm = crate::task::TASK_MANAGER.int_lock();
-                            if !GLOBAL_EVENT_QUEUE
-                                .int_lock()
-                                .push_to_process(&*tm, w.pid, event)
-                            {
-                                GLOBAL_EVENT_QUEUE.int_lock().add_event(event);
-                            }
-                        }
                     }
                 }
             }
-        };
-    }
-
-    fn clamp_mx(&self, n: i16) -> u16 {
-        let sx = unsafe { (*(&raw mut DISPLAY_SERVER)).width } as i32;
-        if sx <= 0 {
-            return 0;
-        }
-
-        let limit = if DRAGGING_WINDOW.load(Ordering::Relaxed) != 0 {
-            sx + 50
-        } else {
-            sx - 3
-        };
-
-        let next_x = (self.x as i32) + (n as i32);
-        if next_x < 0 {
-            0
-        } else if next_x >= limit {
-            limit.saturating_sub(1) as u16
-        } else {
-            next_x as u16
-        }
-    }
-
-    fn clamp_my(&self, n: i16) -> u16 {
-        let sy = unsafe { (*(&raw mut DISPLAY_SERVER)).height } as i32;
-        if sy <= 0 {
-            return 0;
-        }
-
-        let limit = if DRAGGING_WINDOW.load(Ordering::Relaxed) != 0 {
-            sy + 50
-        } else {
-            sy - 3
-        };
-
-        let next_y = (self.y as i32) + (n as i32);
-        if next_y < 0 {
-            0
-        } else if next_y >= limit {
-            limit.saturating_sub(1) as u16
-        } else {
-            next_y as u16
         }
     }
 }
 
-fn cap(n: usize, value: usize) -> usize {
-    if n > value { value } else { n }
+pub fn handle_vmmouse(buttons: u32, x: u32, y: u32, z: u32) {
+    unsafe {
+        let screen_w = (*(&raw mut DISPLAY_SERVER)).width as isize;
+        let screen_h = (*(&raw mut DISPLAY_SERVER)).height as isize;
+        
+        let abs_x = (x as isize * screen_w) / 0xFFFF;
+        let abs_y = (y as isize * screen_h) / 0xFFFF;
+        
+        let dx = abs_x - MOUSE.x;
+        let dy = abs_y - MOUSE.y;
+        
+        let left = (buttons & 0x20) != 0;
+        let right = (buttons & 0x10) != 0;
+        let center = (buttons & 0x08) != 0;
+        
+        (*(&raw mut MOUSE)).update(dx, dy, left, right, center, false);
+    }
+}
+
+pub fn handle_mouse_update() {
+    unsafe {
+        let packet = crate::drivers::peripherals::mouse::MOUSE_PACKET;
+        let dx = packet[1] as i8 as isize;
+        let dy = -(packet[2] as i8 as isize);
+        let left = (packet[0] & 1) != 0;
+        let right = (packet[0] & 2) != 0;
+        let center = (packet[0] & 4) != 0;
+        
+        (*(&raw mut MOUSE)).update(dx, dy, left, right, center, false);
+    }
 }

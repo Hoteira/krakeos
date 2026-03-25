@@ -350,11 +350,14 @@ unsafe fn remove_free_block(alloc: &mut BuddyAllocator, phys: u64, order: usize)
 pub fn allocate_frames(count: usize) -> Option<u64> {
     if count == 0 { return None; }
     
-    // --- LOCK-FREE FAST PATH ---
+    // --- MAGAZINE FAST PATH (interrupts disabled to prevent re-entrancy) ---
     if count == 1 {
-        // HACK: Hardcoded to CPU 0 for now until SMP is implemented
-        let cpu_id = 0; 
-        if let Some(phys) = PER_CPU_MAGAZINES[cpu_id].pop() {
+        let cpu_id = 0;
+        let flags: u64;
+        unsafe { core::arch::asm!("pushfq; pop {}; cli", out(reg) flags); }
+        let result = PER_CPU_MAGAZINES[cpu_id].pop();
+        unsafe { core::arch::asm!("push {}; popfq", in(reg) flags); }
+        if let Some(phys) = result {
             unsafe {
                 core::ptr::write_bytes((phys + crate::memory::paging::HHDM_OFFSET) as *mut u8, 0, PAGE_SIZE as usize);
             }
@@ -412,17 +415,18 @@ pub fn allocate_frames(count: usize) -> Option<u64> {
 pub fn free_frame(addr: u64) {
     if addr % PAGE_SIZE != 0 { return; }
     
-    // --- LOCK-FREE FAST PATH ---
+    // --- MAGAZINE FAST PATH (interrupts disabled to prevent re-entrancy) ---
     let page_idx = (addr / PAGE_SIZE) as usize;
     unsafe {
         if page_idx < PAGE_MAP_ENTRIES {
             let desc = &*PAGE_MAP.add(page_idx);
-            // Must be allocated, and MUST be an Order 0 block (a single 4KB page)
             if (desc.flags & 0x01) != 0 && desc.order == 0 {
-                let cpu_id = 0; // HACK: Hardcoded to CPU 0
-                // Cap the per-cpu magazine to 4096 pages (16 MiB) to prevent hoarding
+                let cpu_id = 0;
                 if PER_CPU_MAGAZINES[cpu_id].count.load(Ordering::Relaxed) < 4096 {
+                    let flags: u64;
+                    core::arch::asm!("pushfq; pop {}; cli", out(reg) flags);
                     PER_CPU_MAGAZINES[cpu_id].push(addr);
+                    core::arch::asm!("push {}; popfq", in(reg) flags);
                     return;
                 }
             }

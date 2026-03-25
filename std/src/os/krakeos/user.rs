@@ -27,7 +27,7 @@ method_export!("krakeos:system/process@0.2.0", "get-current-user",
 pub fn get_current_user() -> String {
     #[cfg(target_arch = "wasm32")]
     {
-        let mut ret = [0u8; 8];
+        let mut ret = [0u8; 64];
         raw_get_current_user(ret.as_mut_ptr());
         let ptr = unsafe { core::ptr::read_unaligned(ret.as_ptr() as *const u32) };
         let len = unsafe { core::ptr::read_unaligned(ret.as_ptr().add(4) as *const u32) };

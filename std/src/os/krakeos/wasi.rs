@@ -201,43 +201,46 @@ crate::export_method!(
     vec![ValType::NumType(NumType::I32)], vec![ValType::NumType(NumType::I64)],
     pub fn window_create_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         let ptr = match args.get(0) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![Value::I64(0)]) };
-        let id = read_mem_u32(store, ptr)? as usize;
-        let buffer_off = read_mem_u32(store, ptr + 4)? as u64;
-        let back_buffer_off = read_mem_u32(store, ptr + 8)? as u64;
-        let flipped_off = read_mem_u32(store, ptr + 12)? as u64;
-        let pid = read_mem_u64(store, ptr + 16)?; 
-        let x = read_mem_u32(store, ptr + 24)? as i32 as isize;
-        let y = read_mem_u32(store, ptr + 28)? as i32 as isize;
-        let z = read_mem_u32(store, ptr + 32)? as usize;
-        let width = read_mem_u32(store, ptr + 36)? as usize;
-        let height = read_mem_u32(store, ptr + 40)? as usize;
+        
+        let id = read_mem_u64(store, ptr)?;
+        let buffer_off = read_mem_u64(store, ptr + 8)?;
+        let back_buffer_off = read_mem_u64(store, ptr + 16)?;
+        let flipped_off = read_mem_u64(store, ptr + 24)?;
+        let pid = read_mem_u64(store, ptr + 32)?; 
+        let x = read_mem_u64(store, ptr + 40)? as i64;
+        let y = read_mem_u64(store, ptr + 48)? as i64;
+        let z = read_mem_u64(store, ptr + 56)?;
+        let width = read_mem_u64(store, ptr + 64)?;
+        let height = read_mem_u64(store, ptr + 72)?;
         let mut bools = [0u8; 4];
-        read_mem(store, ptr + 44, &mut bools).map_err(|_| HaltExecutionError(1))?;
-        let min_width = read_mem_u32(store, ptr + 48)? as usize;
-        let min_height = read_mem_u32(store, ptr + 52)? as usize;
-        let event_handler = read_mem_u32(store, ptr + 56)? as usize;
-        let w_type_val = read_mem_u32(store, ptr + 60)?;
-        let prev_x = read_mem_u32(store, ptr + 64)? as i32 as isize;
-        let prev_y = read_mem_u32(store, ptr + 68)? as i32 as isize;
-        let prev_width = read_mem_u32(store, ptr + 72)? as usize;
-        let prev_height = read_mem_u32(store, ptr + 76)? as usize;
+        read_mem(store, ptr + 80, &mut bools).map_err(|_| HaltExecutionError(1))?;
+        let min_width = read_mem_u64(store, ptr + 88)?;
+        let min_height = read_mem_u64(store, ptr + 96)?;
+        let event_handler = read_mem_u64(store, ptr + 104)?;
+        let w_type_val = read_mem_u32(store, ptr + 112)?;
+        let prev_x = read_mem_u64(store, ptr + 120)? as i64;
+        let prev_y = read_mem_u64(store, ptr + 128)? as i64;
+        let prev_width = read_mem_u64(store, ptr + 136)?;
+        let prev_height = read_mem_u64(store, ptr + 144)?;
 
         let wasm_base = store.get_wasm_base_ptr() as u64;
         let host_win = host::Window {
             id: 0,
-            buffer: if buffer_off != 0 { (wasm_base + buffer_off) as usize } else { 0 },
-            back_buffer: if back_buffer_off != 0 { (wasm_base + back_buffer_off) as usize } else { 0 },
-            flipped: if flipped_off != 0 { (wasm_base + flipped_off) as usize } else { 0 },
+            buffer: if buffer_off != 0 { (wasm_base + buffer_off) } else { 0 },
+            back_buffer: if back_buffer_off != 0 { (wasm_base + back_buffer_off) } else { 0 },
+            flipped: if flipped_off != 0 { (wasm_base + flipped_off) } else { 0 },
             pid, x, y, z, width, height,
             can_move: bools[0] != 0, can_resize: bools[1] != 0, transparent: bools[2] != 0, treat_as_transparent: bools[3] != 0,
+            _pad0: [0; 4],
             min_width, min_height, event_handler,
             w_type: unsafe { core::mem::transmute(w_type_val) },
+            _pad1: [0; 4],
             prev_x, prev_y, prev_width, prev_height,
         };
 
         let res = host::add_window(&host_win) as u64;
 
-        if res != 0 { let _ = write_bytes(store, ptr, &(res as u32).to_le_bytes()); }
+        if res != 0 { let _ = write_bytes(store, ptr, &(res as u64).to_le_bytes()); }
         Ok(vec![Value::I64(res)])
     }
 );
@@ -248,37 +251,40 @@ crate::export_method!(
     vec![ValType::NumType(NumType::I64), ValType::NumType(NumType::I32)], vec![],
     pub fn window_update_host<T: Config>(store: &mut Store<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, HaltExecutionError> {
         let ptr = match args.get(1) { Some(Value::I32(v)) => *v as u32, _ => return Ok(vec![]) };
-        let id = read_mem_u32(store, ptr)? as usize;
-        let buffer_off = read_mem_u32(store, ptr + 4)? as u64;
-        let back_buffer_off = read_mem_u32(store, ptr + 8)? as u64;
-        let flipped_off = read_mem_u32(store, ptr + 12)? as u64;
-        let pid = read_mem_u64(store, ptr + 16)?; 
-        let x = read_mem_u32(store, ptr + 24)? as i32 as isize;
-        let y = read_mem_u32(store, ptr + 28)? as i32 as isize;
-        let z = read_mem_u32(store, ptr + 32)? as usize;
-        let width = read_mem_u32(store, ptr + 36)? as usize;
-        let height = read_mem_u32(store, ptr + 40)? as usize;
+        
+        let id = read_mem_u64(store, ptr)?;
+        let buffer_off = read_mem_u64(store, ptr + 8)?;
+        let back_buffer_off = read_mem_u64(store, ptr + 16)?;
+        let flipped_off = read_mem_u64(store, ptr + 24)?;
+        let pid = read_mem_u64(store, ptr + 32)?; 
+        let x = read_mem_u64(store, ptr + 40)? as i64;
+        let y = read_mem_u64(store, ptr + 48)? as i64;
+        let z = read_mem_u64(store, ptr + 56)?;
+        let width = read_mem_u64(store, ptr + 64)?;
+        let height = read_mem_u64(store, ptr + 72)?;
         let mut bools = [0u8; 4];
-        read_mem(store, ptr + 44, &mut bools).map_err(|_| HaltExecutionError(1))?;
-        let min_width = read_mem_u32(store, ptr + 48)? as usize;
-        let min_height = read_mem_u32(store, ptr + 52)? as usize;
-        let event_handler = read_mem_u32(store, ptr + 56)? as usize;
-        let w_type_val = read_mem_u32(store, ptr + 60)?;
-        let prev_x = read_mem_u32(store, ptr + 64)? as i32 as isize;
-        let prev_y = read_mem_u32(store, ptr + 68)? as i32 as isize;
-        let prev_width = read_mem_u32(store, ptr + 72)? as usize;
-        let prev_height = read_mem_u32(store, ptr + 76)? as usize;
+        read_mem(store, ptr + 80, &mut bools).map_err(|_| HaltExecutionError(1))?;
+        let min_width = read_mem_u64(store, ptr + 88)?;
+        let min_height = read_mem_u64(store, ptr + 96)?;
+        let event_handler = read_mem_u64(store, ptr + 104)?;
+        let w_type_val = read_mem_u32(store, ptr + 112)?;
+        let prev_x = read_mem_u64(store, ptr + 120)? as i64;
+        let prev_y = read_mem_u64(store, ptr + 128)? as i64;
+        let prev_width = read_mem_u64(store, ptr + 136)?;
+        let prev_height = read_mem_u64(store, ptr + 144)?;
 
         let wasm_base = store.get_wasm_base_ptr() as u64;
         let host_win = host::Window {
             id,
-            buffer: if buffer_off != 0 { (wasm_base + buffer_off) as usize } else { 0 },
-            back_buffer: if back_buffer_off != 0 { (wasm_base + back_buffer_off) as usize } else { 0 },
-            flipped: if flipped_off != 0 { (wasm_base + flipped_off) as usize } else { 0 },
+            buffer: if buffer_off != 0 { (wasm_base + buffer_off) } else { 0 },
+            back_buffer: if back_buffer_off != 0 { (wasm_base + back_buffer_off) } else { 0 },
+            flipped: if flipped_off != 0 { (wasm_base + flipped_off) } else { 0 },
             pid, x, y, z, width, height,
             can_move: bools[0] != 0, can_resize: bools[1] != 0, transparent: bools[2] != 0, treat_as_transparent: bools[3] != 0,
+            _pad0: [0; 4],
             min_width, min_height, event_handler,
             w_type: unsafe { core::mem::transmute(w_type_val) },
+            _pad1: [0; 4],
             prev_x, prev_y, prev_width, prev_height,
         };
 

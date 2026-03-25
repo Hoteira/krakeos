@@ -15,6 +15,7 @@ mod wasi_fs;
 mod wasi_proc;
 mod wasi_env;
 mod wasi_net;
+mod wasi_p2;
 mod float_helpers;
 mod krakeos;
 
@@ -84,11 +85,133 @@ pub static JUMP_TABLE: [unsafe extern "C" fn(&mut Ring3Context, *mut u128) -> *m
     table[66] = unsafe { core::mem::transmute(tables::call_indirect as *const ()) };  // CallIndirect = 66
     table[67] = unsafe { core::mem::transmute(wasi_fs::call_host_dispatch as *const ()) };  // CallHost = 67
 
-    // WASI stubs (accessed via call_host_dispatch, indices match import_stub_table in store/mod.rs)
+    // WASI Preview 1 stubs (indices match import_stub_table in store/mod.rs)
     // Indices 300+ to avoid collision with AotTrampoline SIMD entries (84-260)
     table[300] = wasi_fs::wasi_fd_write;
     table[301] = wasi_fs::wasi_fd_read;
     table[302] = wasi_fs::wasi_fd_close;
+    table[303] = wasi_fs::wasi_proc_exit;
+    table[304] = wasi_fs::wasi_args_sizes_get;
+    table[305] = wasi_fs::wasi_args_get;
+    table[306] = wasi_fs::wasi_environ_sizes_get;
+    table[307] = wasi_fs::wasi_environ_get;
+    table[308] = wasi_fs::wasi_clock_time_get;
+    table[309] = wasi_fs::wasi_random_get;
+    table[310] = wasi_fs::wasi_fd_prestat_get;
+    table[311] = wasi_fs::wasi_fd_prestat_dir_name;
+    table[312] = wasi_fs::wasi_fd_fdstat_get;
+    table[313] = wasi_fs::wasi_fd_filestat_get;
+    table[314] = wasi_fs::wasi_fd_filestat_set_size;
+    table[315] = wasi_fs::wasi_fd_seek;
+    table[316] = wasi_fs::wasi_fd_pread;
+    table[317] = wasi_fs::wasi_fd_readdir;
+    table[318] = wasi_fs::wasi_path_open;
+    table[319] = wasi_fs::wasi_path_filestat_get;
+    table[320] = wasi_fs::wasi_path_create_directory;
+    table[321] = wasi_fs::wasi_path_unlink_file;
+    table[322] = wasi_fs::wasi_path_remove_directory;
+    table[323] = wasi_fs::wasi_path_rename;
+    table[324] = wasi_fs::wasi_path_link;
+    table[325] = wasi_fs::wasi_path_symlink;
+    table[326] = wasi_fs::wasi_path_readlink;
+    table[327] = wasi_fs::wasi_poll_oneoff;
+    table[328] = wasi_fs::wasi_sched_yield;
+    table[329] = wasi_fs::wasi_clock_res_get;
+
+    // KrakeOS Graphics (400+)
+    table[400] = krakeos::krakeos_get_screen_width;
+    table[401] = krakeos::krakeos_get_screen_height;
+
+    // KrakeOS Window (410+)
+    table[410] = krakeos::krakeos_window_create;
+    table[411] = krakeos::krakeos_window_update;
+    table[412] = krakeos::krakeos_window_update_area;
+    table[413] = krakeos::krakeos_window_get_events;
+    table[414] = krakeos::krakeos_register_event_queue;
+    table[415] = krakeos::krakeos_deregister_event_queue;
+
+    // KrakeOS Process (420+)
+    table[420] = krakeos::krakeos_get_pid;
+    table[421] = krakeos::krakeos_debug_print;
+    table[422] = krakeos::krakeos_yield;
+    table[423] = krakeos::krakeos_spawn;
+    table[424] = krakeos::krakeos_waitpid;
+    table[425] = krakeos::krakeos_pipe;
+    table[426] = krakeos::krakeos_native_file_open;
+    table[427] = krakeos::krakeos_native_file_stat;
+    table[428] = krakeos::krakeos_file_read;
+    table[429] = krakeos::krakeos_file_write;
+    table[430] = krakeos::krakeos_kill;
+    table[431] = krakeos::krakeos_get_list;
+    table[432] = krakeos::krakeos_chdir;
+    table[433] = krakeos::krakeos_get_slot_info;
+    table[434] = krakeos::krakeos_ioctl;
+    table[435] = krakeos::krakeos_set_nonblock;
+    table[436] = krakeos::krakeos_poll;
+    table[437] = krakeos::krakeos_get_current_user;
+    table[438] = krakeos::krakeos_spawn_ext;
+    table[439] = krakeos::krakeos_spawn_thread;
+    table[440] = krakeos::krakeos_thread_exit;
+    table[441] = krakeos::krakeos_syscall;
+
+    // KrakeOS Memory (450+)
+    table[450] = krakeos::krakeos_shm_get;
+    table[451] = krakeos::krakeos_brk;
+    table[452] = krakeos::krakeos_get_total_mem;
+    table[453] = krakeos::krakeos_get_used_mem;
+    table[454] = krakeos::krakeos_get_vma_dump;
+
+    // Misc / compatibility
+    table[460] = krakeos::krakeos_noop;
+    table[461] = krakeos::krakeos_noop1;
+    table[462] = krakeos::krakeos_noop2;
+
+    // KrakeOS Terminal (463+)
+    table[463] = krakeos::krakeos_terminal_set_window_size;
+    table[464] = krakeos::krakeos_terminal_get_window_size;
+
+    // KrakeOS Container (470+)
+    table[470] = krakeos::krakeos_noop; // plant stub (TODO)
+    table[471] = krakeos::krakeos_noop; // plant-from-path stub (TODO)
+    table[472] = krakeos::krakeos_noop; // harvest stub (TODO)
+    table[473] = krakeos::krakeos_noop; // list-children stub (TODO)
+    table[474] = krakeos::krakeos_container_kill_child;
+
+    // KrakeOS Debug (480+)
+    table[480] = krakeos::krakeos_debug_get_process_list;
+    table[481] = krakeos::krakeos_kill;
+    table[482] = krakeos::krakeos_get_vma_dump;
+    table[483] = krakeos::krakeos_noop; // get-memory-usage stub (TODO)
+
+    // WASI Preview 2 (500+)
+    table[500] = wasi_p2::wasi_p2_exit;
+    table[501] = wasi_p2::wasi_p2_get_stdout;
+    table[502] = wasi_p2::wasi_p2_get_stdin;
+    table[503] = wasi_p2::wasi_p2_get_stderr;
+    table[504] = wasi_p2::wasi_p2_output_stream_write;
+    table[505] = wasi_p2::wasi_p2_input_stream_read;
+    table[506] = wasi_p2::wasi_p2_poll;
+    table[507] = wasi_p2::wasi_p2_pollable_block;
+    table[508] = wasi_p2::wasi_p2_pollable_drop;
+    table[509] = wasi_p2::wasi_p2_error_drop;
+    table[510] = wasi_p2::wasi_p2_monotonic_now;
+    table[511] = wasi_p2::wasi_p2_monotonic_resolution;
+    table[512] = wasi_p2::wasi_p2_subscribe_duration;
+    table[513] = wasi_p2::wasi_p2_wall_clock_now;
+    table[514] = wasi_p2::wasi_p2_descriptor_drop;
+    table[515] = wasi_p2::wasi_p2_descriptor_open_at;
+    table[516] = wasi_p2::wasi_p2_descriptor_stat;
+    table[517] = wasi_p2::wasi_p2_descriptor_set_size;
+    table[518] = wasi_p2::wasi_p2_descriptor_seek;
+    table[519] = wasi_p2::wasi_p2_descriptor_create_dir;
+    table[520] = wasi_p2::wasi_p2_descriptor_unlink;
+    table[521] = wasi_p2::wasi_p2_descriptor_rmdir;
+    table[522] = wasi_p2::wasi_p2_descriptor_rename;
+    table[523] = wasi_p2::wasi_p2_descriptor_read_directory;
+    table[524] = wasi_p2::wasi_p2_dir_stream_drop;
+    table[525] = wasi_p2::wasi_p2_get_random_bytes;
+    table[526] = wasi_p2::wasi_p2_instance_network;
+
     table[999] = wasi_fs::wasi_serial_print;
     table[1023] = unsafe { core::mem::transmute(traps::process_exit as *const ()) };
 

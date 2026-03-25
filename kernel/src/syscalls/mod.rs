@@ -389,19 +389,6 @@ pub fn dispatch_syscall(context: &mut CPUState) -> u64 {
         SYS_DEREGISTER_EVENT_QUEUE => window::handle_deregister_event_queue(context),
         SYS_YIELD => {}
 
-        SYS_WASM_HOST_CALL => {
-            // Ring3 AOT host call dispatch: rdi=ctx_ptr, rsi=func_idx, rdx=sp
-            let ctx_ptr = context.rdi as *mut ::std::wasm::aot::runtime::Ring3Context;
-            let func_idx = context.rsi as u32;
-            let sp = context.rdx as *mut u128;
-            let new_sp = ::std::wasm::aot::trampoline::aot_call_host(
-                unsafe { &mut *ctx_ptr },
-                func_idx,
-                sp,
-            );
-            context.rax = new_sp as u64;
-        }
-
         SYS_WASM_MEMORY_INIT => {
             let ctx_ptr = context.rdi as *mut ::std::wasm::aot::runtime::Ring3Context;
             let d = context.rsi as i32;

@@ -357,7 +357,7 @@ impl DisplayServer {
                 let dst_row_ptr = dst_base.add((dst_y as usize + row) * dst_pitch + (dst_x as usize));
                 let is_top_or_bottom = (src_off_y + row) == 0 || (src_off_y + row) == (height as usize - 1);
 
-                if !treat_as_transparent && !is_top_or_bottom {
+                if !treat_as_transparent && !is_top_or_bottom && border_color.is_none() {
                     core::ptr::copy_nonoverlapping(src_row_ptr, dst_row_ptr, copy_width);
                     continue;
                 }
@@ -587,7 +587,7 @@ impl DisplayServer {
 
                 let is_top_or_bottom = (src_off_y + row) == 0 || (src_off_y + row) == (height as usize - 1);
 
-                if !treat_as_transparent && !is_top_or_bottom {
+                if !treat_as_transparent && !is_top_or_bottom && border_color.is_none() {
                     core::ptr::copy_nonoverlapping(src_row_ptr, dst_row_ptr, copy_width);
                     continue;
                 }
@@ -814,7 +814,7 @@ impl DisplayServer {
 
                 let is_top_or_bottom = (src_off_y + row) == 0 || (src_off_y + row) == (height as usize - 1);
 
-                if !treat_as_transparent && !is_top_or_bottom {
+                if !treat_as_transparent && !is_top_or_bottom && border_color.is_none() {
                     let mut start_col = 0;
                     let mut end_col = copy_width;
 
@@ -926,7 +926,7 @@ impl DisplayServer {
 
                 let is_top_or_bottom = (src_off_y + row) == 0 || (src_off_y + row) == (height as usize - 1);
 
-                if !treat_as_transparent && !is_top_or_bottom {
+                if !treat_as_transparent && !is_top_or_bottom && border_color.is_none() {
                     core::ptr::copy_nonoverlapping(src_row_ptr, dst_row_ptr, copy_width);
                     continue;
                 }
@@ -1079,7 +1079,7 @@ impl DisplayServer {
                 let overlap_x = (mx as u32) < (sx + sw) && (mx as u32 + mw) > sx;
                 let overlap_y = (my as u32) < (sy + sh) && (my as u32 + mh) > sy;
                 if overlap_x && overlap_y {
-                    self.draw_mouse(mx, my, false);
+                    self.draw_mouse(mx as u16, my as u16, false);
                 }
             }
         }

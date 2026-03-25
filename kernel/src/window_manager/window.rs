@@ -9,36 +9,38 @@ pub enum Items {
 }
 
 #[derive(Debug, Clone)]
-#[repr(C)]
+#[repr(C, align(8))]
 #[derive(Copy)]
 pub struct Window {
-    pub id: usize,
-    pub buffer: usize,
-    pub back_buffer: usize,
-    pub flipped: usize, // Pointer to AtomicBool
+    pub id: u64,
+    pub buffer: u64,
+    pub back_buffer: u64,
+    pub flipped: u64, // Pointer to AtomicBool
     pub pid: u64,
-    pub x: isize,
-    pub y: isize,
-    pub z: usize,
-    pub width: usize,
-    pub height: usize,
+    pub x: i64,
+    pub y: i64,
+    pub z: u64,
+    pub width: u64,
+    pub height: u64,
     pub can_move: bool,
     pub can_resize: bool,
     pub transparent: bool,
     pub treat_as_transparent: bool,
-    pub min_width: usize,
-    pub min_height: usize,
-    pub event_handler: usize,
+    pub _pad0: [u8; 4], // Align to 8 bytes
+    pub min_width: u64,
+    pub min_height: u64,
+    pub event_handler: u64,
     pub w_type: Items,
+    pub _pad1: [u8; 4], // Align to 8 bytes
     // Previous state for maximize toggle
-    pub prev_x: isize,
-    pub prev_y: isize,
-    pub prev_width: usize,
-    pub prev_height: usize,
+    pub prev_x: i64,
+    pub prev_y: i64,
+    pub prev_width: u64,
+    pub prev_height: u64,
 }
 
 impl Window {
-    pub fn get_active_buffer(&self) -> usize {
+    pub fn get_active_buffer(&self) -> u64 {
         if self.flipped == 0 {
             return self.buffer;
         }
@@ -67,10 +69,12 @@ pub static NULL_WINDOW: Window = Window {
     can_resize: false,
     transparent: true,
     treat_as_transparent: true,
+    _pad0: [0; 4],
     min_width: 0,
     min_height: 0,
     event_handler: 0,
     w_type: Items::Null,
+    _pad1: [0; 4],
     prev_x: 0,
     prev_y: 0,
     prev_width: 0,

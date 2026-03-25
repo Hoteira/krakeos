@@ -24,6 +24,10 @@ pub fn handle_add_window(context: &mut CPUState) {
 
                 drop(tm);
                 let id = (*(&raw mut COMPOSER)).add_window(w);
+                if w.w_type == crate::window_manager::window::Items::Window {
+                    crate::window_manager::composer::CLICKED_WINDOW_ID = id as usize;
+                    (*(&raw mut COMPOSER)).focus_window(id);
+                }
                 context.rax = id as u64;
             } else {
                 context.rax = u64::MAX;
@@ -47,7 +51,7 @@ pub fn handle_update_window(context: &mut CPUState) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
                 let w = *(context.rdi as *const Window);
 
-                if let Some(existing_win) = composer.find_window_id(w.id) {
+                if let Some(existing_win) = composer.find_window_id(w.id as u64) {
                     if existing_win.pid == proc.pid {
                         drop(tm);
                         composer.resize_window(w);
@@ -68,7 +72,7 @@ pub fn handle_update_window(context: &mut CPUState) {
 }
 
 pub fn handle_update_window_area(context: &mut CPUState) {
-    let wid = context.rdi as usize;
+    let wid = context.rdi as u64;
     let x = context.rsi as i32;
     let y = context.rdx as i32;
     let w = context.r10 as u32;

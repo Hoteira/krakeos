@@ -153,7 +153,8 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
                         // The exit stub is at jump_table[1023] in the blob.
                         let jump_table = ctx.blob_base as *const u64;
                         let exit_fn_addr = *jump_table.add(1023);
-                        let rsp = (info.stack_base & !15) - 8;
+                        // Start below the 4KB guard page at the top of the stack region
+                        let rsp = ((info.stack_base - 4096) & !15) - 8;
                         *(rsp as *mut u64) = exit_fn_addr;
                         state.rsp = rsp;
 
@@ -317,7 +318,20 @@ pub fn handle_exit(context: &mut CPUState) {
                 thread.state = crate::task::ThreadState::Zombie;
 
                 unsafe {
-                    (*(&raw mut COMPOSER)).remove_windows_by_pid(current as u64);
+                    let composer = &mut *(&raw mut COMPOSER);
+                    let pid = current as u64;
+                    let mut to_remove = alloc::vec::Vec::new();
+                    for w in composer.windows.iter() {
+                        if w.pid == pid {
+                            to_remove.push(w.id);
+                        }
+                    }
+                    if composer.wallpaper.pid == pid {
+                        to_remove.push(composer.wallpaper.id);
+                    }
+                    for wid in to_remove {
+                        composer.remove_window(wid);
+                    }
                 }
 
                 let proc = thread.process.as_ref().expect("Thread has no process");

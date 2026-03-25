@@ -41,14 +41,6 @@ pub fn main() {
 
     std::os::user::set_current_user("racap");
 
-    // Spawn system apps
-    /*debugln!("[Init] Spawning Taskbar...");
-
-    match std::os::spawn_with_fds("@0xE0/apps/taskbar.wasm", &[], &[(0, 0), (1, 1), (2, 2)]) {
-        pid if pid != usize::MAX => debugln!("[Init] Taskbar spawned into its own slot with PID {}", pid),
-        _ => debugln!("[Init] Failed to spawn taskbar"),
-    }*/
-
     sleep(500);
 
     match std::os::spawn("@0xE0/apps/aot_test.wasm") {

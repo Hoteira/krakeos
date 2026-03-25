@@ -1,6 +1,6 @@
 use crate::drivers::peripherals::keyboard::KEYBOARD_BUFFER;
 use crate::arch::x86_64::io::{inb, outb};
-use crate::window_manager::input::{MOUSE, RESIZING_WINDOW, W_WIDTH, W_HEIGHT, CLICKED_WINDOW_ID};
+use crate::window_manager::input::{MOUSE, RESIZING_WINDOW, W_WIDTH, W_HEIGHT};
 use crate::window_manager::events::{Event, ResizeEvent, GLOBAL_EVENT_QUEUE};
 use core::sync::atomic::Ordering;
 
@@ -220,24 +220,27 @@ pub extern "C" fn page_fault_inner(saved_regs: u64) {
     let saved_rdi = unsafe { *base.add(8) };    // rdi = ctx_ptr in AOT
     let saved_rbp = unsafe { *base.add(14) };   // rbp = frame pointer
 
-    // Always print one-line diagnostic with raw frame values
-    serial_print("[PF] CR2=");
-    print_hex(cr2);
-    serial_print(" RIP=");
-    print_hex(rip);
-    serial_print(" CS=");
-    print_hex(cs);
-    serial_print(" RSP=");
-    print_hex(fault_rsp);
-    serial_print(" ERR=");
-    print_hex(error_code);
-    serial_print(" R14=");
-    print_hex(saved_r14);
-    serial_print(" RDI=");
-    print_hex(saved_rdi);
-    serial_print(" RBP=");
-    print_hex(saved_rbp);
-    serial_println("");
+    // Only print diagnostic for fatal/unexpected faults (not routine demand paging)
+    let is_demand_pageable = (error_code & 1) == 0; // bit 0 clear = not-present (normal demand page)
+    if !is_demand_pageable {
+        serial_print("[PF] CR2=");
+        print_hex(cr2);
+        serial_print(" RIP=");
+        print_hex(rip);
+        serial_print(" CS=");
+        print_hex(cs);
+        serial_print(" RSP=");
+        print_hex(fault_rsp);
+        serial_print(" ERR=");
+        print_hex(error_code);
+        serial_print(" R14=");
+        print_hex(saved_r14);
+        serial_print(" RDI=");
+        print_hex(saved_rdi);
+        serial_print(" RBP=");
+        print_hex(saved_rbp);
+        serial_println("");
+    }
 
     // --- Guard page check ---
     use crate::memory::address_space::*;
@@ -456,30 +459,30 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
                     unsafe { LAST_KEY_GLOBAL = key; }
                 } else if key == 'x' as u32 || key == 'w' as u32 {
                     unsafe {
-                        let active_id = crate::window_manager::input::CLICKED_WINDOW_ID;
+                        let active_id = crate::window_manager::composer::CLICKED_WINDOW_ID;
                         if active_id != 0 {
-                            (*(&raw mut crate::window_manager::composer::COMPOSER)).remove_window(active_id);
-                            crate::window_manager::input::CLICKED_WINDOW_ID = 0;
+                            (*(&raw mut crate::window_manager::composer::COMPOSER)).remove_window(active_id as u64);
+                            crate::window_manager::composer::CLICKED_WINDOW_ID = 0;
                         }
                     }
                     handled_globally = true;
                     unsafe { LAST_KEY_GLOBAL = key; }
                 } else if key == 'z' as u32 || key == 'f' as u32 {
                     unsafe {
-                        let active_id = crate::window_manager::input::CLICKED_WINDOW_ID;
+                        let active_id = crate::window_manager::composer::CLICKED_WINDOW_ID;
                         if active_id != 0 {
-                            if let Some(w) = (*(&raw mut crate::window_manager::composer::COMPOSER)).find_window_id(active_id) {
+                            if let Some(w) = (*(&raw mut crate::window_manager::composer::COMPOSER)).find_window_id(active_id as u64) {
                                 if w.can_resize {
-                                    let screen_w = (*(&raw mut crate::window_manager::display::DISPLAY_SERVER)).width as usize;
-                                    let screen_h = (*(&raw mut crate::window_manager::display::DISPLAY_SERVER)).height as usize;
+                                    let screen_w = (*(&raw mut crate::window_manager::display::DISPLAY_SERVER)).width as u64;
+                                    let screen_h = (*(&raw mut crate::window_manager::display::DISPLAY_SERVER)).height as u64;
                                     
                                     let (target_x, target_y, target_w, target_h) = if w.width == screen_w && w.height == screen_h {
                                         // Restore
                                         (w.prev_x, w.prev_y, w.prev_width.max(100), w.prev_height.max(100))
                                     } else {
                                         // Maximize
-                                        let tx = 0;
-                                        let ty = 0;
+                                        let tx: i64 = 0;
+                                        let ty: i64 = 0;
                                         let tw = screen_w;
                                         let th = screen_h;
                                         
@@ -489,7 +492,7 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
                                         w.prev_x = w.x;
                                         w.prev_y = w.y;
                                         
-                                        (tx as isize, ty as isize, tw, th)
+                                        (tx, ty, tw, th)
                                     };
                                     
                                     // Send resize event to the application with target dimensions AND position
@@ -515,9 +518,9 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
                     unsafe { LAST_KEY_GLOBAL = key; }
                 } else if key == 'c' as u32 {
                     unsafe {
-                        let active_id = crate::window_manager::input::CLICKED_WINDOW_ID;
+                        let active_id = crate::window_manager::composer::CLICKED_WINDOW_ID;
                         if active_id != 0 {
-                            if let Some(w) = (*(&raw mut crate::window_manager::composer::COMPOSER)).find_window_id(active_id) {
+                            if let Some(w) = (*(&raw mut crate::window_manager::composer::COMPOSER)).find_window_id(active_id as u64) {
                                 if w.can_resize {
                                     crate::window_manager::input::RESIZING_WINDOW.store(
                                         w.id as u16, 
@@ -550,13 +553,13 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
 
             // Dispatch to Window Manager
             unsafe {
-                let active_window_id = crate::window_manager::input::CLICKED_WINDOW_ID;
+                let active_window_id = crate::window_manager::composer::CLICKED_WINDOW_ID;
                 if active_window_id != 0 {
                     let mut tm = crate::task::TASK_MANAGER.int_lock();
                     let composer = &*(&raw const crate::window_manager::composer::COMPOSER);
                     let mut target_info = None;
                     for w in &composer.windows {
-                        if w.id == active_window_id {
+                        if w.id == active_window_id as u64 {
                             if w.event_handler != 0 {
                                 target_info = Some(w.pid);
                             }
