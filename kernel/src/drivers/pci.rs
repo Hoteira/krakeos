@@ -1,16 +1,26 @@
 use crate::arch::x86_64::io::{inl, outl};
 use alloc::vec::Vec;
 
-static mut PCI_BAR_HEAD: u32 = 0xC0000000;
+static mut PCI_BAR_HEAD: u64 = 0xE0000000;
 
 pub fn allocate_bar_address(size: u32) -> u32 {
     unsafe {
         let addr = PCI_BAR_HEAD;
         // Align to 16MB or size, whichever is larger, to stay compatible with PCI rules
-        let align = size.max(0x1000000);
+        let align = (size as u64).max(0x1000000);
         let aligned_addr = (addr + align - 1) & !(align - 1);
-        PCI_BAR_HEAD = aligned_addr + align;
-        aligned_addr
+        
+        // Check for 32-bit overflow
+        if aligned_addr + (size as u64) > 0xFFFFFFFF {
+             // If we overflow 32-bit, we should ideally use 64-bit BARs, 
+             // but our return type is u32. For now, let's wrap or panic gracefully.
+             // Actually, let's move the head back down if we hit the ceiling, 
+             // or just use a more compact area.
+             panic!("PCI: 32-bit BAR space exhausted at {:#x}", aligned_addr);
+        }
+        
+        PCI_BAR_HEAD = aligned_addr + (size as u64);
+        aligned_addr as u32
     }
 }
 

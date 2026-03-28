@@ -89,7 +89,7 @@ pub extern "C" fn rust_main(bootinfo_ptr: u64) -> ! {
     }
     debugln!("SIGNPOST: DISPLAY_SERVER initialized.");
     unsafe {
-        (*(&raw mut DISPLAY_SERVER)).force_full_sync();
+        (*(&raw mut DISPLAY_SERVER)).force_full_sync(true);
     }
 
     debugln!("SIGNPOST: Drivers initialized.");

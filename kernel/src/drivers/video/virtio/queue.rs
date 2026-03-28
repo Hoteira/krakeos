@@ -16,6 +16,7 @@ pub struct VirtQueue {
     pub last_used_idx: u16,
     pub last_avail_idx: u16,
     pub notify_addr: u64,
+    pub virt_base: u64,
 }
 
 pub static mut VIRT_QUEUES: [Option<VirtQueue>; 2] = [None, None];
@@ -30,19 +31,26 @@ pub fn setup_queue(common_cfg: *mut u8, index: u16, notify_base: u64, notify_mul
         let size: u16 = 128;
         write_16(common_cfg.add(OFF_QUEUE_SIZE), size);
         if let Some(frame) = pmm::allocate_frame() {
-            let virt_frame = (frame + crate::memory::paging::HHDM_OFFSET) as *mut u8;
-            core::ptr::write_bytes(virt_frame, 0, 4096);
+            // Map queue structures as NO_CACHE to ensure the device sees our updates immediately.
+            let virt_addr = crate::memory::vmm::map_mmio(frame, 4096);
+            let virt_ptr = virt_addr as *mut u8;
+            core::ptr::write_bytes(virt_ptr, 0, 4096);
+            
             let desc_addr = frame;
             let avail_addr = desc_addr + 2048;
             let used_addr = (avail_addr + 262 + 3) & !3;
-            let avail_ptr = (avail_addr + crate::memory::paging::HHDM_OFFSET) as *mut VirtqAvail;
-            (*avail_ptr).flags = 1;
+            
+            let avail_ptr = (virt_addr + 2048) as *mut VirtqAvail;
+            (*avail_ptr).flags = 1; // VIRTQ_AVAIL_F_NO_INTERRUPT
+            
             write_64(common_cfg.add(OFF_QUEUE_DESC), desc_addr);
             write_64(common_cfg.add(OFF_QUEUE_DRIVER), avail_addr);
             write_64(common_cfg.add(OFF_QUEUE_DEVICE), used_addr);
+            
             let notify_off = read_16(common_cfg.add(OFF_QUEUE_NOTIFY_OFF));
             let notify_addr = notify_base + (notify_off as u64 * notify_multiplier as u64);
             write_16(common_cfg.add(OFF_QUEUE_ENABLE), 1);
+            
             VIRT_QUEUES[index as usize] = Some(VirtQueue {
                 desc_phys: desc_addr,
                 avail_phys: avail_addr,
@@ -53,6 +61,7 @@ pub fn setup_queue(common_cfg: *mut u8, index: u16, notify_base: u64, notify_mul
                 last_used_idx: 0,
                 last_avail_idx: 0,
                 notify_addr,
+                virt_base: virt_addr,
             });
         }
     }
@@ -77,48 +86,79 @@ unsafe fn send_command_queue_unlocked(queue_idx: usize, out_phys: &[u64], out_le
     };
     let total_descs = out_phys.len() + in_phys.len();
     let mut timeout: u64 = 500_000_000;
-    while vq.last_avail_idx.wrapping_sub(vq.last_used_idx) + total_descs as u16 > vq.num {
-        vq.last_used_idx = read_volatile(core::ptr::addr_of!((*( (vq.used_phys + crate::memory::paging::HHDM_OFFSET) as *const VirtqUsed )).idx));
+    
+    // Safety check for queue capacity (conservative chain limit)
+    while vq.last_avail_idx.wrapping_sub(vq.last_used_idx) >= (vq.num / 4) {
+        let used_ptr = (vq.virt_base + (vq.used_phys - vq.desc_phys)) as *mut VirtqUsed;
+        vq.last_used_idx = read_volatile(core::ptr::addr_of!((*used_ptr).idx));
         timeout -= 1;
         if timeout == 0 { if int_enabled { core::arch::asm!("sti"); } return false; }
     }
-    let virt_desc_base = (vq.desc_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqDesc;
+    
+    let virt_desc_base = vq.virt_base as *mut VirtqDesc;
     let mut curr = vq.free_head as usize;
     for i in 0..out_phys.len() {
-        *(virt_desc_base).add(curr) = VirtqDesc {
-            addr: out_phys[i], len: out_lens[i],
-            flags: if i == out_phys.len() - 1 && in_phys.len() == 0 { 0 } else { 1 },
-            next: ((curr + 1) % vq.num as usize) as u16,
-        };
+        let is_last = i == out_phys.len() - 1 && in_phys.len() == 0;
+        unsafe {
+            core::ptr::write_volatile(virt_desc_base.add(curr), VirtqDesc {
+                addr: out_phys[i], len: out_lens[i],
+                flags: if is_last { 0 } else { 1 },
+                next: if is_last { 0 } else { ((curr + 1) % vq.num as usize) as u16 },
+            });
+        }
         curr = (curr + 1) % vq.num as usize;
     }
     for i in 0..in_phys.len() {
-        *(virt_desc_base).add(curr) = VirtqDesc {
-            addr: in_phys[i], len: in_lens[i],
-            flags: 2 | (if i == in_phys.len() - 1 { 0 } else { 1 }),
-            next: ((curr + 1) % vq.num as usize) as u16,
-        };
+        let is_last = i == in_phys.len() - 1;
+        unsafe {
+            core::ptr::write_volatile(virt_desc_base.add(curr), VirtqDesc {
+                addr: in_phys[i], len: in_lens[i],
+                flags: 2 | (if is_last { 0 } else { 1 }),
+                next: if is_last { 0 } else { ((curr + 1) % vq.num as usize) as u16 },
+            });
+        }
         curr = (curr + 1) % vq.num as usize;
     }
-    let last_desc = (virt_desc_base).add((vq.free_head as usize + total_descs - 1) % vq.num as usize);
-    (*last_desc).next = 0; (*last_desc).flags &= !1;
-    let avail_ptr = (vq.avail_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqAvail;
-    (*avail_ptr).ring[((*avail_ptr).idx % vq.num) as usize] = vq.free_head;
-    core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
-    (*avail_ptr).idx = (*avail_ptr).idx.wrapping_add(1);
+
+    let avail_ptr = (vq.virt_base + 2048) as *mut VirtqAvail;
+    let ring_idx = (read_volatile(core::ptr::addr_of!((*avail_ptr).idx)) % vq.num) as usize;
+    write_volatile(core::ptr::addr_of_mut!((*avail_ptr).ring[ring_idx]), vq.free_head);
+    
+    // Ensure descriptors are visible before the index update
+    unsafe { core::arch::asm!("sfence", options(nostack, preserves_flags)); }
+    
+    let new_idx = read_volatile(core::ptr::addr_of!((*avail_ptr).idx)).wrapping_add(1);
+    write_volatile(core::ptr::addr_of_mut!((*avail_ptr).idx), new_idx);
+    
     vq.last_avail_idx = vq.last_avail_idx.wrapping_add(1);
+    
+    // Ensure index is visible before notify
+    unsafe { core::arch::asm!("sfence", options(nostack, preserves_flags)); }
     write_volatile(vq.notify_addr as *mut u16, vq.queue_index);
+    
     vq.free_head = curr as u16;
+    
     if !wait { if int_enabled { core::arch::asm!("sti"); } return true; }
-    let used_ptr = (vq.used_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqUsed;
-    let mut success = false; timeout = 500_000_000;
+    
+    let used_ptr = (vq.virt_base + (vq.used_phys - vq.desc_phys)) as *mut VirtqUsed;
+    let mut success = false; timeout = 1_000_000_000;
+    let target_idx = vq.last_avail_idx;
+    
     loop {
-        if read_volatile(core::ptr::addr_of!((*used_ptr).idx)) != vq.last_used_idx {
-            vq.last_used_idx = read_volatile(core::ptr::addr_of!((*used_ptr).idx));
-            if vq.last_used_idx == vq.last_avail_idx { success = true; break; }
+        let used_idx = read_volatile(core::ptr::addr_of!((*used_ptr).idx));
+        // Check if host has reached or passed our submitted chain count
+        if used_idx.wrapping_sub(target_idx) as i16 >= 0 {
+            unsafe { core::arch::asm!("lfence", options(nostack, preserves_flags)); }
+            vq.last_used_idx = used_idx;
+            success = true;
+            break;
         }
-        core::hint::spin_loop(); timeout -= 1;
-        if timeout == 0 { break; }
+        core::hint::spin_loop();
+        timeout -= 1;
+        if timeout == 0 {
+            crate::debugln!("VirtIO GPU: Command timeout! queue={} target={} current={}", vq.queue_index, target_idx, used_idx);
+            break;
+        }
     }
     if int_enabled { core::arch::asm!("sti"); }
     success

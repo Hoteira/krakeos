@@ -83,6 +83,13 @@ pub fn map_physical_memory(pml4_phys: u64) {
                 let aligned_end = (end + 0x1FFFFF) & !0x1FFFFF;
 
                 while current < aligned_end {
+                    // SKIP PCI HOLE: Do not map 3GB-4GB into the Cached HHDM.
+                    // This prevents cache-type alias conflicts with PCI BARs.
+                    if current >= 0xC0000000 && current < 0x100000000 {
+                        current = 0x100000000;
+                        continue;
+                    }
+
                     let virt = current + paging::HHDM_OFFSET;
                     let flags = paging::PAGE_PRESENT | paging::PAGE_WRITABLE;
                     
@@ -410,8 +417,9 @@ pub fn map_mmio(phys: u64, size: usize) -> u64 {
         let pages = (size + 4095) / 4096;
         for i in 0..pages {
             let offset = i as u64 * 4096;
+            // Use both NO_CACHE (PCD) and WRITE_THROUGH (PWT) to ensure Strong Uncacheable behavior.
             map_page(start_virt + offset, PhysAddr::new(phys + offset),
-                     paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_NO_CACHE, None);
+                     paging::PAGE_PRESENT | paging::PAGE_WRITABLE | paging::PAGE_NO_CACHE | paging::PAGE_WRITE_THROUGH, None);
         }
         start_virt
     }

@@ -202,14 +202,14 @@ pub fn init() {
                 }
 
                 if end > start {
-                    // CAP TO 4GB: Initial discovery must stay within boot-mapped range.
-                    // Accessing HHDM above 4GB before VMM is ready will cause a crash.
-                    let safe_end = end.min(0x100000000); 
+                    // CAP TO 3GB: Reserve 0xC0000000 - 0xFFFFFFFF for PCI MMIO hole.
+                    // This prevents collisions between RAM and BAR allocations.
+                    let safe_end = end.min(0xC0000000); 
                     if safe_end > start {
                         debugln!("PMM: Adding free region: {:#x} -> {:#x}", start, safe_end);
                         add_free_region(&mut allocator, start, safe_end);
                     } else {
-                        debugln!("PMM: Region {:#x} -> {:#x} is above 4GB, skipping for now.", start, end);
+                        debugln!("PMM: Region {:#x} -> {:#x} is in PCI hole, skipping.", start, end);
                     }
                 }
             }

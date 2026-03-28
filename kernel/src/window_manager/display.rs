@@ -162,6 +162,12 @@ impl DisplayServer {
                 self.double_buffer = ram_virt;
                 self.active_resource_id = 1;
 
+                // Ensure all cached zeroes from PMM are flushed to physical RAM
+                // before the GPU tries to read them via DMA.
+                unsafe {
+                    core::arch::asm!("wbinvd", options(nostack, preserves_flags));
+                }
+
                 virtio::start_gpu(self.width as u32, self.height as u32, self.buffer1_phys, self.buffer2_phys);
                 virtio::set_scanout(1, self.width as u32, self.height as u32);
                 virtio::transfer_and_flush(1, self.width as u32, self.height as u32, true); // Blocking init
@@ -220,7 +226,7 @@ impl DisplayServer {
         }
     }
 
-    pub fn force_full_sync(&mut self) {
+    pub fn force_full_sync(&mut self, wait: bool) {
         unsafe {
             let fb_len = (self.pitch * self.height) as usize;
             let src = self.double_buffer as *const u8;
@@ -230,7 +236,7 @@ impl DisplayServer {
             }
 
             if VIRTIO_ACTIVE {
-                virtio::flush(0, 0, self.width as u32, self.height as u32, self.width as u32, self.active_resource_id, false);
+                virtio::flush(0, 0, self.width as u32, self.height as u32, self.width as u32, self.active_resource_id, wait);
             }
         }
     }
