@@ -86,6 +86,7 @@ pub struct Window {
     pub can_resize: bool,
     pub transparent: bool,
     pub treat_as_transparent: bool,
+    pub is_maximized: bool,
     pub min_width: usize,
     pub min_height: usize,
 
@@ -122,6 +123,7 @@ impl Window {
             can_resize: true,
             transparent: true,
             treat_as_transparent: true,
+            is_maximized: false,
             min_width: 0,
             min_height: 0,
             w_type: Items::Window,
@@ -166,7 +168,8 @@ impl Window {
             can_resize: self.can_resize,
             transparent: self.transparent,
             treat_as_transparent: self.treat_as_transparent,
-            _pad0: [0; 4],
+            is_maximized: self.is_maximized,
+            _pad0: [0; 3],
             min_width: self.min_width as u64,
             min_height: self.min_height as u64,
             event_handler: 1,
@@ -176,6 +179,10 @@ impl Window {
             prev_y: 0,
             prev_width: 0,
             prev_height: 0,
+            tiled_x: 0,
+            tiled_y: 0,
+            tiled_width: 0,
+            tiled_height: 0,
         };
 
         if self.id == 0 {
@@ -242,7 +249,8 @@ impl Window {
             can_resize: self.can_resize,
             transparent: self.transparent,
             treat_as_transparent: self.treat_as_transparent,
-            _pad0: [0; 4],
+            is_maximized: self.is_maximized,
+            _pad0: [0; 3],
             min_width: self.min_width as u64,
             min_height: self.min_height as u64,
             event_handler: 1,
@@ -252,6 +260,10 @@ impl Window {
             prev_y: 0,
             prev_width: 0,
             prev_height: 0,
+            tiled_x: 0,
+            tiled_y: 0,
+            tiled_width: 0,
+            tiled_height: 0,
         };
         graphics::update_window(&std_window);
     }
@@ -270,6 +282,13 @@ impl Window {
     pub fn resize(&mut self, width: usize, height: usize, x: isize, y: isize, can_move: bool) {
         if !self.can_resize { return; }
         std::debugln!("[inkui] Resizing window '{}' to {}x{} at ({}, {})", self.title, width, height, x, y);
+        
+        let screen_w = graphics::get_screen_width();
+        let screen_h = graphics::get_screen_height();
+        
+        // Detect maximization
+        self.is_maximized = width >= screen_w && height >= screen_h && x <= 0 && y <= 0;
+        
         self.width = width;
         self.height = height;
         self.x = x;

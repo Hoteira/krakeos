@@ -26,7 +26,8 @@ pub struct Window {
     pub can_resize: bool,
     pub transparent: bool,
     pub treat_as_transparent: bool,
-    pub _pad0: [u8; 4], // Align to 8 bytes
+    pub is_maximized: bool,
+    pub _pad0: [u8; 3], // Align to 8 bytes
     pub min_width: u64,
     pub min_height: u64,
     pub event_handler: u64,
@@ -37,6 +38,11 @@ pub struct Window {
     pub prev_y: i64,
     pub prev_width: u64,
     pub prev_height: u64,
+    // Tiling target state
+    pub tiled_x: i64,
+    pub tiled_y: i64,
+    pub tiled_width: u64,
+    pub tiled_height: u64,
 }
 
 impl Window {
@@ -69,7 +75,8 @@ pub static NULL_WINDOW: Window = Window {
     can_resize: false,
     transparent: true,
     treat_as_transparent: true,
-    _pad0: [0; 4],
+    is_maximized: false,
+    _pad0: [0; 3],
     min_width: 0,
     min_height: 0,
     event_handler: 0,
@@ -79,4 +86,8 @@ pub static NULL_WINDOW: Window = Window {
     prev_y: 0,
     prev_width: 0,
     prev_height: 0,
+    tiled_x: 0,
+    tiled_y: 0,
+    tiled_width: 0,
+    tiled_height: 0,
 };

@@ -502,11 +502,13 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
                                     let screen_w = (*(&raw mut crate::window_manager::display::DISPLAY_SERVER)).width as u64;
                                     let screen_h = (*(&raw mut crate::window_manager::display::DISPLAY_SERVER)).height as u64;
                                     
-                                    let (target_x, target_y, target_w, target_h, is_transparent) = if w.width == screen_w && w.height == screen_h {
+                                    let (target_x, target_y, target_w, target_h, is_transparent) = if w.is_maximized {
                                         // Restore
+                                        w.is_maximized = false;
                                         (w.prev_x, w.prev_y, w.prev_width.max(100), w.prev_height.max(100), true)
                                     } else {
                                         // Maximize
+                                        w.is_maximized = true;
                                         let tx: i64 = 0;
                                         let ty: i64 = 0;
                                         let tw = screen_w;

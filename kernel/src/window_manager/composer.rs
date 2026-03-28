@@ -102,7 +102,7 @@ impl Composer {
         (self.taskbar.x as i32, self.taskbar.y as i32, tw, th)
     }
 
-    fn get_available_desktop(&self) -> (i32, i32, u32, u32) {
+    pub fn get_available_desktop(&self) -> (i32, i32, u32, u32) {
         let (sw, sh) = unsafe {
             (
                 (*(&raw mut DISPLAY_SERVER)).width as u32,
@@ -134,13 +134,15 @@ impl Composer {
                 let w = &mut self.workspaces[ws_idx].windows[win_idx];
                 let changed = w.x != target_x || w.y != target_y || w.width != target_w || w.height != target_h;
                 
-                // Authoritatively store the intended tiled size in prev fields
-                w.prev_x = target_x;
-                w.prev_y = target_y;
-                w.prev_width = target_w;
-                w.prev_height = target_h;
+                // Authoritatively store the intended tiled size in tiled fields
+                w.tiled_x = target_x;
+                w.tiled_y = target_y;
+                w.tiled_width = target_w;
+                w.tiled_height = target_h;
                 
-                (changed, w.pid, w.id)
+                // If maximized, we don't send resize events because the window is
+                // temporarily covering the tiling layout.
+                (changed && !w.is_maximized, w.pid, w.id)
             };
             
             if needs_event {
@@ -235,7 +237,7 @@ impl Composer {
         let mut fullscreen_id = 0;
         for i in 0..16 {
             let w = &ws.windows[i];
-            if w.w_type == Items::Window && w.x <= 0 && w.y <= 0 && w.width as u32 >= screen_w && w.height as u32 >= screen_h {
+            if w.w_type == Items::Window && (w.is_maximized || (w.x <= 0 && w.y <= 0 && w.width as u32 >= screen_w && w.height as u32 >= screen_h)) {
                 fullscreen_id = w.id;
                 break;
             }
@@ -360,6 +362,8 @@ impl Composer {
     pub fn add_window(&mut self, mut w: Window) -> u64 {
         w.id = self.check_id(w.buffer as u64);
         w.prev_x = 0; w.prev_y = 0; w.prev_width = 0; w.prev_height = 0;
+        w.tiled_x = 0; w.tiled_y = 0; w.tiled_width = 0; w.tiled_height = 0;
+        w.is_maximized = false;
 
         if w.w_type == Items::Wallpaper {
             w.z = 255; w.transparent = false; w.treat_as_transparent = false; w.can_move = false; w.can_resize = false;
@@ -483,13 +487,15 @@ impl Composer {
         for ws in 0..5 {
             for i in 0..16 {
                 if w.id == self.workspaces[ws].windows[i].id {
-                    // If window is tiled, it MUST match the tiling target stored in prev_*
+                    // If window is tiled AND not maximized, it MUST match the tiling target
                     if let Some(_leaf) = self.find_leaf_for_window(ws, i) {
                         let target = &self.workspaces[ws].windows[i];
-                        if w.width != target.prev_width || w.height != target.prev_height || w.x != target.prev_x || w.y != target.prev_y {
-                            // Suppress resizes that don't match the tiling layout (e.g. initial app sync)
-                            // This eliminates the "flash" at original size during spawn.
-                            return;
+                        if !target.is_maximized {
+                            if w.width != target.tiled_width || w.height != target.tiled_height || w.x != target.tiled_x || w.y != target.tiled_y {
+                                // Suppress resizes that don't match the tiling layout (e.g. initial app sync)
+                                // This eliminates the "flash" at original size during spawn.
+                                return;
+                            }
                         }
                     }
 
@@ -500,6 +506,7 @@ impl Composer {
                     self.workspaces[ws].windows[i].width = w.width; self.workspaces[ws].windows[i].height = w.height;
                     self.workspaces[ws].windows[i].x = w.x; self.workspaces[ws].windows[i].y = w.y;
                     self.workspaces[ws].windows[i].transparent = w.transparent; self.workspaces[ws].windows[i].treat_as_transparent = w.treat_as_transparent;
+                    self.workspaces[ws].windows[i].is_maximized = w.is_maximized;
 
                     if ws == self.active_workspace {
                         let min_x = old_x.min(w.x) as i32; let min_y = old_y.min(w.y) as i32;
@@ -567,9 +574,9 @@ impl Composer {
                 let mut fullscreen_win = None;
                 for i in 0..16 {
                     let w = &ws.windows[i];
-                    if w.w_type == Items::Window && w.x <= 0 && w.y <= 0 && w.width as i32 >= width && w.height as i32 >= height {
+                    if w.w_type == Items::Window && (w.is_maximized || (w.x <= 0 && w.y <= 0 && w.width as i32 >= width && w.height as i32 >= height)) {
                         fullscreen_win = Some(w);
-                        break; // Only need one
+                        break; 
                     }
                 }
 
@@ -577,7 +584,7 @@ impl Composer {
                     if fw.id != ignore_id {
                         display_server.copy_to_db_clipped(fw.width as u32, fw.height as u32, fw.get_active_buffer() as usize, fw.x as i32, fw.y as i32, dirty_x, dirty_y, dirty_w, dirty_h, None, false);
                     }
-                    return; // DO NOT render anything else
+                    return; 
                 }
 
                 let start_x = dirty_x.max(0);
@@ -609,7 +616,7 @@ impl Composer {
                     display_server.copy_to_db_clipped(w.width as u32, w.height as u32, w.get_active_buffer() as usize, w.x as i32, w.y as i32, dirty_x, dirty_y, dirty_w, dirty_h, border_color, w.treat_as_transparent);
                 }
 
-                if self.taskbar.w_type != Items::Null && self.taskbar.id != ignore_id {
+                if self.taskbar.w_type != Items::Null && self.taskbar.id != ignore_id && fullscreen_win.is_none() {
                     display_server.copy_to_db_clipped(self.taskbar.width as u32, self.taskbar.height as u32, self.taskbar.get_active_buffer() as usize, self.taskbar.x as i32, self.taskbar.y as i32, dirty_x, dirty_y, dirty_w, dirty_h, None, self.taskbar.treat_as_transparent);
                 }
             }

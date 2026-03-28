@@ -212,7 +212,7 @@ crate::export_method!(
         let z = read_mem_u64(store, ptr + 56)?;
         let width = read_mem_u64(store, ptr + 64)?;
         let height = read_mem_u64(store, ptr + 72)?;
-        let mut bools = [0u8; 4];
+        let mut bools = [0u8; 5];
         read_mem(store, ptr + 80, &mut bools).map_err(|_| HaltExecutionError(1))?;
         let min_width = read_mem_u64(store, ptr + 88)?;
         let min_height = read_mem_u64(store, ptr + 96)?;
@@ -222,6 +222,10 @@ crate::export_method!(
         let prev_y = read_mem_u64(store, ptr + 128)? as i64;
         let prev_width = read_mem_u64(store, ptr + 136)?;
         let prev_height = read_mem_u64(store, ptr + 144)?;
+        let tiled_x = read_mem_u64(store, ptr + 152)? as i64;
+        let tiled_y = read_mem_u64(store, ptr + 160)? as i64;
+        let tiled_width = read_mem_u64(store, ptr + 168)?;
+        let tiled_height = read_mem_u64(store, ptr + 176)?;
 
         let wasm_base = store.get_wasm_base_ptr() as u64;
         let host_win = host::Window {
@@ -231,11 +235,13 @@ crate::export_method!(
             flipped: if flipped_off != 0 { (wasm_base + flipped_off) } else { 0 },
             pid, x, y, z, width, height,
             can_move: bools[0] != 0, can_resize: bools[1] != 0, transparent: bools[2] != 0, treat_as_transparent: bools[3] != 0,
-            _pad0: [0; 4],
+            is_maximized: bools[4] != 0,
+            _pad0: [0; 3],
             min_width, min_height, event_handler,
             w_type: unsafe { core::mem::transmute(w_type_val) },
             _pad1: [0; 4],
             prev_x, prev_y, prev_width, prev_height,
+            tiled_x, tiled_y, tiled_width, tiled_height,
         };
 
         let res = host::add_window(&host_win) as u64;
@@ -262,7 +268,7 @@ crate::export_method!(
         let z = read_mem_u64(store, ptr + 56)?;
         let width = read_mem_u64(store, ptr + 64)?;
         let height = read_mem_u64(store, ptr + 72)?;
-        let mut bools = [0u8; 4];
+        let mut bools = [0u8; 5];
         read_mem(store, ptr + 80, &mut bools).map_err(|_| HaltExecutionError(1))?;
         let min_width = read_mem_u64(store, ptr + 88)?;
         let min_height = read_mem_u64(store, ptr + 96)?;
@@ -272,6 +278,10 @@ crate::export_method!(
         let prev_y = read_mem_u64(store, ptr + 128)? as i64;
         let prev_width = read_mem_u64(store, ptr + 136)?;
         let prev_height = read_mem_u64(store, ptr + 144)?;
+        let tiled_x = read_mem_u64(store, ptr + 152)? as i64;
+        let tiled_y = read_mem_u64(store, ptr + 160)? as i64;
+        let tiled_width = read_mem_u64(store, ptr + 168)?;
+        let tiled_height = read_mem_u64(store, ptr + 176)?;
 
         let wasm_base = store.get_wasm_base_ptr() as u64;
         let host_win = host::Window {
@@ -281,11 +291,13 @@ crate::export_method!(
             flipped: if flipped_off != 0 { (wasm_base + flipped_off) } else { 0 },
             pid, x, y, z, width, height,
             can_move: bools[0] != 0, can_resize: bools[1] != 0, transparent: bools[2] != 0, treat_as_transparent: bools[3] != 0,
-            _pad0: [0; 4],
+            is_maximized: bools[4] != 0,
+            _pad0: [0; 3],
             min_width, min_height, event_handler,
             w_type: unsafe { core::mem::transmute(w_type_val) },
             _pad1: [0; 4],
             prev_x, prev_y, prev_width, prev_height,
+            tiled_x, tiled_y, tiled_width, tiled_height,
         };
 
         host::update_window(&host_win);
