@@ -28,7 +28,7 @@ pub fn setup_queue(common_cfg: *mut u8, index: u16, notify_base: u64, notify_mul
         write_16(common_cfg.add(OFF_QUEUE_SELECT), index);
         let max_size = read_16(common_cfg.add(OFF_QUEUE_SIZE));
         if max_size == 0 { return; }
-        let size: u16 = 128;
+        let size: u16 = max_size.min(128);
         write_16(common_cfg.add(OFF_QUEUE_SIZE), size);
         if let Some(frame) = pmm::allocate_frame() {
             // Map queue structures as NO_CACHE to ensure the device sees our updates immediately.
@@ -41,7 +41,7 @@ pub fn setup_queue(common_cfg: *mut u8, index: u16, notify_base: u64, notify_mul
             let used_addr = (avail_addr + 262 + 3) & !3;
             
             let avail_ptr = (virt_addr + 2048) as *mut VirtqAvail;
-            (*avail_ptr).flags = 1; // VIRTQ_AVAIL_F_NO_INTERRUPT
+            write_volatile(core::ptr::addr_of_mut!((*avail_ptr).flags), 1); // VIRTQ_AVAIL_F_NO_INTERRUPT
             
             write_64(common_cfg.add(OFF_QUEUE_DESC), desc_addr);
             write_64(common_cfg.add(OFF_QUEUE_DRIVER), avail_addr);
@@ -69,20 +69,27 @@ pub fn setup_queue(common_cfg: *mut u8, index: u16, notify_base: u64, notify_mul
 
 pub fn send_command_queue(queue_idx: usize, out_phys: &[u64], out_lens: &[u32], in_phys: &[u64], in_lens: &[u32], wait: bool) -> bool {
     if queue_idx >= 2 { return false; }
+    
+    let int_enabled = crate::arch::x86_64::idt::interrupts();
+    if int_enabled { unsafe { core::arch::asm!("cli"); } }
+
     while QUEUE_LOCKS[queue_idx].compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
         core::hint::spin_loop();
     }
+    
     let result = unsafe { send_command_queue_unlocked(queue_idx, out_phys, out_lens, in_phys, in_lens, wait) };
+    
     QUEUE_LOCKS[queue_idx].store(false, Ordering::Release);
+    
+    if int_enabled { unsafe { core::arch::asm!("sti"); } }
+    
     result
 }
 
 unsafe fn send_command_queue_unlocked(queue_idx: usize, out_phys: &[u64], out_lens: &[u32], in_phys: &[u64], in_lens: &[u32], wait: bool) -> bool {
-    let int_enabled = crate::arch::x86_64::idt::interrupts();
-    if int_enabled { core::arch::asm!("cli"); }
     let vq = match &mut VIRT_QUEUES[queue_idx] {
         Some(v) => v,
-        None => { if int_enabled { core::arch::asm!("sti"); } return false; }
+        None => { return false; }
     };
     let total_descs = out_phys.len() + in_phys.len();
     let mut timeout: u64 = 500_000_000;
