@@ -36,22 +36,23 @@ pub fn copy_string_from_user(ptr: *const u8, len: usize) -> String {
 }
 
 pub fn resolve_path(cwd: &str, path: &str) -> String {
-    let mut full_path = String::new();
-
-    if path.starts_with('@') {
-        full_path = String::from(path);
-    } else if path.starts_with('/') {
-        full_path = alloc::format!("@0xE0{}", path);
+    let mut full_path = if path.starts_with('/') {
+        String::from(path)
     } else {
-        full_path = alloc::format!("{}{}", cwd, path);
-    }
+        let mut base = String::from(cwd);
+        if !base.ends_with('/') {
+            base.push('/');
+        }
+        base.push_str(path);
+        base
+    };
 
     let mut parts: Vec<&str> = Vec::new();
     for part in full_path.split('/') {
         if part.is_empty() || part == "." {
             continue;
         } else if part == ".." {
-            if parts.len() > 1 {
+            if !parts.is_empty() {
                 parts.pop();
             }
         } else {
@@ -59,7 +60,7 @@ pub fn resolve_path(cwd: &str, path: &str) -> String {
         }
     }
 
-    let mut res = String::new();
+    let mut res = String::from("/");
     for (i, p) in parts.iter().enumerate() {
         if i > 0 { res.push('/'); }
         res.push_str(p);
@@ -234,10 +235,10 @@ pub fn handle_chdir(context: &mut CPUState) {
                 let cwd_len = cwd.iter().position(|&c| c == 0).unwrap_or(cwd.len());
                 String::from_utf8_lossy(&cwd[..cwd_len]).into_owned()
             } else {
-                String::from("@0xE0/")
+                String::from("/")
             }
         } else {
-            String::from("@0xE0/")
+            String::from("/")
         }
     };
 
@@ -355,7 +356,7 @@ pub fn get_current_cwd() -> String {
             return String::from_utf8_lossy(&cwd[..cwd_len]).into_owned();
         }
     }
-    String::from("@0xE0/")
+    String::from("/")
 }
 
 pub fn assign_local_fd(global_fd: usize) -> u64 {
@@ -1297,7 +1298,7 @@ pub fn handle_readlinkat(context: &mut CPUState) {
                     if let Some(handle) = handle_opt {
                         if let crate::fs::vfs::FileHandle::File { node, .. } = handle {
                             if node.inode() == 2 {
-                                String::from("@0xE0/")
+                                String::from("/")
                             } else {
                                 get_proc_cwd()
                             }
@@ -1305,9 +1306,9 @@ pub fn handle_readlinkat(context: &mut CPUState) {
                     } else { get_proc_cwd() }
                 } else { get_proc_cwd() }
             } else { get_proc_cwd() }
-        } else { String::from("@0xE0/") }
+        } else { String::from("/") }
     } else if dirfd == 3 { // WASI Root
-        String::from("@0xE0/")
+        String::from("/")
     } else {
         get_current_cwd()
     };

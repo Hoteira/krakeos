@@ -89,7 +89,7 @@ pub fn main() {
         (2, fds_out[1] as u8),
     ];
 
-    match std::os::spawn_with_fds("@0xE0/apps/shell.wasm", &[], &map) {
+    match std::os::spawn_with_fds("/apps/shell.wasm", &[], &map) {
         pid if pid != usize::MAX => {
             debugln!("[term] SHell spawned into its own slot with PID {}", pid)
         }
@@ -105,7 +105,7 @@ pub fn main() {
     win.y = y as isize;
 
     {
-        if let Ok(mut file) = File::open("@0xE0/sys/fonts/CaskaydiaNerd.ttf") {
+        if let Ok(mut file) = File::open("/sys/fonts/CaskaydiaNerd.ttf") {
             let mut buffer = Vec::new();
             if file.read_to_end(&mut buffer).is_ok() {
                 // Leak the buffer to get a 'static reference for inkui

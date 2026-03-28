@@ -32,7 +32,7 @@ pub struct Process {
 impl Process {
     pub fn new(pid: u64, uid: u16, gid: u16, parent_pid: Option<u64>) -> Arc<Self> {
         let mut cwd = [0; 128];
-        let root = b"@0xE0/";
+        let root = b"/";
         cwd[..root.len()].copy_from_slice(root);
 
         let slot_id = crate::memory::address_space::allocate_slot().expect("SAS: Out of process slots!");

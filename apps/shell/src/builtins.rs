@@ -222,7 +222,7 @@ WASM:
         }
         return 0;
     } else if cmd == "cd" {
-        let target = if args.is_empty() { "@0xE0" } else { &args[0] };
+        let target = if args.is_empty() { "/" } else { &args[0] };
         let new_path = resolve_path(cwd, target);
         
         if std::os::chdir(&new_path) == 0 {

@@ -40,7 +40,7 @@ impl WasiCtx {
 
 impl Default for WasiCtx {
     fn default() -> Self {
-        Self::new(Vec::new(), String::from("@0xE0"), &[(0, 0), (1, 1), (2, 2)])
+        Self::new(Vec::new(), String::from("/"), &[(0, 0), (1, 1), (2, 2)])
     }
 }
 

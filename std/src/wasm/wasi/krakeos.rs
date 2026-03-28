@@ -185,7 +185,7 @@ impl Default for KrakeosWasiEnv {
             next_fd: 4, // 0,1,2 are reserved, 3 is preopened root
             random_state: 0,
             args: Vec::new(),
-            root_path: String::from("@0xE0"),
+            root_path: String::from("/"),
             env_vars: Vec::new(),
         }
     }

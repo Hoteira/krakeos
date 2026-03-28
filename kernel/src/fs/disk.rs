@@ -67,6 +67,10 @@ pub fn read(lba: u64, disk: u8, buffer: &mut [u8]) {
 
 #[allow(dead_code)]
 pub fn write(lba: u64, disk: u8, buffer: &[u8]) {
+    if disk != 0xE0 {
+        crate::debugln!("disk::write REJECTED: attempt to write to disk {:#x} (only 0xE0 allowed)", disk);
+        return;
+    }
     if crate::fs::virtio::is_active() {
         crate::fs::virtio::write(lba, disk, buffer);
         return;

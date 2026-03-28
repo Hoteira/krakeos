@@ -17,28 +17,16 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
                 let cwd_len = cwd.iter().position(|&c| c == 0).unwrap_or(cwd.len());
                 String::from_utf8_lossy(&cwd[..cwd_len]).into_owned()
             } else {
-                String::from("@0xE0/")
+                String::from("/")
             }
         } else {
-            String::from("@0xE0/")
+            String::from("/")
         }
     };
 
     let resolved = resolve_path(&cwd_str, path);
-
-    let path_parts: Vec<&str> = resolved.split('/').collect();
-    if path_parts.len() < 1 || !path_parts[0].starts_with('@') {
-        crate::debugln!("[spawn_process] Error: Invalid path format"); return Err(String::from("Invalid path format"));
-    }
-
-    let disk_part = &path_parts[0][1..];
-    let disk_id = if disk_part.starts_with("0x") || disk_part.starts_with("0X") {
-        u8::from_str_radix(&disk_part[2..], 16).unwrap_or(0xFF)
-    } else {
-        disk_part.parse::<u8>().unwrap_or_else(|_| u8::from_str_radix(disk_part, 16).unwrap_or(0xFF))
-    };
-
-    let actual_path = if path_parts.len() > 1 { path_parts[1..].join("/") } else { String::from("") };
+    let disk_id = 0xE0;
+    let actual_path = resolved.clone();
 
     let process_name_str = if let Some(last_slash) = actual_path.rfind('/') {
         &actual_path[last_slash + 1..]

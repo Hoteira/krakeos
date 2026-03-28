@@ -104,16 +104,8 @@ fn get_current_ids() -> (u16, u16) {
 }
 
 pub fn open(disk_id: u8, path_str: &str) -> Result<Box<dyn VfsNode>, String> {
-    let (actual_disk, actual_path) = if path_str.starts_with('@') {
-        let mut parts = path_str.splitn(2, '/');
-        let disk_part = parts.next().unwrap().trim_start_matches('@');
-        let id = if disk_part.starts_with("0x") || disk_part.starts_with("0X") {
-            u8::from_str_radix(&disk_part[2..], 16).unwrap_or(disk_id)
-        } else {
-            u8::from_str_radix(disk_part, 16).unwrap_or_else(|_| disk_part.parse::<u8>().unwrap_or(disk_id))
-        };
-        let p = parts.next().unwrap_or("");
-        (id, p)
+    let (actual_disk, actual_path) = if path_str.starts_with('/') {
+        (0xE0, path_str)
     } else {
         (disk_id, path_str)
     };

@@ -26,7 +26,7 @@ pub fn main() {
         .height(Size::Relative(100))
         .background_color(Color::rgb(255, 0, 0));
 
-    if let Ok(mut file) = File::open("@0xE0/sys/img/wallpaper2.png") {
+    if let Ok(mut file) = File::open("/sys/img/wallpaper2.png") {
         let size = file.size();
         if size > 0 {
             let buffer_addr = std::memory::malloc(size);
@@ -48,28 +48,28 @@ pub fn main() {
 
     println!("Desktop Environment Initialized.");
 
-    println!("Starting userland WASM Apps...");
-
+    if let Ok(mut file) = File::open("/sys/img/wallpaper2.png") {
+    ...
     std::thread::spawn(|| {
-        std::wasm::run("@0xE0/apps/container_test.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
+        std::wasm::run("/apps/container_test.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
     });
 
     sleep(1000);
 
     /*std::thread::spawn(|| {
-        std::wasm::run("@0xE0/apps/aot_test.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
+        std::wasm::run("/apps/aot_test.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
     });
 
     sleep(500);
 
     std::thread::spawn(|| {
-        std::wasm::run("@0xE0/apps/taskbar.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
+        std::wasm::run("/apps/taskbar.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
     });
 
     sleep(500);*/
 
     std::thread::spawn(|| {
-        std::wasm::run("@0xE0/apps/term.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
+        std::wasm::run("/apps/term.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
     });
 
 

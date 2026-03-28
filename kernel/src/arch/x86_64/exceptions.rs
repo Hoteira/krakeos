@@ -547,11 +547,11 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
                     unsafe { LAST_KEY_GLOBAL = eval_key; }
                 } else if eval_key == 't' as u32 {
                     // Spawn terminal
-                    let _ = crate::syscalls::process::spawn_process("@0xE0/sys/bin/term.wasm", None, None, None);
+                    let _ = crate::syscalls::process::spawn_process("/sys/bin/term.wasm", None, None, None);
                     handled_globally = true;
                     unsafe { LAST_KEY_GLOBAL = eval_key; }
                 } else if eval_key == 0x0D { // Enter
-                    let _ = crate::syscalls::process::spawn_process("@0xE0/apps/term.wasm", None, None, None);
+                    let _ = crate::syscalls::process::spawn_process("/apps/term.wasm", None, None, None);
                     handled_globally = true;
                     unsafe { LAST_KEY_GLOBAL = eval_key; }
                 } else if eval_key >= '1' as u32 && eval_key <= '5' as u32 {

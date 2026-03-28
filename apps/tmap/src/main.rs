@@ -32,7 +32,7 @@ impl AppState {
         self.selected_index = 0;
 
 
-        if self.current_path != "@0xE0" && self.current_path.len() > 5 {
+        if self.current_path != "/" && self.current_path.len() > 1 {
             self.entries.push(fs::DirEntry {
                 name: String::from(".."),
                 file_type: fs::FileType::Directory,
@@ -94,7 +94,7 @@ impl AppState {
                 if let Some(last_slash) = self.current_path.rfind('/') {
                     self.current_path.truncate(last_slash);
                 } else {
-                    self.current_path = String::from("@0xE0");
+                    self.current_path = String::from("/");
                 }
                 self.refresh();
             } else if entry.file_type == fs::FileType::Directory {
@@ -109,7 +109,7 @@ impl AppState {
 }
 
 pub fn main() {
-    let mut app = AppState::new("@0xE0");
+    let mut app = AppState::new("/");
     let mut needs_redraw = true;
 
 

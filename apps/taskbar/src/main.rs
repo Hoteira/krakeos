@@ -20,7 +20,7 @@ pub fn main() {
 
     println!("Loading font...");
     {
-        match std::fs::read("@0xE0/sys/fonts/CaskaydiaNerd.ttf") {
+        match std::fs::read("/sys/fonts/CaskaydiaNerd.ttf") {
             Ok(bytes) => {
                 println!("Font loaded ({} bytes).", bytes.len());
                 // Leak the memory to create a 'static slice for the window font loader

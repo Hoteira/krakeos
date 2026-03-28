@@ -36,7 +36,7 @@ All development must adhere to the Single Address Space model where isolation is
 ### Build & Verification
 - **Build Entrypoint:** Use `make.bat` for full system builds and image generation.
 - **Fast Feedback:** Use `cargo check` on individual crates (`kernel`, `std`, `inkui`) for rapid verification.
-- **Path Resolution:** Default `PATH` is `@0xE0/sys/bin;@0xE0/apps`.
+- **Path Resolution:** Default `PATH` is `/sys/bin;/apps`.
 
 ### GUI Development (`inkui`)
 - **Rendering:** Software rasterization via `inkui`.

@@ -63,7 +63,7 @@ Custom linker targets:
 2. ISTs + IDT + PIC
 3. VirtIO block + VFS + Ext2 mount at disk `0xE0`
 4. Window manager + event queue + task manager
-5. Spawn `@0xE0/sys/bin/init.wasm` as PID 1
+5. Spawn `/sys/bin/init.wasm` as PID 1
 6. Enter idle `hlt` loop; scheduler runs via PIT interrupt
 
 ### Syscall Interface (`kernel/src/interrupts/syscalls/`)
@@ -82,7 +82,7 @@ Custom linker targets:
 - `vfs.rs` — global file descriptor table (256 slots), dispatch to mounted `FileSystem` trait objects
 - `ext2/` — read/write Ext2 implementation
 - `pipe.rs` — IPC pipes
-- File paths use `@0xE0/path` syntax where `0xE0` is the disk index
+- File paths use `/path` syntax (defaults to 0xE0 disk)
 
 ### Window Manager (`kernel/src/window_manager/`)
 - In-kernel compositor with alpha blending (SIMD/SSE-accelerated in `composer.rs`)

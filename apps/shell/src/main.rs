@@ -24,7 +24,7 @@ pub fn main() {
     let welcome_msg = format!("\nWelcome to KrakeOS Shell {} \n", welcome_icon);
     std::os::file_write(STDOUT_FD, welcome_msg.as_bytes());
 
-    let mut cwd = String::from("@0xE0");
+    let mut cwd = String::from("/");
     let mut path_env = String::from("/sys/bin;/apps");
     let mut reader = LineReader::new();
 
@@ -179,7 +179,7 @@ pub fn main() {
                                 }
                             }
 
-                            if !found && (path_dir.ends_with("/apps") || path_dir == "@0xE0/apps") {
+                            if !found && (path_dir.ends_with("/apps") || path_dir == "/apps") {
                                 let apps_dir = format!("{}/{}", path_dir, parsed.cmd);
                                 if let Ok(entries) = std::fs::read_dir(&apps_dir) {
                                     for entry in entries {

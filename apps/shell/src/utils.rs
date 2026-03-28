@@ -5,29 +5,23 @@ pub fn resolve_path(cwd: &str, path: &str) -> String {
     let trimmed_path = path.trim();
     if trimmed_path.is_empty() { return String::from(cwd); }
 
-    let mut parts = Vec::new();
-
-    if !trimmed_path.starts_with('@') {
-        if trimmed_path.starts_with('/') {
-            if let Some(idx) = cwd.find('/') {
-                parts.push(&cwd[..idx]);
-            } else {
-                parts.push(cwd);
-            }
-        } else {
-            for part in cwd.split('/') {
-                if !part.is_empty() {
-                    parts.push(part);
-                }
-            }
+    let mut full_path = if trimmed_path.starts_with('/') {
+        String::from(trimmed_path)
+    } else {
+        let mut base = String::from(cwd);
+        if !base.ends_with('/') {
+            base.push('/');
         }
-    }
+        base.push_str(trimmed_path);
+        base
+    };
 
-    for part in trimmed_path.split('/') {
+    let mut parts: Vec<&str> = Vec::new();
+    for part in full_path.split('/') {
         if part.is_empty() || part == "." {
             continue;
         } else if part == ".." {
-            if parts.len() > 1 {
+            if !parts.is_empty() {
                 parts.pop();
             }
         } else {
@@ -35,11 +29,7 @@ pub fn resolve_path(cwd: &str, path: &str) -> String {
         }
     }
 
-    if parts.is_empty() {
-        return String::from("@0xE0");
-    }
-
-    let mut res = String::new();
+    let mut res = String::from("/");
     for (i, p) in parts.iter().enumerate() {
         if i > 0 { res.push('/'); }
         res.push_str(p);
