@@ -684,7 +684,7 @@ pub fn handle_read_dir(context: &mut CPUState) {
                         match node.read_dir(*offset, buf) {
                             Ok((bw, cr)) => {
                                 *offset += cr as u64;
-                                Some(Ok(bw))
+                                Some(Ok((bw, cr)))
                             }
                             Err(e) => Some(Err(e)),
                         }
@@ -695,7 +695,10 @@ pub fn handle_read_dir(context: &mut CPUState) {
             release_fs_lock();
 
             match res {
-                Some(Ok(n)) => context.rax = n as u64,
+                Some(Ok((n, cr))) => {
+                    context.rax = n as u64;
+                    context.rdx = cr as u64;
+                }
                 Some(Err(_)) => context.rax = u64::MAX,
                 None => context.rax = u64::MAX,
             }

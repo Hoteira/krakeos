@@ -18,6 +18,7 @@ const SYS_YIELD: u64 = 129;
 const SYS_RANDOM_GET: u64 = 208;
 const SYS_RENAME: u64 = 82;
 const SYS_GETDENTS: u64 = 78;
+const SYS_MEMORY_GROW: u64 = 200;
 
 // =============================================================================
 // wasi:cli
@@ -422,6 +423,88 @@ pub extern "C" fn wasi_p2_descriptor_read_directory(ctx: &mut Ring3Context, sp: 
         // Return a directory stream handle = the fd itself
         *result_abs = 0; // Ok
         core::ptr::write_unaligned(result_abs.add(4) as *mut u32, handle as u32);
+        sp.add(2)
+    }
+}
+
+/// [method]directory-entry-stream.read-directory-entry(handle: i32, result_ptr: u32)
+#[no_mangle]
+pub extern "C" fn wasi_p2_dir_stream_read_directory_entry(ctx: &mut Ring3Context, sp: *mut u128) -> *mut u128 {
+    unsafe {
+        let result_offset = (*sp.add(0)) as u32;
+        let handle = (*sp.add(1)) as i32;
+        let mem = ctx.memory_base;
+        let result_abs = mem.add(result_offset as usize);
+
+        let mut buf = [0u8; 512];
+        let rax: u64;
+        let rdx: u64;
+        
+        core::arch::asm!(
+            "syscall",
+            in("rax") SYS_GETDENTS,
+            in("rdi") handle as u64,
+            in("rsi") buf.as_mut_ptr() as u64,
+            in("rdx") buf.len() as u64,
+            lateout("rax") rax,
+            lateout("rdx") rdx,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack)
+        );
+
+        if rax == u64::MAX {
+            core::ptr::write_unaligned(result_abs as *mut u32, 1); // Err
+            core::ptr::write_unaligned(result_abs.add(4) as *mut u32, 5); // EIO
+            return sp.add(2);
+        }
+
+        if rax == 0 {
+            core::ptr::write_unaligned(result_abs as *mut u32, 0); // Ok
+            core::ptr::write_unaligned(result_abs.add(4) as *mut u32, 0); // None
+            return sp.add(2);
+        }
+
+        let cr = rdx;
+        if cr > 1 {
+            // If the kernel returned multiple records, seek back to ensure the next
+            // call starts at the second record.
+            let back = -((cr - 1) as i64);
+            // SYS_LSEEK: rdi=fd, rsi=offset, rdx=whence (1=SEEK_CUR)
+            crate::syscall::syscall3(SYS_LSEEK, handle as u64, back as u64, 1);
+        }
+
+        // Parse first entry: [type (1), name_len (1), name (name_len)]
+        let type_byte = buf[0];
+        let name_len = buf[1] as usize;
+        let name = &buf[2..2 + name_len];
+
+        // Allocate space for name at the end of linear memory (bump)
+        let name_ptr = ctx.memory_size as u32;
+        
+        // Grow memory by 1 page (64KB) via syscall SYS_MEMORY_GROW
+        let _ = crate::syscall::syscall2(SYS_MEMORY_GROW, 1, 0);
+        ctx.memory_size += 65536;
+        
+        core::ptr::copy_nonoverlapping(name.as_ptr(), mem.add(name_ptr as usize), name_len);
+
+        // Map KrakeOS type to WASI P2 type
+        // KrakeOS: 1=File, 2=Dir, 3=Device
+        // WASI: regular-file=4, directory=3, character-device=2
+        let wasi_type = match type_byte {
+            1 => 4,
+            2 => 3,
+            3 => 2,
+            _ => 0,
+        };
+
+        core::ptr::write_unaligned(result_abs as *mut u32, 0); // Ok
+        core::ptr::write_unaligned(result_abs.add(4) as *mut u32, 1); // Some
+        core::ptr::write_unaligned(result_abs.add(8) as *mut u8, wasi_type);
+        // padding 3 bytes
+        core::ptr::write_unaligned(result_abs.add(12) as *mut u32, name_ptr);
+        core::ptr::write_unaligned(result_abs.add(16) as *mut u32, name_len as u32);
+
         sp.add(2)
     }
 }

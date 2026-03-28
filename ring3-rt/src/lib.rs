@@ -211,6 +211,7 @@ pub static JUMP_TABLE: [unsafe extern "C" fn(&mut Ring3Context, *mut u128) -> *m
     table[524] = wasi_p2::wasi_p2_dir_stream_drop;
     table[525] = wasi_p2::wasi_p2_get_random_bytes;
     table[526] = wasi_p2::wasi_p2_instance_network;
+    table[527] = wasi_p2::wasi_p2_dir_stream_read_directory_entry;
 
     table[999] = wasi_fs::wasi_serial_print;
     table[1023] = unsafe { core::mem::transmute(traps::process_exit as *const ()) };

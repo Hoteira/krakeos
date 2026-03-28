@@ -528,6 +528,7 @@ impl<'a, T: Config> Store<'a, T> {
                             ("wasi:filesystem/types@0.2.0", "[method]descriptor.rename-at") => 522,
                             ("wasi:filesystem/types@0.2.0", "[method]descriptor.read-directory") => 523,
                             ("wasi:filesystem/types@0.2.0", "[resource-drop]directory-entry-stream") => 524,
+                            ("wasi:filesystem/types@0.2.0", "[method]directory-entry-stream.read-directory-entry") => 527,
                             ("wasi:random/random@0.2.0", "get-random-bytes") => 525,
                             ("wasi:sockets/instance-network@0.2.0", "instance-network") => 526,
 

@@ -322,8 +322,7 @@ crate::export_method!(
                     let _ = write_bytes(store, payload_ptr, &[ty]);
 
                     let _ = write_u32(store, payload_ptr + 4, name_ptr); 
-                    let _ = write_u32(store, payload_ptr + 12, name_bytes.len() as u32); 
-                    let _ = write_u64(store, payload_ptr + 16, inode);
+                    let _ = write_u32(store, payload_ptr + 8, name_bytes.len() as u32);
                     } else {
                     let _ = write_u32(store, ret_ptr, 0); // Ok Result
                     let _ = write_u32(store, ret_ptr + 4, 0); // None Option

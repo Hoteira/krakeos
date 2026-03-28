@@ -326,9 +326,9 @@ pub fn read_dir(path: &str) -> Result<Vec<DirEntry>> {
         if has_value == 0 { break; }
 
         let type_byte = entry_buf[8];
-        // On wasm32: name_ptr is 8 bytes at offset 12, name_len at offset 20
-        let name_ptr = unsafe { core::ptr::read_unaligned(entry_buf.as_ptr().add(12) as *const u64) } as *const u8;
-        let name_len = unsafe { core::ptr::read_unaligned(entry_buf.as_ptr().add(20) as *const u32) } as usize;
+        // On wasm32: name_ptr is 4 bytes at offset 12, name_len at offset 16
+        let name_ptr = unsafe { core::ptr::read_unaligned(entry_buf.as_ptr().add(12) as *const u32) } as *const u8;
+        let name_len = unsafe { core::ptr::read_unaligned(entry_buf.as_ptr().add(16) as *const u32) } as usize;
 
         let name = unsafe {
             let slice = core::slice::from_raw_parts(name_ptr, name_len);

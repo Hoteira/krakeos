@@ -243,20 +243,21 @@ method_export!("wasi:filesystem/types@0.2.0", "[method]directory-entry-stream.re
                     _ => 0,
                 };
 
-                // WASI Result layout:
+                // WASI Result layout (WASM32 aligned):
                 // [0..4]   = 0 (Result::Ok)
                 // [4..8]   = 1 (Option::Some)
-                // [8..9]   = type
-                // [12..20] = name_ptr (8 bytes)
-                // [20..24] = name_len (4 bytes)
-                // [24..32] = inode (8 bytes)
+                // [8..9]   = type (u8)
+                // [9..12]  = padding
+                // [12..16] = name_ptr (u32)
+                // [16..20] = name_len (u32)
+                // [24..32] = inode (u64) - if we had one
 
                 *result_ptr = 0; // Ok
                 core::ptr::write_unaligned(result_ptr.add(4) as *mut u32, 1); // Some
                 core::ptr::write_unaligned(result_ptr.add(8) as *mut u8, wasi_type);
                 
-                core::ptr::write_unaligned(result_ptr.add(12) as *mut usize, name_ptr);
-                core::ptr::write_unaligned(result_ptr.add(20) as *mut u32, name_len as u32);
+                core::ptr::write_unaligned(result_ptr.add(12) as *mut u32, name_ptr as u32);
+                core::ptr::write_unaligned(result_ptr.add(16) as *mut u32, name_len as u32);
                 core::ptr::write_unaligned(result_ptr.add(24) as *mut u64, 0); // inode stub
 
                 return;
