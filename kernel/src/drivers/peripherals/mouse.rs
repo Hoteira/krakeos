@@ -99,8 +99,23 @@ pub fn init_mouse() {
         println!("Mouse: VMMouse initialized successfully (Absolute Mode).");
     }
 
+    // Standard PS/2 Mouse Initialization
     mouse_write(MOUSE_SET_DEFAULTS);
     let _ack = mouse_read();
+
+    // Try to enable scroll wheel (IntelliMouse sequence)
+    mouse_write(0xF3); // Set Sample Rate
+    let _ = mouse_read();
+    mouse_write(200);
+    let _ = mouse_read();
+    mouse_write(0xF3); // Set Sample Rate
+    let _ = mouse_read();
+    mouse_write(100);
+    let _ = mouse_read();
+    mouse_write(0xF3); // Set Sample Rate
+    let _ = mouse_read();
+    mouse_write(80);
+    let _ = mouse_read();
 
     mouse_write(MOUSE_GET_ID);
     let _ack = mouse_read();

@@ -99,7 +99,7 @@ unsafe fn send_command_queue_unlocked(queue_idx: usize, out_phys: &[u64], out_le
         let used_ptr = (vq.virt_base + (vq.used_phys - vq.desc_phys)) as *mut VirtqUsed;
         vq.last_used_idx = read_volatile(core::ptr::addr_of!((*used_ptr).idx));
         timeout -= 1;
-        if timeout == 0 { if int_enabled { core::arch::asm!("sti"); } return false; }
+        if timeout == 0 { return false; }
     }
     
     let virt_desc_base = vq.virt_base as *mut VirtqDesc;
@@ -145,7 +145,7 @@ unsafe fn send_command_queue_unlocked(queue_idx: usize, out_phys: &[u64], out_le
     
     vq.free_head = curr as u16;
     
-    if !wait { if int_enabled { core::arch::asm!("sti"); } return true; }
+    if !wait { return true; }
     
     let used_ptr = (vq.virt_base + (vq.used_phys - vq.desc_phys)) as *mut VirtqUsed;
     let mut success = false; timeout = 1_000_000_000;
@@ -167,6 +167,5 @@ unsafe fn send_command_queue_unlocked(queue_idx: usize, out_phys: &[u64], out_le
             break;
         }
     }
-    if int_enabled { core::arch::asm!("sti"); }
     success
 }

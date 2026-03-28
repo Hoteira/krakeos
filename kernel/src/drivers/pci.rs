@@ -7,16 +7,21 @@ pub fn allocate_bar_address(size: u32) -> u32 {
     unsafe {
         let addr = PCI_BAR_HEAD;
         // Align to 16MB or size, whichever is larger, to stay compatible with PCI rules
+        // Ensure align is at least 1, and size is at least 1
         let align = (size as u64).max(0x1000000);
-        let aligned_addr = (addr + align - 1) & !(align - 1);
+        
+        // Use a safer alignment calculation that avoids overflow before the mask
+        // aligned_addr = (addr + align - 1) & !(align - 1)
+        // can be rewritten as:
+        let aligned_addr = if addr % align == 0 {
+            addr
+        } else {
+            addr + (align - (addr % align))
+        };
         
         // Check for 32-bit overflow
-        if aligned_addr + (size as u64) > 0xFFFFFFFF {
-             // If we overflow 32-bit, we should ideally use 64-bit BARs, 
-             // but our return type is u32. For now, let's wrap or panic gracefully.
-             // Actually, let's move the head back down if we hit the ceiling, 
-             // or just use a more compact area.
-             panic!("PCI: 32-bit BAR space exhausted at {:#x}", aligned_addr);
+        if aligned_addr.saturating_add(size as u64) > 0xFFFFFFFF {
+             panic!("PCI: 32-bit BAR space exhausted at {:#x} for size {:#x}", aligned_addr, size);
         }
         
         PCI_BAR_HEAD = aligned_addr + (size as u64);

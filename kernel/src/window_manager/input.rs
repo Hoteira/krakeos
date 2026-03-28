@@ -24,7 +24,7 @@ pub static mut MOUSE: Mouse = Mouse {
 };
 
 impl Mouse {
-    pub fn update(&mut self, dx: isize, dy: isize, left: bool, right: bool, center: bool, _is_super: bool) {
+    pub fn update(&mut self, dx: isize, dy: isize, left: bool, right: bool, center: bool, scroll: i8, _is_super: bool) {
         let old_x = self.x;
         let old_y = self.y;
         let _btns_changed = self.left != left || self.right != right || self.center != center;
@@ -104,18 +104,35 @@ impl Mouse {
                     static mut LAST_BTNS: [bool; 3] = [false; 3];
 
                     let btns = [self.left, self.right, self.center];
+                    if scroll != 0 {
+                        crate::debugln!("[WM] Scroll detected: {} for window {}", scroll, w.id);
+                    }
                     if local_x != unsafe { LAST_X }
                         || local_y != unsafe { LAST_Y }
                         || btns != unsafe { LAST_BTNS }
+                        || scroll != 0
                     {
-                        let mut event_queue = GLOBAL_EVENT_QUEUE.lock();
-                        event_queue.add_event(Event::Mouse(MouseEvent {
+                        let event = Event::Mouse(MouseEvent {
                             wid: w.id as u32,
                             x: local_x as u32,
                             y: local_y as u32,
                             buttons: btns,
-                            scroll: 0,
-                        }));
+                            scroll,
+                        });
+
+                        // Attempt to push directly to the process's registered event queue
+                        let mut pushed = false;
+                        {
+                            let tm = crate::task::TASK_MANAGER.lock();
+                            let mut event_queue_internal = GLOBAL_EVENT_QUEUE.lock();
+                            pushed = event_queue_internal.push_to_process(&tm, w.pid, event);
+                        }
+
+                        if !pushed {
+                            let mut event_queue = GLOBAL_EVENT_QUEUE.lock();
+                            event_queue.add_event(event);
+                        }
+
                         unsafe {
                             LAST_X = local_x;
                             LAST_Y = local_y;
@@ -142,8 +159,9 @@ pub fn handle_vmmouse(buttons: u32, x: u32, y: u32, z: u32) {
         let left = (buttons & 0x20) != 0;
         let right = (buttons & 0x10) != 0;
         let center = (buttons & 0x08) != 0;
+        let scroll = z as i8;
         
-        (*(&raw mut MOUSE)).update(dx, dy, left, right, center, false);
+        (*(&raw mut MOUSE)).update(dx, dy, left, right, center, scroll, false);
     }
 }
 
@@ -155,7 +173,8 @@ pub fn handle_mouse_update() {
         let left = (packet[0] & 1) != 0;
         let right = (packet[0] & 2) != 0;
         let center = (packet[0] & 4) != 0;
+        let scroll = packet[3] as i8;
         
-        (*(&raw mut MOUSE)).update(dx, dy, left, right, center, false);
+        (*(&raw mut MOUSE)).update(dx, dy, left, right, center, scroll, false);
     }
 }

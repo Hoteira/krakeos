@@ -407,6 +407,7 @@ impl Window {
 
                         if let Some(id) = scroll_target {
                             if let Some(w) = self.find_widget_by_id_mut(id) {
+                                // Delegate to handle_scroll which now has the correct sign logic
                                 w.handle_scroll(e.scroll);
                                 any_redraw = true;
                             }

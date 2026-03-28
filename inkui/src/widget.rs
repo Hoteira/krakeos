@@ -353,13 +353,16 @@ impl Widget {
     }
 
     pub fn handle_scroll(&mut self, delta: i8) {
+        std::debugln!("[inkui] handle_scroll: delta={}", delta);
         let geo = self.geometry_mut();
         let scroll_step = 60;
 
 
         if delta > 0 {
+            // Previously this decreased offset, now it increases it
             geo.scroll_offset_y = geo.scroll_offset_y.saturating_add((delta.abs() as usize) * scroll_step);
         } else {
+            // Previously this increased offset, now it decreases it
             geo.scroll_offset_y = geo.scroll_offset_y.saturating_sub((delta.abs() as usize) * scroll_step);
         }
 
