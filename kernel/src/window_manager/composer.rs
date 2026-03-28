@@ -125,17 +125,28 @@ impl Composer {
         let spacing = self.spacing as u32;
 
         if let Some(win_idx) = node.leaf_window {
-            let w = &self.workspaces[ws_idx].windows[win_idx];
             let target_x = rx as i64;
             let target_y = ry as i64;
             let target_w = rw.max(1) as u64;
             let target_h = rh.max(1) as u64;
+
+            let (needs_event, pid, wid) = {
+                let w = &mut self.workspaces[ws_idx].windows[win_idx];
+                let changed = w.x != target_x || w.y != target_y || w.width != target_w || w.height != target_h;
+                
+                // Authoritatively store the intended tiled size in prev fields
+                w.prev_x = target_x;
+                w.prev_y = target_y;
+                w.prev_width = target_w;
+                w.prev_height = target_h;
+                
+                (changed, w.pid, w.id)
+            };
             
-            // Only send resize event, DO NOT update w in kernel until app responds
-            if w.x != target_x || w.y != target_y || w.width != target_w || w.height != target_h {
+            if needs_event {
                 let event = crate::window_manager::events::Event::Resize(
                     crate::window_manager::events::ResizeEvent {
-                        wid: w.id as u32,
+                        wid: wid as u32,
                         width: target_w as u32,
                         height: target_h as u32,
                         x: target_x as i32,
@@ -143,7 +154,6 @@ impl Composer {
                     }
                 );
                 
-                let pid = w.pid;
                 let tm = crate::task::TASK_MANAGER.int_lock();
                 if !crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&*tm, pid, event) {
                     crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().add_event(event);
@@ -383,6 +393,10 @@ impl Composer {
         if w.w_type == Items::Window {
             if true { // w.width == 0 || w.height == 0
                 crate::debugln!("[WINDOW_SERVER] TILING WID {}", w.id);
+                // Hide window in workspace until it responds to the first tiling resize
+                self.workspaces[ws_idx].windows[inserted_idx].width = 0;
+                self.workspaces[ws_idx].windows[inserted_idx].height = 0;
+                
                 let leaf_id = self.workspaces[ws_idx].alloc_node().unwrap();
                 self.workspaces[ws_idx].tree[leaf_id].leaf_window = Some(inserted_idx);
 
@@ -469,6 +483,16 @@ impl Composer {
         for ws in 0..5 {
             for i in 0..16 {
                 if w.id == self.workspaces[ws].windows[i].id {
+                    // If window is tiled, it MUST match the tiling target stored in prev_*
+                    if let Some(_leaf) = self.find_leaf_for_window(ws, i) {
+                        let target = &self.workspaces[ws].windows[i];
+                        if w.width != target.prev_width || w.height != target.prev_height || w.x != target.prev_x || w.y != target.prev_y {
+                            // Suppress resizes that don't match the tiling layout (e.g. initial app sync)
+                            // This eliminates the "flash" at original size during spawn.
+                            return;
+                        }
+                    }
+
                     let old_x = self.workspaces[ws].windows[i].x; let old_y = self.workspaces[ws].windows[i].y;
                     let old_w = self.workspaces[ws].windows[i].width; let old_h = self.workspaces[ws].windows[i].height;
 
@@ -482,6 +506,8 @@ impl Composer {
                         let max_x = (old_x + old_w as i64).max(w.x + w.width as i64) as i32; let max_y = (old_y + old_h as i64).max(w.y + w.height as i64) as i32;
                         self.update_window_area_rect(min_x, min_y, (max_x - min_x) as u32, (max_y - min_y) as u32);
                     }
+                    
+                    self.retile_workspace(ws);
                     return;
                 }
             }
