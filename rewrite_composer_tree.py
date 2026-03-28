@@ -1,4 +1,10 @@
-use crate::debugln;
+import sys
+
+def run():
+    with open('kernel/src/window_manager/composer.rs', 'r') as f:
+        content = f.read()
+
+    new_content = """use crate::debugln;
 use crate::window_manager::display::{DISPLAY_SERVER, VIRTIO_ACTIVE};
 use crate::window_manager::window::{Items, Window, NULL_WINDOW};
 use alloc::vec::Vec;
@@ -125,30 +131,11 @@ impl Composer {
         let spacing = self.spacing as u32;
 
         if let Some(win_idx) = node.leaf_window {
-            let w = &self.workspaces[ws_idx].windows[win_idx];
-            let target_x = rx as i64;
-            let target_y = ry as i64;
-            let target_w = rw.max(1) as u64;
-            let target_h = rh.max(1) as u64;
-            
-            // Only send resize event, DO NOT update w in kernel until app responds
-            if w.x != target_x || w.y != target_y || w.width != target_w || w.height != target_h {
-                let event = crate::window_manager::events::Event::Resize(
-                    crate::window_manager::events::ResizeEvent {
-                        wid: w.id as u32,
-                        width: target_w as u32,
-                        height: target_h as u32,
-                        x: target_x as i32,
-                        y: target_y as i32,
-                    }
-                );
-                
-                let pid = w.pid;
-                let tm = crate::task::TASK_MANAGER.int_lock();
-                if !crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&*tm, pid, event) {
-                    crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().add_event(event);
-                }
-            }
+            let w = &mut self.workspaces[ws_idx].windows[win_idx];
+            w.x = rx as i64;
+            w.y = ry as i64;
+            w.width = rw.max(1) as u64;
+            w.height = rh.max(1) as u64;
             return;
         }
 
@@ -218,52 +205,29 @@ impl Composer {
     }
 
     pub fn copy_window(&mut self, id: u64) {
-        let ws = &self.workspaces[self.active_workspace];
-        let screen_w = unsafe { (*(&raw mut DISPLAY_SERVER)).width as u32 };
-        let screen_h = unsafe { (*(&raw mut DISPLAY_SERVER)).height as u32 };
-
-        let mut fullscreen_id = 0;
-        for i in 0..16 {
-            let w = &ws.windows[i];
-            if w.w_type == Items::Window && w.x <= 0 && w.y <= 0 && w.width as u32 >= screen_w && w.height as u32 >= screen_h {
-                fullscreen_id = w.id;
-                break;
-            }
-        }
-
-        if fullscreen_id != 0 && fullscreen_id != id {
-            return; // Suppress background updates when a fullscreen window is active
-        }
-
         if id == self.wallpaper.id && self.wallpaper.w_type != Items::Null {
-            if fullscreen_id == 0 {
-                unsafe {
-                    let ds = &mut *(&raw mut DISPLAY_SERVER);
-                    ds.copy_to_db(self.wallpaper.width as u32, self.wallpaper.height as u32, self.wallpaper.get_active_buffer() as usize, self.wallpaper.x as i32, self.wallpaper.y as i32, None, self.wallpaper.treat_as_transparent);
-                }
+            unsafe {
+                let ds = &mut *(&raw mut DISPLAY_SERVER);
+                ds.copy_to_db(self.wallpaper.width as u32, self.wallpaper.height as u32, self.wallpaper.get_active_buffer() as usize, self.wallpaper.x as i32, self.wallpaper.y as i32, None, self.wallpaper.treat_as_transparent);
             }
             return;
         }
         if id == self.taskbar.id && self.taskbar.w_type != Items::Null {
-            if fullscreen_id == 0 {
-                unsafe {
-                    let ds = &mut *(&raw mut DISPLAY_SERVER);
-                    ds.copy_to_db(self.taskbar.width as u32, self.taskbar.height as u32, self.taskbar.get_active_buffer() as usize, self.taskbar.x as i32, self.taskbar.y as i32, None, self.taskbar.treat_as_transparent);
-                }
+            unsafe {
+                let ds = &mut *(&raw mut DISPLAY_SERVER);
+                ds.copy_to_db(self.taskbar.width as u32, self.taskbar.height as u32, self.taskbar.get_active_buffer() as usize, self.taskbar.x as i32, self.taskbar.y as i32, None, self.taskbar.treat_as_transparent);
             }
             return;
         }
-
+        let ws = &self.workspaces[self.active_workspace];
         for i in 0..16 {
             if id == ws.windows[i].id && ws.windows[i].w_type != Items::Null {
-                let is_fullscreen = fullscreen_id == id;
-                let border_color = if ws.windows[i].w_type == Items::Window && !is_fullscreen {
+                let border_color = if ws.windows[i].w_type == Items::Window {
                     unsafe { if ws.windows[i].id == CLICKED_WINDOW_ID as u64 { Some(0xFFFFFFFF) } else { Some(0xFF9070FF) } }
                 } else { None };
-                
                 unsafe {
                     let ds = &mut *(&raw mut DISPLAY_SERVER);
-                    ds.copy_to_db(ws.windows[i].width as u32, ws.windows[i].height as u32, ws.windows[i].get_active_buffer() as usize, ws.windows[i].x as i32, ws.windows[i].y as i32, border_color, if is_fullscreen { false } else { ws.windows[i].treat_as_transparent });
+                    ds.copy_to_db(ws.windows[i].width as u32, ws.windows[i].height as u32, ws.windows[i].get_active_buffer() as usize, ws.windows[i].x as i32, ws.windows[i].y as i32, border_color, ws.windows[i].treat_as_transparent);
                 }
             }
         }
@@ -381,8 +345,7 @@ impl Composer {
         if inserted_idx == 16 { return w.id; }
 
         if w.w_type == Items::Window {
-            if true { // w.width == 0 || w.height == 0
-                crate::debugln!("[WINDOW_SERVER] TILING WID {}", w.id);
+            if w.width == 0 || w.height == 0 {
                 let leaf_id = self.workspaces[ws_idx].alloc_node().unwrap();
                 self.workspaces[ws_idx].tree[leaf_id].leaf_window = Some(inserted_idx);
 
@@ -417,7 +380,7 @@ impl Composer {
                         let parent = self.workspaces[ws_idx].tree[target_leaf].parent;
                         let new_internal = self.workspaces[ws_idx].alloc_node().unwrap();
                         
-                        let parent_horiz = parent.map_or(true, |p| self.workspaces[ws_idx].tree[p].split_horizontal);
+                        let parent_horiz = parent.map_or(false, |p| self.workspaces[ws_idx].tree[p].split_horizontal);
                         self.workspaces[ws_idx].tree[new_internal].split_horizontal = !parent_horiz;
                         self.workspaces[ws_idx].tree[new_internal].left_child = Some(target_leaf);
                         self.workspaces[ws_idx].tree[new_internal].right_child = Some(leaf_id);
@@ -440,6 +403,44 @@ impl Composer {
                 
                 self.retile_workspace(ws_idx);
 
+                let tw = self.workspaces[ws_idx].windows[inserted_idx].width;
+                let th = self.workspaces[ws_idx].windows[inserted_idx].height;
+                let tx = self.workspaces[ws_idx].windows[inserted_idx].x;
+                let ty = self.workspaces[ws_idx].windows[inserted_idx].y;
+
+                let event = crate::window_manager::events::Event::Resize(
+                    crate::window_manager::events::ResizeEvent {
+                        wid: w.id as u32,
+                        width: tw as u32,
+                        height: th as u32,
+                        x: tx as i32,
+                        y: ty as i32,
+                    }
+                );
+                crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().add_event(event);
+                
+                // For all other tiled windows, send resize events
+                for i in 0..16 {
+                    if i != inserted_idx && self.workspaces[ws_idx].windows[i].w_type == Items::Window {
+                        if self.find_leaf_for_window(ws_idx, i).is_some() {
+                            let ew = self.workspaces[ws_idx].windows[i].width;
+                            let eh = self.workspaces[ws_idx].windows[i].height;
+                            let ex = self.workspaces[ws_idx].windows[i].x;
+                            let ey = self.workspaces[ws_idx].windows[i].y;
+                            let e = crate::window_manager::events::Event::Resize(
+                                crate::window_manager::events::ResizeEvent {
+                                    wid: self.workspaces[ws_idx].windows[i].id as u32,
+                                    width: ew as u32,
+                                    height: eh as u32,
+                                    x: ex as i32,
+                                    y: ey as i32,
+                                }
+                            );
+                            crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().add_event(e);
+                        }
+                    }
+                }
+
             } else {
                 let (ax, ay, aw, ah) = self.get_available_desktop();
                 self.workspaces[ws_idx].windows[inserted_idx].x = ax as i64 + (aw as i64 - w.width as i64) / 2;
@@ -452,7 +453,6 @@ impl Composer {
     }
 
     pub fn resize_window(&mut self, w: Window) {
-        crate::debugln!("[WINDOW_SERVER] RESIZING {} AT {} X {}", w.id, w.width, w.height);
         if w.id == self.wallpaper.id {
             self.wallpaper.buffer = w.buffer; self.wallpaper.back_buffer = w.back_buffer; self.wallpaper.flipped = w.flipped;
             self.wallpaper.width = w.width; self.wallpaper.height = w.height;
@@ -503,6 +503,26 @@ impl Composer {
                             self.retile_workspace(ws);
                             self.recompose_all();
                         }
+                        for j in 0..16 {
+                            if self.workspaces[ws].windows[j].w_type == Items::Window {
+                                if self.find_leaf_for_window(ws, j).is_some() {
+                                    let tw = self.workspaces[ws].windows[j].width;
+                                    let th = self.workspaces[ws].windows[j].height;
+                                    let tx = self.workspaces[ws].windows[j].x;
+                                    let ty = self.workspaces[ws].windows[j].y;
+                                    let event = crate::window_manager::events::Event::Resize(
+                                        crate::window_manager::events::ResizeEvent {
+                                            wid: self.workspaces[ws].windows[j].id as u32,
+                                            width: tw as u32,
+                                            height: th as u32,
+                                            x: tx as i32,
+                                            y: ty as i32,
+                                        }
+                                    );
+                                    crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().add_event(event);
+                                }
+                            }
+                        }
                     } else if ws == self.active_workspace {
                         self.recompose_all();
                     }
@@ -533,26 +553,6 @@ impl Composer {
                 let pitch_u32 = (display_server.pitch / 4) as usize;
                 let height = display_server.height as i32;
                 let width = display_server.width as i32;
-                
-                let ws = &self.workspaces[self.active_workspace];
-
-                // FAST PATH: Fullscreen override
-                // If there is a window occupying the entire screen, do 1:1 streaming
-                let mut fullscreen_win = None;
-                for i in 0..16 {
-                    let w = &ws.windows[i];
-                    if w.w_type == Items::Window && w.x <= 0 && w.y <= 0 && w.width as i32 >= width && w.height as i32 >= height {
-                        fullscreen_win = Some(w);
-                        break; // Only need one
-                    }
-                }
-
-                if let Some(fw) = fullscreen_win {
-                    if fw.id != ignore_id {
-                        display_server.copy_to_db_clipped(fw.width as u32, fw.height as u32, fw.get_active_buffer() as usize, fw.x as i32, fw.y as i32, dirty_x, dirty_y, dirty_w, dirty_h, None, false);
-                    }
-                    return; // DO NOT render anything else
-                }
 
                 let start_x = dirty_x.max(0);
                 let start_y = dirty_y.max(0);
@@ -573,6 +573,7 @@ impl Composer {
                     }
                 }
 
+                let ws = &self.workspaces[self.active_workspace];
                 let mut indices = vec![];
                 for i in 0..16 { if ws.windows[i].w_type != Items::Null && ws.windows[i].id != ignore_id { indices.push(i); } }
                 indices.sort_by_key(|&i| ws.windows[i].z);
@@ -645,3 +646,9 @@ impl Composer {
         if id != 0 { self.focus_window(id); }
     }
 }
+"""
+    with open('kernel/src/window_manager/composer.rs', 'w') as f:
+        f.write(new_content)
+
+if __name__ == '__main__':
+    run()

@@ -62,6 +62,13 @@ pub fn main() {
         _ => debugln!("[Init] Failed to spawn term app"),
     }
 
+    sleep(500);
+
+    match std::os::spawn("@0xE0/apps/term.wasm") {
+        pid if pid != usize::MAX => debugln!("[Init] Term app spawned with PID {}", pid),
+        _ => debugln!("[Init] Failed to spawn term app"),
+    }
+
     debugln!("[Init] System ready.");
 
     loop {

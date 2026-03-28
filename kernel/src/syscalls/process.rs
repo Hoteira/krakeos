@@ -321,9 +321,11 @@ pub fn handle_exit(context: &mut CPUState) {
                     let composer = &mut *(&raw mut COMPOSER);
                     let pid = current as u64;
                     let mut to_remove = alloc::vec::Vec::new();
-                    for w in composer.windows.iter() {
-                        if w.pid == pid {
-                            to_remove.push(w.id);
+                    for ws in 0..5 {
+                        for w in composer.workspaces[ws].windows.iter() {
+                            if w.pid == pid {
+                                to_remove.push(w.id);
+                            }
                         }
                     }
                     if composer.wallpaper.pid == pid {

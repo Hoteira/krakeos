@@ -201,9 +201,11 @@ impl TaskManager {
                     unsafe {
                         let composer = &mut *(&raw mut crate::window_manager::composer::COMPOSER);
                         let mut to_remove = alloc::vec::Vec::new();
-                        for w in composer.windows.iter() {
-                            if w.pid == pid as u64 {
-                                to_remove.push(w.id);
+                        for ws in 0..5 {
+                            for w in composer.workspaces[ws].windows.iter() {
+                                if w.pid == pid as u64 {
+                                    to_remove.push(w.id);
+                                }
                             }
                         }
                         if composer.wallpaper.pid == pid as u64 {

@@ -15,6 +15,7 @@ pub const KEY_ENTER: u32 = 0x0D;
 pub const KEY_CTRL: u32 = 0x110005;
 pub const KEY_ALT: u32 = 0x110006;
 pub const KEY_SHIFT: u32 = 0x110007;
+pub const KEY_SUPER: u32 = 0x110008;
 
 
 #[allow(dead_code)]
@@ -175,7 +176,7 @@ pub fn handle_scancode(scancode: u8) -> Option<(u32, bool)> {
         match scancode_val {
             0x5B | 0x5C if is_e0 => {
                 SUPER_ACTIVE = pressed;
-                None
+                Some((KEY_SUPER, pressed))
             }
 
             0x38 => {

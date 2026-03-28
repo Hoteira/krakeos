@@ -5,15 +5,6 @@ use crate::window_manager::display::{DISPLAY_SERVER, HARDWARE_CURSOR_ACTIVE, VIR
 use crate::drivers::video::virtio;
 use crate::window_manager::window::Items;
 
-pub static mut DRAGS: u8 = 0;
-pub static mut DRAG: bool = false;
-pub static DRAGGING_WINDOW: AtomicU16 = AtomicU16::new(0);
-pub static RESIZING_WINDOW: AtomicU16 = AtomicU16::new(0);
-pub static mut CLICK_STARTED_IN_TITLEBAR: bool = false;
-pub static mut CLICK_X_OFFSET: i32 = 0;
-pub static mut CLICK_Y_OFFSET: i32 = 0;
-pub static mut W_WIDTH: usize = 0;
-pub static mut W_HEIGHT: usize = 0;
 pub static mut MOUSE_PENDING: bool = false;
 
 pub struct Mouse {
@@ -33,21 +24,20 @@ pub static mut MOUSE: Mouse = Mouse {
 };
 
 impl Mouse {
-    pub fn update(&mut self, dx: isize, dy: isize, left: bool, right: bool, center: bool, is_super: bool) {
+    pub fn update(&mut self, dx: isize, dy: isize, left: bool, right: bool, center: bool, _is_super: bool) {
         let old_x = self.x;
         let old_y = self.y;
-        let btns_changed = self.left != left || self.right != right || self.center != center;
+        let _btns_changed = self.left != left || self.right != right || self.center != center;
 
         self.x = (self.x + dx).max(0).min(unsafe { (*(&raw mut DISPLAY_SERVER)).width as isize - 1 });
         self.y = (self.y + dy).max(0).min(unsafe { (*(&raw mut DISPLAY_SERVER)).height as isize - 1 });
 
         let moved = old_x != self.x || old_y != self.y;
-        let clicked = !self.left && left;
         self.left = left;
         self.right = right;
         self.center = center;
 
-        if clicked {
+        if moved {
             let ws_opt = unsafe { (*(&raw mut COMPOSER)).find_window(self.x as usize, self.y as usize) };
             if let Some(ws) = ws_opt {
                 unsafe {
@@ -58,149 +48,7 @@ impl Mouse {
                         CLICKED_WINDOW_ID = new_id as usize;
                         (*(&raw mut COMPOSER)).focus_window(new_id);
                     }
-
-                    // Capture offset for absolute dragging
-                    CLICK_X_OFFSET = self.x as i32 - ws.x as i32;
-                    CLICK_Y_OFFSET = self.y as i32 - ws.y as i32;
                 }
-
-                if ws.can_move && is_super {
-                    unsafe {
-                        CLICK_STARTED_IN_TITLEBAR = true;
-                    }
-                } else {
-                    unsafe {
-                        CLICK_STARTED_IN_TITLEBAR = false;
-                    }
-                }
-            } else {
-                unsafe {
-                    CLICKED_WINDOW_ID = 0;
-                    CLICK_STARTED_IN_TITLEBAR = false;
-                }
-            }
-        } else if !self.left {
-            unsafe {
-                CLICK_STARTED_IN_TITLEBAR = false;
-            }
-        }
-
-        unsafe {
-            if self.left {
-                DRAGS = DRAGS.wrapping_add(1);
-                if DRAGS > 2 {
-                    DRAG = true;
-                }
-            } else {
-                DRAGS = 0;
-                DRAG = false;
-
-                if DRAGGING_WINDOW.load(Ordering::Relaxed) != 0 {
-                    let wid = DRAGGING_WINDOW.load(Ordering::Relaxed) as u64;
-                    let composer = &mut *(&raw mut COMPOSER);
-                    let display_server = &mut *(&raw mut DISPLAY_SERVER);
-
-                    let w_opt = composer.find_window_id(wid);
-                    if w_opt.is_none() {
-                        return;
-                    }
-
-                    let w = w_opt.unwrap();
-                    let win_x = w.x;
-                    let win_y = w.y;
-                    let win_width = w.width;
-                    let win_height = w.height;
-
-                    composer.copy_window(wid);
-
-                    display_server.copy_to_fb(old_x as i32, old_y as i32, 32, 32);
-
-                    display_server.copy_to_fb(
-                        win_x as i32,
-                        win_y as i32,
-                        win_width as u32,
-                        win_height as u32,
-                    );
-
-                    if !HARDWARE_CURSOR_ACTIVE {
-                        display_server.draw_mouse(self.x as u16, self.y as u16, false);
-                    }
-
-                    DRAGGING_WINDOW.store(0, Ordering::Relaxed);
-                    RESIZING_WINDOW.store(0, Ordering::Relaxed);
-                    W_WIDTH = 0;
-                    W_HEIGHT = 0;
-
-                    return;
-                }
-            }
-        }
-
-        unsafe {
-            if DRAG && CLICK_STARTED_IN_TITLEBAR {
-                if DRAGGING_WINDOW.load(Ordering::Relaxed) == 0 {
-                    let wid = CLICKED_WINDOW_ID as u64;
-                    DRAGGING_WINDOW.store(wid as u16, Ordering::Relaxed);
-                    (*(&raw mut COMPOSER)).recompose_except(wid);
-                }
-            }
-        }
-
-        if DRAGGING_WINDOW.load(Ordering::Relaxed) != 0 {
-            let composer = unsafe { &mut *(&raw mut COMPOSER) };
-            let display_server = unsafe { &mut *(&raw mut DISPLAY_SERVER) };
-            let wid = DRAGGING_WINDOW.load(Ordering::Relaxed) as u64;
-
-            if !moved && !btns_changed {
-                return;
-            }
-
-            let (old_x_pos, old_y_pos, width, height) = {
-                let w = match composer.find_window_id(wid) {
-                    Some(w) => w,
-                    None => return,
-                };
-
-                let old_x = w.x;
-                let old_y = w.y;
-                let width = w.width;
-                let height = w.height;
-
-                // ABSOLUTE MATH: New position is CurrentMouse - ClickOffset
-                let target_win_x = self.x as i32 - unsafe { CLICK_X_OFFSET };
-                let target_win_y = self.y as i32 - unsafe { CLICK_Y_OFFSET };
-
-                let screen_w = display_server.width as i32;
-                let screen_h = display_server.height as i32;
-
-                // Clamp to ensure window doesn't disappear and handles edge limits correctly
-                let new_x = target_win_x.max(-((width as i32) - 20)).min(screen_w - 20);
-                let new_y = target_win_y.max(0).min(screen_h - 20);
-
-                w.x = new_x as i64;
-                w.y = new_y as i64;
-
-                (old_x, old_y, width, height)
-            };
-
-            let (new_x_pos, new_y_pos) = {
-                let w = composer.find_window_id(wid).unwrap();
-                (w.x, w.y)
-            };
-
-            // Only update if the position actually changed after clamping
-            if old_x_pos != new_x_pos || old_y_pos != new_y_pos {
-                // Calculate the total area that needs updating (Union of old and new)
-                let min_x = old_x_pos.min(new_x_pos) as i32;
-                let min_y = old_y_pos.min(new_y_pos) as i32;
-                let max_x = (old_x_pos + width as i64).max(new_x_pos + width as i64) as i32;
-                let max_y = (old_y_pos + height as i64).max(new_y_pos + height as i64) as i32;
-
-                let update_w = (max_x - min_x) as u32;
-                let update_h = (max_y - min_y) as u32;
-
-                // Perform ONE unified recomposition into the back-buffer
-                composer.update_window_area_rect(min_x, min_y, update_w, update_h);
             }
         }
 

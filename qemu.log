@@ -1,0 +1,2 @@
+qemu-system-x86_64: -device virtio-gpu-gl-pci,xres=1024,yres=576: The display backend does not have OpenGL support enabled
+It can be enabled with '-display BACKEND,gl=on' where BACKEND is the name of the display backend to use.

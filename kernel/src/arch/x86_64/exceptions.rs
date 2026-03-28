@@ -1,6 +1,6 @@
 use crate::drivers::peripherals::keyboard::KEYBOARD_BUFFER;
 use crate::arch::x86_64::io::{inb, outb};
-use crate::window_manager::input::{MOUSE, RESIZING_WINDOW, W_WIDTH, W_HEIGHT};
+use crate::window_manager::input::MOUSE;
 use crate::window_manager::events::{Event, ResizeEvent, GLOBAL_EVENT_QUEUE};
 use core::sync::atomic::Ordering;
 
@@ -417,6 +417,7 @@ pub const KEYBOARD_INT: u8 = 33;
 
 static mut IN_IRQ: bool = false;
 static mut LAST_KEY_GLOBAL: u32 = 0;
+static mut LAST_NORMAL_KEY: u32 = 0;
 
 pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
     unsafe {
@@ -433,6 +434,16 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
     if let Some((key, pressed)) = crate::drivers::peripherals::keyboard::handle_scancode(scancode) {
         let is_super = crate::drivers::peripherals::keyboard::is_super_active();
         let mut handled_globally = false;
+        
+        unsafe {
+            if !is_super && key != crate::drivers::peripherals::keyboard::KEY_SUPER {
+                if pressed {
+                    LAST_NORMAL_KEY = key;
+                } else if LAST_NORMAL_KEY == key {
+                    LAST_NORMAL_KEY = 0;
+                }
+            }
+        }
 
         // Reset shortcut debounce when super is released
         if !is_super {
@@ -443,6 +454,11 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
         // shortcuts, not the app (also prevents QEMU down/up repeat leak)
         if is_super && !pressed {
             handled_globally = true;
+            unsafe {
+                if LAST_KEY_GLOBAL == key {
+                    LAST_KEY_GLOBAL = 0;
+                }
+            }
         }
 
         // Check for keyboard shortcuts
@@ -450,14 +466,24 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
             // DEBOUNCE: Only fire once per key while super is held.
             // LAST_KEY_GLOBAL is only cleared when super is released,
             // so QEMU-style down/up auto-repeat can't re-trigger.
-            let is_new_press = unsafe { LAST_KEY_GLOBAL != key };
+            
+            let mut eval_key = key;
+            if key == crate::drivers::peripherals::keyboard::KEY_SUPER {
+                unsafe {
+                    if LAST_NORMAL_KEY != 0 {
+                        eval_key = LAST_NORMAL_KEY;
+                    }
+                }
+            }
+
+            let is_new_press = unsafe { LAST_KEY_GLOBAL != eval_key };
 
             if is_new_press {
-                if key == 'p' as u32 {
+                if eval_key == 'p' as u32 {
                     crate::memory::vma::GLOBAL_VMA.lock().dump();
                     handled_globally = true;
-                    unsafe { LAST_KEY_GLOBAL = key; }
-                } else if key == 'x' as u32 || key == 'w' as u32 {
+                    unsafe { LAST_KEY_GLOBAL = eval_key; }
+                } else if eval_key == 'x' as u32 || eval_key == 'w' as u32 {
                     unsafe {
                         let active_id = crate::window_manager::composer::CLICKED_WINDOW_ID;
                         if active_id != 0 {
@@ -466,8 +492,8 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
                         }
                     }
                     handled_globally = true;
-                    unsafe { LAST_KEY_GLOBAL = key; }
-                } else if key == 'z' as u32 || key == 'f' as u32 {
+                    unsafe { LAST_KEY_GLOBAL = eval_key; }
+                } else if eval_key == 'z' as u32 || eval_key == 'f' as u32 {
                     unsafe {
                         let active_id = crate::window_manager::composer::CLICKED_WINDOW_ID;
                         if active_id != 0 {
@@ -476,9 +502,9 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
                                     let screen_w = (*(&raw mut crate::window_manager::display::DISPLAY_SERVER)).width as u64;
                                     let screen_h = (*(&raw mut crate::window_manager::display::DISPLAY_SERVER)).height as u64;
                                     
-                                    let (target_x, target_y, target_w, target_h) = if w.width == screen_w && w.height == screen_h {
+                                    let (target_x, target_y, target_w, target_h, is_transparent) = if w.width == screen_w && w.height == screen_h {
                                         // Restore
-                                        (w.prev_x, w.prev_y, w.prev_width.max(100), w.prev_height.max(100))
+                                        (w.prev_x, w.prev_y, w.prev_width.max(100), w.prev_height.max(100), true)
                                     } else {
                                         // Maximize
                                         let tx: i64 = 0;
@@ -492,9 +518,12 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
                                         w.prev_x = w.x;
                                         w.prev_y = w.y;
                                         
-                                        (tx, ty, tw, th)
+                                        (tx, ty, tw, th, false)
                                     };
                                     
+                                    w.transparent = is_transparent;
+                                    w.treat_as_transparent = is_transparent;
+
                                     // Send resize event to the application with target dimensions AND position
                                     let event = crate::window_manager::events::Event::Resize(
                                         crate::window_manager::events::ResizeEvent {
@@ -515,28 +544,25 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
                         }
                     }
                     handled_globally = true;
-                    unsafe { LAST_KEY_GLOBAL = key; }
-                } else if key == 'c' as u32 {
-                    unsafe {
-                        let active_id = crate::window_manager::composer::CLICKED_WINDOW_ID;
-                        if active_id != 0 {
-                            if let Some(w) = (*(&raw mut crate::window_manager::composer::COMPOSER)).find_window_id(active_id as u64) {
-                                if w.can_resize {
-                                    crate::window_manager::input::RESIZING_WINDOW.store(
-                                        w.id as u16, 
-                                        core::sync::atomic::Ordering::Relaxed
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    handled_globally = true;
-                    unsafe { LAST_KEY_GLOBAL = key; }
-                } else if key == 't' as u32 {
+                    unsafe { LAST_KEY_GLOBAL = eval_key; }
+                } else if eval_key == 't' as u32 {
                     // Spawn terminal
                     let _ = crate::syscalls::process::spawn_process("@0xE0/sys/bin/term.wasm", None, None, None);
                     handled_globally = true;
-                    unsafe { LAST_KEY_GLOBAL = key; }
+                    unsafe { LAST_KEY_GLOBAL = eval_key; }
+                } else if eval_key == 0x0D { // Enter
+                    let _ = crate::syscalls::process::spawn_process("@0xE0/apps/term.wasm", None, None, None);
+                    handled_globally = true;
+                    unsafe { LAST_KEY_GLOBAL = eval_key; }
+                } else if eval_key >= '1' as u32 && eval_key <= '5' as u32 {
+                    let workspace_idx = (eval_key - '1' as u32) as usize;
+                    unsafe {
+                        (*(&raw mut crate::window_manager::composer::COMPOSER)).switch_workspace(workspace_idx);
+                    }
+                    handled_globally = true;
+                    unsafe { LAST_KEY_GLOBAL = eval_key; }
+                } else if key == crate::drivers::peripherals::keyboard::KEY_SUPER {
+                    handled_globally = true; // swallow bare super press if it doesn't match a shortcut
                 }
             } else {
                 // If it's a repeat of a key already handled globally, just swallow it
@@ -558,13 +584,16 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
                     let mut tm = crate::task::TASK_MANAGER.int_lock();
                     let composer = &*(&raw const crate::window_manager::composer::COMPOSER);
                     let mut target_info = None;
-                    for w in &composer.windows {
-                        if w.id == active_window_id as u64 {
-                            if w.event_handler != 0 {
-                                target_info = Some(w.pid);
+                    for ws in 0..5 {
+                        for w in &composer.workspaces[ws].windows {
+                            if w.id == active_window_id as u64 {
+                                if w.event_handler != 0 {
+                                    target_info = Some(w.pid);
+                                }
+                                break;
                             }
-                            break;
                         }
+                        if target_info.is_some() { break; }
                     }
 
                     if let Some(w_pid) = target_info {

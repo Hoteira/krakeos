@@ -189,6 +189,9 @@ impl Window {
     }
 
     pub fn draw(&mut self) {
+        let new_size = self.width * self.height * 4 + 4;
+        self.buffer.resize(new_size);
+
         let addr = self.buffer.inactive_address();
         if addr.is_null() {
             return;
@@ -273,14 +276,7 @@ impl Window {
         self.y = y;
         self.can_move = can_move;
 
-        let new_size = width * height * 4 + 4;
-        self.buffer.resize(new_size);
-
         self.mark_dirty();
-        // Must immediately notify compositor of new buffer pointers after
-        // reallocation, otherwise it reads freed memory (GPF).
-        // No draw here — caller triggers the redraw after processing all events.
-        self.sync_window();
     }
 
     pub fn poll_events(&mut self) -> Vec<Event> {

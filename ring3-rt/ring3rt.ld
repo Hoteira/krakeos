@@ -5,6 +5,7 @@ SECTIONS {
         KEEP(*(.jump_table))
         *(.text .text.*)
     }
+
     .rodata : { *(.rodata .rodata.*) }
     /DISCARD/ : { *(.eh_frame*) *(.note*) *(.comment) *(.gnu*) }
 }
