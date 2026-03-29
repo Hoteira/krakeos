@@ -259,7 +259,8 @@ impl<'a, T: Config> Store<'a, T> {
         module_inst.data_addrs = data_addrs;
         module_inst.exports = export_insts;
 
-        // Initialize active element segments
+        // Initialize active element segments (capture offsets for .wacc)
+        let mut elem_offsets_captured: Vec<Option<i32>> = Vec::with_capacity(validation_info.elements.len());
         for (
             i,
             ElemType {
@@ -279,6 +280,7 @@ impl<'a, T: Config> Store<'a, T> {
                 .unwrap_validated()
                 .try_into()
                 .unwrap_validated();
+                elem_offsets_captured.push(Some(d));
                 table_init(
                     &self.modules,
                     &mut self.tables,
@@ -292,11 +294,15 @@ impl<'a, T: Config> Store<'a, T> {
                 )?;
                 elem_drop(&self.modules, &mut self.elements, module_addr, i)?;
             } else if let ElemMode::Declarative = mode {
+                elem_offsets_captured.push(None);
                 elem_drop(&self.modules, &mut self.elements, module_addr, i)?;
+            } else {
+                elem_offsets_captured.push(None);
             }
         }
-        // Initialize active data segments
-        for (i, DataSegment { init, mode }) in validation_info.data.iter().enumerate() {
+        // Initialize active data segments (capture offsets for .wacc)
+        let mut data_offsets_captured: Vec<Option<i32>> = Vec::with_capacity(validation_info.data.len());
+        for (i, DataSegment { init, mode, .. }) in validation_info.data.iter().enumerate() {
             if let DataMode::Active(active) = mode {
                 if active.memory_idx != 0 {
                     return Err(RuntimeError::MoreThanOneMemory);
@@ -311,6 +317,7 @@ impl<'a, T: Config> Store<'a, T> {
                 .unwrap_validated()
                 .try_into()
                 .unwrap_validated();
+                data_offsets_captured.push(Some(d));
                 memory_init(
                     &self.modules,
                     &mut self.memories,
@@ -323,6 +330,8 @@ impl<'a, T: Config> Store<'a, T> {
                     d,
                 )?;
                 data_drop(&self.modules, &mut self.data, module_addr, i)?;
+            } else {
+                data_offsets_captured.push(None);
             }
         }
 
@@ -405,140 +414,7 @@ impl<'a, T: Config> Store<'a, T> {
                 let mut import_stubs = Vec::new();
                 for imp in &validation_info.imports {
                     if let crate::wasm::common::reader::types::import::ImportDesc::Func(_) = imp.desc {
-                        let stub_idx = match (imp.module_name.as_str(), imp.name.as_str()) {
-                            // WASI Preview 1 (300+)
-                            ("wasi_snapshot_preview1", "fd_write") => 300,
-                            ("wasi_snapshot_preview1", "fd_read") => 301,
-                            ("wasi_snapshot_preview1", "fd_close") => 302,
-                            ("wasi_snapshot_preview1", "proc_exit") => 303,
-                            ("wasi_snapshot_preview1", "args_sizes_get") => 304,
-                            ("wasi_snapshot_preview1", "args_get") => 305,
-                            ("wasi_snapshot_preview1", "environ_sizes_get") => 306,
-                            ("wasi_snapshot_preview1", "environ_get") => 307,
-                            ("wasi_snapshot_preview1", "clock_time_get") => 308,
-                            ("wasi_snapshot_preview1", "random_get") => 309,
-                            ("wasi_snapshot_preview1", "fd_prestat_get") => 310,
-                            ("wasi_snapshot_preview1", "fd_prestat_dir_name") => 311,
-                            ("wasi_snapshot_preview1", "fd_fdstat_get") => 312,
-                            ("wasi_snapshot_preview1", "fd_filestat_get") => 313,
-                            ("wasi_snapshot_preview1", "fd_filestat_set_size") => 314,
-                            ("wasi_snapshot_preview1", "fd_seek") => 315,
-                            ("wasi_snapshot_preview1", "fd_pread") => 316,
-                            ("wasi_snapshot_preview1", "fd_readdir") => 317,
-                            ("wasi_snapshot_preview1", "path_open") => 318,
-                            ("wasi_snapshot_preview1", "path_filestat_get") => 319,
-                            ("wasi_snapshot_preview1", "path_create_directory") => 320,
-                            ("wasi_snapshot_preview1", "path_unlink_file") => 321,
-                            ("wasi_snapshot_preview1", "path_remove_directory") => 322,
-                            ("wasi_snapshot_preview1", "path_rename") => 323,
-                            ("wasi_snapshot_preview1", "path_link") => 324,
-                            ("wasi_snapshot_preview1", "path_symlink") => 325,
-                            ("wasi_snapshot_preview1", "path_readlink") => 326,
-                            ("wasi_snapshot_preview1", "poll_oneoff") => 327,
-                            ("wasi_snapshot_preview1", "sched_yield") => 328,
-                            ("wasi_snapshot_preview1", "clock_res_get") => 329,
-
-                            // KrakeOS Graphics (400+)
-                            ("krakeos:graphics/screen@0.2.0", "get-width") => 400,
-                            ("krakeos:graphics/screen@0.2.0", "get-height") => 401,
-
-                            // KrakeOS Window (410+)
-                            ("krakeos:system/window@0.2.0", "create") => 410,
-                            ("krakeos:system/window@0.2.0", "update") => 411,
-                            ("krakeos:system/window@0.2.0", "update-area") => 412,
-                            ("krakeos:system/window@0.2.0", "get-events") => 413,
-                            ("krakeos:system/window@0.2.0", "register-event-queue") => 414,
-                            ("krakeos:system/window@0.2.0", "deregister-event-queue") => 415,
-
-                            // KrakeOS Process (420+)
-                            ("krakeos:system/process@0.2.0", "get-pid") => 420,
-                            ("krakeos:system/process@0.2.0", "debug-print") => 421,
-                            ("krakeos:system/process@0.2.0", "yield") => 422,
-                            ("krakeos:system/process@0.2.0", "spawn") => 423,
-                            ("krakeos:system/process@0.2.0", "waitpid") => 424,
-                            ("krakeos:system/process@0.2.0", "pipe") => 425,
-                            ("krakeos:system/process@0.2.0", "native-file-open") => 426,
-                            ("krakeos:system/process@0.2.0", "native-file-stat") => 427,
-                            ("krakeos:system/process@0.2.0", "file-read") => 428,
-                            ("krakeos:system/process@0.2.0", "file-write") => 429,
-                            ("krakeos:system/process@0.2.0", "kill") => 430,
-                            ("krakeos:system/process@0.2.0", "get-list") => 431,
-                            ("krakeos:system/process@0.2.0", "chdir") => 432,
-                            ("krakeos:system/process@0.2.0", "get-slot-info") => 433,
-                            ("krakeos:system/process@0.2.0", "ioctl") => 434,
-                            ("krakeos:system/process@0.2.0", "set-nonblock") => 435,
-                            ("krakeos:system/process@0.2.0", "poll") => 436,
-                            ("krakeos:system/process@0.2.0", "get-current-user") => 437,
-                            ("krakeos:system/process@0.2.0", "spawn-ext") => 438,
-                            ("krakeos:system/process@0.2.0", "spawn-thread") => 439,
-                            ("krakeos:system/process@0.2.0", "thread-exit") => 440,
-                            ("krakeos:system/process@0.2.0", "syscall") => 441,
-
-                            // KrakeOS Terminal (463+)
-                            ("krakeos:system/terminal@0.1.0", "set-window-size") => 463,
-                            ("krakeos:system/terminal@0.1.0", "get-window-size") => 464,
-
-                            // KrakeOS Container (470+)
-                            ("krakeos:system/container@0.1.0", "plant") => 470,
-                            ("krakeos:system/container@0.1.0", "plant-from-path") => 471,
-                            ("krakeos:system/container@0.1.0", "harvest") => 472,
-                            ("krakeos:system/container@0.1.0", "list-children") => 473,
-                            ("krakeos:system/container@0.1.0", "kill-child") => 474,
-
-                            // KrakeOS Debug (480+)
-                            ("krakeos:system/debug@0.1.0", "get-process-list") => 480,
-                            ("krakeos:system/debug@0.1.0", "kill") => 481,
-                            ("krakeos:system/debug@0.1.0", "dump-vma") => 482,
-                            ("krakeos:system/debug@0.1.0", "get-memory-usage") => 483,
-
-                            // KrakeOS Memory (450+)
-                            ("krakeos:system/memory@0.2.0", "shm-get") => 450,
-                            ("krakeos:system/memory@0.2.0", "brk") => 451,
-                            ("krakeos:system/memory@0.2.0", "get-total-mem") => 452,
-                            ("krakeos:system/memory@0.2.0", "get-used-mem") => 453,
-                            ("krakeos:system/memory@0.2.0", "get-vma-dump") => 454,
-
-                            // WASI Preview 2 (500+)
-                            ("wasi:cli/exit@0.2.0", "exit") => 500,
-                            ("wasi:cli/stdout@0.2.0", "get-stdout") => 501,
-                            ("wasi:cli/stdin@0.2.0", "get-stdin") => 502,
-                            ("wasi:cli/stderr@0.2.0", "get-stderr") => 503,
-                            ("wasi:io/streams@0.2.0", "[method]output-stream.write") => 504,
-                            ("wasi:io/streams@0.2.0", "[method]output-stream.blocking-write") => 504,
-                            ("wasi:io/streams@0.2.0", "[method]output-stream.blocking-write-and-flush") => 504,
-                            ("wasi:io/streams@0.2.0", "[method]input-stream.read") => 505,
-                            ("wasi:io/streams@0.2.0", "[method]input-stream.blocking-read") => 505,
-                            ("wasi:io/poll@0.2.0", "poll") => 506,
-                            ("wasi:io/poll@0.2.0", "[method]pollable.block") => 507,
-                            ("wasi:io/poll@0.2.0", "[resource-drop]pollable") => 508,
-                            ("wasi:io/error@0.2.0", "[resource-drop]error") => 509,
-                            ("wasi:clocks/monotonic-clock@0.2.0", "now") => 510,
-                            ("wasi:clocks/monotonic-clock@0.2.0", "resolution") => 511,
-                            ("wasi:clocks/monotonic-clock@0.2.0", "subscribe-duration") => 512,
-                            ("wasi:clocks/monotonic-clock@0.2.0", "subscribe-instant") => 512,
-                            ("wasi:clocks/wall-clock@0.2.0", "now") => 513,
-                            ("wasi:filesystem/types@0.2.0", "[resource-drop]descriptor") => 514,
-                            ("wasi:filesystem/types@0.2.0", "[method]descriptor.open-at") => 515,
-                            ("wasi:filesystem/types@0.2.0", "[method]descriptor.stat") => 516,
-                            ("wasi:filesystem/types@0.2.0", "[method]descriptor.set-size") => 517,
-                            ("wasi:filesystem/types@0.2.0", "[method]descriptor.seek") => 518,
-                            ("wasi:filesystem/types@0.2.0", "[method]descriptor.create-directory-at") => 519,
-                            ("wasi:filesystem/types@0.2.0", "[method]descriptor.unlink-file-at") => 520,
-                            ("wasi:filesystem/types@0.2.0", "[method]descriptor.remove-directory-at") => 521,
-                            ("wasi:filesystem/types@0.2.0", "[method]descriptor.rename-at") => 522,
-                            ("wasi:filesystem/types@0.2.0", "[method]descriptor.read-directory") => 523,
-                            ("wasi:filesystem/types@0.2.0", "[resource-drop]directory-entry-stream") => 524,
-                            ("wasi:filesystem/types@0.2.0", "[method]directory-entry-stream.read-directory-entry") => 527,
-                            ("wasi:random/random@0.2.0", "get-random-bytes") => 525,
-                            ("wasi:sockets/instance-network@0.2.0", "instance-network") => 526,
-
-                            // Internal / Special
-                            ("env", "__wasi_init_tp") => 460,
-                            ("env", "__wasm_call_dtors") => 460,
-                            ("env", "host_serial_print") => 999,
-                            _ => u64::MAX, // Unknown import — will return NOSYS
-                        };
-                        import_stubs.push(stub_idx as u64);
+                        import_stubs.push(resolve_import_stub(&imp.module_name, &imp.name));
                     }
                 }
 
@@ -694,8 +570,364 @@ impl<'a, T: Config> Store<'a, T> {
             module_addr,
             maybe_remaining_fuel,
             maybe_ctx_ptr,
+            global_init_vals,
+            data_offsets: data_offsets_captured,
+            elem_offsets: elem_offsets_captured,
         })
     }
+    /// Instantiate a module from a pre-compiled `.wacc` cache, skipping
+    /// validation and AOT compilation entirely.
+    pub fn module_instantiate_from_wacc(
+        &mut self,
+        wacc: &crate::wasm::aot::wacc::WaccInfo,
+        wasm_bytecode: &'a [u8],
+        extern_vals: Vec<ExternVal>,
+        slot_id: u16,
+    ) -> Result<InstantiationOutcome, RuntimeError> {
+        let mut maybe_ctx_ptr = None;
+
+        // Build ModuleInst — wasm_bytecode is kept for lifetime but interpreter won't use it
+        let module_inst = ModuleInst {
+            types: wacc.types.clone(),
+            func_addrs: extern_vals.iter().funcs().collect(),
+            table_addrs: Vec::new(),
+            mem_addrs: Vec::new(),
+            global_addrs: extern_vals.iter().globals().collect(),
+            elem_addrs: Vec::new(),
+            data_addrs: Vec::new(),
+            exports: BTreeMap::new(),
+            wasm_bytecode,
+            sidetable: Vec::new(),
+        };
+        let module_addr = self.modules.insert(module_inst);
+
+        // Allocate WasmFuncInst entries with dummy code_expr (AOT-only)
+        let dummy_span = Span::new(0, 0);
+        let func_addrs: Vec<FuncAddr> = wacc.functions.iter().map(|&ty_idx| {
+            self.functions.insert(FuncInst::WasmFunc(WasmFuncInst {
+                function_type: wacc.types[ty_idx].clone(),
+                _ty: ty_idx,
+                locals: Vec::new(),
+                code_expr: dummy_span,
+                stp: 0,
+                module_addr,
+                aot_ptr: None,
+            }))
+        }).collect();
+        self.modules.get_mut(module_addr).func_addrs.extend(func_addrs);
+
+        // Globals — use pre-evaluated values from cache
+        let global_init_vals: Vec<Value> = wacc.globals.iter().map(|g| g.init_value).collect();
+
+        // Element init ref lists — resolve func indices to store FuncAddrs
+        let mut element_init_ref_lists: Vec<Vec<Ref>> = Vec::with_capacity(wacc.elem_segments.len());
+        for es in &wacc.elem_segments {
+            let mut refs = Vec::new();
+            match &es.items {
+                crate::wasm::aot::wacc::WaccElemItems::RefFuncs(func_indices) => {
+                    for &fi in func_indices {
+                        if fi == 0xFFFF_FFFF {
+                            refs.push(Ref::Null(RefType::FuncRef));
+                        } else if let Some(&fa) = self.modules.get(module_addr).func_addrs.get(fi as usize) {
+                            refs.push(Ref::Func(fa));
+                        } else {
+                            refs.push(Ref::Null(RefType::FuncRef));
+                        }
+                    }
+                }
+            }
+            element_init_ref_lists.push(refs);
+        }
+
+        // Allocate tables, memories, globals, elements, data
+        let table_addrs: Vec<TableAddr> = wacc.tables.iter()
+            .map(|t| self.alloc_table(*t, Ref::Null(t.et)))
+            .collect();
+        let mem_addrs: Vec<MemAddr> = wacc.memories.iter()
+            .map(|m| self.alloc_mem(*m))
+            .collect();
+        let global_addrs: Vec<GlobalAddr> = wacc.globals.iter()
+            .zip(global_init_vals.clone())
+            .map(|(g, v)| self.alloc_global(g.ty, v))
+            .collect();
+        let elem_addrs = wacc.elem_segments.iter()
+            .zip(element_init_ref_lists)
+            .map(|(es, refs)| {
+                let ty = match &es.items {
+                    crate::wasm::aot::wacc::WaccElemItems::RefFuncs(_) => RefType::FuncRef,
+                };
+                self.alloc_elem(ty, refs)
+            })
+            .collect();
+        let data_addrs = wacc.data_segments.iter()
+            .map(|ds| self.alloc_data(&ds.init))
+            .collect();
+
+        let mut table_addrs_mod: Vec<TableAddr> = extern_vals.iter().tables().collect();
+        table_addrs_mod.extend(table_addrs);
+        let mut mem_addrs_mod: Vec<MemAddr> = extern_vals.iter().mems().collect();
+        mem_addrs_mod.extend(mem_addrs);
+        self.modules.get_mut(module_addr).global_addrs.extend(global_addrs);
+
+        // Build exports
+        let export_insts: BTreeMap<String, ExternVal> = wacc.exports.iter()
+            .map(|Export { name, desc }| {
+                let module_inst = self.modules.get(module_addr);
+                let value = match desc {
+                    ExportDesc::FuncIdx(func_idx) => ExternVal::Func(module_inst.func_addrs[*func_idx]),
+                    ExportDesc::TableIdx(table_idx) => ExternVal::Table(table_addrs_mod[*table_idx]),
+                    ExportDesc::MemIdx(mem_idx) => ExternVal::Mem(mem_addrs_mod[*mem_idx]),
+                    ExportDesc::GlobalIdx(global_idx) => ExternVal::Global(module_inst.global_addrs[*global_idx]),
+                };
+                (String::from(name), value)
+            })
+            .collect();
+        let module_inst = self.modules.get_mut(module_addr);
+        module_inst.table_addrs = table_addrs_mod;
+        module_inst.mem_addrs = mem_addrs_mod;
+        module_inst.elem_addrs = elem_addrs;
+        module_inst.data_addrs = data_addrs;
+        module_inst.exports = export_insts;
+
+        // Initialize active element segments (pre-evaluated offsets)
+        for (i, es) in wacc.elem_segments.iter().enumerate() {
+            match &es.mode {
+                crate::wasm::aot::wacc::WaccElemMode::Active { table_idx, offset } => {
+                    let n = match &es.items {
+                        crate::wasm::aot::wacc::WaccElemItems::RefFuncs(v) => v.len() as u32,
+                    };
+                    table_init(
+                        &self.modules, &mut self.tables, &self.elements,
+                        module_addr, i, *table_idx as usize, n, 0, *offset,
+                    )?;
+                    elem_drop(&self.modules, &mut self.elements, module_addr, i)?;
+                }
+                crate::wasm::aot::wacc::WaccElemMode::Declarative => {
+                    elem_drop(&self.modules, &mut self.elements, module_addr, i)?;
+                }
+                crate::wasm::aot::wacc::WaccElemMode::Passive => {}
+            }
+        }
+
+        // Initialize active data segments (pre-evaluated offsets)
+        for (i, ds) in wacc.data_segments.iter().enumerate() {
+            if let crate::wasm::aot::wacc::WaccDataMode::Active { memory_idx, offset } = &ds.mode {
+                if *memory_idx != 0 {
+                    return Err(RuntimeError::MoreThanOneMemory);
+                }
+                memory_init(
+                    &self.modules, &mut self.memories, &self.data,
+                    module_addr, i, 0, ds.init.len() as u32, 0, *offset,
+                )?;
+                data_drop(&self.modules, &mut self.data, module_addr, i)?;
+            }
+        }
+
+        // --- AOT code slot setup (identical to the normal path) ---
+        let aot_module = crate::wasm::aot::runtime::AotModule::new(&wacc.code, wacc.func_offsets.clone());
+
+        let final_code_ptr = if let Some(base) = self.code_base {
+            if self.next_code_offset == 0 {
+                crate::debugln!("[WACC] Copying blob to {:#x}...", base);
+                let blob = crate::wasm::aot::RING3_RT_BLOB;
+                unsafe {
+                    core::ptr::copy_nonoverlapping(blob.as_ptr(), base as *mut u8, blob.len());
+                    let jump_table = base as *mut u64;
+                    for i in 0..1024 {
+                        *jump_table.add(i) += base;
+                    }
+                }
+                self.next_code_offset = (blob.len() + 4095) & !4095;
+            }
+
+            let ptr = (base + self.next_code_offset as u64) as *mut u8;
+            let code_len = aot_module.code.len();
+            crate::debugln!(
+                "[WACC] code_base={:#x} offset={} code_len={} ({} KB)",
+                base, self.next_code_offset, code_len, code_len / 1024
+            );
+            const CODE_SLOT_SIZE: usize = 64 * 1024 * 1024;
+            if self.next_code_offset + code_len > CODE_SLOT_SIZE {
+                return Err(RuntimeError::Trap(TrapError::ReachedUnreachable));
+            }
+            unsafe {
+                core::ptr::copy_nonoverlapping(aot_module.code.as_ptr(), ptr, code_len);
+            }
+
+            let res = ptr as usize;
+            self.next_code_offset = (self.next_code_offset + code_len + 4095) & !4095;
+
+            // Data region
+            let data_region_ptr = (base + self.next_code_offset as u64) as *mut u8;
+            let ctx_ptr = data_region_ptr as *mut crate::wasm::aot::runtime::Ring3Context;
+
+            // Collect all global values (imported + local)
+            let mut all_global_vals = Vec::new();
+            for ga in extern_vals.iter().globals() {
+                all_global_vals.push(self.globals.get(ga).value);
+            }
+            for v in &global_init_vals {
+                all_global_vals.push(*v);
+            }
+
+            let num_globals = all_global_vals.len();
+            let globals_ptr = unsafe { data_region_ptr.add(256) };
+
+            let table0_addr = *self.modules.get(module_addr).table_addrs.first().unwrap_or(&usize::MAX);
+            let (table0_ptr, table0_size) = if table0_addr != usize::MAX {
+                let t = self.tables.get(table0_addr);
+                (unsafe { globals_ptr.add((num_globals * 16 + 15) & !15) as *mut u64 }, t.elem.len() as u32)
+            } else {
+                (core::ptr::null_mut(), 0)
+            };
+
+            // Resolve import stubs
+            let mut import_stubs = Vec::new();
+            for imp in &wacc.imports {
+                if let crate::wasm::common::reader::types::import::ImportDesc::Func(_) = imp.desc {
+                    let stub_idx = resolve_import_stub(&imp.module_name, &imp.name);
+                    import_stubs.push(stub_idx as u64);
+                }
+            }
+
+            let import_stub_table_ptr = if !import_stubs.is_empty() {
+                let ptr = unsafe { (if table0_ptr.is_null() { globals_ptr.add((num_globals * 16 + 15) & !15) } else { table0_ptr.add(table0_size as usize) as *mut u8 }) as *mut u64 };
+                ptr
+            } else {
+                core::ptr::null()
+            };
+
+            let num_funcs = self.modules.get(module_addr).func_addrs.len();
+            let func_table_ptr = unsafe { (if import_stub_table_ptr.is_null() { (if table0_ptr.is_null() { globals_ptr.add((num_globals * 16 + 15) & !15) } else { table0_ptr.add(table0_size as usize) as *mut u8 }) } else { import_stub_table_ptr.add(import_stubs.len()) as *mut u8 }) as *mut u64 };
+
+            unsafe {
+                core::ptr::write_bytes(data_region_ptr, 0, 1024 * 1024);
+
+                let mem_addr = *self.modules.get(module_addr).mem_addrs.get(0).unwrap_or(&usize::MAX);
+                let (memory_base, memory_size) = if mem_addr != usize::MAX {
+                    let mem = &self.memories.get(mem_addr).mem;
+                    (mem.get_base_ptr(), mem.len())
+                } else {
+                    (core::ptr::null_mut(), 0)
+                };
+
+                let ring3_ctx = crate::wasm::aot::runtime::Ring3Context {
+                    store: core::ptr::null_mut(),
+                    fuel: core::ptr::null_mut(),
+                    memory_base,
+                    memory_size,
+                    stack_base: core::ptr::null_mut(),
+                    locals_base: core::ptr::null_mut(),
+                    module_addr: 0,
+                    stack_limit: 0,
+                    trap_code: &mut (*ctx_ptr).trap_code_storage as *mut i32,
+                    blob_base: base,
+                    globals_ptr,
+                    globals_count: num_globals as u32,
+                    _pad0: 0,
+                    table0_ptr,
+                    table0_size,
+                    _pad1: 0,
+                    func_table_ptr,
+                    func_count: num_funcs as u32,
+                    _pad2: 0,
+                    pid: self.container_id.unwrap_or(0),
+                    slot_id,
+                    _pad3: [0; 6],
+                    trap_code_storage: 0,
+                    _pad4: 0,
+                    num_imported_funcs: import_stubs.len() as u32,
+                    _pad5: 0,
+                    import_stub_table: import_stub_table_ptr,
+                };
+
+                for (i, val) in all_global_vals.iter().enumerate() {
+                    *(globals_ptr.add(i * 16) as *mut u128) = val.to_u128();
+                }
+
+                if !import_stub_table_ptr.is_null() {
+                    let ist_mut = import_stub_table_ptr as *mut u64;
+                    for (i, &stub) in import_stubs.iter().enumerate() {
+                        *ist_mut.add(i) = stub;
+                    }
+                }
+
+                core::ptr::write(ctx_ptr, ring3_ctx);
+                maybe_ctx_ptr = Some(ctx_ptr as u64);
+            }
+
+            self.next_code_offset = (self.next_code_offset + 1024 * 1024) & !4095;
+            crate::debugln!("[WACC] Context and data region initialized.");
+            res
+        } else {
+            aot_module.code.as_ptr() as usize
+        };
+
+        // Populate func_table and table0
+        if let Some(ctx_u64) = maybe_ctx_ptr {
+            let ctx = unsafe { &mut *(ctx_u64 as *mut crate::wasm::aot::runtime::Ring3Context) };
+            for (i, offset) in aot_module.func_offsets.iter().enumerate() {
+                let func_idx = wacc.imports_length.imported_functions + i;
+                let func_addr = self.modules.get(module_addr).func_addrs[func_idx];
+                let absolute_ptr = final_code_ptr + *offset;
+                if let FuncInst::WasmFunc(wasm_func) = self.functions.get_mut(func_addr) {
+                    wasm_func.aot_ptr = Some(absolute_ptr);
+                }
+                unsafe { *ctx.func_table_ptr.add(func_idx) = absolute_ptr as u64; }
+            }
+            for i in 0..wacc.imports_length.imported_functions {
+                unsafe { *ctx.func_table_ptr.add(i) = 0; }
+            }
+            if !ctx.table0_ptr.is_null() {
+                let table0_addr = *self.modules.get(module_addr).table_addrs.first().unwrap();
+                let t = self.tables.get(table0_addr);
+                for (i, entry) in t.elem.iter().enumerate() {
+                    unsafe {
+                        *ctx.table0_ptr.add(i) = match entry {
+                            Ref::Func(addr) => {
+                                if let FuncInst::WasmFunc(wf) = self.functions.get(*addr) {
+                                    wf.aot_ptr.unwrap_or(0) as u64
+                                } else { 0 }
+                            }
+                            _ => 0,
+                        };
+                    }
+                }
+            }
+        } else {
+            for (i, offset) in aot_module.func_offsets.iter().enumerate() {
+                let func_idx = wacc.imports_length.imported_functions + i;
+                let func_addr = self.modules.get(module_addr).func_addrs[func_idx];
+                if let FuncInst::WasmFunc(wasm_func) = self.functions.get_mut(func_addr) {
+                    wasm_func.aot_ptr = Some(final_code_ptr + *offset);
+                }
+            }
+        }
+        self.aot_modules.push(aot_module);
+
+        // Run start function if present
+        let maybe_remaining_fuel = if let Some(func_idx) = wacc.start {
+            let func_addr = self.modules.get(module_addr).func_addrs[func_idx];
+            let RunState::Finished { maybe_remaining_fuel, .. } =
+                self.invoke_unchecked(func_addr, Vec::new(), None)?
+            else {
+                return Err(RuntimeError::OutOfFuel);
+            };
+            maybe_remaining_fuel
+        } else {
+            None
+        };
+
+        Ok(InstantiationOutcome {
+            module_addr,
+            maybe_remaining_fuel,
+            maybe_ctx_ptr,
+            global_init_vals,
+            data_offsets: Vec::new(),
+            elem_offsets: Vec::new(),
+        })
+    }
+
     pub fn func_alloc_unchecked(
         &mut self,
         func_type: FuncType,
@@ -1054,6 +1286,134 @@ impl ExternVal {
     }
 }
 
+/// Resolve a WASI/KrakeOS import `(module, name)` to a blob stub index.
+pub fn resolve_import_stub(module_name: &str, name: &str) -> u64 {
+    match (module_name, name) {
+        // WASI Preview 1 (300+)
+        ("wasi_snapshot_preview1", "fd_write") => 300,
+        ("wasi_snapshot_preview1", "fd_read") => 301,
+        ("wasi_snapshot_preview1", "fd_close") => 302,
+        ("wasi_snapshot_preview1", "proc_exit") => 303,
+        ("wasi_snapshot_preview1", "args_sizes_get") => 304,
+        ("wasi_snapshot_preview1", "args_get") => 305,
+        ("wasi_snapshot_preview1", "environ_sizes_get") => 306,
+        ("wasi_snapshot_preview1", "environ_get") => 307,
+        ("wasi_snapshot_preview1", "clock_time_get") => 308,
+        ("wasi_snapshot_preview1", "random_get") => 309,
+        ("wasi_snapshot_preview1", "fd_prestat_get") => 310,
+        ("wasi_snapshot_preview1", "fd_prestat_dir_name") => 311,
+        ("wasi_snapshot_preview1", "fd_fdstat_get") => 312,
+        ("wasi_snapshot_preview1", "fd_filestat_get") => 313,
+        ("wasi_snapshot_preview1", "fd_filestat_set_size") => 314,
+        ("wasi_snapshot_preview1", "fd_seek") => 315,
+        ("wasi_snapshot_preview1", "fd_pread") => 316,
+        ("wasi_snapshot_preview1", "fd_readdir") => 317,
+        ("wasi_snapshot_preview1", "path_open") => 318,
+        ("wasi_snapshot_preview1", "path_filestat_get") => 319,
+        ("wasi_snapshot_preview1", "path_create_directory") => 320,
+        ("wasi_snapshot_preview1", "path_unlink_file") => 321,
+        ("wasi_snapshot_preview1", "path_remove_directory") => 322,
+        ("wasi_snapshot_preview1", "path_rename") => 323,
+        ("wasi_snapshot_preview1", "path_link") => 324,
+        ("wasi_snapshot_preview1", "path_symlink") => 325,
+        ("wasi_snapshot_preview1", "path_readlink") => 326,
+        ("wasi_snapshot_preview1", "poll_oneoff") => 327,
+        ("wasi_snapshot_preview1", "sched_yield") => 328,
+        ("wasi_snapshot_preview1", "clock_res_get") => 329,
+        // KrakeOS Graphics (400+)
+        ("krakeos:graphics/screen@0.2.0", "get-width") => 400,
+        ("krakeos:graphics/screen@0.2.0", "get-height") => 401,
+        // KrakeOS Window (410+)
+        ("krakeos:system/window@0.2.0", "create") => 410,
+        ("krakeos:system/window@0.2.0", "update") => 411,
+        ("krakeos:system/window@0.2.0", "update-area") => 412,
+        ("krakeos:system/window@0.2.0", "get-events") => 413,
+        ("krakeos:system/window@0.2.0", "register-event-queue") => 414,
+        ("krakeos:system/window@0.2.0", "deregister-event-queue") => 415,
+        // KrakeOS Process (420+)
+        ("krakeos:system/process@0.2.0", "get-pid") => 420,
+        ("krakeos:system/process@0.2.0", "debug-print") => 421,
+        ("krakeos:system/process@0.2.0", "yield") => 422,
+        ("krakeos:system/process@0.2.0", "spawn") => 423,
+        ("krakeos:system/process@0.2.0", "waitpid") => 424,
+        ("krakeos:system/process@0.2.0", "pipe") => 425,
+        ("krakeos:system/process@0.2.0", "native-file-open") => 426,
+        ("krakeos:system/process@0.2.0", "native-file-stat") => 427,
+        ("krakeos:system/process@0.2.0", "file-read") => 428,
+        ("krakeos:system/process@0.2.0", "file-write") => 429,
+        ("krakeos:system/process@0.2.0", "kill") => 430,
+        ("krakeos:system/process@0.2.0", "get-list") => 431,
+        ("krakeos:system/process@0.2.0", "chdir") => 432,
+        ("krakeos:system/process@0.2.0", "get-slot-info") => 433,
+        ("krakeos:system/process@0.2.0", "ioctl") => 434,
+        ("krakeos:system/process@0.2.0", "set-nonblock") => 435,
+        ("krakeos:system/process@0.2.0", "poll") => 436,
+        ("krakeos:system/process@0.2.0", "get-current-user") => 437,
+        ("krakeos:system/process@0.2.0", "spawn-ext") => 438,
+        ("krakeos:system/process@0.2.0", "spawn-thread") => 439,
+        ("krakeos:system/process@0.2.0", "thread-exit") => 440,
+        ("krakeos:system/process@0.2.0", "syscall") => 441,
+        // KrakeOS Terminal (463+)
+        ("krakeos:system/terminal@0.1.0", "set-window-size") => 463,
+        ("krakeos:system/terminal@0.1.0", "get-window-size") => 464,
+        // KrakeOS Container (470+)
+        ("krakeos:system/container@0.1.0", "plant") => 470,
+        ("krakeos:system/container@0.1.0", "plant-from-path") => 471,
+        ("krakeos:system/container@0.1.0", "harvest") => 472,
+        ("krakeos:system/container@0.1.0", "list-children") => 473,
+        ("krakeos:system/container@0.1.0", "kill-child") => 474,
+        // KrakeOS Debug (480+)
+        ("krakeos:system/debug@0.1.0", "get-process-list") => 480,
+        ("krakeos:system/debug@0.1.0", "kill") => 481,
+        ("krakeos:system/debug@0.1.0", "dump-vma") => 482,
+        ("krakeos:system/debug@0.1.0", "get-memory-usage") => 483,
+        // KrakeOS Memory (450+)
+        ("krakeos:system/memory@0.2.0", "shm-get") => 450,
+        ("krakeos:system/memory@0.2.0", "brk") => 451,
+        ("krakeos:system/memory@0.2.0", "get-total-mem") => 452,
+        ("krakeos:system/memory@0.2.0", "get-used-mem") => 453,
+        ("krakeos:system/memory@0.2.0", "get-vma-dump") => 454,
+        // WASI Preview 2 (500+)
+        ("wasi:cli/exit@0.2.0", "exit") => 500,
+        ("wasi:cli/stdout@0.2.0", "get-stdout") => 501,
+        ("wasi:cli/stdin@0.2.0", "get-stdin") => 502,
+        ("wasi:cli/stderr@0.2.0", "get-stderr") => 503,
+        ("wasi:io/streams@0.2.0", "[method]output-stream.write") => 504,
+        ("wasi:io/streams@0.2.0", "[method]output-stream.blocking-write") => 504,
+        ("wasi:io/streams@0.2.0", "[method]output-stream.blocking-write-and-flush") => 504,
+        ("wasi:io/streams@0.2.0", "[method]input-stream.read") => 505,
+        ("wasi:io/streams@0.2.0", "[method]input-stream.blocking-read") => 505,
+        ("wasi:io/poll@0.2.0", "poll") => 506,
+        ("wasi:io/poll@0.2.0", "[method]pollable.block") => 507,
+        ("wasi:io/poll@0.2.0", "[resource-drop]pollable") => 508,
+        ("wasi:io/error@0.2.0", "[resource-drop]error") => 509,
+        ("wasi:clocks/monotonic-clock@0.2.0", "now") => 510,
+        ("wasi:clocks/monotonic-clock@0.2.0", "resolution") => 511,
+        ("wasi:clocks/monotonic-clock@0.2.0", "subscribe-duration") => 512,
+        ("wasi:clocks/monotonic-clock@0.2.0", "subscribe-instant") => 512,
+        ("wasi:clocks/wall-clock@0.2.0", "now") => 513,
+        ("wasi:filesystem/types@0.2.0", "[resource-drop]descriptor") => 514,
+        ("wasi:filesystem/types@0.2.0", "[method]descriptor.open-at") => 515,
+        ("wasi:filesystem/types@0.2.0", "[method]descriptor.stat") => 516,
+        ("wasi:filesystem/types@0.2.0", "[method]descriptor.set-size") => 517,
+        ("wasi:filesystem/types@0.2.0", "[method]descriptor.seek") => 518,
+        ("wasi:filesystem/types@0.2.0", "[method]descriptor.create-directory-at") => 519,
+        ("wasi:filesystem/types@0.2.0", "[method]descriptor.unlink-file-at") => 520,
+        ("wasi:filesystem/types@0.2.0", "[method]descriptor.remove-directory-at") => 521,
+        ("wasi:filesystem/types@0.2.0", "[method]descriptor.rename-at") => 522,
+        ("wasi:filesystem/types@0.2.0", "[method]descriptor.read-directory") => 523,
+        ("wasi:filesystem/types@0.2.0", "[resource-drop]directory-entry-stream") => 524,
+        ("wasi:filesystem/types@0.2.0", "[method]directory-entry-stream.read-directory-entry") => 527,
+        ("wasi:random/random@0.2.0", "get-random-bytes") => 525,
+        ("wasi:sockets/instance-network@0.2.0", "instance-network") => 526,
+        // Internal / Special
+        ("env", "__wasi_init_tp") => 460,
+        ("env", "__wasm_call_dtors") => 460,
+        ("env", "host_serial_print") => 999,
+        _ => u64::MAX,
+    }
+}
+
 pub trait ExternFilterable {
     fn funcs(self) -> impl Iterator<Item = FuncAddr>;
     fn globals(self) -> impl Iterator<Item = GlobalAddr>;
@@ -1101,4 +1461,10 @@ pub struct InstantiationOutcome {
     pub module_addr: ModuleAddr,
     pub maybe_remaining_fuel: Option<u32>,
     pub maybe_ctx_ptr: Option<u64>,
+    /// Pre-evaluated global init values (local globals only), for .wacc serialization.
+    pub global_init_vals: Vec<Value>,
+    /// Pre-evaluated data segment offsets (None for passive), for .wacc serialization.
+    pub data_offsets: Vec<Option<i32>>,
+    /// Pre-evaluated element segment offsets (None for passive/declarative), for .wacc serialization.
+    pub elem_offsets: Vec<Option<i32>>,
 }

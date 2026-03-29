@@ -46,3 +46,32 @@ pub fn get_date() -> (u8, u8, u16) {
     let full_year = 2000 + year as u16;
     (day, month, full_year)
 }
+
+/// Returns seconds since Unix epoch (1970-01-01 00:00:00 UTC).
+pub fn unix_timestamp() -> u32 {
+    let (h, m, s) = get_time();
+    let (d, mo, y) = get_date();
+
+    // Days per month (non-leap)
+    const DAYS: [u16; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+    let y = y as u32;
+    let mut days: u32 = 0;
+
+    // Full years since 1970
+    for yr in 1970..y {
+        days += if yr % 4 == 0 && (yr % 100 != 0 || yr % 400 == 0) { 366 } else { 365 };
+    }
+
+    // Full months this year
+    for i in 0..(mo as usize).saturating_sub(1) {
+        days += DAYS[i] as u32;
+        if i == 1 && y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
+            days += 1; // leap feb
+        }
+    }
+
+    days += (d as u32).saturating_sub(1);
+
+    days * 86400 + (h as u32) * 3600 + (m as u32) * 60 + (s as u32)
+}

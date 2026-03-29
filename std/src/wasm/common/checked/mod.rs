@@ -387,6 +387,9 @@ impl AbstractStored for StoredInstantiationOutcome {
             module_addr: self.module_addr.into_bare(),
             maybe_remaining_fuel: self.maybe_remaining_fuel,
             maybe_ctx_ptr: None,
+            global_init_vals: Vec::new(),
+            data_offsets: Vec::new(),
+            elem_offsets: Vec::new(),
         }
     }
 }

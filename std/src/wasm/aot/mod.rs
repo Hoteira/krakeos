@@ -2,6 +2,7 @@ pub mod emitter;
 pub mod compiler;
 pub mod runtime;
 pub mod trampoline;
+pub mod wacc;
 
 pub use compiler::AotCompiler;
 pub use runtime::AotModule;

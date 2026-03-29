@@ -6,6 +6,8 @@ use alloc::vec::Vec;
 use core::mem::size_of;
 
 
+use alloc::collections::{BTreeMap, BTreeSet};
+
 use crate::fs::disk;
 use crate::fs::ext2::structs::{BlockGroupDescriptor, Inode, Superblock};
 
@@ -17,8 +19,8 @@ pub struct Ext2 {
     block_size: u64,
     inodes_per_group: u32,
     inode_size: u16,
-    cache_lba: Option<u64>,
-    cache_data: [u8; 512],
+    sector_cache: BTreeMap<u64, [u8; 512]>,
+    dirty_sectors: BTreeSet<u64>,
     pub lock: YieldMutex<()>,
 }
 
@@ -54,8 +56,8 @@ impl Ext2 {
             block_size: block_size as u64,
             inodes_per_group: superblock.inodes_per_group,
             inode_size,
-            cache_lba: None,
-            cache_data: [0; 512],
+            sector_cache: BTreeMap::new(),
+            dirty_sectors: BTreeSet::new(),
             lock: YieldMutex::new(()),
         }))
     }
@@ -70,19 +72,20 @@ impl Ext2 {
         let start_lba = abs_offset / 512;
         let offset_in_sector = (abs_offset % 512) as usize;
 
-
-        if offset_in_sector == 0 && (buffer.len() % 512) == 0 && buffer.len() >= 512 {
-            disk::read(start_lba, self.disk_id, buffer);
-            return;
-        }
-
         let mut current_lba = start_lba;
         let mut bytes_read = 0;
         let total_bytes = buffer.len();
 
-        let mut temp_buf = [0u8; 512];
         while bytes_read < total_bytes {
-            disk::read(current_lba, self.disk_id, &mut temp_buf);
+            let mut temp_buf = [0u8; 512];
+            if let Some(cached) = self.sector_cache.get(&current_lba) {
+                temp_buf.copy_from_slice(cached);
+            } else {
+                disk::read(current_lba, self.disk_id, &mut temp_buf);
+                if self.sector_cache.len() < 8192 {
+                    self.sector_cache.insert(current_lba, temp_buf);
+                }
+            }
 
             let start_index = if current_lba == start_lba { offset_in_sector } else { 0 };
             let remaining_in_sector = 512 - start_index;
@@ -100,32 +103,63 @@ impl Ext2 {
         let start_lba = abs_offset / 512;
         let offset_in_sector = (abs_offset % 512) as usize;
 
-
-        if offset_in_sector == 0 && (buffer.len() % 512) == 0 && buffer.len() >= 512 {
-            disk::write(start_lba, self.disk_id, buffer);
-            return;
-        }
-
         let mut current_lba = start_lba;
         let mut bytes_written = 0;
         let total_bytes = buffer.len();
 
-        let mut temp_buf = [0u8; 512];
         while bytes_written < total_bytes {
-            disk::read(current_lba, self.disk_id, &mut temp_buf);
-
+            let mut temp_buf = [0u8; 512];
             let start_index = if current_lba == start_lba { offset_in_sector } else { 0 };
             let remaining_in_sector = 512 - start_index;
             let to_copy = core::cmp::min(total_bytes - bytes_written, remaining_in_sector);
 
+            if to_copy < 512 {
+                if let Some(cached) = self.sector_cache.get(&current_lba) {
+                    temp_buf.copy_from_slice(cached);
+                } else {
+                    disk::read(current_lba, self.disk_id, &mut temp_buf);
+                }
+            }
 
             temp_buf[start_index..start_index + to_copy].copy_from_slice(&buffer[bytes_written..bytes_written + to_copy]);
 
+            self.sector_cache.insert(current_lba, temp_buf);
+            self.dirty_sectors.insert(current_lba);
 
-            disk::write(current_lba, self.disk_id, &temp_buf);
+            if self.dirty_sectors.len() > 8192 {
+                self.flush();
+            }
 
             bytes_written += to_copy;
             current_lba += 1;
+        }
+    }
+
+    pub fn flush(&mut self) {
+        if self.dirty_sectors.is_empty() { return; }
+        let mut lbas: alloc::vec::Vec<u64> = self.dirty_sectors.iter().copied().collect();
+        lbas.sort_unstable();
+        
+        let mut current_start = lbas[0];
+        let mut consecutive_data = alloc::vec::Vec::new();
+        
+        for &lba in &lbas {
+            if lba == current_start + (consecutive_data.len() / 512) as u64 {
+                consecutive_data.extend_from_slice(self.sector_cache.get(&lba).unwrap());
+            } else {
+                disk::write(current_start, self.disk_id, &consecutive_data);
+                current_start = lba;
+                consecutive_data.clear();
+                consecutive_data.extend_from_slice(self.sector_cache.get(&lba).unwrap());
+            }
+        }
+        if !consecutive_data.is_empty() {
+            disk::write(current_start, self.disk_id, &consecutive_data);
+        }
+        self.dirty_sectors.clear();
+        
+        if self.sector_cache.len() > 16384 {
+            self.sector_cache.clear();
         }
     }
 
@@ -347,28 +381,43 @@ impl Ext2 {
     }
 
     fn alloc_block(&mut self) -> u32 {
+        let alloc_start = unsafe { crate::task::SYSTEM_TICKS };
         let groups = self.superblock.blocks_count / self.superblock.blocks_per_group;
+        let block_size_usize = self.block_size as usize;
+        
         for i in 0..=groups {
             let mut bg = self.read_block_group_descriptor(i);
             if bg.free_blocks_count > 0 {
                 let bitmap_block = bg.block_bitmap;
-                let mut bitmap = alloc::vec![0u8; self.block_size as usize];
-                self.read_disk_data(bitmap_block as u64 * self.block_size, &mut bitmap);
+                let mut bitmap = [0u8; 4096];
+                
+                let read_start = unsafe { crate::task::SYSTEM_TICKS };
+                self.read_disk_data(bitmap_block as u64 * self.block_size, &mut bitmap[..block_size_usize]);
+                let read_time = unsafe { crate::task::SYSTEM_TICKS } - read_start;
 
-                for byte_idx in 0..self.block_size as usize {
+                for byte_idx in 0..block_size_usize {
                     if bitmap[byte_idx] != 0xFF {
                         for bit_idx in 0..8 {
                             if (bitmap[byte_idx] & (1 << bit_idx)) == 0 {
                                 bitmap[byte_idx] |= 1 << bit_idx;
-                                self.write_disk_data(bitmap_block as u64 * self.block_size, &bitmap);
+                                
+                                let write_start = unsafe { crate::task::SYSTEM_TICKS };
+                                self.write_disk_data(bitmap_block as u64 * self.block_size, &bitmap[..block_size_usize]);
 
                                 bg.free_blocks_count -= 1;
                                 self.write_block_group_descriptor(i, &bg);
 
                                 self.superblock.free_blocks_count -= 1;
                                 self.write_superblock();
+                                let write_time = unsafe { crate::task::SYSTEM_TICKS } - write_start;
 
                                 let block_id = (i * self.superblock.blocks_per_group) + (byte_idx as u32 * 8) + bit_idx as u32 + self.superblock.first_data_block;
+                                
+                                let total_time = unsafe { crate::task::SYSTEM_TICKS } - alloc_start;
+                                if total_time > 10 {
+                                    crate::debugln!("Ext2::alloc_block SLOW: {} ticks (read bitmap: {}, write metadata: {})", total_time, read_time, write_time);
+                                }
+                                
                                 return block_id;
                             }
                         }
@@ -381,19 +430,21 @@ impl Ext2 {
 
     fn alloc_inode(&mut self) -> u32 {
         let groups = self.superblock.inodes_count / self.superblock.inodes_per_group;
+        let block_size_usize = self.block_size as usize;
+        
         for i in 0..=groups {
             let mut bg = self.read_block_group_descriptor(i);
             if bg.free_inodes_count > 0 {
                 let bitmap_block = bg.inode_bitmap;
-                let mut bitmap = alloc::vec![0u8; self.block_size as usize];
-                self.read_disk_data(bitmap_block as u64 * self.block_size, &mut bitmap);
+                let mut bitmap = [0u8; 4096];
+                self.read_disk_data(bitmap_block as u64 * self.block_size, &mut bitmap[..block_size_usize]);
 
-                for byte_idx in 0..self.block_size as usize {
+                for byte_idx in 0..block_size_usize {
                     if bitmap[byte_idx] != 0xFF {
                         for bit_idx in 0..8 {
                             if (bitmap[byte_idx] & (1 << bit_idx)) == 0 {
                                 bitmap[byte_idx] |= 1 << bit_idx;
-                                self.write_disk_data(bitmap_block as u64 * self.block_size, &bitmap);
+                                self.write_disk_data(bitmap_block as u64 * self.block_size, &bitmap[..block_size_usize]);
 
                                 bg.free_inodes_count -= 1;
                                 self.write_block_group_descriptor(i, &bg);
@@ -422,15 +473,16 @@ impl Ext2 {
         let mut bg = self.read_block_group_descriptor(group);
         let bitmap_block = bg.block_bitmap;
 
-        let mut bitmap = alloc::vec![0u8; self.block_size as usize];
-        self.read_disk_data(bitmap_block as u64 * self.block_size, &mut bitmap);
+        let block_size_usize = self.block_size as usize;
+        let mut bitmap = [0u8; 4096];
+        self.read_disk_data(bitmap_block as u64 * self.block_size, &mut bitmap[..block_size_usize]);
 
         let byte_idx = (index_in_group / 8) as usize;
         let bit_idx = index_in_group % 8;
 
         if (bitmap[byte_idx] & (1 << bit_idx)) != 0 {
             bitmap[byte_idx] &= !(1 << bit_idx);
-            self.write_disk_data(bitmap_block as u64 * self.block_size, &bitmap);
+            self.write_disk_data(bitmap_block as u64 * self.block_size, &bitmap[..block_size_usize]);
 
             bg.free_blocks_count += 1;
             self.write_block_group_descriptor(group, &bg);
@@ -450,15 +502,16 @@ impl Ext2 {
         let mut bg = self.read_block_group_descriptor(group);
         let bitmap_block = bg.inode_bitmap;
 
-        let mut bitmap = alloc::vec![0u8; self.block_size as usize];
-        self.read_disk_data(bitmap_block as u64 * self.block_size, &mut bitmap);
+        let block_size_usize = self.block_size as usize;
+        let mut bitmap = [0u8; 4096];
+        self.read_disk_data(bitmap_block as u64 * self.block_size, &mut bitmap[..block_size_usize]);
 
         let byte_idx = (index_in_group / 8) as usize;
         let bit_idx = index_in_group % 8;
 
         if (bitmap[byte_idx] & (1 << bit_idx)) != 0 {
             bitmap[byte_idx] &= !(1 << bit_idx);
-            self.write_disk_data(bitmap_block as u64 * self.block_size, &bitmap);
+            self.write_disk_data(bitmap_block as u64 * self.block_size, &bitmap[..block_size_usize]);
 
             bg.free_inodes_count += 1;
             self.write_block_group_descriptor(group, &bg);
@@ -612,17 +665,34 @@ impl VfsNode for Ext2Node {
 
         let mut bounce_buf = alloc::vec![0u8; fs.block_size as usize];
 
+        let write_start_time = unsafe { crate::task::SYSTEM_TICKS };
+        let mut total_alloc_time = 0;
+        let mut total_disk_write_time = 0;
+        let mut total_blocks_allocated = 0;
+        let mut loop_count = 0;
+
+        let mut total_get_block_addr_time = 0;
+        let mut total_cache_inval_time = 0;
+
+        crate::debugln!("Ext2Node::write: START len={}", len);
+
         while bytes_written < len {
+            let loop_start = unsafe { crate::task::SYSTEM_TICKS };
+            
             let block_idx = (current_offset / block_size) as u32;
             let block_offset = (current_offset % block_size) as usize;
 
+            let get_block_start = unsafe { crate::task::SYSTEM_TICKS };
             let mut phys = {
                 let _lock = fs.lock.lock();
                 unsafe { (*fs_ptr).get_block_address(&self.inode, block_idx) }
             };
+            total_get_block_addr_time += unsafe { crate::task::SYSTEM_TICKS } - get_block_start;
 
+            let mut newly_allocated = false;
 
             if phys == 0 {
+                let alloc_start = unsafe { crate::task::SYSTEM_TICKS };
                 phys = {
                     let _lock = fs.lock.lock();
                     unsafe {
@@ -630,10 +700,7 @@ impl VfsNode for Ext2Node {
                         if p != 0 {
                             if let Ok(_) = (*fs_ptr).set_block_address(&mut self.inode, block_idx, p) {
                                 self.inode.blocks += (block_size / 512) as u32;
-                                (*fs_ptr).write_inode(self.inode_idx, &self.inode);
-
-                                bounce_buf.fill(0);
-                                (*fs_ptr).write_disk_data(p as u64 * block_size, &bounce_buf);
+                                newly_allocated = true;
                             } else {
                                 return Err(String::from("Failed to allocate and set block"));
                             }
@@ -641,17 +708,30 @@ impl VfsNode for Ext2Node {
                         p
                     }
                 };
+                total_alloc_time += unsafe { crate::task::SYSTEM_TICKS } - alloc_start;
+                total_blocks_allocated += 1;
                 if phys == 0 { return Err(String::from("Failed to allocate block")); }
             }
 
+            let io_start = unsafe { crate::task::SYSTEM_TICKS };
 
             if block_offset != 0 || (len - bytes_written) < block_size as usize {
                 let to_copy = core::cmp::min(len - bytes_written, (block_size as usize) - block_offset);
-                {
+                
+                if !newly_allocated {
                     let _lock = fs.lock.lock();
                     unsafe {
                         (*fs_ptr).read_disk_data(phys as u64 * block_size, &mut bounce_buf);
-                        bounce_buf[block_offset..block_offset + to_copy].copy_from_slice(&buffer[buf_offset..buf_offset + to_copy]);
+                    }
+                } else {
+                    bounce_buf.fill(0);
+                }
+                
+                bounce_buf[block_offset..block_offset + to_copy].copy_from_slice(&buffer[buf_offset..buf_offset + to_copy]);
+                
+                {
+                    let _lock = fs.lock.lock();
+                    unsafe {
                         (*fs_ptr).write_disk_data(phys as u64 * block_size, &bounce_buf);
                     }
                 }
@@ -671,14 +751,40 @@ impl VfsNode for Ext2Node {
                 buf_offset += to_copy;
             }
 
+            total_disk_write_time += unsafe { crate::task::SYSTEM_TICKS } - io_start;
+            
+            let inval_start = unsafe { crate::task::SYSTEM_TICKS };
             crate::fs::cache::GLOBAL_PAGE_CACHE.lock().invalidate(fs.disk_id, self.inode_idx as u64, block_idx);
+            total_cache_inval_time += unsafe { crate::task::SYSTEM_TICKS } - inval_start;
+
+            loop_count += 1;
+            if loop_count % 100 == 0 {
+                crate::debugln!(
+                    "Ext2Node::write: Progress {} / {} bytes... get_block={} alloc={} io={} inval={}", 
+                    bytes_written, len, total_get_block_addr_time, total_alloc_time, total_disk_write_time, total_cache_inval_time
+                );
+            }
         }
 
+        crate::debugln!("Ext2Node::write: Loop done. Ticks so far: {}", unsafe { crate::task::SYSTEM_TICKS } - write_start_time);
 
-        if current_offset > self.inode.size as u64 {
+        let total_time = unsafe { crate::task::SYSTEM_TICKS } - write_start_time;
+        if len >= 1024 {
+            crate::debugln!("Ext2 write of {} bytes took {} ticks (alloc_time: {} ticks for {} blocks, io_time: {} ticks)", len, total_time, total_alloc_time, total_blocks_allocated, total_disk_write_time);
+        }
+
+        let need_size_update = current_offset > self.inode.size as u64;
+        // Always update mtime on write; update size if it grew
+        {
             let _lock = fs.lock.lock();
-            self.inode.size = current_offset as u32;
+            self.inode.mtime = crate::drivers::rtc::unix_timestamp();
+            if need_size_update {
+                self.inode.size = current_offset as u32;
+            }
             unsafe { (*fs_ptr).write_inode(self.inode_idx, &self.inode) };
+            crate::debugln!("Ext2Node::write: Inode updated, about to flush...");
+            unsafe { (*fs_ptr).flush() };
+            crate::debugln!("Ext2Node::write: Flush done.");
         }
 
         Ok(bytes_written)
@@ -1462,7 +1568,7 @@ impl Ext2Node {
         };
         if inode_id == 0 { return Err(String::from("No free inodes")); }
 
-        let current_time = 0;
+        let current_time = crate::drivers::rtc::unix_timestamp();
 
         let new_inode = Inode {
             mode,

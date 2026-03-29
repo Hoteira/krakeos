@@ -35,22 +35,29 @@ pub fn mount(disk_id: u8, fs: Box<dyn FileSystem>) {
 }
 
 pub fn open_file(disk_id: u8, path_str: &str) -> Result<usize, String> {
+    crate::debugln!("vfs::open_file: Start for {}", path_str);
     let mut actual_path = String::from(path_str);
     if !path_str.starts_with('@') && !path_str.starts_with('/') {}
 
+    crate::debugln!("vfs::open_file: Calling vfs::open...");
     let node = open(disk_id, path_str)?;
+    crate::debugln!("vfs::open_file: vfs::open returned successfully. Checking access...");
+    
     let (uid, gid) = get_current_ids();
     if !check_access(uid, gid, &node.stat(), ACCESS_READ) {
         return Err(String::from("Permission denied (read)"));
     }
     
+    crate::debugln!("vfs::open_file: Access granted. Locking GLOBAL_FILES...");
     let mut table = GLOBAL_FILES.lock();
     let fd = table.next_fd;
     table.next_fd += 1;
     
+    crate::debugln!("vfs::open_file: Inserting into table (fd: {})...", fd);
     table.files.insert(fd, Box::new(FileHandle::File { node, offset: 0 }));
     table.refcounts.insert(fd, 1);
     
+    crate::debugln!("vfs::open_file: Done!");
     Ok(fd)
 }
 
@@ -104,6 +111,7 @@ fn get_current_ids() -> (u16, u16) {
 }
 
 pub fn open(disk_id: u8, path_str: &str) -> Result<Box<dyn VfsNode>, String> {
+    crate::debugln!("vfs::open: Start for disk_id={} path_str={}", disk_id, path_str);
     let (actual_disk, actual_path) = if path_str.starts_with('/') {
         (0xE0, path_str)
     } else {
@@ -115,7 +123,9 @@ pub fn open(disk_id: u8, path_str: &str) -> Result<Box<dyn VfsNode>, String> {
 
     unsafe {
         if let Some(fs) = &mut FILESYSTEMS[actual_disk as usize] {
+            crate::debugln!("vfs::open: Getting root node...");
             let mut node = fs.root()?;
+            crate::debugln!("vfs::open: Traversing components...");
             for component in components.iter() {
                 // Check traversal permission (X bit) on directories
                 if node.kind() == FileType::Directory {
@@ -125,6 +135,7 @@ pub fn open(disk_id: u8, path_str: &str) -> Result<Box<dyn VfsNode>, String> {
                 }
                 node = node.find(&component)?;
             }
+            crate::debugln!("vfs::open: Node found.");
             Ok(node)
         } else {
             Err(String::from("Disk ID not mounted"))

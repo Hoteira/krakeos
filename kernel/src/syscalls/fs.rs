@@ -332,8 +332,12 @@ pub fn handle_create(context: &mut CPUState, syscall_num: u64) {
             let open_res = crate::fs::vfs::open_file(0, &resolved);
             release_fs_lock();
 
+            crate::debugln!("SYS_CREATE: Finished open_file, checking result...");
+
             if let Ok(global_fd) = open_res {
                 context.rax = assign_local_fd(global_fd);
+                let rax_val = context.rax;
+                crate::debugln!("SYS_CREATE: Successfully assigned local fd {}, returning to caller.", rax_val);
             } else {
                 crate::debugln!("SYS_CREATE: FAILED TO OPEN AFTER CREATE!");
                 context.rax = u64::MAX;
@@ -581,6 +585,10 @@ pub fn handle_write_file(context: &mut CPUState) {
 
     if !super::validate_user_buf(context, buf_ptr as u64, len as u64) { return; }
 
+    if len > 1024 * 1024 {
+        crate::debugln!("SYS_WRITE: Large write requested: {} bytes to fd {}", len, local_fd);
+    }
+
     let global_fd_opt = {
         let tm = crate::task::TASK_MANAGER.int_lock();
         let current = tm.current_task;
@@ -612,20 +620,45 @@ pub fn handle_write_file(context: &mut CPUState) {
             return;
         }
         let fd = fd_val as usize;
+        
+        if len > 1024 * 1024 {
+            crate::debugln!("SYS_WRITE: Global FD is {}. About to create slice...", fd);
+        }
+        
         let buf = unsafe { core::slice::from_raw_parts(buf_ptr, len) };
 
+        if len > 1024 * 1024 {
+            crate::debugln!("SYS_WRITE: Acquiring FS lock...");
+        }
+        
         acquire_fs_lock();
         let handle_opt = crate::fs::vfs::get_file(fd);
+        
+        if len > 1024 * 1024 {
+            crate::debugln!("SYS_WRITE: FS lock acquired, get_file done. Handle is some: {}", handle_opt.is_some());
+        }
+        
         let res = if let Some(handle) = handle_opt {
             use crate::fs::vfs::FileHandle;
             match handle {
                 FileHandle::File { node, offset } => {
+                    if len > 1024 * 1024 {
+                        crate::debugln!("SYS_WRITE: Calling node.write...");
+                    }
                     match node.write(*offset, buf) {
                         Ok(n) => {
+                            if len > 1024 * 1024 {
+                                crate::debugln!("SYS_WRITE: node.write finished successfully. Updating offset...");
+                            }
                             *offset += n as u64;
                             Some(Ok(n))
                         }
-                        Err(e) => Some(Err(e))
+                        Err(e) => {
+                            if len > 1024 * 1024 {
+                                crate::debugln!("SYS_WRITE: node.write failed!");
+                            }
+                            Some(Err(e))
+                        }
                     }
                 }
                 FileHandle::Pipe { pipe } => {
@@ -633,6 +666,10 @@ pub fn handle_write_file(context: &mut CPUState) {
                 }
             }
         } else { None };
+        
+        if len > 1024 * 1024 {
+            crate::debugln!("SYS_WRITE: Releasing FS lock...");
+        }
         release_fs_lock();
 
         match res {

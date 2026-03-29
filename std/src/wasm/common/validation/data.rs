@@ -35,18 +35,23 @@ pub(super) fn validate_data_section(
                 };
                 valid_stack.assert_val_types(&[ValType::NumType(NumType::I32)], true)?;
                 let byte_vec = wasm.read_vec(|el| el.read_u8())?;
+                let wasm_init_offset = wasm.pc - byte_vec.len();
                 DataSegment {
                     mode: DataMode::Active(DataModeActive {
                         memory_idx: 0,
                         offset,
                     }),
                     init: byte_vec,
+                    wasm_init_offset,
                 }
             }
             1 => {
+                let byte_vec = wasm.read_vec(|el| el.read_u8())?;
+                let wasm_init_offset = wasm.pc - byte_vec.len();
                 DataSegment {
                     mode: DataMode::Passive,
-                    init: wasm.read_vec(|el| el.read_u8())?,
+                    init: byte_vec,
+                    wasm_init_offset,
                 }
             }
             2 => {
@@ -68,12 +73,14 @@ pub(super) fn validate_data_section(
                 };
                 valid_stack.assert_val_types(&[ValType::NumType(NumType::I32)], true)?;
                 let byte_vec = wasm.read_vec(|el| el.read_u8())?;
+                let wasm_init_offset = wasm.pc - byte_vec.len();
                 DataSegment {
                     mode: DataMode::Active(DataModeActive {
                         memory_idx: 0,
                         offset,
                     }),
                     init: byte_vec,
+                    wasm_init_offset,
                 }
             }
             _ => { return Err(ValidationError::MalformedDataSegmentMode(mode)); },
