@@ -72,6 +72,23 @@ impl Ext2 {
         let start_lba = abs_offset / 512;
         let offset_in_sector = (abs_offset % 512) as usize;
 
+        // Fast path for aligned, multi-sector reads
+        if offset_in_sector == 0 && (buffer.len() % 512) == 0 && buffer.len() >= 512 {
+            // Read everything from disk in one go
+            disk::read(start_lba, self.disk_id, buffer);
+            
+            // Patch in any cached sectors
+            let num_sectors = (buffer.len() / 512) as u64;
+            for i in 0..num_sectors {
+                let lba = start_lba + i;
+                if let Some(cached) = self.sector_cache.get(&lba) {
+                    let buf_start = (i * 512) as usize;
+                    buffer[buf_start..buf_start + 512].copy_from_slice(cached);
+                }
+            }
+            return;
+        }
+
         let mut current_lba = start_lba;
         let mut bytes_read = 0;
         let total_bytes = buffer.len();
@@ -619,9 +636,52 @@ impl VfsNode for Ext2Node {
 
         let block_size = fs.block_size as u64;
 
+        let start_ticks = unsafe { crate::task::SYSTEM_TICKS };
+        let mut loop_count = 0;
+
         while bytes_read < len {
+            loop_count += 1;
             let block_idx = (current_offset / block_size) as u32;
             let block_offset = (current_offset % block_size) as usize;
+
+            // Fast path for large, block-aligned reads
+            if block_offset == 0 && (len - bytes_read) >= block_size as usize {
+                let mut blocks_to_read = 1;
+                let max_blocks = ((len - bytes_read) / block_size as usize) as u32;
+                
+                let start_phys = {
+                    let _lock = fs.lock.lock();
+                    unsafe { (*fs_ptr).get_block_address(&self.inode, block_idx) }
+                };
+
+                if start_phys != 0 {
+                    while blocks_to_read < max_blocks {
+                        let next_phys = {
+                            let _lock = fs.lock.lock();
+                            unsafe { (*fs_ptr).get_block_address(&self.inode, block_idx + blocks_to_read) }
+                        };
+                        if next_phys == start_phys + blocks_to_read {
+                            blocks_to_read += 1;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    let read_len = (blocks_to_read * block_size as u32) as usize;
+                    let target_slice = &mut buffer[bytes_read..bytes_read + read_len];
+                    
+                    {
+                        let _lock = fs.lock.lock();
+                        unsafe {
+                            (*fs_ptr).read_disk_data(start_phys as u64 * block_size, target_slice);
+                        }
+                    }
+
+                    bytes_read += read_len;
+                    current_offset += read_len as u64;
+                    continue;
+                }
+            }
 
             let phys = {
                 let _lock = fs.lock.lock();
@@ -648,6 +708,11 @@ impl VfsNode for Ext2Node {
 
             bytes_read += to_copy;
             current_offset += to_copy as u64;
+        }
+
+        let end_ticks = unsafe { crate::task::SYSTEM_TICKS };
+        if end_ticks - start_ticks > 10 || len > 1024 * 1024 {
+            crate::debugln!("Ext2Node::read of {} bytes took {} ticks over {} loops", len, end_ticks - start_ticks, loop_count);
         }
 
         Ok(bytes_read)

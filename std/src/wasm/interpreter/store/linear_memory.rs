@@ -290,22 +290,12 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
 
         match &*lock_guard {
             LinearMemoryStorage::Managed(data) => {
-                for (i, byte) in buf.iter_mut().enumerate() {
-                    let src = unsafe { data.get_unchecked(i + index) };
-                    *byte = src.load(Ordering::Relaxed);
-                }
+                let src_ptr = unsafe { data.as_ptr().add(index) as *const u8 };
+                unsafe { core::ptr::copy_nonoverlapping(src_ptr, buf.as_mut_ptr(), buf_len) };
             }
-            LinearMemoryStorage::Sas { base, .. } => {
-                for (i, byte) in buf.iter_mut().enumerate() {
-                    let src = unsafe { &*base.add(i + index) };
-                    *byte = src.load(Ordering::Relaxed);
-                }
-            }
-            LinearMemoryStorage::Nested { base, .. } => {
-                for (i, byte) in buf.iter_mut().enumerate() {
-                    let src = unsafe { &*base.add(i + index) };
-                    *byte = src.load(Ordering::Relaxed);
-                }
+            LinearMemoryStorage::Sas { base, .. } | LinearMemoryStorage::Nested { base, .. } => {
+                let src_ptr = unsafe { base.add(index) as *const u8 };
+                unsafe { core::ptr::copy_nonoverlapping(src_ptr, buf.as_mut_ptr(), buf_len) };
             }
         }
         Ok(())
@@ -328,22 +318,12 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
 
         match &*lock_guard {
             LinearMemoryStorage::Managed(data) => {
-                for i in index..(index + count) {
-                    let lin_mem_byte = unsafe { data.get_unchecked(i) };
-                    lin_mem_byte.store(data_byte, Ordering::Relaxed);
-                }
+                let dst_ptr = unsafe { data.as_ptr().add(index) as *mut u8 };
+                unsafe { core::ptr::write_bytes(dst_ptr, data_byte, count) };
             }
-            LinearMemoryStorage::Sas { base, .. } => {
-                for i in index..(index + count) {
-                    let lin_mem_byte = unsafe { &*base.add(i) };
-                    lin_mem_byte.store(data_byte, Ordering::Relaxed);
-                }
-            }
-            LinearMemoryStorage::Nested { base, .. } => {
-                for i in index..(index + count) {
-                    let lin_mem_byte = unsafe { &*base.add(i) };
-                    lin_mem_byte.store(data_byte, Ordering::Relaxed);
-                }
+            LinearMemoryStorage::Sas { base, .. } | LinearMemoryStorage::Nested { base, .. } => {
+                let dst_ptr = unsafe { base.add(index) as *mut u8 };
+                unsafe { core::ptr::write_bytes(dst_ptr, data_byte, count) };
             }
         }
         Ok(())
@@ -380,29 +360,20 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
             return Ok(());
         }
 
-        let get_src = |i| match &*lock_guard_other {
-            LinearMemoryStorage::Managed(data) => unsafe { data.get_unchecked(i + source_index) },
-            LinearMemoryStorage::Sas { base, .. } => unsafe { &*base.add(i + source_index) },
-            LinearMemoryStorage::Nested { base, .. } => unsafe { &*base.add(i + source_index) },
+        let get_src_ptr = || match &*lock_guard_other {
+            LinearMemoryStorage::Managed(data) => unsafe { data.as_ptr().add(source_index) as *const u8 },
+            LinearMemoryStorage::Sas { base, .. } | LinearMemoryStorage::Nested { base, .. } => unsafe { base.add(source_index) as *const u8 },
         };
 
-        let get_dst = |i| match &*lock_guard_self {
-            LinearMemoryStorage::Managed(data) => unsafe { data.get_unchecked(i + destination_index) },
-            LinearMemoryStorage::Sas { base, .. } => unsafe { &*base.add(i + destination_index) },
-            LinearMemoryStorage::Nested { base, .. } => unsafe { &*base.add(i + destination_index) },
+        let get_dst_ptr = || match &*lock_guard_self {
+            LinearMemoryStorage::Managed(data) => unsafe { data.as_ptr().add(destination_index) as *mut u8 },
+            LinearMemoryStorage::Sas { base, .. } | LinearMemoryStorage::Nested { base, .. } => unsafe { base.add(destination_index) as *mut u8 },
         };
 
-        if destination_index <= source_index {
-            for i in 0..count {
-                let byte = get_src(i).load(Ordering::Relaxed);
-                get_dst(i).store(byte, Ordering::Relaxed);
-            }
-        } else {
-            for i in (0..count).rev() {
-                let byte = get_src(i).load(Ordering::Relaxed);
-                get_dst(i).store(byte, Ordering::Relaxed);
-            }
+        unsafe {
+            core::ptr::copy(get_src_ptr(), get_dst_ptr(), count);
         }
+        
         Ok(())
     }
 
@@ -433,25 +404,14 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
 
         match &*lock_guard_self {
             LinearMemoryStorage::Managed(data) => {
-                for i in 0..count {
-                    let src_byte = unsafe { source_data.get_unchecked(i + source_index) };
-                    let dst_byte = unsafe { data.get_unchecked(i + destination_index) };
-                    dst_byte.store(*src_byte, Ordering::Relaxed);
-                }
+                let dst_ptr = unsafe { data.as_ptr().add(destination_index) as *mut u8 };
+                let src_ptr = unsafe { source_data.as_ptr().add(source_index) };
+                unsafe { core::ptr::copy_nonoverlapping(src_ptr, dst_ptr, count) };
             }
-            LinearMemoryStorage::Sas { base, .. } => {
-                for i in 0..count {
-                    let src_byte = unsafe { source_data.get_unchecked(i + source_index) };
-                    let dst_byte = unsafe { &*base.add(i + destination_index) };
-                    dst_byte.store(*src_byte, Ordering::Relaxed);
-                }
-            }
-            LinearMemoryStorage::Nested { base, .. } => {
-                for i in 0..count {
-                    let src_byte = unsafe { source_data.get_unchecked(i + source_index) };
-                    let dst_byte = unsafe { &*base.add(i + destination_index) };
-                    dst_byte.store(*src_byte, Ordering::Relaxed);
-                }
+            LinearMemoryStorage::Sas { base, .. } | LinearMemoryStorage::Nested { base, .. } => {
+                let dst_ptr = unsafe { base.add(destination_index) as *mut u8 };
+                let src_ptr = unsafe { source_data.as_ptr().add(source_index) };
+                unsafe { core::ptr::copy_nonoverlapping(src_ptr, dst_ptr, count) };
             }
         }
         Ok(())

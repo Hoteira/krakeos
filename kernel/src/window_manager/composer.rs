@@ -201,12 +201,14 @@ impl Composer {
         None
     }
 
-    fn remove_node(&mut self, ws_idx: usize, node_idx: usize) {
+    fn remove_node(&mut self, ws_idx: usize, node_idx: usize) -> Option<usize> {
         let parent_opt = self.workspaces[ws_idx].tree[node_idx].parent;
+        let mut expanding_sibling = None;
         
         if let Some(parent) = parent_opt {
             let p_node = self.workspaces[ws_idx].tree[parent];
             let sibling = if p_node.left_child == Some(node_idx) { p_node.right_child } else { p_node.left_child };
+            expanding_sibling = sibling;
             
             let grandparent_opt = p_node.parent;
             if let Some(grandparent) = grandparent_opt {
@@ -227,6 +229,26 @@ impl Composer {
             self.workspaces[ws_idx].root = None;
         }
         self.workspaces[ws_idx].tree[node_idx].is_active = false;
+        
+        expanding_sibling
+    }
+
+    fn get_first_leaf_window(&self, ws_idx: usize, node_idx: usize) -> Option<usize> {
+        let node = &self.workspaces[ws_idx].tree[node_idx];
+        if let Some(win_idx) = node.leaf_window {
+            return Some(win_idx);
+        }
+        if let Some(left) = node.left_child {
+            if let Some(win) = self.get_first_leaf_window(ws_idx, left) {
+                return Some(win);
+            }
+        }
+        if let Some(right) = node.right_child {
+            if let Some(win) = self.get_first_leaf_window(ws_idx, right) {
+                return Some(win);
+            }
+        }
+        None
     }
 
     pub fn copy_window(&mut self, id: u64) {
@@ -530,14 +552,66 @@ impl Composer {
                 if self.workspaces[ws].windows[i].id == wid {
                     self.workspaces[ws].windows[i] = NULL_WINDOW;
                     
+                    let mut expanding_sibling = None;
                     if let Some(leaf_idx) = self.find_leaf_for_window(ws, i) {
-                        self.remove_node(ws, leaf_idx);
+                        expanding_sibling = self.remove_node(ws, leaf_idx);
                         if ws == self.active_workspace {
                             self.retile_workspace(ws);
+                        }
+                    }
+                    
+                    if ws == self.active_workspace {
+                        let mut target_id = 0;
+                        
+                        if let Some(sibling) = expanding_sibling {
+                            if let Some(win_idx) = self.get_first_leaf_window(ws, sibling) {
+                                target_id = self.workspaces[ws].windows[win_idx].id;
+                            }
+                        }
+
+                        if target_id == 0 {
+                            let mx = unsafe { crate::window_manager::input::MOUSE.x.max(0) as i64 };
+                            let my = unsafe { crate::window_manager::input::MOUSE.y.max(0) as i64 };
+                            let mut top_z = u64::MAX;
+                            
+                            for w in self.workspaces[ws].windows.iter() {
+                                if w.w_type != Items::Null {
+                                    let check_x = if w.tiled_width > 0 && !w.is_maximized { w.tiled_x } else { w.x };
+                                    let check_y = if w.tiled_height > 0 && !w.is_maximized { w.tiled_y } else { w.y };
+                                    let check_w = if w.tiled_width > 0 && !w.is_maximized { w.tiled_width } else { w.width };
+                                    let check_h = if w.tiled_height > 0 && !w.is_maximized { w.tiled_height } else { w.height };
+                                    
+                                    if mx >= check_x && mx < check_x + check_w as i64 && my >= check_y && my < check_y + check_h as i64 {
+                                        if w.z <= top_z {
+                                            top_z = w.z;
+                                            target_id = w.id;
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            if target_id == 0 && self.taskbar.w_type != Items::Null {
+                                if mx >= self.taskbar.x && mx < self.taskbar.x + self.taskbar.width as i64 && my >= self.taskbar.y && my < self.taskbar.y + self.taskbar.height as i64 {
+                                    target_id = self.taskbar.id;
+                                }
+                            }
+                            
+                            if target_id == 0 && self.wallpaper.w_type != Items::Null {
+                                if mx >= self.wallpaper.x && mx < self.wallpaper.x + self.wallpaper.width as i64 && my >= self.wallpaper.y && my < self.wallpaper.y + self.wallpaper.height as i64 {
+                                    target_id = self.wallpaper.id;
+                                }
+                            }
+                        }
+
+                        if target_id != 0 {
+                            unsafe { CLICKED_WINDOW_ID = target_id as usize; }
+                            self.focus_window(target_id);
+                        } else {
+                            if unsafe { CLICKED_WINDOW_ID } == wid as usize {
+                                unsafe { CLICKED_WINDOW_ID = 0; }
+                            }
                             self.recompose_all();
                         }
-                    } else if ws == self.active_workspace {
-                        self.recompose_all();
                     }
                     return;
                 }

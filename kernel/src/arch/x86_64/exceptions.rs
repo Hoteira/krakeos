@@ -488,7 +488,6 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
                         let active_id = crate::window_manager::composer::CLICKED_WINDOW_ID;
                         if active_id != 0 {
                             (*(&raw mut crate::window_manager::composer::COMPOSER)).remove_window(active_id as u64);
-                            crate::window_manager::composer::CLICKED_WINDOW_ID = 0;
                         }
                     }
                     handled_globally = true;

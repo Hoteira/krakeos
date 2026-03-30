@@ -30,7 +30,10 @@ pub trait Read {
         let mut total_read = 0;
         loop {
             if buf.len() == buf.capacity() {
-                buf.reserve(32); // Reserve at least some bytes
+                // Reserve significantly more space to avoid tiny reads.
+                // Double the capacity or add at least 4096 bytes.
+                let additional = core::cmp::max(buf.capacity(), 4096);
+                buf.reserve(additional);
             }
             
             let len = buf.len();

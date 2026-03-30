@@ -170,6 +170,47 @@ impl Read for File {
             Ok(n)
         }
     }
+
+    fn read_to_end(&mut self, buf: &mut alloc::vec::Vec<u8>) -> Result<usize> {
+        if let Ok(st) = self.stat() {
+            let file_size = st.size as usize;
+            if file_size > 0 {
+                // Only reserve if we need to
+                let required_capacity = buf.len() + file_size;
+                if buf.capacity() < required_capacity {
+                    buf.reserve(required_capacity - buf.capacity());
+                }
+            }
+        }
+
+        let mut total_read = 0;
+        loop {
+            if buf.len() == buf.capacity() {
+                // Reserve significantly more space to avoid tiny reads.
+                let additional = core::cmp::max(buf.capacity(), 4096);
+                buf.reserve(additional);
+            }
+            
+            let len = buf.len();
+            let capacity = buf.capacity();
+            let unused_space = unsafe {
+                core::slice::from_raw_parts_mut(
+                    buf.as_mut_ptr().add(len),
+                    capacity - len,
+                )
+            };
+            
+            match self.read(unused_space) {
+                Ok(0) => break,
+                Ok(n) => {
+                    unsafe { buf.set_len(len + n); }
+                    total_read += n;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(total_read)
+    }
 }
 
 impl Write for File {
