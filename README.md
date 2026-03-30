@@ -6,6 +6,8 @@
 
 # 🦑 KrakeOS
 
+*IMPORTANT: THis has been a project of mine for quite some time where EVERYTHING was written by me, all the crates used you can find on my github. That said in the last months I've come to realise that, no matter what I do, I cannot in good faith publish an OS that feels sub-par to its original ideas, as such I've decided to create a fork of it which will start using external crates to lessen the burden on me (expecially when it comes to drivers). There will be sparse updates to add basic functionalities but nothing major going forward. That said I'll keep the crate public hoping some beginner may find the code here usefu*
+
 **A 64-bit Microkernel-ish Operating System written in Rust**
 
 [![Rust](https://img.shields.io/badge/Language-Rust_Nightly-b7410e.svg?style=for-the-badge&logo=rust)](https://www.rust-lang.org/)
