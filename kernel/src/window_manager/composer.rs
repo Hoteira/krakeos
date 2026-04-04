@@ -156,8 +156,14 @@ impl Composer {
                     }
                 );
                 
-                let tm = crate::task::TASK_MANAGER.int_lock();
-                if !crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&*tm, pid, event) {
+                let mut pushed = false;
+                if let Some(tm) = crate::task::TASK_MANAGER.try_lock() {
+                    if crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&*tm, pid, event) {
+                        pushed = true;
+                    }
+                }
+
+                if !pushed {
                     crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().add_event(event);
                 }
             }
@@ -561,57 +567,17 @@ impl Composer {
                     }
                     
                     if ws == self.active_workspace {
-                        let mut target_id = 0;
+                        if let Some(leaf_idx) = self.find_leaf_for_window(ws, i) {
+                            self.remove_node(ws, leaf_idx);
+                            self.retile_workspace(ws);
+                        }
                         
-                        if let Some(sibling) = expanding_sibling {
-                            if let Some(win_idx) = self.get_first_leaf_window(ws, sibling) {
-                                target_id = self.workspaces[ws].windows[win_idx].id;
+                        unsafe {
+                            if CLICKED_WINDOW_ID == wid as usize {
+                                CLICKED_WINDOW_ID = 0;
                             }
                         }
-
-                        if target_id == 0 {
-                            let mx = unsafe { crate::window_manager::input::MOUSE.x.max(0) as i64 };
-                            let my = unsafe { crate::window_manager::input::MOUSE.y.max(0) as i64 };
-                            let mut top_z = u64::MAX;
-                            
-                            for w in self.workspaces[ws].windows.iter() {
-                                if w.w_type != Items::Null {
-                                    let check_x = if w.tiled_width > 0 && !w.is_maximized { w.tiled_x } else { w.x };
-                                    let check_y = if w.tiled_height > 0 && !w.is_maximized { w.tiled_y } else { w.y };
-                                    let check_w = if w.tiled_width > 0 && !w.is_maximized { w.tiled_width } else { w.width };
-                                    let check_h = if w.tiled_height > 0 && !w.is_maximized { w.tiled_height } else { w.height };
-                                    
-                                    if mx >= check_x && mx < check_x + check_w as i64 && my >= check_y && my < check_y + check_h as i64 {
-                                        if w.z <= top_z {
-                                            top_z = w.z;
-                                            target_id = w.id;
-                                        }
-                                    }
-                                }
-                            }
-                            
-                            if target_id == 0 && self.taskbar.w_type != Items::Null {
-                                if mx >= self.taskbar.x && mx < self.taskbar.x + self.taskbar.width as i64 && my >= self.taskbar.y && my < self.taskbar.y + self.taskbar.height as i64 {
-                                    target_id = self.taskbar.id;
-                                }
-                            }
-                            
-                            if target_id == 0 && self.wallpaper.w_type != Items::Null {
-                                if mx >= self.wallpaper.x && mx < self.wallpaper.x + self.wallpaper.width as i64 && my >= self.wallpaper.y && my < self.wallpaper.y + self.wallpaper.height as i64 {
-                                    target_id = self.wallpaper.id;
-                                }
-                            }
-                        }
-
-                        if target_id != 0 {
-                            unsafe { CLICKED_WINDOW_ID = target_id as usize; }
-                            self.focus_window(target_id);
-                        } else {
-                            if unsafe { CLICKED_WINDOW_ID } == wid as usize {
-                                unsafe { CLICKED_WINDOW_ID = 0; }
-                            }
-                            self.recompose_all();
-                        }
+                        self.recompose_all();
                     }
                     return;
                 }
@@ -680,12 +646,27 @@ impl Composer {
                     }
                 }
 
-                let mut indices = vec![];
-                for i in 0..16 { if ws.windows[i].w_type != Items::Null && ws.windows[i].id != ignore_id { indices.push(i); } }
-                indices.sort_by_key(|&i| ws.windows[i].z);
+                let mut indices = [0usize; 16];
+                let mut count = 0;
+                for i in 0..16 { 
+                    if ws.windows[i].w_type != Items::Null && ws.windows[i].id != ignore_id { 
+                        indices[count] = i;
+                        count += 1;
+                    } 
+                }
+
+                // Sort indices by Z-order (ascending)
+                for i in 0..count {
+                    for j in i + 1..count {
+                        if ws.windows[indices[j]].z < ws.windows[indices[i]].z {
+                            indices.swap(i, j);
+                        }
+                    }
+                }
                 
-                for i in indices.iter().rev() {
-                    let w = &ws.windows[*i];
+                for idx in (0..count).rev() {
+                    let i = indices[idx];
+                    let w = &ws.windows[i];
                     let border_color = if w.w_type == Items::Window { if w.id == CLICKED_WINDOW_ID as u64 { Some(0xFFFFFFFF) } else { Some(0xFF9070FF) } } else { None };
                     display_server.copy_to_db_clipped(w.width as u32, w.height as u32, w.get_active_buffer() as usize, w.x as i32, w.y as i32, dirty_x, dirty_y, dirty_w, dirty_h, border_color, w.treat_as_transparent);
                 }

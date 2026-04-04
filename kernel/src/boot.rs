@@ -3,9 +3,9 @@ pub static mut BOOT_INFO: BootInfo = unsafe { core::mem::zeroed() };
 #[derive(Debug, Clone, Copy)]
 pub struct BootInfo {
     pub mmap: MemoryMap,
-    rsdp: Rsdp,
+    pub rsdp: Rsdp,
     pub tss: u16,
-    vbe: VbeInfoBlock,
+    pub vbe: VbeInfoBlock,
     pub mode: VbeModeInfoBlock,
     pub pml4: u64,
     pub kernel_stack: u64,
@@ -29,11 +29,11 @@ pub struct MemoryMap {
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct Rsdp {
-    signature: [u8; 8],
-    checksum: u8,
-    oem_id: [u8; 6],
-    revision: u8,
-    rsdt_address: u32,
+    pub signature: [u8; 8],
+    pub checksum: u8,
+    pub oem_id: [u8; 6],
+    pub revision: u8,
+    pub rsdt_address: u32,
 }
 
 #[repr(C, packed)]

@@ -150,8 +150,7 @@ unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
         }
 
         if is_timer {
-            (*(&raw const crate::arch::x86_64::pic::PICS))
-                .end_interrupt(crate::arch::x86_64::exceptions::TIMER_INT);
+            crate::arch::x86_64::exceptions::end_interrupt(crate::arch::x86_64::exceptions::TIMER_INT);
         }
 
         // Validate the CPUState we're about to restore

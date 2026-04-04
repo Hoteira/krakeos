@@ -120,17 +120,15 @@ impl Mouse {
                             scroll,
                         });
 
-                        // Attempt to push directly to the process's registered event queue
                         let mut pushed = false;
-                        {
-                            let tm = crate::task::TASK_MANAGER.lock();
-                            let mut event_queue_internal = GLOBAL_EVENT_QUEUE.lock();
-                            pushed = event_queue_internal.push_to_process(&tm, w.pid, event);
+                        if let Some(tm) = crate::task::TASK_MANAGER.try_lock() {
+                            if GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&tm, w.pid, event) {
+                                pushed = true;
+                            }
                         }
 
                         if !pushed {
-                            let mut event_queue = GLOBAL_EVENT_QUEUE.lock();
-                            event_queue.add_event(event);
+                            GLOBAL_EVENT_QUEUE.lock().add_event(event);
                         }
 
                         unsafe {

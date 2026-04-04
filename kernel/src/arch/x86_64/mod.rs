@@ -4,8 +4,12 @@ pub mod idt;
 pub mod pic;
 pub mod tss;
 pub mod exceptions;
+pub mod acpi;
+pub mod apic;
 
 use core::arch::asm;
+
+pub static mut USING_APIC: bool = false;
 
 pub const EFER_MSR: u32 = 0xC0000080;
 pub const STAR_MSR: u32 = 0xC0000081;

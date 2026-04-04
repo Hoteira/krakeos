@@ -96,7 +96,34 @@ pub extern "C" fn rust_main(bootinfo_ptr: u64) -> ! {
 
     drivers::peripherals::keyboard::init();
     drivers::peripherals::mouse::init_mouse();
-    drivers::peripherals::timer::init_pit(1000);
+
+    debugln!("SIGNPOST: Initializing APIC...");
+    if let Some(madt) = arch::x86_64::acpi::get_madt() {
+        arch::x86_64::apic::init(madt);
+        unsafe {
+            arch::x86_64::USING_APIC = true;
+            // Mask the legacy PIC
+            (*(&raw mut arch::x86_64::pic::PICS)).master.write_data(0xFF);
+            (*(&raw mut arch::x86_64::pic::PICS)).slave.write_data(0xFF);
+        }
+        // Setup IOAPIC IRQs: 0/2=Timer, 1=Keyboard, 12=Mouse
+        arch::x86_64::apic::set_irq(0, 32);
+        arch::x86_64::apic::set_irq(2, 32);
+        arch::x86_64::apic::set_irq(1, 33);
+        arch::x86_64::apic::set_irq(12, 44);
+    }
+
+    debugln!("SIGNPOST: Initializing HPET...");
+    let mut hpet_initialized = false;
+    if let Some(hpet) = arch::x86_64::acpi::get_hpet() {
+        if drivers::peripherals::hpet::init(hpet) {
+            hpet_initialized = true;
+        }
+    }
+
+    if !hpet_initialized {
+        drivers::peripherals::timer::init_pit(1000);
+    }
 
     crate::debugln!("Mounting Ext2...");
     match Ext2::new(0xE0, 16384) {

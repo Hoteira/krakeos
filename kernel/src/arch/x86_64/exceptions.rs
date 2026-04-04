@@ -419,10 +419,20 @@ static mut IN_IRQ: bool = false;
 static mut LAST_KEY_GLOBAL: u32 = 0;
 static mut LAST_NORMAL_KEY: u32 = 0;
 
+pub fn end_interrupt(int: u8) {
+    unsafe {
+        if *(&raw const crate::arch::x86_64::USING_APIC) {
+            crate::arch::x86_64::apic::eoi();
+        } else {
+            (*(&raw const crate::arch::x86_64::pic::PICS)).end_interrupt(int);
+        }
+    }
+}
+
 pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
     unsafe {
         if IN_IRQ {
-            (*(&raw const crate::arch::x86_64::pic::PICS)).end_interrupt(KEYBOARD_INT);
+            end_interrupt(KEYBOARD_INT);
             return;
         }
         IN_IRQ = true;
@@ -485,9 +495,10 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
                     unsafe { LAST_KEY_GLOBAL = eval_key; }
                 } else if eval_key == 'x' as u32 || eval_key == 'w' as u32 {
                     unsafe {
-                        let active_id = crate::window_manager::composer::CLICKED_WINDOW_ID;
-                        if active_id != 0 {
-                            (*(&raw mut crate::window_manager::composer::COMPOSER)).remove_window(active_id as u64);
+                        let active_id = crate::window_manager::composer::CLICKED_WINDOW_ID as u64;
+                        let composer = &mut *(&raw mut crate::window_manager::composer::COMPOSER);
+                        if active_id != 0 && active_id != composer.wallpaper.id && active_id != composer.taskbar.id {
+                            composer.remove_window(active_id);
                         }
                     }
                     handled_globally = true;
@@ -582,35 +593,39 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
             unsafe {
                 let active_window_id = crate::window_manager::composer::CLICKED_WINDOW_ID;
                 if active_window_id != 0 {
-                    let mut tm = crate::task::TASK_MANAGER.int_lock();
-                    let composer = &*(&raw const crate::window_manager::composer::COMPOSER);
-                    let mut target_info = None;
+                    let mut tm_target = None;
                     for ws in 0..5 {
-                        for w in &composer.workspaces[ws].windows {
+                        for w in &(&*(&raw const crate::window_manager::composer::COMPOSER)).workspaces[ws].windows {
                             if w.id == active_window_id as u64 {
                                 if w.event_handler != 0 {
-                                    target_info = Some(w.pid);
+                                    tm_target = Some(w.pid);
                                 }
                                 break;
                             }
                         }
-                        if target_info.is_some() { break; }
+                        if tm_target.is_some() { break; }
                     }
 
-                    if let Some(w_pid) = target_info {
-                        use crate::window_manager::events::{Event, KeyboardEvent, GLOBAL_EVENT_QUEUE};
+                    use crate::window_manager::events::{Event, KeyboardEvent, GLOBAL_EVENT_QUEUE};
 
-                        let tm_ref = &*tm;
-                        let event = Event::Keyboard(KeyboardEvent {
-                            wid: active_window_id as u32,
-                            key,
-                            pressed,
-                            repeat: 1,
-                        });
+                    let event = Event::Keyboard(KeyboardEvent {
+                        wid: active_window_id as u32,
+                        key,
+                        pressed,
+                        repeat: 1,
+                    });
 
-                        if !GLOBAL_EVENT_QUEUE.int_lock().push_to_process(tm_ref, w_pid, event) {
-                            GLOBAL_EVENT_QUEUE.int_lock().add_event(event);
+                    let mut pushed = false;
+                    if let Some(pid) = tm_target {
+                        if let Some(tm) = crate::task::TASK_MANAGER.try_lock() {
+                            if GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&*tm, pid, event) {
+                                pushed = true;
+                            }
                         }
+                    }
+
+                    if !pushed {
+                        GLOBAL_EVENT_QUEUE.lock().add_event(event);
                     }
                 }
             }
@@ -619,7 +634,7 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
 
     unsafe {
         IN_IRQ = false;
-        (*(&raw const crate::arch::x86_64::pic::PICS)).end_interrupt(KEYBOARD_INT);
+        end_interrupt(KEYBOARD_INT);
     }
 }
 
@@ -632,7 +647,7 @@ pub static mut MOUSE_IDX: usize = 0;
 pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
     unsafe {
         if IN_IRQ {
-            (*(&raw const crate::arch::x86_64::pic::PICS)).end_interrupt(MOUSE_INT);
+            end_interrupt(MOUSE_INT);
             return;
         }
         IN_IRQ = true;
@@ -662,7 +677,7 @@ pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
             }
 
             IN_IRQ = false;
-            (*(&raw const crate::arch::x86_64::pic::PICS)).end_interrupt(MOUSE_INT);
+            end_interrupt(MOUSE_INT);
             return;
         }
     }
@@ -673,7 +688,7 @@ pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
     unsafe {
         if MOUSE_IDX == 0 && ((data & 0x08) == 0 || data == 0xFF) {
             IN_IRQ = false;
-            (*(&raw const crate::arch::x86_64::pic::PICS)).end_interrupt(MOUSE_INT);
+            end_interrupt(MOUSE_INT);
             return;
         }
 
@@ -694,7 +709,7 @@ pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
         }
 
         IN_IRQ = false;
-        (*(&raw const crate::arch::x86_64::pic::PICS)).end_interrupt(MOUSE_INT);
+        end_interrupt(MOUSE_INT);
     }
 }
 

@@ -35,4 +35,3 @@ lto = false
 panic = "abort"
 opt-level = 1
 lto = false
-
