@@ -307,8 +307,9 @@ fn read_chunk(lba: u64, target: &mut [u8]) {
     let status_phys = crate::memory::paging::virt_to_phys(&status as *const _ as u64);
     let status_len = 1u32;
 
-    let mut in_phys = alloc::vec::Vec::new();
-    let mut in_lens = alloc::vec::Vec::new();
+    let num_pages = (target.len() + 4095) / 4096 + 1; // +1 for status
+    let mut in_phys = alloc::vec::Vec::with_capacity(num_pages + 1);
+    let mut in_lens = alloc::vec::Vec::with_capacity(num_pages + 1);
 
     let mut current_offset = 0;
     while current_offset < target.len() {
@@ -366,8 +367,9 @@ fn write_chunk(lba: u64, buffer: &[u8]) {
     let status_phys = crate::memory::paging::virt_to_phys(&status as *const _ as u64);
     let status_len = 1u32;
 
-    let mut out_phys = alloc::vec::Vec::new();
-    let mut out_lens = alloc::vec::Vec::new();
+    let num_pages = (buffer.len() + 4095) / 4096 + 1; // +1 for header
+    let mut out_phys = alloc::vec::Vec::with_capacity(num_pages + 1);
+    let mut out_lens = alloc::vec::Vec::with_capacity(num_pages + 1);
 
     out_phys.push(req_phys);
     out_lens.push(req_len);

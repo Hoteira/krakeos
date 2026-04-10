@@ -475,6 +475,8 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
                 }
             }
 
+            crate::debugln!("[Shortcut] Super={} Key={:#x} Eval={:#x}", is_super, key, eval_key);
+
             let is_new_press = LAST_KEY_GLOBAL.load(Ordering::SeqCst) != eval_key;
 
             if is_new_press {

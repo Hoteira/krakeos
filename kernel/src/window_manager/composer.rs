@@ -388,12 +388,12 @@ impl Composer {
         if w.w_type == Items::Wallpaper {
             w.z = 255; w.transparent = false; w.treat_as_transparent = false; w.can_move = false; w.can_resize = false;
             self.wallpaper = w;
-            self.recompose_all();
+            self.recompose_except(0);
             return w.id;
         } else if w.w_type == Items::Bar {
             w.z = 0; w.can_move = false; w.can_resize = false;
             self.taskbar = w;
-            self.recompose_all();
+            self.recompose_except(0);
             return w.id;
         } else if w.w_type == Items::Popup {
             w.z = 0; w.can_move = false; w.can_resize = false;
@@ -542,8 +542,8 @@ impl Composer {
     }
 
     pub fn remove_window(&mut self, wid: u64) {
-        if self.wallpaper.id == wid { self.wallpaper = NULL_WINDOW; self.recompose_all(); return; }
-        if self.taskbar.id == wid { self.taskbar = NULL_WINDOW; self.recompose_all(); return; }
+        if self.wallpaper.id == wid { self.wallpaper = NULL_WINDOW; self.recompose_except(0); return; }
+        if self.taskbar.id == wid { self.taskbar = NULL_WINDOW; self.recompose_except(0); return; }
 
         for ws in 0..5 {
             for i in 0..16 {
@@ -559,15 +559,10 @@ impl Composer {
                     }
                     
                     if ws == self.active_workspace {
-                        if let Some(leaf_idx) = self.find_leaf_for_window(ws, i) {
-                            self.remove_node(ws, leaf_idx);
-                            self.retile_workspace(ws);
-                        }
-                        
                         if CLICKED_WINDOW_ID.load(core::sync::atomic::Ordering::SeqCst) == wid as usize {
                             CLICKED_WINDOW_ID.store(0, core::sync::atomic::Ordering::SeqCst);
                         }
-                        self.recompose_all();
+                        self.recompose_except(0);
                     }
                     return;
                 }
