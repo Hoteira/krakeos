@@ -4,7 +4,8 @@ use crate::window_manager::window::{Items, Window, NULL_WINDOW};
 use alloc::vec::Vec;
 use alloc::vec;
 
-pub static mut CLICKED_WINDOW_ID: usize = 0;
+use core::sync::atomic::AtomicUsize;
+pub static CLICKED_WINDOW_ID: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Clone, Copy)]
 pub struct TilingNode {
@@ -65,13 +66,15 @@ pub struct Composer {
     pub spacing: usize,
 }
 
-pub static mut COMPOSER: Composer = Composer {
+use crate::sync::Mutex;
+
+pub static COMPOSER: Mutex<Composer> = Mutex::new(Composer {
     workspaces: [Workspace::new(); 5],
     active_workspace: 0,
     wallpaper: NULL_WINDOW,
     taskbar: NULL_WINDOW,
     spacing: 10,
-};
+});
 
 impl Composer {
     pub fn switch_workspace(&mut self, index: usize) {
@@ -82,11 +85,9 @@ impl Composer {
     }
 
     fn get_taskbar_rect(&self) -> (i32, i32, u32, u32) {
-        let (sw, sh) = unsafe {
-            (
-                (*(&raw mut DISPLAY_SERVER)).width as u32,
-                (*(&raw mut DISPLAY_SERVER)).height as u32,
-            )
+        let (sw, sh) = {
+            let ds = DISPLAY_SERVER.lock();
+            (ds.width as u32, ds.height as u32)
         };
 
         if self.taskbar.w_type == Items::Null { return (0, 0, 0, 0); }
@@ -103,11 +104,9 @@ impl Composer {
     }
 
     pub fn get_available_desktop(&self) -> (i32, i32, u32, u32) {
-        let (sw, sh) = unsafe {
-            (
-                (*(&raw mut DISPLAY_SERVER)).width as u32,
-                (*(&raw mut DISPLAY_SERVER)).height as u32,
-            )
+        let (sw, sh) = {
+            let ds = DISPLAY_SERVER.lock();
+            (ds.width as u32, ds.height as u32)
         };
         let (tx, ty, tw, th) = self.get_taskbar_rect();
         if tw == 0 && th == 0 { return (0, 0, sw, sh); }
@@ -259,8 +258,9 @@ impl Composer {
 
     pub fn copy_window(&mut self, id: u64) {
         let ws = &self.workspaces[self.active_workspace];
-        let screen_w = unsafe { (*(&raw mut DISPLAY_SERVER)).width as u32 };
-        let screen_h = unsafe { (*(&raw mut DISPLAY_SERVER)).height as u32 };
+        let mut display_server = DISPLAY_SERVER.lock();
+        let screen_w = display_server.width as u32;
+        let screen_h = display_server.height as u32;
 
         let mut fullscreen_id = 0;
         for i in 0..16 {
@@ -277,19 +277,13 @@ impl Composer {
 
         if id == self.wallpaper.id && self.wallpaper.w_type != Items::Null {
             if fullscreen_id == 0 {
-                unsafe {
-                    let ds = &mut *(&raw mut DISPLAY_SERVER);
-                    ds.copy_to_db(self.wallpaper.width as u32, self.wallpaper.height as u32, self.wallpaper.get_active_buffer() as usize, self.wallpaper.x as i32, self.wallpaper.y as i32, None, self.wallpaper.treat_as_transparent);
-                }
+                display_server.copy_to_db(self.wallpaper.width as u32, self.wallpaper.height as u32, self.wallpaper.get_active_buffer() as usize, self.wallpaper.x as i32, self.wallpaper.y as i32, None, self.wallpaper.treat_as_transparent);
             }
             return;
         }
         if id == self.taskbar.id && self.taskbar.w_type != Items::Null {
             if fullscreen_id == 0 {
-                unsafe {
-                    let ds = &mut *(&raw mut DISPLAY_SERVER);
-                    ds.copy_to_db(self.taskbar.width as u32, self.taskbar.height as u32, self.taskbar.get_active_buffer() as usize, self.taskbar.x as i32, self.taskbar.y as i32, None, self.taskbar.treat_as_transparent);
-                }
+                display_server.copy_to_db(self.taskbar.width as u32, self.taskbar.height as u32, self.taskbar.get_active_buffer() as usize, self.taskbar.x as i32, self.taskbar.y as i32, None, self.taskbar.treat_as_transparent);
             }
             return;
         }
@@ -297,14 +291,12 @@ impl Composer {
         for i in 0..16 {
             if id == ws.windows[i].id && ws.windows[i].w_type != Items::Null {
                 let is_fullscreen = fullscreen_id == id;
+                let clicked_id = CLICKED_WINDOW_ID.load(core::sync::atomic::Ordering::SeqCst);
                 let border_color = if ws.windows[i].w_type == Items::Window && !is_fullscreen {
-                    unsafe { if ws.windows[i].id == CLICKED_WINDOW_ID as u64 { Some(0xFFFFFFFF) } else { Some(0xFF9070FF) } }
+                    if ws.windows[i].id == clicked_id as u64 { Some(0xFFFFFFFF) } else { Some(0xFF9070FF) }
                 } else { None };
                 
-                unsafe {
-                    let ds = &mut *(&raw mut DISPLAY_SERVER);
-                    ds.copy_to_db(ws.windows[i].width as u32, ws.windows[i].height as u32, ws.windows[i].get_active_buffer() as usize, ws.windows[i].x as i32, ws.windows[i].y as i32, border_color, if is_fullscreen { false } else { ws.windows[i].treat_as_transparent });
-                }
+                display_server.copy_to_db(ws.windows[i].width as u32, ws.windows[i].height as u32, ws.windows[i].get_active_buffer() as usize, ws.windows[i].x as i32, ws.windows[i].y as i32, border_color, if is_fullscreen { false } else { ws.windows[i].treat_as_transparent });
             }
         }
     }
@@ -383,8 +375,8 @@ impl Composer {
     }
 
     pub fn check_id(&self, _rng_seed: u64) -> u64 {
-        static mut NEXT_ID: u64 = 1;
-        unsafe { let id = NEXT_ID; NEXT_ID += 1; id }
+        static NEXT_ID: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
+        NEXT_ID.fetch_add(1, core::sync::atomic::Ordering::SeqCst)
     }
 
     pub fn add_window(&mut self, mut w: Window) -> u64 {
@@ -437,7 +429,7 @@ impl Composer {
                     self.workspaces[ws_idx].root = Some(leaf_id);
                 } else {
                     let mut split_node_idx = None;
-                    let active_id = unsafe { CLICKED_WINDOW_ID } as u64;
+                    let active_id = CLICKED_WINDOW_ID.load(core::sync::atomic::Ordering::SeqCst) as u64;
                     if active_id != 0 {
                         for i in 0..16 {
                             if self.workspaces[ws_idx].windows[i].id == active_id {
@@ -572,10 +564,8 @@ impl Composer {
                             self.retile_workspace(ws);
                         }
                         
-                        unsafe {
-                            if CLICKED_WINDOW_ID == wid as usize {
-                                CLICKED_WINDOW_ID = 0;
-                            }
+                        if CLICKED_WINDOW_ID.load(core::sync::atomic::Ordering::SeqCst) == wid as usize {
+                            CLICKED_WINDOW_ID.store(0, core::sync::atomic::Ordering::SeqCst);
                         }
                         self.recompose_all();
                     }
@@ -586,12 +576,10 @@ impl Composer {
     }
 
     pub fn update_window_area_rect(&mut self, dirty_x: i32, dirty_y: i32, dirty_w: u32, dirty_h: u32) {
-        unsafe { (*(&raw mut DISPLAY_SERVER)).mark_dirty(dirty_x, dirty_y, dirty_w, dirty_h); }
+        DISPLAY_SERVER.lock().mark_dirty(dirty_x, dirty_y, dirty_w, dirty_h);
         self.recompose_area(dirty_x, dirty_y, dirty_w, dirty_h);
-        unsafe {
-            let ds = &mut *(&raw mut DISPLAY_SERVER);
-            if VIRTIO_ACTIVE { ds.copy(); } else { ds.present_rect(dirty_x, dirty_y, dirty_w, dirty_h); }
-        }
+        let mut ds = DISPLAY_SERVER.lock();
+        if VIRTIO_ACTIVE.load(core::sync::atomic::Ordering::SeqCst) { ds.copy(); } else { ds.present_rect(dirty_x, dirty_y, dirty_w, dirty_h); }
     }
 
     pub fn recompose_area(&mut self, dirty_x: i32, dirty_y: i32, dirty_w: u32, dirty_h: u32) {
@@ -599,137 +587,93 @@ impl Composer {
     }
 
     pub fn recompose_area_except(&mut self, dirty_x: i32, dirty_y: i32, dirty_w: u32, dirty_h: u32, ignore_id: u64) {
-        unsafe {
-            let display_server = &mut *(&raw mut DISPLAY_SERVER);
-            if display_server.double_buffer != 0 {
-                let db_ptr = display_server.double_buffer as *mut u32;
-                let pitch_u32 = (display_server.pitch / 4) as usize;
-                let height = display_server.height as i32;
-                let width = display_server.width as i32;
-                
-                let ws = &self.workspaces[self.active_workspace];
+        let mut display_server = DISPLAY_SERVER.lock();
+        if display_server.double_buffer != 0 {
+            let db_ptr = display_server.double_buffer as *mut u32;
+            let pitch_u32 = (display_server.pitch / 4) as usize;
+            let height = display_server.height as i32;
+            let width = display_server.width as i32;
+            
+            let ws = &self.workspaces[self.active_workspace];
 
-                // FAST PATH: Fullscreen override
-                // If there is a window occupying the entire screen, do 1:1 streaming
-                let mut fullscreen_win = None;
-                for i in 0..16 {
-                    let w = &ws.windows[i];
-                    if w.w_type == Items::Window && (w.is_maximized || (w.x <= 0 && w.y <= 0 && w.width as i32 >= width && w.height as i32 >= height)) {
-                        fullscreen_win = Some(w);
-                        break; 
-                    }
+            // FAST PATH: Fullscreen override
+            // If there is a window occupying the entire screen, do 1:1 streaming
+            let mut fullscreen_win = None;
+            for i in 0..16 {
+                let w = &ws.windows[i];
+                if w.w_type == Items::Window && (w.is_maximized || (w.x <= 0 && w.y <= 0 && w.width as i32 >= width && w.height as i32 >= height)) {
+                    fullscreen_win = Some(w);
+                    break; 
                 }
+            }
 
-                if let Some(fw) = fullscreen_win {
-                    if fw.id != ignore_id {
-                        display_server.copy_to_db_clipped(fw.width as u32, fw.height as u32, fw.get_active_buffer() as usize, fw.x as i32, fw.y as i32, dirty_x, dirty_y, dirty_w, dirty_h, None, false);
-                    }
-                    return; 
+            if let Some(fw) = fullscreen_win {
+                if fw.id != ignore_id {
+                    display_server.copy_to_db_clipped(fw.width as u32, fw.height as u32, fw.get_active_buffer() as usize, fw.x as i32, fw.y as i32, dirty_x, dirty_y, dirty_w, dirty_h, None, false);
                 }
+                return; 
+            }
 
-                let start_x = dirty_x.max(0);
-                let start_y = dirty_y.max(0);
-                let end_x = (dirty_x + dirty_w as i32).min(width);
-                let end_y = (dirty_y + dirty_h as i32).min(height);
+            let start_x = dirty_x.max(0);
+            let start_y = dirty_y.max(0);
+            let end_x = (dirty_x + dirty_w as i32).min(width);
+            let end_y = (dirty_y + dirty_h as i32).min(height);
 
-                if end_x > start_x && end_y > start_y {
-                    if self.wallpaper.w_type != Items::Null && self.wallpaper.id != ignore_id {
-                        display_server.copy_to_db_clipped(self.wallpaper.width as u32, self.wallpaper.height as u32, self.wallpaper.get_active_buffer() as usize, self.wallpaper.x as i32, self.wallpaper.y as i32, dirty_x, dirty_y, dirty_w, dirty_h, None, self.wallpaper.treat_as_transparent);
-                    } else {
-                        for y in start_y..end_y {
-                            let row_offset = y as usize * pitch_u32;
-                            let row_ptr = db_ptr.add(row_offset + start_x as usize);
-                            for x in 0..(end_x - start_x) as usize {
-                                *row_ptr.add(x) = 0xFF333333;
-                            }
+            if end_x > start_x && end_y > start_y {
+                if self.wallpaper.w_type != Items::Null && self.wallpaper.id != ignore_id {
+                    display_server.copy_to_db_clipped(self.wallpaper.width as u32, self.wallpaper.height as u32, self.wallpaper.get_active_buffer() as usize, self.wallpaper.x as i32, self.wallpaper.y as i32, dirty_x, dirty_y, dirty_w, dirty_h, None, self.wallpaper.treat_as_transparent);
+                } else {
+                    for y in start_y..end_y {
+                        let row_offset = y as usize * pitch_u32;
+                        let row_ptr = unsafe { db_ptr.add(row_offset + start_x as usize) };
+                        for x in 0..(end_x - start_x) as usize {
+                            unsafe { *row_ptr.add(x) = 0xFF333333; }
                         }
                     }
                 }
+            }
 
-                let mut indices = [0usize; 16];
-                let mut count = 0;
-                for i in 0..16 { 
-                    if ws.windows[i].w_type != Items::Null && ws.windows[i].id != ignore_id { 
-                        indices[count] = i;
-                        count += 1;
-                    } 
-                }
+            let mut indices = [0usize; 16];
+            let mut count = 0;
+            for i in 0..16 { 
+                if ws.windows[i].w_type != Items::Null && ws.windows[i].id != ignore_id { 
+                    indices[count] = i;
+                    count += 1;
+                } 
+            }
 
-                // Sort indices by Z-order (ascending)
-                for i in 0..count {
-                    for j in i + 1..count {
-                        if ws.windows[indices[j]].z < ws.windows[indices[i]].z {
-                            indices.swap(i, j);
-                        }
+            // Sort indices by Z-order (ascending)
+            for i in 0..count {
+                for j in i + 1..count {
+                    if ws.windows[indices[j]].z < ws.windows[indices[i]].z {
+                        indices.swap(i, j);
                     }
                 }
-                
-                for idx in (0..count).rev() {
-                    let i = indices[idx];
-                    let w = &ws.windows[i];
-                    let border_color = if w.w_type == Items::Window { if w.id == CLICKED_WINDOW_ID as u64 { Some(0xFFFFFFFF) } else { Some(0xFF9070FF) } } else { None };
-                    display_server.copy_to_db_clipped(w.width as u32, w.height as u32, w.get_active_buffer() as usize, w.x as i32, w.y as i32, dirty_x, dirty_y, dirty_w, dirty_h, border_color, w.treat_as_transparent);
-                }
+            }
+            
+            let clicked_id = CLICKED_WINDOW_ID.load(core::sync::atomic::Ordering::SeqCst);
+            for idx in (0..count).rev() {
+                let i = indices[idx];
+                let w = &ws.windows[i];
+                let border_color = if w.w_type == Items::Window { if w.id == clicked_id as u64 { Some(0xFFFFFFFF) } else { Some(0xFF9070FF) } } else { None };
+                display_server.copy_to_db_clipped(w.width as u32, w.height as u32, w.get_active_buffer() as usize, w.x as i32, w.y as i32, dirty_x, dirty_y, dirty_w, dirty_h, border_color, w.treat_as_transparent);
+            }
 
-                if self.taskbar.w_type != Items::Null && self.taskbar.id != ignore_id && fullscreen_win.is_none() {
-                    display_server.copy_to_db_clipped(self.taskbar.width as u32, self.taskbar.height as u32, self.taskbar.get_active_buffer() as usize, self.taskbar.x as i32, self.taskbar.y as i32, dirty_x, dirty_y, dirty_w, dirty_h, None, self.taskbar.treat_as_transparent);
-                }
+            if self.taskbar.w_type != Items::Null && self.taskbar.id != ignore_id && fullscreen_win.is_none() {
+                display_server.copy_to_db_clipped(self.taskbar.width as u32, self.taskbar.height as u32, self.taskbar.get_active_buffer() as usize, self.taskbar.x as i32, self.taskbar.y as i32, dirty_x, dirty_y, dirty_w, dirty_h, None, self.taskbar.treat_as_transparent);
             }
         }
     }
 
     pub fn recompose_all(&mut self) {
-        let (sw, sh) = unsafe { let ds = &mut *(&raw mut DISPLAY_SERVER); (ds.width as u32, ds.height as u32) };
+        let (sw, sh) = { let ds = DISPLAY_SERVER.lock(); (ds.width as u32, ds.height as u32) };
         self.update_window_area_rect(0, 0, sw, sh);
     }
 
     pub fn recompose_except(&mut self, except_id: u64) {
-        let (sw, sh) = unsafe { let ds = &mut *(&raw mut DISPLAY_SERVER); (ds.width as u32, ds.height as u32) };
+        let (sw, sh) = { let ds = DISPLAY_SERVER.lock(); (ds.width as u32, ds.height as u32) };
         self.recompose_area_except(0, 0, sw, sh, except_id);
-        unsafe {
-            let ds = &mut *(&raw mut DISPLAY_SERVER);
-            if VIRTIO_ACTIVE { ds.copy(); } else { ds.present_rect(0, 0, sw, sh); }
-        }
-    }
-
-    pub fn get_window_at(&mut self, x: usize, y: usize) -> u64 {
-        let mx = x as i64;
-        let my = y as i64;
-
-        if self.taskbar.w_type != Items::Null {
-            if mx >= self.taskbar.x && mx < self.taskbar.x + self.taskbar.width as i64 && my >= self.taskbar.y && my < self.taskbar.y + self.taskbar.height as i64 {
-                return self.taskbar.id;
-            }
-        }
-
-        let ws = &self.workspaces[self.active_workspace];
-        let mut top_z = u64::MAX;
-        let mut top_id = 0;
-
-        for w in ws.windows.iter() {
-            if w.w_type != Items::Null {
-                if mx >= w.x && mx < w.x + w.width as i64 && my >= w.y && my < w.y + w.height as i64 {
-                    if w.z <= top_z {
-                        top_z = w.z;
-                        top_id = w.id;
-                    }
-                }
-            }
-        }
-
-        if top_id != 0 { return top_id; }
-        
-        if self.wallpaper.w_type != Items::Null {
-            if mx >= self.wallpaper.x && mx < self.wallpaper.x + self.wallpaper.width as i64 && my >= self.wallpaper.y && my < self.wallpaper.y + self.wallpaper.height as i64 {
-                return self.wallpaper.id;
-            }
-        }
-
-        0
-    }
-
-    pub fn handle_mouse_click(&mut self, x: usize, y: usize) {
-        let id = self.get_window_at(x, y);
-        if id != 0 { self.focus_window(id); }
+        let mut ds = DISPLAY_SERVER.lock();
+        if VIRTIO_ACTIVE.load(core::sync::atomic::Ordering::SeqCst) { ds.copy(); } else { ds.present_rect(0, 0, sw, sh); }
     }
 }

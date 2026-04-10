@@ -1,0 +1,344 @@
+[+] Loading stage 3 ...
+[+] Loading stage 4 ...
+[+] Loading kernel ...
+[+] Jumping to protected mode ...
+[+] Jumping to long mode ...
+[+] FB Addr: 0xfd000000
+[+] FB Size: 0x384000
+Stage 4 loaded.
+SIGNPOST: Initializing Memory...
+PMM: Detected 5120MB RAM. Metadata needs 2560KB.
+PMM: Selected map_phys=0x1000000 from entry base=0x100000 len=0xbfedd000
+PMM: Page Map Virtual Address: 0xffff800001000000. Zeroing...
+PMM: Page Map zeroed successfully (1310720 descriptors).
+PMM: Starting to add free regions...
+PMM: Processing mmap entry 0: 0x0 -> 0x9fc00
+PMM: Skipping entry 0 (fully below 16MB or invalid)
+PMM: Processing mmap entry 3: 0x100000 -> 0xbffdd000
+PMM: Entry overlaps Page Map. Splitting. Map is 0x1000000 -> 0x1280000
+PMM: Remaining region after map: 0x1280000 -> 0xbffdd000
+PMM: Adding free region: 0x1280000 -> 0xbffdd000
+PMM: Processing mmap entry 7: 0x100000000 -> 0x140000000
+PMM: Region 0x100000000 -> 0x140000000 is in PCI hole, skipping.
+PMM: Buddy Allocator initialized. Free: 5120MB
+VMM: Relocated PML4 from 0x20000 to 0xbffdc000
+VMM: Mapping entire physical RAM into HHDM...
+VMM: Physical memory mapping complete.
+PMM: Expanding discovery to all available RAM...
+PMM: Adding extended free region: 0x100000000 -> 0x140000000
+PMM: Expansion complete. Free: 5119MB
+SIGNPOST: Initializing ISTs...
+SIGNPOST: Loading IDT...
+SIGNPOST: Kernel fully initialized.
+SIGNPOST: Heap initialized.
+VirtIO Block: Found device at Bus 0, Device 4, Func 0
+VirtIO Block: Bus mastering enabled.
+VirtIO Block: Remapped BAR 4 to 0xe0000000
+VirtIO Block: Notify mapped at 0xffffa00000000000 -> Phys 0xe0003000
+VirtIO Block: Common Config mapped at 0xffffa00000200000 -> Phys 0xe0000000
+VirtIO Block: Negotiating features...
+VirtIO Block: Initialized successfully.
+SIGNPOST: TaskManager initialized.
+SIGNPOST: Calling DISPLAY_SERVER.init()...
+VirtIO GPU: Device not found.
+DisplayServer: Using VBE fallback
+SIGNPOST: DISPLAY_SERVER initialized.
+SIGNPOST: Drivers initialized.
+Mouse: Initializing PS/2 Mouse...
+Mouse: VMMouse initialized successfully (Absolute Mode).
+Mouse: Initialized (ID: 3).
+SIGNPOST: Initializing APIC...
+APIC: Local APIC at 0xfee00000 (mapped to 0xffffa00000800000)
+APIC: I/O APIC at 0xfec00000 (mapped to 0xffffa00000a00000)
+APIC: IRQ Override: Bus 0 IRQ 0 -> GSI 2
+APIC: IRQ Override: Bus 0 IRQ 5 -> GSI 5
+APIC: IRQ Override: Bus 0 IRQ 9 -> GSI 9
+APIC: IRQ Override: Bus 0 IRQ 10 -> GSI 10
+APIC: IRQ Override: Bus 0 IRQ 11 -> GSI 11
+SIGNPOST: Initializing SMP...
+SMP: Core ID 1 online.
+SMP: Core ID 2 online.
+SSMMPP: Booted 4 to:tal  coCreos.r
+e ID 3 onlineSIG.NPOS
+T: Initializing HPET...
+HPET: HPET at 0xfed00000 (mapped to 0xffffa00000c00000)
+HPET: Period: 10000000 fs
+HPET: Comparator increment for 1ms: 100000
+Mounting Ext2...
+Spawning terminal spawner thread...
+[TaskManager] Reserved PID 5 (Thread at 0xffff8000009ff4f8)
+Spawning trivial test process (WASM)...
+[spawn_process] path='/sys/bin/init.wasm'
+[TaskManager] Reserved PID 6 (Thread at 0xffff8000009ff878)
+[TaskManager] Reusing existing task 6
+[TaskManager] Initialized User Task 6 (Thread at 0xffff8000b835b9b0, State=Reserved)
+[wasm-runner] Starting buffer /sys/bin/init.wasm (AOT: true)...
+[std] LinearMemory: new_sas base=0x7020000000 size=3997696 (61 pages)
+[AOT] Copying blob to 0x110000000...
+[AOT] Blob copied. Fixing jump table...
+[AOT] Jump table fixed.
+[AOT] code_base=0x110000000 offset=57344 code_len=7775640 (7593 KB)
+[AOT] Module code copied.
+[AOT] Data region at 0x110779000
+[AOT] Context and data region initialized.
+save_wacc: Start serialization...
+save_wacc: Finished serialization. About to create file /sys/bin/init.wacc...
+save_wacc: File::create returned. About to start Write::write of 7800941 bytes...
+[WACC] Saved cache /sys/bin/init.wacc (7618 KB)
+[AOT-Runner] AOT enabled, looking for entry point...
+[AOT-Runner] Found entry point at addr 380
+[AOT-Runner] AOT ptr: 0x11000e299
+[wasm-runner] Finished buffer /sys/bin/init.wasm.
+[spawn_process] AOT ready for PID 6. Entry=0x11000e299 ctx=0x110779000
+[spawn_process] Set linear_memory_size=3997696 (61 pages)
+Trivial te[sInti t]p Srtaorctesisn sg pWAaSMw nUesde rwlaindt.h. .P
+I[D I6nit]
+ KDeeterctneed Slcr eienn iStiiazle:i z1e28d0,x 7e20nt
+e[rIinnitg]  idCalleli nglo Woinpdo.w:.:n.ew.
+..
+[inkui] Creating window 'Wallpaper' with pid 6
+[EventQueue] PID 6 registered queue: header=0x70203d0010 buf=0x70203d0038 cap=512
+[inkui] FrameBuffer::new: allocating...
+[inkui] FrameBuffer::new: front done
+[inkui] FrameBuffer::new: back done
+[Init] Window::new returned.
+[Init] Loading wallpaper...
+[std::fs::read] Opening '/sys/img/wallpaper2.png'...
+[std::fs::read] File size: 133055 bytes
+[std::fs::read] Reading at offset 0 (remaining 133055)...
+[std::fs::read] Finished reading 133055 bytes
+[Init] Wallpaper loaded (133055 bytes).
+[Syscall] handle_add_window called! ptr=0x70200ffe20
+Image Layout: geometry 1280x720, last 0x0
+Image: Rasterizing 1280x720...
+Image: Rasterization successful. Buffer len: 921600
+First pixel: 0xFF2D3246
+Middle pixel: 0xFF2D3246
+[WINDOW_SERVER] RESIZING 1 AT 1280 X 720
+[Syscall] handle_spawn called! path_len=19
+[spawn_process] path='/apps/aot_test.wasm'
+[TaskManager] Reserved PID 7 (Thread at 0xffff8000bff4f718)
+[TaskManager] Reusing existing task 7
+[TaskManager] Initialized User Task 7 (Thread at 0xffff8000b837b620, State=Reserved)
+[wasm-runner] Starting buffer /apps/aot_test.wasm (AOT: true)...
+[std] LinearMemory: new_sas base=0x77e0000000 size=1114112 (17 pages)
+[AOT] Copying blob to 0x114000000...
+[AOT] Blob copied. Fixing jump table...
+[AOT] Jump table fixed.
+[AOT] code_base=0x114000000 offset=57344 code_len=4391493 (4288 KB)
+[AOT] Module code copied.
+[AOT] Data region at 0x11443f000
+[AOT] Context and data region initialized.
+save_wacc: Start serialization...
+save_wacc: Finished serialization. About to create file /apps/aot_test.wacc...
+save_wacc: File::create returned. About to start Write::write of 4410987 bytes...
+[WACC] Saved cache /apps/aot_test.wacc (4307 KB)
+[AOT-Runner] AOT enabled, looking for entry point...
+[AOT-Runner] Found entry point at addr 380
+[AOT-Runner] AOT ptr: 0x11400e299
+[wasm-runner] Finished buffer /apps/aot_test.wasm.
+[spawn_process] AOT ready for PID 7. Entry=0x11400e299 ctx=0x11443f000
+[spawn_process] Set linear_memory_size=1114112 (17 pages)
+[Init] TAOT test into its own slot with PID 7
+[Syscall] handle_spawn called! path_len=18
+[spawn_process] path='/apps/taskbar.wasm'
+[TaskManager] Reserved PID 8 (Thread at 0xffff8000bff4f718)
+[TaskManager] Reusing existing task 8
+[TaskManager] Initialized User Task 8 (Thread at 0xffff8000b836cbc8, State=Reserved)
+[wasm-runner] Starting buffer /apps/taskbar.wasm (AOT: true)...
+[std] LinearMemory: new_sas base=0x7fa0000000 size=3997696 (61 pages)
+[AOT] Copying blob to 0x118000000...
+[AOT] Blob copied. Fixing jump table...
+[AOT] Jump table fixed.
+[AOT] code_base=0x118000000 offset=57344 code_len=7815295 (7632 KB)
+[AOT] Module code copied.
+[AOT] Data region at 0x118783000
+[AOT] Context and data region initialized.
+save_wacc: Start serialization...
+save_wacc: Finished serialization. About to create file /apps/taskbar.wacc...
+save_wacc: File::create returned. About to start Write::write of 7840872 bytes...
+[WACC] Saved cache /apps/taskbar.wacc (7657 KB)
+[AOT-Runner] AOT enabled, looking for entry point...
+[AOT-Runner] Found entry point at addr 380
+[AOT-Runner] AOT ptr: 0x11800e299
+[wasm-runner] Finished buffer /apps/taskbar.wasm.
+[spawn_process] AOT ready for PID 8. Entry=0x11800e299 ctx=0x118783000
+[spawn_process] Set linear_memory_size=3997696 (61 pages)
+[Init[]in kTuasi]kb aCrr eaaptpin sgp awwinneddo w w'itTha PskIbDa r8'
+ [wiSyths caplild]  8ha
+ndle_spawn called! path_len=15
+[spawn_process] path='/apps/term.wasm'
+[EventQueue] PID 8 registered queue: header=0x7fa03d0010 buf=0x7fa03d0038 cap=512
+[inkui] FrameBuffer::new: allocating...
+[inkui] FrameBuffer::new: front done
+[inkui] FrameBuffer::new: back done
+[TaskManager] Reserved PID 9 (Thread at 0xffff8000bff4f718)
+[TaskManager] Reusing existing task 9
+[TaskManager] Initialized User Task 9 (Thread at 0xffff8000b8db08b0, State=Reserved)
+[wasm-runner] Starting buffer /apps/term.wasm (AOT: [tstrud:e:).fs..::
+read] Opening '/sys/fonts/CaskaydiaNerd.ttf'...
+[std::fs::read] File size: 2764424 bytes
+[std::fs::read] Reading at offset 0 (remaining 2764424)...
+[std] LinearMemory: new_sas base=0x8760000000 size=3997696 (61 pages)
+[AOT] Copying blob to 0x11c000000...
+[AOT] Blob copied. Fixing jump table...
+[AOT] Jump table fixed.
+[AOT] code_base=0x11c000000 offset=57344 code_len=8065524 (7876 KB)
+[AOT] Module code copied.
+[AOT] Data region at 0x11c7c0000
+[AOT] Context and data region initialized.
+save_wacc: Start serialization...
+save_wacc: Finished serialization. About to create file /apps/term.wacc...
+==================== Starting Comprehensive AOT Compiler Test Suite...
+==================== Testing Integer Edge Cases...
+==================== Integer Edge Cases: OK
+==================== Testing Floating Point Precision & Rounding...
+==================== Floating Point: OK
+==================== Testing i32 Arithmetic...
+==================== i32 Arithmetic: OK
+==================== Testing i64 Arithmetic...
+==================== i64 Arithmetic: OK
+==================== Testing f32 Floating Point...
+==================== f32 Math: OK
+==================== Testing f64 Floating Point...
+==================== f64 Math: OK
+==================== Testing Complex Control Flow...
+==================== Complex Control Flow: OK
+==================== Testing Memory Bulk Operations...
+==================== Memory Bulk: OK
+==================== Testing Tables & Globals...
+==================== Tables & Globals: OK
+==================== Testing Memory Access & Bounds...
+==================== Memory Access: OK
+==================== Testing Numer[istcd ::Cfso:n:rveeard]si Foinnsis..he.d 
+r=e==ad==in==g ==2=7=6=44==24== =by==te= sCo
+nversions: OK
+==================== Testing SIMD Basic Ops...
+==================== SIMD Basic: OK
+==================== Testing Multi-Value & ABI Stress...
+==================== ABI Stress: OK
+==================== Testing SIMD Intrinsics...
+==================== SIMD Intrinsics: OK
+==================== Testing Atomics...
+==================== Atomics: OK
+====================
+==================== ALL AOT TESTS PASSED SUCCESSFULLY!
+[Syscall] Process exited with code 0
+save_wacc: File::create returned. About to start Write::write of 8091698 bytes...
+[Syscall] handle_add_window called! ptr=0x7fa00ffe08
+[WINDOW_SERVER] RESIZING 2 AT 1280 X 28
+[WINDOW_SERVER] RESIZING 2 AT 1280 X 28
+[WACC] Saved cache /apps/term.wacc (7902 KB)
+[AOT-Runner] AOT enabled, looking for entry point...
+[AOT-Runner] Found entry point at addr 380
+[AOT-Runner] AOT ptr: 0x11c00e299
+[wasm-runner] Finished buffer /apps/term.wasm.
+[spawn_process] AOT ready for PID 9. Entry=0x11c00e299 ctx=0x11c7c0000
+[spawn_process] Set linear_memory_size=3997696 (61 pages)
+[Init] Term app spawned with PID 9
+[Syscall] handle_spawn called! path_len=15
+[spawn_process] path='/apps/term.wasm'
+[TaskManager] Reserved PID 10 (Thread at 0xffff8000bff4f718)
+[TaskManager] Reusing existing task 10
+[TaskManager] Initialized User Task 10 (Thread at 0xffff8000b8d4bee0, State=Reserved)
+[wasm-runner] Starting buffer /apps/term.wasm (AOT: true)...
+[WACC] Cache hit for /apps/term.wasm
+[std] LinearMemory: new_sas base=0x8f20000000 size=3997696 (61 pages)
+[WACC] Copying blob to 0x120000000...
+[WACC] code_base=0x120000000 offset=57344 code_len=8065524 (7876 KB)
+[WACC] Context and data region initialized.
+[AOT-Runner] AOT enabled, looking for entry point...
+[AOT-Runner] Found entry point at addr 380
+[AOT-Runner] AOT ptr: 0x12000e299
+[wasm-runner] Finished buffer /apps/term.wasm.
+[spawn_process] AOT ready for PID 10. Entry=0x12000e299 ctx=0x1207c0000
+[spawn_process] Set linear_memory_size=3997696 (61 pages)
+[InWAiAtA]A AATeAArmAA aAAppAA sAApaAAwnAAedAAA wAAitAAhA APAIADA AA10AAA
+AA[IAAniAAtA]A ASAyAsAtAAeAmA ArAeaAdAyA.AA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+OCDOSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
+OCDOSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
+[Syscall] handle_spawn called! path_len=16
+[spawn_process] path='/apps/shell.wasm'
+[TaskManager] Reserved PID 11 (Thread at 0xffff8000069ff718)
+[TaskManager] Reusing existing task 11
+[TaskManager] Initialized User Task 11 (Thread at 0xffff8000b838c108, State=Reserved)
+[wasm-runner] Starting buffer /apps/shell.wasm (AOT: true)...
+[std] LinearMemory: new_sas base=0x96e0000000 size=1114112 (17 pages)
+[AOT] Copying blob to 0x124000000...
+[AOT] Blob copied. Fixing jump table...
+[AOT] Jump table fixed.
+[AOT] code_base=0x124000000 offset=57344 code_len=5067939 (4949 KB)
+[AOT] Module code copied.
+[AOT] Data region at 0x1244e4000
+[AOT] Context and data region initialized.
+save_wacc: Start serialization...
+save_wacc: Finished serialization. About to create file /apps/shell.wacc...
+save_wacc: File::create returned. About to start Write::write of 5089142 bytes...
+[WACC] Saved cache /apps/shell.wacc (4969 KB)
+[AOT-Runner] AOT enabled, looking for entry point...
+[AOT-Runner] Found entry point at addr 380
+[AOT-Runner] AOT ptr: 0x12400e299
+[wasm-runner] Finished buffer /apps/shell.wasm.
+[spawn_process] AOT ready for PID 11. Entry=0x12400e299 ctx=0x1244e4000
+[spawn_process] Set linear_memory_size=1114112 (17 pages)
+[term] SHell spawned into its own slot with PID 11
+[inkui] Creating window 'krakeOS Term' with pid 10
+[EventQueue] PID 10 registered queue: header=0x8f203d0010 buf=0x8f203d0038 cap=512
+[inkui] FrameBuffer::new: allocating...
+[inkui] FrameBuffer::new: front done
+[inkui] FrameBuffer::new: back done
+WAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+OCDOSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
+OCDOSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
+[Syscall] handle_spawn called! path_len=16
+[spawn_process] path='/apps/shell.wasm'
+[TaskManager] Reserved PID 12 (Thread at 0xffff800003c4f718)
+[TaskManager] Reusing existing task 12
+[TaskManager] Initialized User Task 12 (Thread at 0xffff8000b881ba80, State=Reserved)
+[wasm-runner] Starting buffer /apps/shell.wasm (AOT: true)...
+[WACC] Cache hit for /apps/shell.wasm
+[std] LinearMemory: new_sas base=0x9ea0000000 size=1114112 (17 pages)
+[WACC] Copying blob to 0x128000000...
+[WACC] code_base=0x128000000 offset=57344 code_len=5067939 (4949 KB)
+[WACC] Context and data region initialized.
+[AOT-Runner] AOT enabled, looking for entry point...
+[AOT-Runner] Found entry point at addr 380
+[AOT-Runner] AOT ptr: 0x12800e299
+[wasm-runner] Finished buffer /apps/shell.wasm.
+[spawn_process] AOT ready for PID 12. Entry=0x12800e299 ctx=0x1284e4000
+[spawn_process] Set linear_memory_size=1114112 (17 pages)
+[term] SHell spawned into its own slot with PID 12
+[inkui] Creating window 'krakeOS Term' with pid 9
+[EventQueue] PID 9 registered queue: header=0x87603d0010 buf=0x87603d0038 cap=512
+[inkui] FrameBuffer::new: allocating...
+[inkui] FrameBuffer::new: front done
+[inkui] FrameBuffer::new: back done
+[Syscall] handle_add_window called! ptr=0x8f200fe310
+[WINDOW_SERVER] TILING WID 3
+[WINDOW_SERVER] RESIZING 3 AT 800 X 400
+[WINDOW_SERVER] Rejecting resize: w=800, h=400, x=240, y=160, target: tw=1260, th=672, tx=10, ty=38
+[WINDOW_SERVER] RESIZING 3 AT 800 X 400
+[WINDOW_SERVER] Rejecting resize: w=800, h=400, x=240, y=160, target: tw=1260, th=672, tx=10, ty=38
+[term] Loop starting. Read FD: 3
+[term] ENTERING MAIN LOOP!
+[term] Read 33 bytes
+[WINDOW_SERVER] RESIZING 3 AT 800 X 400
+[WINDOW_SERVER] Rejecting resize: w=800, h=400, x=240, y=160, target: tw=1260, th=672, tx=10, ty=38
+[Syscall] handle_add_window called! ptr=0x87600fe310
+[WINDOW_SERVER] TILING WID 4
+[term] Resize Event: 625x672 at (10, 38)
+[inkui] Resizing window 'krakeOS Term' to 625x672 at (10, 38)
+[WINDOW_SERVER] RESIZING 4 AT 800 X 400
+[WINDOW_SERVER] Rejecting resize: w=800, h=400, x=240, y=160, target: tw=625, th=672, tx=645, ty=38
+[WINDOW_SERVER] RESIZING 3 AT 625 X 672
+[WINDOW_SERVER] RESIZING 4 AT 800 X 400
+[WINDOW_SERVER] Rejecting resize: w=800, h=400, x=240, y=160, target: tw=625, th=672, tx=645, ty=38
+[term] Loop starting. Read FD: 3
+[term] ENTERING MAIN LOOP!
+[inkui] Popped event from fast-path: Resize(ResizeEvent { wid: 4, width: 625, height: 672, x: 645, y: 38 })
+[inkui] Popped event from fast-path: Resize(ResizeEvent { wid: 4, width: 625, height: 672, x: 645, y: 38 })
+[term] Resize Event: 625x672 at (645, 38)
+[inkui] Resizing window 'krakeOS Term' to 625x672 at (645, 38)
+[term] Read 33 bytes
+[WINDOW_SERVER] RESIZING 4 AT 625 X 672

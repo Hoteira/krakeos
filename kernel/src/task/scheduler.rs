@@ -116,7 +116,8 @@ unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
         crate::drivers::network::virtio::poll_rx();
 
         let mut tm = TASK_MANAGER.lock();
-        let current_task_idx = tm.current_task;
+        let current_task_idx: i64;
+        asm!("mov {}, gs:[24]", out(reg) current_task_idx);
 
         if is_timer {
             crate::task::event_manager::EVENT_MANAGER
@@ -133,8 +134,8 @@ unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
             }
         }
 
-        let (new_state, k_stack) = tm.schedule(rsp as *mut CPUState, is_timer);
-        let new_task_idx = tm.current_task;
+        let (new_state, k_stack, new_task_idx) = tm.schedule(rsp as *mut CPUState, is_timer);
+        asm!("mov gs:[24], {}", in(reg) new_task_idx);
 
         if new_task_idx >= 0 {
             if let Some(thread) = tm.tasks.get(&(new_task_idx as usize)) {
@@ -146,39 +147,13 @@ unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
 
         if k_stack != 0 {
             crate::arch::x86_64::tss::set_tss(k_stack);
-            crate::task::scheduler::KERNEL_STACK_PTR = k_stack;
+            asm!("mov gs:[8], {}", in(reg) k_stack);
         }
 
         if is_timer {
             crate::arch::x86_64::exceptions::end_interrupt(crate::arch::x86_64::exceptions::TIMER_INT);
         }
 
-        // Validate the CPUState we're about to restore
-        let state_ptr = new_state as *const CPUState;
-        let rip_val = (*state_ptr).rip;
-        let rsp_val = (*state_ptr).rsp;
-        let cs_val = (*state_ptr).cs;
-        // Check for non-canonical RIP (bit 47 set but bits 48-63 not all 1, or vice versa)
-        let bit47 = (rip_val >> 47) & 1;
-        let high_bits = rip_val >> 48;
-        if rip_val != 0 && ((bit47 == 1 && high_bits != 0xFFFF) || (bit47 == 0 && high_bits != 0)) {
-            crate::debugln!("[SCHED] CORRUPT STATE! TID={} rip={:#x} rsp={:#x} cs={:#x} ptr={:#x}",
-                new_task_idx, rip_val, rsp_val, cs_val, new_state as u64);
-            // Print the kernel stack info
-            if new_task_idx >= 0 {
-                if let Some(thread) = tm.tasks.get(&(new_task_idx as usize)) {
-                    crate::debugln!("[SCHED] kernel_stack={:#x} cpu_state_ptr={:#x}",
-                        thread.kernel_stack, thread.cpu_state_ptr);
-                }
-            }
-        }
-
         new_state as u64
     }
 }
-
-#[unsafe(no_mangle)]
-pub static mut KERNEL_STACK_PTR: u64 = 0;
-
-#[unsafe(no_mangle)]
-pub static mut SCRATCH: u64 = 0;

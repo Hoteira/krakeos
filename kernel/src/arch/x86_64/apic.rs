@@ -72,10 +72,38 @@ pub fn ioapic_write(reg: u32, value: u32) {
     }
 }
 
+pub fn enable_local_apic() {
+    unsafe {
+        let lapic_base = *(&raw const LOCAL_APIC_ADDR);
+        let spurious_vector_reg = (lapic_base + 0xF0) as *mut u32;
+        write_volatile(spurious_vector_reg, read_volatile(spurious_vector_reg) | 0x100 | 0xFF);
+    }
+}
+
+pub fn get_id() -> u8 {
+    unsafe {
+        let lapic_base = *(&raw const LOCAL_APIC_ADDR);
+        if lapic_base == 0 { return 0; }
+        let id_reg = (lapic_base + 0x20) as *const u32;
+        (read_volatile(id_reg) >> 24) as u8
+    }
+}
+
+pub fn send_ipi(lapic_id: u8, command: u32) {
+    unsafe {
+        let lapic_base = *(&raw const LOCAL_APIC_ADDR);
+        let icr_high = (lapic_base + 0x310) as *mut u32;
+        let icr_low = (lapic_base + 0x300) as *mut u32;
+        
+        while (read_volatile(icr_low) & (1 << 12)) != 0 {}
+        write_volatile(icr_high, (lapic_id as u32) << 24);
+        write_volatile(icr_low, command);
+    }
+}
+
 pub fn set_irq(irq: u8, vector: u8) {
     let low_index = 0x10 + (irq as u32) * 2;
-    let high_index = 0x10 + (irq as u32) * 2 + 1;
-
+    let high_index = low_index + 1;
     ioapic_write(low_index, vector as u32);
     ioapic_write(high_index, 0);
 }

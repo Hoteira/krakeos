@@ -35,7 +35,9 @@ pub struct DisplayServer {
     pub has_damage: bool,
 }
 
-pub static mut DISPLAY_SERVER: DisplayServer = DisplayServer {
+use crate::sync::Mutex;
+
+pub static DISPLAY_SERVER: Mutex<DisplayServer> = Mutex::new(DisplayServer {
     width: 0,
     height: 0,
     pitch: 0,
@@ -50,10 +52,11 @@ pub static mut DISPLAY_SERVER: DisplayServer = DisplayServer {
     vbe_framebuffer: 0,
     damage_rects: [None; 8],
     has_damage: false,
-};
+});
 
-pub static mut VIRTIO_ACTIVE: bool = false;
-pub static mut HARDWARE_CURSOR_ACTIVE: bool = false;
+use core::sync::atomic::{AtomicBool, Ordering};
+pub static VIRTIO_ACTIVE: AtomicBool = AtomicBool::new(false);
+pub static HARDWARE_CURSOR_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 impl DisplayServer {
     pub fn mark_dirty(&mut self, x: i32, y: i32, w: u32, h: u32) {
@@ -144,7 +147,7 @@ impl DisplayServer {
                 let ram_db = crate::memory::pmm::allocate_frames(pages).expect("Failed to allocate RAM buffer");
                 let ram_virt = ram_db + crate::memory::paging::HHDM_OFFSET;
 
-                unsafe {
+                {
                     let b1_ptr = b1_virt as *mut u32;
                     let db_ptr = ram_virt as *mut u32;
                     for i in 0..(self.width * self.height) as usize {
@@ -164,9 +167,7 @@ impl DisplayServer {
 
                 // Ensure all cached zeroes from PMM are flushed to physical RAM
                 // before the GPU tries to read them via DMA.
-                unsafe {
-                    core::arch::asm!("wbinvd", options(nostack, preserves_flags));
-                }
+                core::arch::asm!("wbinvd", options(nostack, preserves_flags));
 
                 virtio::start_gpu(self.width as u32, self.height as u32, self.buffer1_phys, self.buffer2_phys);
                 virtio::set_scanout(1, self.width as u32, self.height as u32);
@@ -177,24 +178,21 @@ impl DisplayServer {
                 let cursor_pages = (cursor_size_bytes + 4095) / 4096;
                 if let Some(cursor_phys) = crate::memory::pmm::allocate_frames(cursor_pages) {
                     let cursor_ptr = (cursor_phys + crate::memory::paging::HHDM_OFFSET) as *mut u32;
-                    unsafe {
-                        core::ptr::write_bytes(cursor_ptr as *mut u8, 0, cursor_size_bytes);
-                        for row in 0..CURSOR_HEIGHT {
-                            for col in 0..CURSOR_WIDTH {
-                                *cursor_ptr.add(row * 64 + col) = CURSOR_BUFFER[row * CURSOR_WIDTH + col];
-                            }
+                    core::ptr::write_bytes(cursor_ptr as *mut u8, 0, cursor_size_bytes);
+                    for row in 0..CURSOR_HEIGHT {
+                        for col in 0..CURSOR_WIDTH {
+                            *cursor_ptr.add(row * 64 + col) = CURSOR_BUFFER[row * CURSOR_WIDTH + col];
                         }
                     }
                     virtio::cursor::setup_cursor(cursor_phys, 64, 64, 0, 0);
-                    HARDWARE_CURSOR_ACTIVE = true;
+                    HARDWARE_CURSOR_ACTIVE.store(true, Ordering::SeqCst);
                 }
 
-                VIRTIO_ACTIVE = true;
+                VIRTIO_ACTIVE.store(true, Ordering::SeqCst);
                 println!("DisplayServer: VirtIO GPU active at {}x{}", self.width, self.height);
                 return;
             }
         }
-        // ... rest of init fallback ...
 
 
         println!("DisplayServer: Using VBE fallback");
@@ -209,10 +207,8 @@ impl DisplayServer {
 
         let size_bytes = self.pitch as usize * self.height as usize;
 
-        unsafe {
-            // Map VBE framebuffer as uncacheable MMIO so writes reach the device
-            self.framebuffer = crate::memory::vmm::map_mmio(vbe.framebuffer as u64, size_bytes);
-        }
+        // Map VBE framebuffer as uncacheable MMIO so writes reach the device
+        self.framebuffer = crate::memory::vmm::map_mmio(vbe.framebuffer as u64, size_bytes);
 
         let pages = (size_bytes + 4095) / 4096;
 
@@ -227,51 +223,51 @@ impl DisplayServer {
     }
 
     pub fn force_full_sync(&mut self, wait: bool) {
-        unsafe {
-            let fb_len = (self.pitch * self.height) as usize;
-            let src = self.double_buffer as *const u8;
-            
-            if self.vbe_framebuffer != 0 {
-                core::ptr::copy_nonoverlapping(src, self.vbe_framebuffer as *mut u8, fb_len);
-            }
+        let fb_len = (self.pitch * self.height) as usize;
+        let src = self.double_buffer as *const u8;
+        
+        if self.vbe_framebuffer != 0 {
+            unsafe { core::ptr::copy_nonoverlapping(src, self.vbe_framebuffer as *mut u8, fb_len); }
+        }
 
-            if VIRTIO_ACTIVE {
+        unsafe {
+            if VIRTIO_ACTIVE.load(Ordering::SeqCst) {
                 virtio::flush(0, 0, self.width as u32, self.height as u32, self.width as u32, self.active_resource_id, wait);
             }
         }
     }
 
     pub fn copy(&mut self) {
-        unsafe {
-            if VIRTIO_ACTIVE {
-                if self.has_damage {
-                    // 1. Calculate a single bounding box for all damage this frame
-                    let mut min_x = self.width as i32;
-                    let mut min_y = self.height as i32;
-                    let mut max_x = 0i32;
-                    let mut max_y = 0i32;
-                    
-                    for i in 0..8 {
-                        if let Some(r) = self.damage_rects[i] {
-                            if r.x < min_x { min_x = r.x; }
-                            if r.y < min_y { min_y = r.y; }
-                            if (r.x + r.w as i32) > max_x { max_x = r.x + r.w as i32; }
-                            if (r.y + r.h as i32) > max_y { max_y = r.y + r.h as i32; }
-                        }
+        if VIRTIO_ACTIVE.load(Ordering::SeqCst) {
+            if self.has_damage {
+                // 1. Calculate a single bounding box for all damage this frame
+                let mut min_x = self.width as i32;
+                let mut min_y = self.height as i32;
+                let mut max_x = 0i32;
+                let mut max_y = 0i32;
+                
+                for i in 0..8 {
+                    if let Some(r) = self.damage_rects[i] {
+                        if r.x < min_x { min_x = r.x; }
+                        if r.y < min_y { min_y = r.y; }
+                        if (r.x + r.w as i32) > max_x { max_x = r.x + r.w as i32; }
+                        if (r.y + r.h as i32) > max_y { max_y = r.y + r.h as i32; }
                     }
+                }
 
-                    let sx = min_x.max(0) as u32;
-                    let sy = min_y.max(0) as u32;
-                    let ex = max_x.min(self.width as i32).max(0) as u32;
-                    let ey = max_y.min(self.height as i32).max(0) as u32;
-                    
-                    let sw = ex.saturating_sub(sx);
-                    let sh = ey.saturating_sub(sy);
+                let sx = min_x.max(0) as u32;
+                let sy = min_y.max(0) as u32;
+                let ex = max_x.min(self.width as i32).max(0) as u32;
+                let ey = max_y.min(self.height as i32).max(0) as u32;
+                
+                let sw = ex.saturating_sub(sx);
+                let sh = ey.saturating_sub(sy);
 
-                    if sw > 0 && sh > 0 {
-                        let pitch = self.pitch as usize;
-                        let src = self.double_buffer as *const u8;
-                        let dst = self.framebuffer as *mut u8;
+                if sw > 0 && sh > 0 {
+                    let pitch = self.pitch as usize;
+                    let src = self.double_buffer as *const u8;
+                    let dst = self.framebuffer as *mut u8;
+                    unsafe {
                         for row in 0..sh {
                             let offset = (sy + row) as usize * pitch + (sx as usize * 4);
                             core::ptr::copy_nonoverlapping(
@@ -283,17 +279,19 @@ impl DisplayServer {
 
                         // NON-BLOCKING transfer and flush to the single active resource
                         virtio::flush(sx, sy, sw, sh, self.width as u32, self.active_resource_id, false);
-                        self.sync_vbe_rect(sx, sy, sw, sh);
                     }
-                    
-                    self.reset_dirty();
+                    self.sync_vbe_rect(sx, sy, sw, sh);
                 }
-            } else {
-                let buffer_size = self.pitch as u64 * self.height as u64;
+                
+                self.reset_dirty();
+            }
+        } else {
+            let buffer_size = (self.pitch * self.height) as usize;
+            unsafe {
                 core::ptr::copy(
                     self.double_buffer as *const u8,
                     self.framebuffer as *mut u8,
-                    buffer_size as usize,
+                    buffer_size,
                 );
             }
         }
@@ -1013,11 +1011,7 @@ impl DisplayServer {
         self.mark_dirty(x, y, w, h);
 
         unsafe {
-            if VIRTIO_ACTIVE {
-                // If the hardware cursor is inactive, we must draw the software cursor into the double buffer
-                // BEFORE the sync happens, otherwise we'll see trailing or flickering.
-                // But for now, present_rect is only called by recompose logic.
-                
+            if VIRTIO_ACTIVE.load(Ordering::SeqCst) {
                 let bpp = 4;
                 let pitch = self.pitch as usize;
                 let src = self.double_buffer as *const u8;
@@ -1044,10 +1038,6 @@ impl DisplayServer {
                         }
                     }
                 }
-
-                // If hardware cursor is active, we don't need to do anything else.
-                // If not, we'd draw it here, but that causes flicker.
-                // The correct flicker-free way is Resource Swapping (copy() method).
 
                 virtio::flush(sx, sy, sw, sh, self.width as u32, self.active_resource_id, false);
 
@@ -1077,8 +1067,10 @@ impl DisplayServer {
             } else {
                 self.copy_to_fb(x, y, w, h);
 
-                let mx = crate::window_manager::input::MOUSE.x;
-                let my = crate::window_manager::input::MOUSE.y;
+                let (mx, my) = {
+                    let mouse = crate::window_manager::input::MOUSE.lock();
+                    (mouse.x, mouse.y)
+                };
                 use crate::drivers::peripherals::mouse::{CURSOR_HEIGHT, CURSOR_WIDTH};
                 let mw = CURSOR_WIDTH as u32;
                 let mh = CURSOR_HEIGHT as u32;
@@ -1165,23 +1157,6 @@ pub struct Window {
     pub z_index: usize,
 }
 
-pub struct Mouse {
-    pub x: u16,
-    pub y: u16,
-
-    pub left: bool,
-    pub center: bool,
-    pub right: bool,
-
-    pub state: State,
-}
-
-pub enum State {
-    Point,
-    Write,
-    Click,
-}
-
 pub enum EventType {
     Close,
     Resize,
@@ -1237,7 +1212,7 @@ impl Color {
         ((self.a as u32) << 24) | ((self.r as u32) << 16) | ((self.g as u32) << 8) | (self.b as u32)
     }
 
-    pub fn to_u24(&self) -> [u8; 3] {
+    pub fn to_24(&self) -> [u8; 3] {
         [self.b, self.g, self.r]
     }
 

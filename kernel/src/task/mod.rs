@@ -3,6 +3,8 @@ pub mod process;
 pub mod thread;
 pub mod scheduler;
 pub mod event_manager;
+pub mod aot_worker;
+pub mod cpu;
 
 pub use manager::{TASK_MANAGER, TaskManager, MAX_THREADS, MAX_THREADS as MAX_TASKS};
 pub use process::Process;

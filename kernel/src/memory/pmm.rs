@@ -53,7 +53,7 @@ impl LockFreeMagazine {
     }
 }
 
-pub static PER_CPU_MAGAZINES: [LockFreeMagazine; 1] = [LockFreeMagazine::new()];
+pub static PER_CPU_MAGAZINES: [LockFreeMagazine; 64] = [const { LockFreeMagazine::new() }; 64];
 static mut PAGE_MAP: *mut PageDescriptor = core::ptr::null_mut();
 static mut PAGE_MAP_ENTRIES: usize = 0;
 
@@ -352,16 +352,18 @@ pub fn allocate_frames(count: usize) -> Option<u64> {
     
     // --- MAGAZINE FAST PATH (interrupts disabled to prevent re-entrancy) ---
     if count == 1 {
-        let cpu_id = 0;
-        let flags: u64;
-        unsafe { core::arch::asm!("pushfq; pop {}; cli", out(reg) flags); }
-        let result = PER_CPU_MAGAZINES[cpu_id].pop();
-        unsafe { core::arch::asm!("push {}; popfq", in(reg) flags); }
-        if let Some(phys) = result {
-            unsafe {
-                core::ptr::write_bytes((phys + crate::memory::paging::HHDM_OFFSET) as *mut u8, 0, PAGE_SIZE as usize);
+        let cpu_id = crate::task::cpu::get_cpu_id() as usize;
+        if cpu_id < 64 {
+            let flags: u64;
+            unsafe { core::arch::asm!("pushfq; pop {}; cli", out(reg) flags); }
+            let result = PER_CPU_MAGAZINES[cpu_id].pop();
+            unsafe { core::arch::asm!("push {}; popfq", in(reg) flags); }
+            if let Some(phys) = result {
+                unsafe {
+                    core::ptr::write_bytes((phys + crate::memory::paging::HHDM_OFFSET) as *mut u8, 0, PAGE_SIZE as usize);
+                }
+                return Some(phys);
             }
-            return Some(phys);
         }
     }
     // ---------------------------
@@ -421,8 +423,8 @@ pub fn free_frame(addr: u64) {
         if page_idx < PAGE_MAP_ENTRIES {
             let desc = &*PAGE_MAP.add(page_idx);
             if (desc.flags & 0x01) != 0 && desc.order == 0 {
-                let cpu_id = 0;
-                if PER_CPU_MAGAZINES[cpu_id].count.load(Ordering::Relaxed) < 4096 {
+                let cpu_id = crate::task::cpu::get_cpu_id() as usize;
+                if cpu_id < 64 && PER_CPU_MAGAZINES[cpu_id].count.load(Ordering::Relaxed) < 4096 {
                     let flags: u64;
                     core::arch::asm!("pushfq; pop {}; cli", out(reg) flags);
                     PER_CPU_MAGAZINES[cpu_id].push(addr);
@@ -495,8 +497,8 @@ pub fn reserve_frame(_addr: u64) -> bool {
 
 pub fn get_used_memory() -> usize {
     let base_used = PMM.lock().used_pages * PAGE_SIZE as usize;
-    let cpu_id = 0; // HACK
-    let cached = PER_CPU_MAGAZINES[cpu_id].count.load(Ordering::Relaxed) * PAGE_SIZE as usize;
+    let cpu_id = crate::task::cpu::get_cpu_id() as usize;
+    let cached = if cpu_id < 64 { PER_CPU_MAGAZINES[cpu_id].count.load(Ordering::Relaxed) * PAGE_SIZE as usize } else { 0 };
     base_used.saturating_sub(cached)
 }
 
@@ -507,8 +509,8 @@ pub fn get_total_memory() -> usize {
 pub fn get_free_memory() -> usize {
     let alloc = PMM.lock();
     let base_free = (alloc.total_pages - alloc.used_pages) * PAGE_SIZE as usize;
-    let cpu_id = 0; // HACK
-    let cached = PER_CPU_MAGAZINES[cpu_id].count.load(Ordering::Relaxed) * PAGE_SIZE as usize;
+    let cpu_id = crate::task::cpu::get_cpu_id() as usize;
+    let cached = if cpu_id < 64 { PER_CPU_MAGAZINES[cpu_id].count.load(Ordering::Relaxed) * PAGE_SIZE as usize } else { 0 };
     base_free + cached
 }
 

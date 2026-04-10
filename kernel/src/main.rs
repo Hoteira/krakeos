@@ -53,6 +53,9 @@ pub extern "C" fn rust_main(bootinfo_ptr: u64) -> ! {
 
     arch::x86_64::gdt::reload_gdt_high_half();
 
+    // Initialize per-CPU state for BSP (CPU 0)
+    task::cpu::init_per_cpu(0, 0);
+
     debugln!("SIGNPOST: Initializing Memory...");
     memory::init();
     memory::pmm::discover_all_memory();
@@ -81,16 +84,13 @@ pub extern "C" fn rust_main(bootinfo_ptr: u64) -> ! {
 
     window_manager::events::GLOBAL_EVENT_QUEUE.lock().init();
     task::init();
+    task::aot_worker::init();
     debugln!("SIGNPOST: TaskManager initialized.");
 
     debugln!("SIGNPOST: Calling DISPLAY_SERVER.init()...");
-    unsafe {
-        (*(&raw mut DISPLAY_SERVER)).init();
-    }
+    DISPLAY_SERVER.lock().init();
     debugln!("SIGNPOST: DISPLAY_SERVER initialized.");
-    unsafe {
-        (*(&raw mut DISPLAY_SERVER)).force_full_sync(true);
-    }
+    DISPLAY_SERVER.lock().force_full_sync(true);
 
     debugln!("SIGNPOST: Drivers initialized.");
 

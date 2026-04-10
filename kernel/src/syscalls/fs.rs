@@ -228,8 +228,9 @@ pub fn handle_chdir(context: &mut CPUState) {
 
     let cwd_str = {
         let tm = crate::task::TASK_MANAGER.int_lock();
-        if tm.current_task >= 0 {
-            if let Some(thread) = tm.tasks.get(&(tm.current_task as usize)) {
+        let current_idx = crate::task::cpu::get_current_task_idx();
+        if current_idx >= 0 {
+            if let Some(thread) = tm.tasks.get(&(current_idx as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
                 let cwd = proc.cwd.lock();
                 let cwd_len = cwd.iter().position(|&c| c == 0).unwrap_or(cwd.len());
@@ -252,9 +253,9 @@ pub fn handle_chdir(context: &mut CPUState) {
         use crate::fs::vfs::FileType;
         if node.kind() == FileType::Directory {
             let mut tm = crate::task::TASK_MANAGER.int_lock();
-            let current_idx = tm.current_task as usize;
-            if tm.current_task >= 0 {
-                if let Some(thread) = tm.tasks.get_mut(&(current_idx)) {
+            let current_idx = crate::task::cpu::get_current_task_idx();
+            if current_idx >= 0 {
+                if let Some(thread) = tm.tasks.get_mut(&(current_idx as usize)) {
                     let proc = thread.process.as_ref().expect("Thread has no process");
                     let mut cwd = proc.cwd.lock();
                     cwd.fill(0);
@@ -281,14 +282,11 @@ pub fn handle_create(context: &mut CPUState, syscall_num: u64) {
     let cwd_str = get_current_cwd();
     let resolved = resolve_path(&cwd_str, &path_str_full);
 
-    crate::debugln!("SYS_CREATE: path='{}' (raw='{}')", resolved, path_str_full);
-
     acquire_fs_lock();
     let exists = crate::fs::vfs::open_file(0, &resolved);
     release_fs_lock();
 
     if let Ok(global_fd) = exists {
-        crate::debugln!("SYS_CREATE: File already exists, returning FD");
         context.rax = assign_local_fd(global_fd);
         return;
     }
@@ -298,8 +296,6 @@ pub fn handle_create(context: &mut CPUState, syscall_num: u64) {
     } else {
         ("", resolved.as_str())
     };
-
-    crate::debugln!("SYS_CREATE: Creating '{}' in '{}'", name, parent_path);
 
     let (uid, gid) = {
         let tm = crate::task::TASK_MANAGER.int_lock();
@@ -326,25 +322,18 @@ pub fn handle_create(context: &mut CPUState, syscall_num: u64) {
                 context.rax = 0;
                 return;
             }
-            crate::debugln!("SYS_CREATE: Success, opening new file...");
 
             acquire_fs_lock();
             let open_res = crate::fs::vfs::open_file(0, &resolved);
             release_fs_lock();
 
-            crate::debugln!("SYS_CREATE: Finished open_file, checking result...");
-
             if let Ok(global_fd) = open_res {
                 context.rax = assign_local_fd(global_fd);
-                let rax_val = context.rax;
-                crate::debugln!("SYS_CREATE: Successfully assigned local fd {}, returning to caller.", rax_val);
             } else {
-                crate::debugln!("SYS_CREATE: FAILED TO OPEN AFTER CREATE!");
                 context.rax = u64::MAX;
             }
         }
-        Err(e) => {
-            crate::debugln!("SYS_CREATE: FAILED! Error: {}", e);
+        Err(_) => {
             context.rax = u64::MAX;
         }
     }
@@ -352,9 +341,9 @@ pub fn handle_create(context: &mut CPUState, syscall_num: u64) {
 
 pub fn get_current_cwd() -> String {
     let tm = crate::task::TASK_MANAGER.int_lock();
-    if tm.current_task >= 0 {
-        if let Some(thread) = tm.tasks.get(&(tm.current_task as usize)) {
-            let proc = thread.process.as_ref().expect("Thread has no process");
+    let current_idx = crate::task::cpu::get_current_task_idx();
+    if current_idx >= 0 {
+        if let Some(thread) = tm.tasks.get(&(current_idx as usize)) {            let proc = thread.process.as_ref().expect("Thread has no process");
             let cwd = proc.cwd.lock();
             let cwd_len = cwd.iter().position(|&c| c == 0).unwrap_or(cwd.len());
             return String::from_utf8_lossy(&cwd[..cwd_len]).into_owned();
@@ -365,7 +354,7 @@ pub fn get_current_cwd() -> String {
 
 pub fn assign_local_fd(global_fd: usize) -> u64 {
     let mut tm = crate::task::TASK_MANAGER.int_lock();
-    let current = tm.current_task;
+    let current = crate::task::cpu::get_current_task_idx();
     if current >= 0 {
         if let Some(thread) = tm.tasks.get_mut(&(current as usize)) {
             let proc = thread.process.as_ref().expect("Thread has no process");
@@ -497,7 +486,7 @@ pub fn handle_read_file(context: &mut CPUState) {
 
     let global_fd_opt = {
         let tm = crate::task::TASK_MANAGER.int_lock();
-        let current = tm.current_task;
+        let current = crate::task::cpu::get_current_task_idx();
         if current >= 0 {
             if let Some(thread) = tm.tasks.get(&(current as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
@@ -591,7 +580,7 @@ pub fn handle_write_file(context: &mut CPUState) {
 
     let global_fd_opt = {
         let tm = crate::task::TASK_MANAGER.int_lock();
-        let current = tm.current_task;
+        let current = crate::task::cpu::get_current_task_idx();
         if current >= 0 {
             if let Some(thread) = tm.tasks.get(&(current as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
@@ -695,7 +684,7 @@ pub fn handle_read_dir(context: &mut CPUState) {
 
     let global_fd_opt = {
         let tm = crate::task::TASK_MANAGER.int_lock();
-        let current = tm.current_task;
+        let current = crate::task::cpu::get_current_task_idx();
         if current >= 0 {
             if let Some(thread) = tm.tasks.get(&(current as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
@@ -773,7 +762,7 @@ pub fn handle_stat(context: &mut CPUState, is_fstat: bool) {
     } else { // SYS_FSTAT
         let local_fd = context.rdi as usize;
         let tm = crate::task::TASK_MANAGER.int_lock();
-        let current = tm.current_task;
+        let current = crate::task::cpu::get_current_task_idx();
         if current >= 0 {
             if let Some(thread) = tm.tasks.get(&(current as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
@@ -820,7 +809,7 @@ pub fn handle_ftruncate(context: &mut CPUState) {
     let local_fd = context.rdi as usize;
     let length = context.rsi as u64;
     let tm = crate::task::TASK_MANAGER.int_lock();
-    let current = tm.current_task;
+    let current = crate::task::cpu::get_current_task_idx();
     if current >= 0 {
         if let Some(thread) = tm.tasks.get(&(current as usize)) {
             let proc = thread.process.as_ref().expect("Thread has no process");
@@ -1040,7 +1029,7 @@ pub fn handle_mmap_file(context: &mut CPUState) {
     let global_fd_opt = {
         let tm = crate::task::TASK_MANAGER.int_lock();
 
-        let current = tm.current_task;
+        let current = crate::task::cpu::get_current_task_idx();
 
         if current >= 0 {
             if let Some(thread) = tm.tasks.get(&(current as usize)) {
@@ -1091,7 +1080,7 @@ pub fn handle_pread64(context: &mut CPUState) {
 
     let global_fd_opt = {
         let tm = crate::task::TASK_MANAGER.int_lock();
-        let current = tm.current_task;
+        let current = crate::task::cpu::get_current_task_idx();
         if current >= 0 {
             if let Some(thread) = tm.tasks.get(&(current as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
@@ -1139,7 +1128,7 @@ pub fn handle_pwrite64(context: &mut CPUState) {
 
     let global_fd_opt = {
         let tm = crate::task::TASK_MANAGER.int_lock();
-        let current = tm.current_task;
+        let current = crate::task::cpu::get_current_task_idx();
         if current >= 0 {
             if let Some(thread) = tm.tasks.get(&(current as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
@@ -1316,7 +1305,7 @@ pub fn handle_readlinkat(context: &mut CPUState) {
         get_current_cwd()
     } else if dirfd >= 0 {
         let tm = crate::task::TASK_MANAGER.int_lock();
-        let current = tm.current_task;
+        let current = crate::task::cpu::get_current_task_idx();
         if current >= 0 {
             let proc = tm.tasks.get(&(current as usize)).unwrap().process.as_ref().unwrap();
 

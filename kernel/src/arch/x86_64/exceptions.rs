@@ -1,7 +1,7 @@
 use crate::drivers::peripherals::keyboard::KEYBOARD_BUFFER;
 use crate::arch::x86_64::io::{inb, outb};
 use crate::window_manager::input::MOUSE;
-use crate::window_manager::events::{Event, ResizeEvent, GLOBAL_EVENT_QUEUE};
+use crate::window_manager::events::{Event, ResizeEvent, GLOBAL_EVENT_QUEUE, KeyboardEvent};
 use core::sync::atomic::Ordering;
 
 #[derive(Clone, Copy, Debug)]
@@ -66,7 +66,7 @@ fn kill_current_task() {
     }
 
     if pid_to_kill != -1 {
-        crate::task::TASK_MANAGER.int_lock().kill_process(pid_to_kill as u64);
+        crate::task::manager::kill_process(pid_to_kill as u64);
 
         unsafe {
             core::arch::asm!("sti");
@@ -347,7 +347,7 @@ pub extern "C" fn page_fault_inner(saved_regs: u64) {
     print_hex(cs);
     {
         let tm = crate::task::TASK_MANAGER.int_lock();
-        let pid = tm.current_task;
+        let pid = crate::task::cpu::get_current_task_idx();
         serial_print(" PID: ");
         print_hex(pid as u64);
         if pid >= 0 {
@@ -415,9 +415,10 @@ pub const TIMER_INT: u8 = 32;
 
 pub const KEYBOARD_INT: u8 = 33;
 
-static mut IN_IRQ: bool = false;
-static mut LAST_KEY_GLOBAL: u32 = 0;
-static mut LAST_NORMAL_KEY: u32 = 0;
+use core::sync::atomic::{AtomicBool, AtomicU32};
+static IN_IRQ: AtomicBool = AtomicBool::new(false);
+static LAST_KEY_GLOBAL: AtomicU32 = AtomicU32::new(0);
+static LAST_NORMAL_KEY: AtomicU32 = AtomicU32::new(0);
 
 pub fn end_interrupt(int: u8) {
     unsafe {
@@ -430,12 +431,9 @@ pub fn end_interrupt(int: u8) {
 }
 
 pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
-    unsafe {
-        if IN_IRQ {
-            end_interrupt(KEYBOARD_INT);
-            return;
-        }
-        IN_IRQ = true;
+    if IN_IRQ.swap(true, Ordering::SeqCst) {
+        end_interrupt(KEYBOARD_INT);
+        return;
     }
 
     serial_print("K");
@@ -445,139 +443,115 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
         let is_super = crate::drivers::peripherals::keyboard::is_super_active();
         let mut handled_globally = false;
         
-        unsafe {
-            if !is_super && key != crate::drivers::peripherals::keyboard::KEY_SUPER {
-                if pressed {
-                    LAST_NORMAL_KEY = key;
-                } else if LAST_NORMAL_KEY == key {
-                    LAST_NORMAL_KEY = 0;
-                }
+        if !is_super && key != crate::drivers::peripherals::keyboard::KEY_SUPER {
+            if pressed {
+                LAST_NORMAL_KEY.store(key, Ordering::SeqCst);
+            } else if LAST_NORMAL_KEY.load(Ordering::SeqCst) == key {
+                LAST_NORMAL_KEY.store(0, Ordering::SeqCst);
             }
         }
 
         // Reset shortcut debounce when super is released
         if !is_super {
-            unsafe { LAST_KEY_GLOBAL = 0; }
+            LAST_KEY_GLOBAL.store(0, Ordering::SeqCst);
         }
 
         // Swallow all key releases while super is held — they belong to
         // shortcuts, not the app (also prevents QEMU down/up repeat leak)
         if is_super && !pressed {
             handled_globally = true;
-            unsafe {
-                if LAST_KEY_GLOBAL == key {
-                    LAST_KEY_GLOBAL = 0;
-                }
+            if LAST_KEY_GLOBAL.load(Ordering::SeqCst) == key {
+                LAST_KEY_GLOBAL.store(0, Ordering::SeqCst);
             }
         }
 
         // Check for keyboard shortcuts
         if is_super && pressed {
-            // DEBOUNCE: Only fire once per key while super is held.
-            // LAST_KEY_GLOBAL is only cleared when super is released,
-            // so QEMU-style down/up auto-repeat can't re-trigger.
-            
             let mut eval_key = key;
             if key == crate::drivers::peripherals::keyboard::KEY_SUPER {
-                unsafe {
-                    if LAST_NORMAL_KEY != 0 {
-                        eval_key = LAST_NORMAL_KEY;
-                    }
+                let lnk = LAST_NORMAL_KEY.load(Ordering::SeqCst);
+                if lnk != 0 {
+                    eval_key = lnk;
                 }
             }
 
-            let is_new_press = unsafe { LAST_KEY_GLOBAL != eval_key };
+            let is_new_press = LAST_KEY_GLOBAL.load(Ordering::SeqCst) != eval_key;
 
             if is_new_press {
                 if eval_key == 'p' as u32 {
                     crate::memory::vma::GLOBAL_VMA.lock().dump();
                     handled_globally = true;
-                    unsafe { LAST_KEY_GLOBAL = eval_key; }
+                    LAST_KEY_GLOBAL.store(eval_key, Ordering::SeqCst);
                 } else if eval_key == 'x' as u32 || eval_key == 'w' as u32 {
-                    unsafe {
-                        let active_id = crate::window_manager::composer::CLICKED_WINDOW_ID as u64;
-                        let composer = &mut *(&raw mut crate::window_manager::composer::COMPOSER);
-                        if active_id != 0 && active_id != composer.wallpaper.id && active_id != composer.taskbar.id {
-                            composer.remove_window(active_id);
-                        }
+                    let mut composer = crate::window_manager::composer::COMPOSER.lock();
+                    let active_id = crate::window_manager::composer::CLICKED_WINDOW_ID.load(Ordering::SeqCst) as u64;
+                    if active_id != 0 && active_id != composer.wallpaper.id && active_id != composer.taskbar.id {
+                        composer.remove_window(active_id);
                     }
                     handled_globally = true;
-                    unsafe { LAST_KEY_GLOBAL = eval_key; }
+                    LAST_KEY_GLOBAL.store(eval_key, Ordering::SeqCst);
                 } else if eval_key == 'z' as u32 || eval_key == 'f' as u32 {
-                    unsafe {
-                        let active_id = crate::window_manager::composer::CLICKED_WINDOW_ID;
-                        if active_id != 0 {
-                            if let Some(w) = (*(&raw mut crate::window_manager::composer::COMPOSER)).find_window_id(active_id as u64) {
-                                if w.can_resize {
-                                    let screen_w = (*(&raw mut crate::window_manager::display::DISPLAY_SERVER)).width as u64;
-                                    let screen_h = (*(&raw mut crate::window_manager::display::DISPLAY_SERVER)).height as u64;
-                                    
-                                    let (target_x, target_y, target_w, target_h, is_transparent) = if w.is_maximized {
-                                        // Restore
-                                        w.is_maximized = false;
-                                        (w.prev_x, w.prev_y, w.prev_width.max(100), w.prev_height.max(100), true)
-                                    } else {
-                                        // Maximize
-                                        w.is_maximized = true;
-                                        let tx: i64 = 0;
-                                        let ty: i64 = 0;
-                                        let tw = screen_w;
-                                        let th = screen_h;
-                                        
-                                        // Store current state for future restore
-                                        w.prev_width = w.width;
-                                        w.prev_height = w.height;
-                                        w.prev_x = w.x;
-                                        w.prev_y = w.y;
-                                        
-                                        (tx, ty, tw, th, false)
-                                    };
-                                    
-                                    w.transparent = is_transparent;
-                                    w.treat_as_transparent = is_transparent;
+                    let mut composer = crate::window_manager::composer::COMPOSER.lock();
+                    let active_id = crate::window_manager::composer::CLICKED_WINDOW_ID.load(Ordering::SeqCst);
+                    if active_id != 0 {
+                        if let Some(w) = composer.find_window_id(active_id as u64) {
+                            if w.can_resize {
+                                let (screen_w, screen_h) = {
+                                    let ds = crate::window_manager::display::DISPLAY_SERVER.lock();
+                                    (ds.width as u64, ds.height as u64)
+                                };
+                                
+                                let (target_x, target_y, target_w, target_h, is_transparent) = if w.is_maximized {
+                                    w.is_maximized = false;
+                                    (w.prev_x, w.prev_y, w.prev_width.max(100), w.prev_height.max(100), true)
+                                } else {
+                                    w.is_maximized = true;
+                                    w.prev_width = w.width;
+                                    w.prev_height = w.height;
+                                    w.prev_x = w.x;
+                                    w.prev_y = w.y;
+                                    (0, 0, screen_w, screen_h, false)
+                                };
+                                
+                                w.transparent = is_transparent;
+                                w.treat_as_transparent = is_transparent;
 
-                                    // Send resize event to the application with target dimensions AND position
-                                    let event = crate::window_manager::events::Event::Resize(
-                                        crate::window_manager::events::ResizeEvent {
-                                            wid: w.id as u32,
-                                            width: target_w as u32,
-                                            height: target_h as u32,
-                                            x: target_x as i32,
-                                            y: target_y as i32,
-                                        }
-                                    );
-                                    let pid = w.pid;
-                                    let tm = crate::task::TASK_MANAGER.int_lock();
-                                    if !crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&*tm, pid, event) {
-                                        crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().add_event(event);
+                                let event = crate::window_manager::events::Event::Resize(
+                                    crate::window_manager::events::ResizeEvent {
+                                        wid: w.id as u32,
+                                        width: target_w as u32,
+                                        height: target_h as u32,
+                                        x: target_x as i32,
+                                        y: target_y as i32,
                                     }
+                                );
+                                let pid = w.pid;
+                                let tm = crate::task::TASK_MANAGER.int_lock();
+                                if !crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&*tm, pid, event) {
+                                    crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().add_event(event);
                                 }
                             }
                         }
                     }
                     handled_globally = true;
-                    unsafe { LAST_KEY_GLOBAL = eval_key; }
+                    LAST_KEY_GLOBAL.store(eval_key, Ordering::SeqCst);
                 } else if eval_key == 't' as u32 {
-                    // Spawn terminal
                     let _ = crate::syscalls::process::spawn_process("/sys/bin/term.wasm", None, None, None);
                     handled_globally = true;
-                    unsafe { LAST_KEY_GLOBAL = eval_key; }
-                } else if eval_key == 0x0D { // Enter
+                    LAST_KEY_GLOBAL.store(eval_key, Ordering::SeqCst);
+                } else if eval_key == 0x0D {
                     let _ = crate::syscalls::process::spawn_process("/apps/term.wasm", None, None, None);
                     handled_globally = true;
-                    unsafe { LAST_KEY_GLOBAL = eval_key; }
+                    LAST_KEY_GLOBAL.store(eval_key, Ordering::SeqCst);
                 } else if eval_key >= '1' as u32 && eval_key <= '5' as u32 {
                     let workspace_idx = (eval_key - '1' as u32) as usize;
-                    unsafe {
-                        (*(&raw mut crate::window_manager::composer::COMPOSER)).switch_workspace(workspace_idx);
-                    }
+                    crate::window_manager::composer::COMPOSER.lock().switch_workspace(workspace_idx);
                     handled_globally = true;
-                    unsafe { LAST_KEY_GLOBAL = eval_key; }
+                    LAST_KEY_GLOBAL.store(eval_key, Ordering::SeqCst);
                 } else if key == crate::drivers::peripherals::keyboard::KEY_SUPER {
-                    handled_globally = true; // swallow bare super press if it doesn't match a shortcut
+                    handled_globally = true;
                 }
             } else {
-                // If it's a repeat of a key already handled globally, just swallow it
                 handled_globally = true;
             }
         }
@@ -585,72 +559,61 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
         if !handled_globally {
             if pressed && !is_super {
                 KEYBOARD_BUFFER.lock().push_back(key);
-                // Signal readiness for stdin (FD 0)
                 crate::task::event_manager::signal_event(crate::task::event_manager::AsyncEvent::Read(0));
             }
 
-            // Dispatch to Window Manager
-            unsafe {
-                let active_window_id = crate::window_manager::composer::CLICKED_WINDOW_ID;
-                if active_window_id != 0 {
-                    let mut tm_target = None;
-                    for ws in 0..5 {
-                        for w in &(&*(&raw const crate::window_manager::composer::COMPOSER)).workspaces[ws].windows {
-                            if w.id == active_window_id as u64 {
-                                if w.event_handler != 0 {
-                                    tm_target = Some(w.pid);
-                                }
-                                break;
+            let active_window_id = crate::window_manager::composer::CLICKED_WINDOW_ID.load(Ordering::SeqCst);
+            if active_window_id != 0 {
+                let mut tm_target = None;
+                let composer = crate::window_manager::composer::COMPOSER.lock();
+                for ws in 0..5 {
+                    for w in &composer.workspaces[ws].windows {
+                        if w.id == active_window_id as u64 {
+                            if w.event_handler != 0 {
+                                tm_target = Some(w.pid);
                             }
-                        }
-                        if tm_target.is_some() { break; }
-                    }
-
-                    use crate::window_manager::events::{Event, KeyboardEvent, GLOBAL_EVENT_QUEUE};
-
-                    let event = Event::Keyboard(KeyboardEvent {
-                        wid: active_window_id as u32,
-                        key,
-                        pressed,
-                        repeat: 1,
-                    });
-
-                    let mut pushed = false;
-                    if let Some(pid) = tm_target {
-                        if let Some(tm) = crate::task::TASK_MANAGER.try_lock() {
-                            if GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&*tm, pid, event) {
-                                pushed = true;
-                            }
+                            break;
                         }
                     }
+                    if tm_target.is_some() { break; }
+                }
+                drop(composer);
 
-                    if !pushed {
-                        GLOBAL_EVENT_QUEUE.lock().add_event(event);
+                let event = Event::Keyboard(KeyboardEvent {
+                    wid: active_window_id as u32,
+                    key,
+                    pressed,
+                    repeat: 1,
+                });
+
+                let mut pushed = false;
+                if let Some(pid) = tm_target {
+                    if let Some(tm) = crate::task::TASK_MANAGER.try_lock() {
+                        if GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&*tm, pid, event) {
+                            pushed = true;
+                        }
                     }
+                }
+
+                if !pushed {
+                    GLOBAL_EVENT_QUEUE.lock().add_event(event);
                 }
             }
         }
     }
 
-    unsafe {
-        IN_IRQ = false;
-        end_interrupt(KEYBOARD_INT);
-    }
+    IN_IRQ.store(false, Ordering::SeqCst);
+    end_interrupt(KEYBOARD_INT);
 }
 
 pub const MOUSE_INT: u8 = 44;
-#[allow(dead_code)]
 pub static mut MOUSE_PACKET: [u8; 4] = [0; 4];
-#[allow(dead_code)]
 pub static mut MOUSE_IDX: usize = 0;
 
 pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
-    unsafe {
-        if IN_IRQ {
-            end_interrupt(MOUSE_INT);
-            return;
-        }
-        IN_IRQ = true;
+    if IN_IRQ.swap(true, Ordering::SeqCst) {
+        end_interrupt(MOUSE_INT);
+        return;
     }
 
     serial_print("M");
@@ -669,14 +632,13 @@ pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
                 }
             }
             
-            // Clear the 8042 PS/2 controller queue so it doesn't get stuck
             let mut limit = 5;
             while (inb(0x64) & 1) == 1 && limit > 0 {
                 let _ = inb(0x60);
                 limit -= 1;
             }
 
-            IN_IRQ = false;
+            IN_IRQ.store(false, Ordering::SeqCst);
             end_interrupt(MOUSE_INT);
             return;
         }
@@ -687,12 +649,12 @@ pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
 
     unsafe {
         if MOUSE_IDX == 0 && ((data & 0x08) == 0 || data == 0xFF) {
-            IN_IRQ = false;
+            IN_IRQ.store(false, Ordering::SeqCst);
             end_interrupt(MOUSE_INT);
             return;
         }
 
-        if MOUSE_IDX < (*(&raw const MOUSE_PACKET)).len() {
+        if MOUSE_IDX < 4 {
             MOUSE_PACKET[MOUSE_IDX] = data;
             MOUSE_IDX += 1;
         } else {
@@ -708,7 +670,7 @@ pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
             MOUSE_IDX = 0;
         }
 
-        IN_IRQ = false;
+        IN_IRQ.store(false, Ordering::SeqCst);
         end_interrupt(MOUSE_INT);
     }
 }

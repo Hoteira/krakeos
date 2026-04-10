@@ -22,11 +22,12 @@ pub fn get_current_process() -> Option<Arc<Process>> {
 }
 
 pub fn is_kernel_thread() -> bool {
+    let idx = crate::task::cpu::get_current_task_idx();
+    if idx < 0 { return true; } // Bootstrap/Initial
+    
     let tm = TASK_MANAGER.int_lock();
-    if let Some(idx) = tm.current_task_idx() {
-        if let Some(thread) = tm.tasks.get(&(idx)) {
-            return thread.user_stack == 0;
-        }
+    if let Some(thread) = tm.tasks.get(&(idx as usize)) {
+        return thread.user_stack == 0;
     }
     true
 }
@@ -197,15 +198,15 @@ pub const SYS_PROC_RAISE: u64 = 211;
 pub extern "C" fn syscall_entry() {
     unsafe {
         naked_asm!(
-            "mov [rip + {scratch}], r15",
+            "mov gs:[16], r15",
             "mov r15, rsp",
-            "mov rsp, [rip + {kernel_stack_ptr}]",
+            "mov rsp, gs:[8]",
             "push QWORD PTR 0x1B",
             "push r15",
             "push r11",
             "push QWORD PTR 0x23",
             "push rcx",
-            "mov r15, [rip + {scratch}]",
+            "mov r15, gs:[16]",
             "push rbp",
             "push rax",
             "push rbx",
@@ -242,8 +243,6 @@ pub extern "C" fn syscall_entry() {
             "pop rax",
             "pop rbp",
             "iretq",
-            kernel_stack_ptr = sym crate::task::scheduler::KERNEL_STACK_PTR,
-            scratch = sym crate::task::scheduler::SCRATCH,
         );
     }
 }
@@ -284,23 +283,10 @@ pub extern "C" fn syscall_dispatcher(
     let _ = dispatch_syscall(&mut fake_context);
     fake_context.rax
 }
-
 #[unsafe(no_mangle)]
 pub fn dispatch_syscall(context: &mut CPUState) -> u64 {
     let syscall_num = context.rax;
-    let pid = {
-        let tm = TASK_MANAGER.int_lock();
-        tm.current_task
-    };
-
-    {
-        let rdi = context.rdi;
-        let rsi = context.rsi;
-        let rdx = context.rdx;
-        let r10 = context.r10;
-        let r8 = context.r8;
-        let r9 = context.r9;
-    }
+    let pid = crate::task::cpu::get_current_task_idx();
 
     context.rax = 0;
 

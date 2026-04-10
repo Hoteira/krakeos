@@ -5,7 +5,7 @@ use crate::memory::{paging, pmm, vmm};
 pub fn handle_brk(context: &mut CPUState) {
     let new_brk = context.rdi;
     let mut tm = crate::task::TASK_MANAGER.int_lock();
-    let current_idx = tm.current_task;
+    let current_idx = crate::task::cpu::get_current_task_idx();
 
     if current_idx < 0 {
         context.rax = 0;
@@ -125,7 +125,7 @@ pub fn handle_mmap(context: &mut CPUState) {
 
     let (pid, heap_limit, mem_base) = {
         let tm = crate::task::TASK_MANAGER.int_lock();
-        let current_idx = tm.current_task;
+        let current_idx = crate::task::cpu::get_current_task_idx();
         if current_idx < 0 {
             crate::debugln!("[MMAP] REJECTED: no current task");
             context.rax = u64::MAX;
@@ -143,7 +143,7 @@ pub fn handle_mmap(context: &mut CPUState) {
 
     let target_addr = if addr == 0 {
         let tm = crate::task::TASK_MANAGER.int_lock();
-        let current_idx = tm.current_task;
+        let current_idx = crate::task::cpu::get_current_task_idx();
         if let Some(thread) = tm.tasks.get(&(current_idx as usize)) {
             let proc = thread.process.as_ref().expect("Thread has no process");
             let mut heap_end = proc.heap_end.lock();

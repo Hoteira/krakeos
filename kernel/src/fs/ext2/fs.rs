@@ -739,10 +739,8 @@ impl VfsNode for Ext2Node {
         let mut total_get_block_addr_time = 0;
         let mut total_cache_inval_time = 0;
 
-        crate::debugln!("Ext2Node::write: START len={}", len);
-
         while bytes_written < len {
-            let loop_start = unsafe { crate::task::SYSTEM_TICKS };
+            let _loop_start = unsafe { crate::task::SYSTEM_TICKS };
             
             let block_idx = (current_offset / block_size) as u32;
             let block_offset = (current_offset % block_size) as usize;
@@ -823,15 +821,7 @@ impl VfsNode for Ext2Node {
             total_cache_inval_time += unsafe { crate::task::SYSTEM_TICKS } - inval_start;
 
             loop_count += 1;
-            if loop_count % 100 == 0 {
-                crate::debugln!(
-                    "Ext2Node::write: Progress {} / {} bytes... get_block={} alloc={} io={} inval={}", 
-                    bytes_written, len, total_get_block_addr_time, total_alloc_time, total_disk_write_time, total_cache_inval_time
-                );
-            }
         }
-
-        crate::debugln!("Ext2Node::write: Loop done. Ticks so far: {}", unsafe { crate::task::SYSTEM_TICKS } - write_start_time);
 
         let total_time = unsafe { crate::task::SYSTEM_TICKS } - write_start_time;
         if len >= 1024 {
@@ -847,9 +837,7 @@ impl VfsNode for Ext2Node {
                 self.inode.size = current_offset as u32;
             }
             unsafe { (*fs_ptr).write_inode(self.inode_idx, &self.inode) };
-            crate::debugln!("Ext2Node::write: Inode updated, about to flush...");
             unsafe { (*fs_ptr).flush() };
-            crate::debugln!("Ext2Node::write: Flush done.");
         }
 
         Ok(bytes_written)

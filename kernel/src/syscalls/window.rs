@@ -5,60 +5,55 @@ use crate::window_manager::input::MOUSE;
 use crate::window_manager::window::Window;
 
 pub fn handle_add_window(context: &mut CPUState) {
-    unsafe {
-        let ptr = { core::ptr::addr_of!(context.rdi).read_unaligned() };
-        crate::debugln!("[Syscall] handle_add_window called! ptr={:#x}", ptr);
-        let win_size = core::mem::size_of::<Window>() as u64;
-        if !super::validate_user_buf(context, ptr, win_size) { 
-            crate::debugln!("[Syscall] handle_add_window FAILED validation!");
-            return; 
-        }
+    let ptr = context.rdi;
+    crate::debugln!("[Syscall] handle_add_window called! ptr={:#x}", ptr);
+    let win_size = core::mem::size_of::<Window>() as u64;
+    if !super::validate_user_buf(context, ptr, win_size) { 
+        crate::debugln!("[Syscall] handle_add_window FAILED validation!");
+        return; 
+    }
 
-        let mut tm = crate::task::TASK_MANAGER.int_lock();
-        if let Some(current) = tm.current_task_idx() {
-            if let Some(thread) = tm.tasks.get(&(current)) {
-                let proc = thread.process.as_ref().expect("Thread has no process");
+    let mut tm = crate::task::TASK_MANAGER.int_lock();
+    if let Some(current) = tm.current_task_idx() {
+        if let Some(thread) = tm.tasks.get(&(current)) {
+            let proc = thread.process.as_ref().expect("Thread has no process");
 
-                let mut w = *(context.rdi as *const Window);
-                w.pid = proc.pid;
+            let mut w = unsafe { *(context.rdi as *const Window) };
+            w.pid = proc.pid;
 
-                drop(tm);
-                let id = (*(&raw mut COMPOSER)).add_window(w);
-                if w.w_type == crate::window_manager::window::Items::Window {
-                    crate::window_manager::composer::CLICKED_WINDOW_ID = id as usize;
-                    (*(&raw mut COMPOSER)).focus_window(id);
-                }
-                context.rax = id as u64;
-            } else {
-                context.rax = u64::MAX;
+            drop(tm);
+            let mut composer = COMPOSER.lock();
+            let id = composer.add_window(w);
+            if w.w_type == crate::window_manager::window::Items::Window {
+                crate::window_manager::composer::CLICKED_WINDOW_ID.store(id as usize, core::sync::atomic::Ordering::SeqCst);
+                composer.focus_window(id);
             }
+            context.rax = id as u64;
         } else {
             context.rax = u64::MAX;
         }
+    } else {
+        context.rax = u64::MAX;
     }
 }
 
 pub fn handle_update_window(context: &mut CPUState) {
-    unsafe {
-        let win_size = core::mem::size_of::<Window>() as u64;
-        if !super::validate_user_buf(context, context.rdi, win_size) { return; }
+    let win_size = core::mem::size_of::<Window>() as u64;
+    if !super::validate_user_buf(context, context.rdi, win_size) { return; }
 
-        let composer = &mut *(&raw mut COMPOSER);
+    let mut composer = COMPOSER.lock();
 
-        let mut tm = crate::task::TASK_MANAGER.int_lock();
-        if let Some(current) = tm.current_task_idx() {
-            if let Some(thread) = tm.tasks.get(&(current)) {
-                let proc = thread.process.as_ref().expect("Thread has no process");
-                let w = *(context.rdi as *const Window);
+    let mut tm = crate::task::TASK_MANAGER.int_lock();
+    if let Some(current) = tm.current_task_idx() {
+        if let Some(thread) = tm.tasks.get(&(current)) {
+            let proc = thread.process.as_ref().expect("Thread has no process");
+            let w = unsafe { *(context.rdi as *const Window) };
 
-                if let Some(existing_win) = composer.find_window_id(w.id as u64) {
-                    if existing_win.pid == proc.pid {
-                        drop(tm);
-                        composer.resize_window(w);
-                        context.rax = 1;
-                    } else {
-                        context.rax = 0;
-                    }
+            if let Some(existing_win) = composer.find_window_id(w.id as u64) {
+                if existing_win.pid == proc.pid {
+                    drop(tm);
+                    composer.resize_window(w);
+                    context.rax = 1;
                 } else {
                     context.rax = 0;
                 }
@@ -68,6 +63,8 @@ pub fn handle_update_window(context: &mut CPUState) {
         } else {
             context.rax = 0;
         }
+    } else {
+        context.rax = 0;
     }
 }
 
@@ -78,13 +75,11 @@ pub fn handle_update_window_area(context: &mut CPUState) {
     let w = context.r10 as u32;
     let h = context.r8 as u32;
 
-    unsafe {
-        let composer = &mut *(&raw mut COMPOSER);
-        if let Some(win) = composer.find_window_id(wid) {
-            let global_x = win.x as i32 + x;
-            let global_y = win.y as i32 + y;
-            composer.update_window_area_rect(global_x, global_y, w, h);
-        }
+    let mut composer = COMPOSER.lock();
+    if let Some(win) = composer.find_window_id(wid) {
+        let global_x = win.x as i32 + x;
+        let global_y = win.y as i32 + y;
+        composer.update_window_area_rect(global_x, global_y, w, h);
     }
     context.rax = 1;
 }
@@ -190,20 +185,14 @@ pub fn handle_deregister_event_queue(context: &mut CPUState) {
 }
 
 pub fn handle_get_width(context: &mut CPUState) {
-    unsafe {
-        context.rax = (*(&raw mut DISPLAY_SERVER)).width;
-    }
+    context.rax = DISPLAY_SERVER.lock().width;
 }
 
 pub fn handle_get_height(context: &mut CPUState) {
-    unsafe {
-        context.rax = (*(&raw mut DISPLAY_SERVER)).height;
-    }
+    context.rax = DISPLAY_SERVER.lock().height;
 }
 
 pub fn handle_get_mouse(context: &mut CPUState) {
-    unsafe {
-        let mouse = &*(&raw const MOUSE);
-        context.rax = ((mouse.x as u64) << 32) | (mouse.y as u64);
-    }
+    let mouse = MOUSE.lock();
+    context.rax = ((mouse.x as u64) << 32) | (mouse.y as u64);
 }

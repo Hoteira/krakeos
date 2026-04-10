@@ -105,7 +105,7 @@ pub struct VirtioNetDevice {
     rx_packet_queue: Mutex<VecDeque<alloc::vec::Vec<u8>>>,
 }
 
-pub static mut NET_DEVICE: Option<VirtioNetDevice> = None;
+pub static NET_DEVICE: Mutex<Option<VirtioNetDevice>> = Mutex::new(None);
 
 pub fn init() -> Result<(), String> {
     let device_opt = crate::drivers::pci::find_device(0x1AF4, 0x1000); // Legacy
@@ -240,7 +240,7 @@ pub fn init() -> Result<(), String> {
         // Populate RX queue
         fill_rx_queue(&mut net_dev);
 
-        NET_DEVICE = Some(net_dev);
+        *NET_DEVICE.lock() = Some(net_dev);
 
         status |= STATUS_DRIVER_OK;
         write_8(common_cfg_ptr.add(OFF_DEVICE_STATUS), status);
@@ -367,49 +367,48 @@ unsafe fn recycle_tx_descriptors(dev: &mut VirtioNetDevice) {
 }
 
 pub fn poll_rx() {
-    unsafe {
-        let dev_ptr = core::ptr::addr_of_mut!(NET_DEVICE);
-        if let Some(dev) = (*dev_ptr).as_mut() {
-            if let Some(vq) = &mut dev.rx_queue {
-                let used_ptr = (vq.used_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqUsed;
-                let used_idx = (*used_ptr).idx;
+    if let Some(dev) = NET_DEVICE.lock().as_mut() {
+        if let Some(vq) = &mut dev.rx_queue {
+            let used_ptr = (vq.used_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqUsed;
+            let used_idx = unsafe { (*used_ptr).idx };
 
-                while vq.last_used_idx != used_idx {
-                    let elem = (*used_ptr).ring[(vq.last_used_idx % vq.num) as usize];
-                    let id = elem.id;
-                    let len = elem.len;
+            while vq.last_used_idx != used_idx {
+                let elem = unsafe { (*used_ptr).ring[(vq.last_used_idx % vq.num) as usize] };
+                let id = elem.id;
+                let len = elem.len;
 
-                    let desc_ptr = (vq.desc_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqDesc;
-                    let desc = *desc_ptr.add(id as usize);
+                let desc_ptr = (vq.desc_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqDesc;
+                let desc = unsafe { *desc_ptr.add(id as usize) };
 
-                    let virt_addr = desc.addr + crate::memory::paging::HHDM_OFFSET;
-                    let hdr_size = core::mem::size_of::<VirtioNetHdr>();
+                let virt_addr = desc.addr + crate::memory::paging::HHDM_OFFSET;
+                let hdr_size = core::mem::size_of::<VirtioNetHdr>();
 
-                    if len as usize > hdr_size {
-                        let packet_len = len as usize - hdr_size;
-                        let mut packet = alloc::vec![0u8; packet_len];
+                if len as usize > hdr_size {
+                    let packet_len = len as usize - hdr_size;
+                    let mut packet = alloc::vec![0u8; packet_len];
+                    unsafe {
                         core::ptr::copy_nonoverlapping(
                             (virt_addr as *const u8).add(hdr_size),
                             packet.as_mut_ptr(),
                             packet_len,
                         );
-
-                        crate::net::on_receive(&packet);
-                        dev.rx_packet_queue.lock().push_back(packet);
                     }
 
-                    let avail_ptr = (vq.avail_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqAvail;
-                    let idx = (*avail_ptr).idx;
-                    (*avail_ptr).ring[(idx % vq.num) as usize] = id as u16;
-                    core::sync::atomic::fence(Ordering::SeqCst);
-                    (*avail_ptr).idx = idx.wrapping_add(1);
-
-                    vq.last_used_idx = vq.last_used_idx.wrapping_add(1);
+                    crate::net::on_receive(&packet);
+                    dev.rx_packet_queue.lock().push_back(packet);
                 }
 
-                if vq.last_used_idx != used_idx {
-                    write_16(vq.notify_addr as *mut u8, vq.queue_index);
-                }
+                let avail_ptr = (vq.avail_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqAvail;
+                let idx = unsafe { (*avail_ptr).idx };
+                unsafe { (*avail_ptr).ring[(idx % vq.num) as usize] = id as u16; }
+                core::sync::atomic::fence(Ordering::SeqCst);
+                unsafe { (*avail_ptr).idx = idx.wrapping_add(1); }
+
+                vq.last_used_idx = vq.last_used_idx.wrapping_add(1);
+            }
+
+            if vq.last_used_idx != used_idx {
+                unsafe { write_16(vq.notify_addr as *mut u8, vq.queue_index); }
             }
         }
     }
@@ -417,52 +416,50 @@ pub fn poll_rx() {
 }
 
 pub fn recv_packet() -> Option<alloc::vec::Vec<u8>> {
-    unsafe {
-        let dev_ptr = core::ptr::addr_of_mut!(NET_DEVICE);
-        if let Some(dev) = (*dev_ptr).as_mut() {
-            poll_rx();
-            dev.rx_packet_queue.lock().pop_front()
-        } else {
-            crate::net::poll_loopback();
-            None
-        }
+    if let Some(dev) = NET_DEVICE.lock().as_mut() {
+        poll_rx();
+        dev.rx_packet_queue.lock().pop_front()
+    } else {
+        crate::net::poll_loopback();
+        None
     }
 }
 
 pub fn send_packet(data: &[u8]) -> usize {
+    let mut net_device_guard = NET_DEVICE.lock();
+    let dev = if let Some(d) = net_device_guard.as_mut() {
+        d
+    } else {
+        return 1;
+    };
+
+    unsafe { recycle_tx_descriptors(dev); }
+
+    let vq = if let Some(q) = &mut dev.tx_queue {
+        q
+    } else {
+        return 2;
+    };
+
+    let head_idx = vq.free_head;
+    if head_idx == 0xFFFF { return 3; }
+
+    let desc_ptr = (vq.desc_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqDesc;
+    let next_idx = unsafe { (*desc_ptr.add(head_idx as usize)).next };
+
+    let hdr_frame = match pmm::allocate_frame() {
+        Some(f) => f,
+        None => return 5,
+    };
+    let hdr_virt = hdr_frame + crate::memory::paging::HHDM_OFFSET;
+    let hdr = VirtioNetHdr::default();
+    unsafe { *(hdr_virt as *mut VirtioNetHdr) = hdr; }
+
+    let total_len = core::mem::size_of::<VirtioNetHdr>() + data.len();
+    if total_len > 4096 { return 4; }
+
+    let ptr = hdr_virt as *mut u8;
     unsafe {
-        let dev = if let Some(d) = NET_DEVICE.as_mut() {
-            d
-        } else {
-            return 1;
-        };
-
-        recycle_tx_descriptors(dev);
-
-        let vq = if let Some(q) = &mut dev.tx_queue {
-            q
-        } else {
-            return 2;
-        };
-
-        let head_idx = vq.free_head;
-        if head_idx == 0xFFFF { return 3; }
-
-        let desc_ptr = (vq.desc_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqDesc;
-        let next_idx = (*desc_ptr.add(head_idx as usize)).next;
-
-        let hdr_frame = match pmm::allocate_frame() {
-            Some(f) => f,
-            None => return 5,
-        };
-        let hdr_virt = hdr_frame + crate::memory::paging::HHDM_OFFSET;
-        let hdr = VirtioNetHdr::default();
-        *(hdr_virt as *mut VirtioNetHdr) = hdr;
-
-        let total_len = core::mem::size_of::<VirtioNetHdr>() + data.len();
-        if total_len > 4096 { return 4; }
-
-        let ptr = hdr_virt as *mut u8;
         core::ptr::copy_nonoverlapping(
             data.as_ptr(),
             ptr.add(core::mem::size_of::<VirtioNetHdr>()),
@@ -475,17 +472,17 @@ pub fn send_packet(data: &[u8]) -> usize {
             flags: 0,
             next: 0,
         };
-
-        vq.free_head = next_idx;
-
-        let avail_ptr = (vq.avail_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqAvail;
-        let idx = (*avail_ptr).idx;
-        (*avail_ptr).ring[(idx % vq.num) as usize] = head_idx;
-
-        core::sync::atomic::fence(Ordering::SeqCst);
-        (*avail_ptr).idx = idx.wrapping_add(1);
-
-        write_16(vq.notify_addr as *mut u8, vq.queue_index);
-        0
     }
+
+    vq.free_head = next_idx;
+
+    let avail_ptr = (vq.avail_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqAvail;
+    let idx = unsafe { (*avail_ptr).idx };
+    unsafe { (*avail_ptr).ring[(idx % vq.num) as usize] = head_idx; }
+
+    core::sync::atomic::fence(Ordering::SeqCst);
+    unsafe { (*avail_ptr).idx = idx.wrapping_add(1); }
+
+    unsafe { write_16(vq.notify_addr as *mut u8, vq.queue_index); }
+    0
 }

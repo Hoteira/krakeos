@@ -2,7 +2,7 @@ use crate::debugln;
 use crate::syscalls::fs::resolve_path;
 use crate::task::CPUState;
 use crate::memory::paging;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use alloc::boxed::Box;
 
@@ -10,8 +10,9 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
     crate::debugln!("[spawn_process] path='{}'", path);
     let cwd_str = {
         let tm = crate::task::TASK_MANAGER.int_lock();
-        if tm.current_task >= 0 {
-            if let Some(thread) = tm.tasks.get(&(tm.current_task as usize)) {
+        let current_idx = crate::task::cpu::get_current_task_idx();
+        if current_idx >= 0 {
+            if let Some(thread) = tm.tasks.get(&(current_idx as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
                 let cwd = proc.cwd.lock();
                 let cwd_len = cwd.iter().position(|&c| c == 0).unwrap_or(cwd.len());
@@ -60,8 +61,9 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
             let tm = crate::task::TASK_MANAGER.int_lock();
             let mut fds = alloc::vec![-1i16; 16];
             let mut size = (80u16, 25u16);
-            if tm.current_task >= 0 {
-                if let Some(thread) = tm.tasks.get(&(tm.current_task as usize)) {
+            let current_idx = crate::task::cpu::get_current_task_idx();
+            if current_idx >= 0 {
+                if let Some(thread) = tm.tasks.get(&(current_idx as usize)) {
                     let proc = thread.process.as_ref().expect("Thread has no process");
                     fds = proc.fd_table.lock().clone();
                     size = (*proc.terminal_width.lock(), *proc.terminal_height.lock());
@@ -103,67 +105,18 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
 
         let wasm_args_vec: Vec<String> = args.unwrap_or(&[]).iter().map(|s| String::from(*s)).collect();
 
-        // Perform Synchronous AOT Compilation
-        let res = std::wasm::runner::run_with_buffer(
-            path,
-            &file_buf,
-            wasm_args_vec,
-            &cwd_str,
-            &[],
-            alloc::vec::Vec::new(),
-            true, // AOT
+        // Submit AOT Compilation Request to Worker
+        use crate::task::aot_worker::{AotRequest, submit_request};
+        submit_request(AotRequest {
             pid,
+            name: path.to_string(),
+            buffer: file_buf,
+            args: wasm_args_vec,
+            cwd: cwd_str,
             slot_id,
-        );
+        });
 
-        match res {
-            std::wasm::runner::WasmRunResult::AotReady(info) => {
-                crate::debugln!("[spawn_process] AOT ready for PID {}. Entry={:#x} ctx={:#x}", pid, info.entry_addr, info.ctx_ptr);
-                // Now re-initialize the task with the real entry point and context!
-                let mut tm = crate::task::TASK_MANAGER.int_lock();
-                // We don't want to re-create the process object, just update the task state.
-                if let Some(task) = tm.tasks.get_mut(&pid_idx) {
-                    unsafe {
-                        let state = &mut *(task.cpu_state_ptr as *mut crate::task::CPUState);
-                        state.rip = info.entry_addr;
-                        state.rdi = info.ctx_ptr;
-                        state.cs = 0x23; // User code
-                        state.ss = 0x1B; // User data
-                        state.rflags = 0x202; // IF=1
-
-                        // Initialize Ring3Context stack fields
-                        let ctx = &mut *(info.ctx_ptr as *mut ::std::wasm::aot::runtime::Ring3Context);
-                        ctx.stack_base = info.stack_base as *mut u128;
-                        ctx.stack_limit = info.stack_limit as usize;
-                        ctx.locals_base = (info.stack_base - 8 * 1024 * 1024) as *mut u128;
-
-                        // Push exit stub as return address so the entry function can return cleanly.
-                        // The exit stub is at jump_table[1023] in the blob.
-                        let jump_table = ctx.blob_base as *const u64;
-                        let exit_fn_addr = *jump_table.add(1023);
-                        // Start below the 4KB guard page at the top of the stack region
-                        let rsp = ((info.stack_base - 4096) & !15) - 8;
-                        *(rsp as *mut u64) = exit_fn_addr;
-                        state.rsp = rsp;
-
-                        // Initialize linear_memory_size from Ring3Context
-                        let proc = task.process.as_ref().expect("Thread has no process");
-                        *proc.linear_memory_size.lock() = ctx.memory_size;
-                        crate::debugln!("[spawn_process] Set linear_memory_size={} ({} pages)", ctx.memory_size, ctx.memory_size / 65536);
-                    }
-                    task.state = crate::task::ThreadState::Ready;
-                    tm.push_to_run_queue(pid_idx);
-                }
-                return Ok(pid);
-            }
-            std::wasm::runner::WasmRunResult::Finished(exit_code) => {
-                crate::debugln!("[spawn_process] WASM finished immediately with code {}", exit_code);
-                // Task is already in map, but we might want to kill it or let it be.
-                // If it finished during instantiation, it's effectively dead.
-                crate::task::TASK_MANAGER.int_lock().kill_process(pid);
-                return Ok(pid);
-            }
-        }
+        return Ok(pid);
     }
 
     let pid_idx_elf = crate::task::TASK_MANAGER.int_lock().reserve_pid().map_err(|_| String::from("No free process slots"))?;
@@ -174,8 +127,9 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
         let tm = crate::task::TASK_MANAGER.int_lock();
         let mut fds = alloc::vec![-1i16; 16];
         let mut size = (80u16, 25u16);
-        if tm.current_task >= 0 {
-            if let Some(thread) = tm.tasks.get(&(tm.current_task as usize)) {
+        let current_idx = crate::task::cpu::get_current_task_idx();
+        if current_idx >= 0 {
+            if let Some(thread) = tm.tasks.get(&(current_idx as usize)) {
                 let proc = thread.process.as_ref().expect("Thread has no process");
                 fds = proc.fd_table.lock().clone();
                 size = (*proc.terminal_width.lock(), *proc.terminal_height.lock());
@@ -227,7 +181,7 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
                 Ok(pid_elf)
             }
             Err(e) => {
-                crate::task::TASK_MANAGER.int_lock().kill_process(pid_elf);
+                crate::task::manager::kill_process(pid_elf);
                 Err(e)
             }
         }
@@ -235,7 +189,7 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
 
     #[cfg(not(feature = "elf_support"))]
     {
-        crate::task::TASK_MANAGER.int_lock().kill_process(pid_elf);
+        crate::task::manager::kill_process(pid_elf);
         Err(String::from("ELF support is disabled"))
     }
 }
@@ -278,7 +232,7 @@ pub fn handle_spawn_ext(context: &mut CPUState) {
 
     let parent_pid = {
         let tm = crate::task::TASK_MANAGER.int_lock();
-        let current = tm.current_task;
+        let current = crate::task::cpu::get_current_task_idx();
         if current >= 0 {
             tm.tasks.get(&(current as usize)).and_then(|t| t.process.as_ref()).map(|p| p.pid)
         } else {
@@ -294,37 +248,18 @@ pub fn handle_spawn_ext(context: &mut CPUState) {
 
 pub fn handle_exit(context: &mut CPUState) {
     let exit_code = context.rdi;
+    let pid = crate::task::cpu::get_current_task_idx() as u64;
     debugln!("[Syscall] Process exited with code {}", exit_code);
+    
+    crate::task::manager::kill_process(pid);
+
     {
-        use crate::window_manager::composer::COMPOSER;
-
         let mut tm = crate::task::TASK_MANAGER.int_lock();
-        let current = tm.current_task;
-        if current >= 0 {
-            if let Some(thread) = tm.tasks.get_mut(&(current as usize)) {
-                thread.exit_code = exit_code;
-                thread.state = crate::task::ThreadState::Zombie;
+        if let Some(thread) = tm.tasks.get_mut(&(pid as usize)) {
+            thread.exit_code = exit_code;
+            thread.state = crate::task::ThreadState::Zombie;
 
-                unsafe {
-                    let composer = &mut *(&raw mut COMPOSER);
-                    let pid = current as u64;
-                    let mut to_remove = alloc::vec::Vec::new();
-                    for ws in 0..5 {
-                        for w in composer.workspaces[ws].windows.iter() {
-                            if w.pid == pid {
-                                to_remove.push(w.id);
-                            }
-                        }
-                    }
-                    if composer.wallpaper.pid == pid {
-                        to_remove.push(composer.wallpaper.id);
-                    }
-                    for wid in to_remove {
-                        composer.remove_window(wid);
-                    }
-                }
-
-                let proc = thread.process.as_ref().expect("Thread has no process");
+            if let Some(proc) = &thread.process {
                 let mut fd_table = proc.fd_table.lock();
                 for i in 0..fd_table.len() {
                     let global = fd_table[i];
@@ -386,7 +321,7 @@ pub fn handle_spawn(context: &mut CPUState) {
 
     let parent_pid = {
         let tm = crate::task::TASK_MANAGER.int_lock();
-        let current = tm.current_task;
+        let current = crate::task::cpu::get_current_task_idx();
         if current >= 0 {
             tm.tasks.get(&(current as usize)).and_then(|t| t.process.as_ref()).map(|p| p.pid)
         } else {
@@ -407,7 +342,7 @@ pub fn handle_kill(context: &mut CPUState) {
     let target_pid = context.rdi as u64;
     let mut tm = crate::task::TASK_MANAGER.int_lock();
     
-    let current_idx = tm.current_task;
+    let current_idx = crate::task::cpu::get_current_task_idx();
     let mut can_kill = false;
 
     if current_idx < 0 { // Kernel
@@ -438,7 +373,7 @@ pub fn handle_kill(context: &mut CPUState) {
     }
 
     if can_kill {
-        tm.kill_process(target_pid);
+        crate::task::manager::kill_process(target_pid);
         context.rax = 0;
     } else {
         context.rax = u64::MAX;
@@ -447,7 +382,7 @@ pub fn handle_kill(context: &mut CPUState) {
 
 pub fn handle_getpid(context: &mut CPUState) {
     let tm = crate::task::TASK_MANAGER.int_lock();
-    let current = tm.current_task;
+    let current = crate::task::cpu::get_current_task_idx();
     if current >= 0 {
         if let Some(thread) = tm.tasks.get(&(current as usize)) {
             let proc = thread.process.as_ref().expect("Thread has no process");
@@ -584,7 +519,7 @@ pub fn handle_get_slot_info(context: &mut CPUState) {
 pub fn handle_sleep(context: &mut CPUState) {
     let duration = context.rdi;
     let mut tm = crate::task::TASK_MANAGER.int_lock();
-    let current = tm.current_task;
+    let current = crate::task::cpu::get_current_task_idx();
 
     if current >= 0 {
         if let Some(task) = tm.tasks.get_mut(&(current as usize)) {
@@ -600,7 +535,7 @@ pub fn handle_spawn_thread(context: &mut CPUState) {
     let arg = context.rdx;
 
     let mut tm = crate::task::TASK_MANAGER.int_lock();
-    let current = tm.current_task;
+    let current = crate::task::cpu::get_current_task_idx();
 
     if current < 0 {
         context.rax = u64::MAX;
@@ -618,7 +553,7 @@ pub fn handle_thread_exit(context: &mut CPUState) {
     debugln!("[Syscall] Thread exited");
     {
         let mut tm = crate::task::TASK_MANAGER.int_lock();
-        let current = tm.current_task;
+        let current = crate::task::cpu::get_current_task_idx();
         if current >= 0 {
             if let Some(task) = tm.tasks.get_mut(&(current as usize)) {
                 task.state = crate::task::ThreadState::Zombie;

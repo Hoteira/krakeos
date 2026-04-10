@@ -44,15 +44,18 @@ impl Drop for File {
 
 impl File {
     pub fn open(path: &str) -> Result<Self> {
+        crate::debugln!("[File::open] path='{}'", path);
         #[cfg(not(target_arch = "wasm32"))]
         {
             let mut result = [0u8; 8];
             open_at(3, 0, path.as_ptr(), path.len(), 0, 0, result.as_mut_ptr());
 
             if result[0] != 0 {
+                crate::debugln!("[File::open] FAILED result[0]={}", result[0]);
                 Err(Error::from_raw_os_error(2)) // ENOENT
             } else {
                 let fd = unsafe { core::ptr::read_unaligned(result.as_ptr().add(4) as *const i32) };
+                crate::debugln!("[File::open] SUCCESS fd={}", fd);
                 Ok(File { fd: fd as usize })
             }
         }
@@ -61,22 +64,27 @@ impl File {
         {
             let res = crate::os::native_file_open(path.as_ptr(), path.len() as u64, 0);
             if res < 0 {
+                crate::debugln!("[File::open] FAILED res={}", res);
                 Err(Error::from_raw_os_error(2))
             } else {
+                crate::debugln!("[File::open] SUCCESS fd={}", res);
                 Ok(File { fd: res as usize })
             }
         }
     }
 
     pub fn create(path: &str) -> Result<Self> {
+        crate::debugln!("[File::create] path='{}'", path);
         #[cfg(not(target_arch = "wasm32"))]
         {
             let mut result = [0u8; 8];
             open_at(3, 0, path.as_ptr(), path.len(), 1, 0, result.as_mut_ptr());
             if result[0] != 0 {
+                crate::debugln!("[File::create] FAILED result[0]={}", result[0]);
                 Err(Error::from_raw_os_error(1))
             } else {
                 let fd = unsafe { core::ptr::read_unaligned(result.as_ptr().add(4) as *const i32) };
+                crate::debugln!("[File::create] SUCCESS fd={}", fd);
                 Ok(File { fd: fd as usize })
             }
         }
@@ -85,15 +93,20 @@ impl File {
         {
             let res = crate::os::native_file_open(path.as_ptr(), path.len() as u64, 1);
             if res < 0 {
+                crate::debugln!("[File::create] FAILED res={}", res);
                 Err(Error::from_raw_os_error(5))
             } else {
+                crate::debugln!("[File::create] SUCCESS fd={}", res);
                 Ok(File { fd: res as usize })
             }
         }
     }
 
     pub fn size(&self) -> usize {
-        self.stat().map(|s| s.size as usize).unwrap_or(0)
+        crate::debugln!("[File::size] fd={}", self.fd);
+        let res = self.stat().map(|s| s.size as usize).unwrap_or(0);
+        crate::debugln!("[File::size] fd={} size={}", self.fd, res);
+        res
     }
 
     pub fn stat(&self) -> Result<Stat> {

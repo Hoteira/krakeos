@@ -1,0 +1,59 @@
+[+] Loading stage 3 ...
+[+] Loading stage 4 ...
+[+] Loading kernel ...
+[+] Jumping to protected mode ...
+[+] Jumping to long mode ...
+[+] FB Addr: 0x0
+[+] FB Size: 0x0
+Stage 4 loaded.
+SIGNPOST: Initializing Memory...
+PMM: Detected 5120MB RAM. Metadata needs 2560KB.
+PMM: Selected map_phys=0x1000000 from entry base=0x100000 len=0xbfedd000
+PMM: Page Map Virtual Address: 0xffff800001000000. Zeroing...
+PMM: Page Map zeroed successfully (1310720 descriptors).
+PMM: Starting to add free regions...
+PMM: Processing mmap entry 0: 0x0 -> 0x9fc00
+PMM: Skipping entry 0 (fully below 16MB or invalid)
+PMM: Processing mmap entry 3: 0x100000 -> 0xbffdd000
+PMM: Entry overlaps Page Map. Splitting. Map is 0x1000000 -> 0x1280000
+PMM: Remaining region after map: 0x1280000 -> 0xbffdd000
+PMM: Adding free region: 0x1280000 -> 0xbffdd000
+PMM: Processing mmap entry 6: 0x100000000 -> 0x140000000
+PMM: Region 0x100000000 -> 0x140000000 is in PCI hole, skipping.
+PMM: Buddy Allocator initialized. Free: 5120MB
+VMM: Relocated PML4 from 0x20000 to 0xbffdc000
+VMM: Mapping entire physical RAM into HHDM...
+VMM: Physical memory mapping complete.
+PMM: Expanding discovery to all available RAM...
+PMM: Adding extended free region: 0x100000000 -> 0x140000000
+PMM: Expansion complete. Free: 5119MB
+SIGNPOST: Initializing ISTs...
+SIGNPOST: Loading IDT...
+SIGNPOST: Kernel fully initialized.
+SIGNPOST: Heap initialized.
+VirtIO Block: Found device at Bus 0, Device 3, Func 0
+VirtIO Block: Bus mastering enabled.
+VirtIO Block: Remapped BAR 4 to 0xe0000000
+VirtIO Block: Notify mapped at 0xffffa00000000000 -> Phys 0xe0003000
+VirtIO Block: Common Config mapped at 0xffffa00000200000 -> Phys 0xe0000000
+VirtIO Block: Negotiating features...
+VirtIO Block: Initialized successfully.
+SIGNPOST: TaskManager initialized.
+SIGNPOST: Calling DISPLAY_SERVER.init()...
+VirtIO GPU: Device not found.
+DisplayServer: Using VBE fallback
+DisplayServer: VBE reports 0x0 resolution. Graphics unavailable.
+SIGNPOST: DISPLAY_SERVER initialized.
+SIGNPOST: Drivers initialized.
+Mouse: Initializing PS/2 Mouse...
+Mouse: VMMouse initialized successfully (Absolute Mode).
+Mouse: Initialized (ID: 3).
+SIGNPOST: Initializing APIC...
+APIC: Local APIC at 0xfee00000 (mapped to 0xffffa00000400000)
+APIC: I/O APIC at 0xfec00000 (mapped to 0xffffa00000600000)
+APIC: IRQ Override: Bus 0 IRQ 0 -> GSI 2
+APIC: IRQ Override: Bus 0 IRQ 5 -> GSI 5
+APIC: IRQ Override: Bus 0 IRQ 9 -> GSI 9
+APIC: IRQ Override: Bus 0 IRQ 10 -> GSI 10
+APIC: IRQ Override: Bus 0 IRQ 11 -> GSI 11
+SIGNPOST: Initializing SMP...

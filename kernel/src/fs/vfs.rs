@@ -2,11 +2,14 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
-
-
-pub static mut FILESYSTEMS: [Option<Box<dyn FileSystem>>; 256] = [const { None }; 256];
 use alloc::collections::BTreeMap;
-use crate::sync::Mutex;
+use crate::sync::YieldMutex;
+
+pub trait FileSystem: Send + Sync {
+    fn root(&mut self) -> Result<Box<dyn VfsNode>, String>;
+}
+
+pub static FILESYSTEMS: YieldMutex<[Option<Box<dyn FileSystem>>; 256]> = YieldMutex::new([const { None }; 256]);
 
 pub struct GlobalFileTable {
     pub files: BTreeMap<usize, Box<FileHandle>>,
@@ -14,7 +17,7 @@ pub struct GlobalFileTable {
     pub next_fd: usize,
 }
 
-pub static GLOBAL_FILES: Mutex<GlobalFileTable> = Mutex::new(GlobalFileTable {
+pub static GLOBAL_FILES: YieldMutex<GlobalFileTable> = YieldMutex::new(GlobalFileTable {
     files: BTreeMap::new(),
     refcounts: BTreeMap::new(),
     next_fd: 3,
@@ -29,35 +32,27 @@ pub fn init() {}
 
 pub fn mount(disk_id: u8, fs: Box<dyn FileSystem>) {
     crate::debugln!("Mounting at index {}, fs box: {:p}", disk_id, fs);
-    unsafe {
-        FILESYSTEMS[disk_id as usize] = Some(fs);
-    }
+    FILESYSTEMS.lock()[disk_id as usize] = Some(fs);
 }
 
 pub fn open_file(disk_id: u8, path_str: &str) -> Result<usize, String> {
-    crate::debugln!("vfs::open_file: Start for {}", path_str);
     let mut actual_path = String::from(path_str);
     if !path_str.starts_with('@') && !path_str.starts_with('/') {}
 
-    crate::debugln!("vfs::open_file: Calling vfs::open...");
     let node = open(disk_id, path_str)?;
-    crate::debugln!("vfs::open_file: vfs::open returned successfully. Checking access...");
     
     let (uid, gid) = get_current_ids();
     if !check_access(uid, gid, &node.stat(), ACCESS_READ) {
         return Err(String::from("Permission denied (read)"));
     }
     
-    crate::debugln!("vfs::open_file: Access granted. Locking GLOBAL_FILES...");
     let mut table = GLOBAL_FILES.lock();
     let fd = table.next_fd;
     table.next_fd += 1;
     
-    crate::debugln!("vfs::open_file: Inserting into table (fd: {})...", fd);
     table.files.insert(fd, Box::new(FileHandle::File { node, offset: 0 }));
     table.refcounts.insert(fd, 1);
     
-    crate::debugln!("vfs::open_file: Done!");
     Ok(fd)
 }
 
@@ -111,7 +106,6 @@ fn get_current_ids() -> (u16, u16) {
 }
 
 pub fn open(disk_id: u8, path_str: &str) -> Result<Box<dyn VfsNode>, String> {
-    crate::debugln!("vfs::open: Start for disk_id={} path_str={}", disk_id, path_str);
     let (actual_disk, actual_path) = if path_str.starts_with('/') {
         (0xE0, path_str)
     } else {
@@ -121,25 +115,21 @@ pub fn open(disk_id: u8, path_str: &str) -> Result<Box<dyn VfsNode>, String> {
     let components: Vec<String> = actual_path.split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
     let (uid, gid) = get_current_ids();
 
-    unsafe {
-        if let Some(fs) = &mut FILESYSTEMS[actual_disk as usize] {
-            crate::debugln!("vfs::open: Getting root node...");
-            let mut node = fs.root()?;
-            crate::debugln!("vfs::open: Traversing components...");
-            for component in components.iter() {
-                // Check traversal permission (X bit) on directories
-                if node.kind() == FileType::Directory {
-                    if !check_access(uid, gid, &node.stat(), ACCESS_EXEC) {
-                        return Err(String::from("Permission denied"));
-                    }
+    let mut fs_lock = FILESYSTEMS.lock();
+    if let Some(fs) = &mut fs_lock[actual_disk as usize] {
+        let mut node = fs.root()?;
+        for component in components.iter() {
+            // Check traversal permission (X bit) on directories
+            if node.kind() == FileType::Directory {
+                if !check_access(uid, gid, &node.stat(), ACCESS_EXEC) {
+                    return Err(String::from("Permission denied"));
                 }
-                node = node.find(&component)?;
             }
-            crate::debugln!("vfs::open: Node found.");
-            Ok(node)
-        } else {
-            Err(String::from("Disk ID not mounted"))
+            node = node.find(&component)?;
         }
+        Ok(node)
+    } else {
+        Err(String::from("Disk ID not mounted"))
     }
 }
 
@@ -191,11 +181,6 @@ pub fn check_access(proc_uid: u16, proc_gid: u16, stat: &Stat, requested: u32) -
 
     (actual & requested) == requested
 }
-
-pub trait FileSystem: Send + Sync {
-    fn root(&mut self) -> Result<Box<dyn VfsNode>, String>;
-}
-
 
 pub trait VfsNode: Send + Sync {
     fn name(&self) -> String;
