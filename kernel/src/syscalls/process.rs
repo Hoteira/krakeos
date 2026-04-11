@@ -7,7 +7,6 @@ use alloc::vec::Vec;
 use alloc::boxed::Box;
 
 pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&[(u8, u8)]>, parent_pid: Option<u64>) -> Result<u64, String> {
-    crate::debugln!("[spawn_process] path='{}'", path);
     let cwd_str = {
         let tm = crate::task::TASK_MANAGER.int_lock();
         let current_idx = crate::task::cpu::get_current_task_idx();
@@ -49,7 +48,7 @@ pub fn spawn_process(path: &str, args: Option<&[&str]>, fd_inheritance: Option<&
             return Err(String::from("File empty"));
         }
     } else {
-        crate::debugln!("[spawn_process] Error: File not found"); return Err(String::from("File not found"));
+        return Err(String::from("File not found"));
     }
 
     // WASM Detection and Execution
@@ -519,16 +518,25 @@ pub fn handle_get_slot_info(context: &mut CPUState) {
 pub fn handle_sleep(context: &mut CPUState) {
     let duration = context.rdi;
     let mut tm = crate::task::TASK_MANAGER.int_lock();
-    let current = crate::task::cpu::get_current_task_idx();
+    let current_idx = crate::task::cpu::get_current_task_idx() as usize;
 
-    if current >= 0 {
-        if let Some(task) = tm.tasks.get_mut(&(current as usize)) {
-            task.wake_ticks = unsafe { crate::task::SYSTEM_TICKS } + duration;
-            task.state = crate::task::ThreadState::Sleeping;
-        }
+    if let Some(task) = tm.tasks.get_mut(&current_idx) {
+        let wake_at = unsafe { crate::task::SYSTEM_TICKS } + duration;
+        task.state = crate::task::ThreadState::WaitingForEvent;
+
+        let mut em = crate::task::event_manager::EVENT_MANAGER.int_lock();
+        em.register(current_idx, crate::task::event_manager::AsyncEvent::Timer(wake_at));
+    }
+
+    drop(tm);
+
+    // Yield immediately
+    unsafe {
+        core::arch::asm!("sti");
+        core::arch::asm!("int 0x81");
+        core::arch::asm!("cli");
     }
 }
-
 pub fn handle_spawn_thread(context: &mut CPUState) {
     let entry = context.rdi;
     let stack = context.rsi;

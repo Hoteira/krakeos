@@ -52,38 +52,22 @@ impl TaskManager {
 
             self.tasks.insert(0, Box::new(idle_thread));
             self.thread_count = 1;
-            // Push idle task to all run queues as fallback
-            for i in 0..64 {
-                self.run_queues[i].push_back(0);
-            }
+            // Do not push idle task to run queues, handle as fallback in get_next_thread
         }
     }
 
     pub fn current_task_idx(&self) -> Option<usize> {
         let idx = crate::task::cpu::get_current_task_idx();
-        if idx >= 0 {
-            Some(idx as usize)
-        } else {
-            None
-        }
+        if idx >= 0 { Some(idx as usize) } else { None }
     }
 
-    pub fn schedule(&mut self, cpu_state: *mut CPUState, _is_timer: bool) -> (*mut CPUState, u64, i64) {
+    pub fn schedule(
+        &mut self,
+        cpu_state: *mut CPUState,
+        _is_timer: bool,
+    ) -> (*mut CPUState, u64, i64) {
         let cpu_id = crate::task::cpu::get_cpu_id() as usize;
         let current_task_idx = crate::task::cpu::get_current_task_idx();
-
-        let mut to_wake = Vec::new();
-        for (tid, thread) in self.tasks.iter_mut() {
-            if thread.state == ThreadState::Sleeping
-                && unsafe { crate::task::scheduler::SYSTEM_TICKS } >= thread.wake_ticks
-            {
-                thread.state = ThreadState::Ready;
-                to_wake.push(*tid);
-            }
-        }
-        for tid in to_wake {
-            self.push_to_run_queue(tid);
-        }
 
         if current_task_idx >= 0 {
             if let Some(thread) = self.tasks.get_mut(&(current_task_idx as usize)) {
@@ -95,59 +79,52 @@ impl TaskManager {
         }
 
         let next_tid = self.get_next_thread(cpu_id);
-        
+
+        if next_tid == 2 {
+            //crate::debugln!("[TaskManager] SCHEDULING TID 2!");
+        }
+
         let thread = self.tasks.get(&(next_tid as usize)).unwrap();
-        (thread.cpu_state_ptr as *mut CPUState, thread.kernel_stack, next_tid as i64)
+        (
+            thread.cpu_state_ptr as *mut CPUState,
+            thread.kernel_stack,
+            next_tid as i64,
+        )
     }
 
     fn get_next_thread(&mut self, cpu_id: usize) -> isize {
-        let mut picked = -1;
-
-        // 1. Try to find a non-zero Ready task in local queue
+        // 1. Try to find a Ready task in local queue
         let q_len = self.run_queues[cpu_id].len();
         for _ in 0..q_len {
-            let tid = self.run_queues[cpu_id].pop_front().unwrap();
-            let is_ready = self
-                .tasks
-                .get(&tid)
-                .map_or(false, |t| t.state == ThreadState::Ready);
-
-            if picked == -1 && tid != 0 && is_ready {
-                picked = tid as isize;
+            if let Some(tid) = self.run_queues[cpu_id].pop_front() {
                 if let Some(t) = self.tasks.get_mut(&tid) {
-                    t.is_queued = false;
+                    if t.state == ThreadState::Ready {
+                        t.is_queued = false;
+                        return tid as isize;
+                    } else {
+                        // Not ready (e.g. Sleeping or WaitingForEvent), put back at end
+                        self.run_queues[cpu_id].push_back(tid);
+                    }
                 }
-            } else {
-                // Keep in queue
-                self.run_queues[cpu_id].push_back(tid);
             }
-        }
-
-        if picked != -1 {
-            return picked;
         }
 
         // 2. Try work stealing from other CPUs
-        for i in 0..64 {
-            if i == cpu_id { continue; }
-            if let Some(tid) = self.run_queues[i].pop_front() {
-                if tid != 0 {
-                    let is_ready = self.tasks.get(&tid).map_or(false, |t| t.state == ThreadState::Ready);
-                    if is_ready {
-                        picked = tid as isize;
-                        if let Some(t) = self.tasks.get_mut(&tid) {
+        for i in 1..64 {
+            let target_cpu = (cpu_id + i) % 64;
+            let q_len = self.run_queues[target_cpu].len();
+            for _ in 0..q_len {
+                if let Some(tid) = self.run_queues[target_cpu].pop_front() {
+                    if let Some(t) = self.tasks.get_mut(&tid) {
+                        if t.state == ThreadState::Ready {
                             t.is_queued = false;
+                            return tid as isize;
+                        } else {
+                            self.run_queues[target_cpu].push_back(tid);
                         }
-                        break;
                     }
                 }
-                // If not suitable or not ready, put it back in its original queue (or local)
-                self.run_queues[i].push_back(tid);
             }
-        }
-
-        if picked != -1 {
-            return picked;
         }
 
         0 // Fallback to idle
@@ -165,11 +142,17 @@ impl TaskManager {
     }
 
     pub fn push_to_run_queue(&mut self, tid: usize) {
+        if tid == 0 {
+            return; // Never queue the idle task
+        }
         if let Some(thread) = self.tasks.get_mut(&tid) {
             if !thread.is_queued {
                 thread.is_queued = true;
-                // For now, always push to CPU 0 queue or a balanced one
-                let cpu_id = (tid % 64) as usize; 
+                // Always push to the current CPU's queue so it participates in round-robin
+                let mut cpu_id = crate::task::cpu::get_cpu_id() as usize;
+                if cpu_id >= 64 {
+                    cpu_id = 0;
+                }
                 self.run_queues[cpu_id].push_back(tid);
             }
         }
@@ -246,7 +229,8 @@ impl TaskManager {
         let code_pages = (64 * 1024 * 1024) / 4096;
         for i in 0..code_pages {
             let virt = proc.code_base + i as u64 * 4096;
-            if i < 4096 { // 16 MiB
+            if i < 4096 {
+                // 16 MiB
                 if let Some(frame) = pmm::allocate_frame() {
                     vmm::map_page(
                         virt,
@@ -391,22 +375,18 @@ impl TaskManager {
 
     pub fn current_thread(&self) -> &Thread {
         let idx = crate::task::cpu::get_current_task_idx() as usize;
-        self.tasks
-            .get(&idx)
-            .expect("No current thread")
+        self.tasks.get(&idx).expect("No current thread")
     }
 
     pub fn current_thread_mut(&mut self) -> &mut Thread {
         let idx = crate::task::cpu::get_current_task_idx() as usize;
-        self.tasks
-            .get_mut(&idx)
-            .expect("No current thread")
+        self.tasks.get_mut(&idx).expect("No current thread")
     }
 }
 
 pub fn kill_process(pid: u64) {
     {
-        let mut composer = crate::window_manager::composer::COMPOSER.lock();
+        let mut composer = crate::window_manager::composer::COMPOSER.write();
         let mut to_remove = alloc::vec::Vec::new();
         for ws in 0..5 {
             for w in composer.workspaces[ws].windows.iter() {

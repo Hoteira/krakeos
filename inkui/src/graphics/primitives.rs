@@ -484,6 +484,12 @@ pub fn draw_text_formatted(
         }
 
         let (metrics, bitmap) = font.get_char::<true>(c, segment.size);
+        if c != ' ' && c != '\n' && c != '\0' {
+            std::debug_print!("[inkui] Glyph '");
+            let mut b = [0u8; 4];
+            std::os::debug_print(c.encode_utf8(&mut b));
+            std::debugln!("' metrics: w={} h={} advance={}", metrics.width, metrics.height, metrics.advance_width);
+        }
 
         let next_x_end = (current_x as isize + metrics.left_side_bearing + metrics.advance_width as isize) as usize;
 

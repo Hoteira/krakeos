@@ -125,8 +125,6 @@ pub fn init() {
         let page_map_size = total_pages * core::mem::size_of::<PageDescriptor>();
         let page_map_pages = (page_map_size + PAGE_SIZE as usize - 1) / PAGE_SIZE as usize;
 
-        debugln!("PMM: Detected {}MB RAM. Metadata needs {}KB.", max_addr / 1024 / 1024, page_map_size / 1024);
-
         // 2. Find a contiguous block for the Page Map
         let mut map_phys: u64 = 0;
         for i in 0..32 {
@@ -137,7 +135,6 @@ pub fn init() {
                 let candidate = base.max(0x1000000); // Start at 16MB
                 if candidate + page_map_size as u64 <= base + length && candidate < 0x80000000 {
                     map_phys = candidate;
-                    debugln!("PMM: Selected map_phys={:#x} from entry base={:#x} len={:#x}", map_phys, base, length);
                     break;
                 }
             }
@@ -148,7 +145,6 @@ pub fn init() {
         }
 
         let map_virt = (map_phys + crate::memory::paging::HHDM_OFFSET) as *mut PageDescriptor;
-        debugln!("PMM: Page Map Virtual Address: {:p}. Zeroing...", map_virt);
         
         let num_descriptors = page_map_size / core::mem::size_of::<PageDescriptor>();
         for i in 0..num_descriptors {
@@ -156,7 +152,6 @@ pub fn init() {
                 core::ptr::write_bytes(map_virt.add(i) as *mut u8, 0, core::mem::size_of::<PageDescriptor>());
             }
         }
-        debugln!("PMM: Page Map zeroed successfully ({} descriptors).", num_descriptors);
 
         allocator.page_map = map_virt;
         
@@ -166,7 +161,6 @@ pub fn init() {
 
         allocator.total_pages = total_pages;
 
-        debugln!("PMM: Starting to add free regions...");
         for i in 0..32 {
             let entry = mmap.entries[i];
             let base = entry.base;
@@ -175,7 +169,6 @@ pub fn init() {
             if entry.memory_type == 1 && length > 0 {
                 let mut start = base;
                 let end = base + length;
-                debugln!("PMM: Processing mmap entry {}: {:#x} -> {:#x}", i, start, end);
 
                 // PROTECT KERNEL: Skip everything below 16MB (0x1000000)
                 if start < 0x1000000 {
@@ -183,22 +176,18 @@ pub fn init() {
                 }
 
                 if start >= end { 
-                    debugln!("PMM: Skipping entry {} (fully below 16MB or invalid)", i);
                     continue; 
                 }
 
                 // Skip the region used by the Page Map itself
                 if start <= map_phys && end > map_phys {
                     let map_end = map_phys + (page_map_pages as u64 * PAGE_SIZE);
-                    debugln!("PMM: Entry overlaps Page Map. Splitting. Map is {:#x} -> {:#x}", map_phys, map_end);
                     
                     if map_phys > start {
-                        debugln!("PMM: Adding region before map: {:#x} -> {:#x}", start, map_phys);
                         add_free_region(&mut allocator, start, map_phys);
                     }
                     
                     start = map_end;
-                    debugln!("PMM: Remaining region after map: {:#x} -> {:#x}", start, end);
                 }
 
                 if end > start {
@@ -206,16 +195,13 @@ pub fn init() {
                     // This prevents collisions between RAM and BAR allocations.
                     let safe_end = end.min(0xC0000000); 
                     if safe_end > start {
-                        debugln!("PMM: Adding free region: {:#x} -> {:#x}", start, safe_end);
                         add_free_region(&mut allocator, start, safe_end);
-                    } else {
-                        debugln!("PMM: Region {:#x} -> {:#x} is in PCI hole, skipping.", start, end);
                     }
                 }
             }
         }
         
-        debugln!("PMM: Buddy Allocator initialized. Free: {}MB", (allocator.total_pages - allocator.used_pages) * PAGE_SIZE as usize / 1024 / 1024);
+        debugln!("PMM: Initialized. {}MB total RAM.", max_addr / 1024 / 1024);
     }
 }
 

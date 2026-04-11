@@ -32,7 +32,9 @@ pub fn main() {
                 .width(inkui::Size::Relative(100))
                 .height(inkui::Size::Relative(100));
             win.children.push(img);
+            debugln!("[Init] Calling win.show()...");
             win.show();
+            debugln!("[Init] win.show() returned. it's still crashign right here");
         }
         Err(_) => {
             debugln!("[Init] Failed to load wallpaper.");

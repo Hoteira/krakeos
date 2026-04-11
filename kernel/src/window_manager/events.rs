@@ -36,14 +36,11 @@ impl EventQueue {
         self.count += 1;
     }
 
-    pub fn push_to_process(&self, tm: &crate::task::TaskManager, pid: u64, event: Event) -> bool {
+    pub fn push_to_process(&self, tm: &mut crate::task::TaskManager, pid: u64, event: Event) -> bool {
         use core::sync::atomic::Ordering;
 
-        let thread = tm.tasks.values().find(|t| {
-            t.state != crate::task::ThreadState::Zombie
-                && t.process.as_ref().map_or(false, |p| p.pid == pid)
-        });
-        if let Some(thread) = thread {
+        if let Some(thread) = tm.tasks.get_mut(&(pid as usize)) {
+            if thread.state == crate::task::ThreadState::Zombie { return false; }
             let proc = thread.process.as_ref().unwrap();
             let (header_ptr, buf_ptr, capacity) = *proc.event_queue.lock();
             if header_ptr == 0 {
@@ -57,6 +54,9 @@ impl EventQueue {
             }
             unsafe { (buf_ptr as *mut Event).add(head as usize).write(event); }
             header.head.store(next_head, Ordering::Release);
+            
+            // Wake up the thread if it's waiting for an event
+            crate::task::event_manager::signal_event_internal(tm, crate::task::event_manager::AsyncEvent::Generic(pid));
             return true;
         }
         false

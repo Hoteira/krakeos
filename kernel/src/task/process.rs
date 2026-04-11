@@ -2,6 +2,7 @@ use crate::sync::Mutex;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use alloc::string::String;
+use alloc::collections::VecDeque;
 
 #[derive(Debug)]
 pub struct Process {
@@ -27,9 +28,10 @@ pub struct Process {
     pub event_queue: Mutex<(u64, u64, u32)>,
     pub args: Mutex<Vec<String>>,
     pub env_vars: Mutex<Vec<(String, String)>>,
-}
+    pub stdin_buffer: Mutex<VecDeque<u32>>,
+    }
 
-impl Process {
+    impl Process {
     pub fn new(pid: u64, uid: u16, gid: u16, parent_pid: Option<u64>) -> Arc<Self> {
         let mut cwd = [0; 128];
         let root = b"/";
@@ -39,7 +41,7 @@ impl Process {
         let linear_memory_base = crate::memory::address_space::allocate_linear_memory(pid, slot_id);
         let code_base = crate::memory::address_space::allocate_code(pid, slot_id);
         let stack_top = crate::memory::address_space::allocate_stack(pid, slot_id);
-        
+
         let heap_start = linear_memory_base + 4 * 1024 * 1024 * 1024;
         let heap_limit = linear_memory_base + crate::memory::address_space::LINEAR_MEMORY_SLOT_SIZE - 4096;
 
@@ -67,6 +69,7 @@ impl Process {
             event_queue: Mutex::new((0, 0, 0)),
             args: Mutex::new(Vec::new()),
             env_vars: Mutex::new(Vec::new()),
+            stdin_buffer: Mutex::new(VecDeque::new()),
         });
 
         //crate::debugln!("Process::new: allocated successfully.");

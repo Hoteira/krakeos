@@ -41,7 +41,7 @@ impl Mouse {
         self.center = center;
 
         if moved {
-            let mut composer = COMPOSER.lock();
+            let mut composer = COMPOSER.write();
             let ws_opt = composer.find_window(self.x as usize, self.y as usize);
             if let Some(ws) = ws_opt {
                 let old_id = CLICKED_WINDOW_ID.load(core::sync::atomic::Ordering::SeqCst);
@@ -93,8 +93,11 @@ impl Mouse {
             }
         }
 
-        let mut composer = COMPOSER.lock();
-        if let Some(w) = composer.find_window(self.x as usize, self.y as usize) {
+        // Release DISPLAY_SERVER lock before acquiring COMPOSER lock to prevent AB-BA deadlock
+        drop(display_server);
+
+        let composer = COMPOSER.read();
+        if let Some(w) = composer.find_window_immut(self.x as usize, self.y as usize) {
             if w.event_handler != 0 {
                 let local_x = (self.x as i64 - w.x).max(0) as usize;
                 let local_y = (self.y as i64 - w.y).max(0) as usize;
@@ -122,8 +125,8 @@ impl Mouse {
                     });
 
                     let mut pushed = false;
-                    if let Some(tm) = crate::task::TASK_MANAGER.try_lock() {
-                        if GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&tm, w.pid, event) {
+                    if let Some(mut tm) = crate::task::TASK_MANAGER.try_lock() {
+                        if GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&mut tm, w.pid, event) {
                             pushed = true;
                         }
                     }

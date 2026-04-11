@@ -141,6 +141,7 @@ pub fn main() {
     debugln!("[term] Loop starting. Read FD: {}", unsafe { TERM_READ_FD });
 
     let mut term_buffer = TerminalBuffer::new();
+    term_buffer.dirty = true;
     let mut pipe_buf = [0u8; 4096];
 
     debugln!("[term] ENTERING MAIN LOOP!");

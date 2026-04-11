@@ -61,8 +61,6 @@ pub fn init() {
 
         (*(&raw mut crate::boot::BOOT_INFO)).pml4 = new_pml4_phys;
 
-        crate::debugln!("VMM: Relocated PML4 from {:#x} to {:#x}", old_pml4_phys, new_pml4_phys);
-        
         map_physical_memory(new_pml4_phys);
     }
 }
@@ -70,7 +68,6 @@ pub fn init() {
 pub fn map_physical_memory(pml4_phys: u64) {
     unsafe {
         let mmap = (*(&raw mut crate::boot::BOOT_INFO)).mmap;
-        debugln!("VMM: Mapping entire physical RAM into HHDM...");
 
         for i in 0..32 {
             let entry = mmap.entries[i];
@@ -99,7 +96,6 @@ pub fn map_physical_memory(pml4_phys: u64) {
                 }
             }
         }
-        debugln!("VMM: Physical memory mapping complete.");
     }
 }
 

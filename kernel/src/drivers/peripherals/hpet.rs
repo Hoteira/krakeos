@@ -26,7 +26,7 @@ pub fn init(hpet_ptr: u64) -> bool {
         let config_reg = (hpet_base + 0x10) as *mut u64;
         write_volatile(config_reg, read_volatile(config_reg) | 3);
 
-        // Setup Timer 0 for periodic interrupts at 1000Hz (1ms)
+        // Setup Timer 0 for periodic interrupts at 100Hz (10ms)
         let timer0_config_reg = (hpet_base + 0x100) as *mut u64;
         let timer0_comp_reg = (hpet_base + 0x108) as *mut u64;
 
@@ -35,8 +35,8 @@ pub fn init(hpet_ptr: u64) -> bool {
         let t0_config = (1 << 3) | (1 << 2) | (1 << 6);
         write_volatile(timer0_config_reg, t0_config);
 
-        let increment = 1_000_000_000_000u64 / period_fs as u64;
-        debugln!("HPET: Comparator increment for 1ms: {}", increment);
+        let increment = 10_000_000_000_000u64 / period_fs as u64;
+        debugln!("HPET: Comparator increment for 10ms: {}", increment);
         
         write_volatile(timer0_comp_reg, increment);
         write_volatile(timer0_comp_reg, increment);

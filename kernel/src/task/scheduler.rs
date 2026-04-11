@@ -110,7 +110,6 @@ unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
     unsafe {
         SYSTEM_TICKS = SYSTEM_TICKS.wrapping_add(1);
 
-        crate::drivers::network::virtio::poll_rx();
         let mut tm = TASK_MANAGER.lock();
         let current_task_idx: i64;
         asm!("mov {}, gs:[24]", out(reg) current_task_idx);

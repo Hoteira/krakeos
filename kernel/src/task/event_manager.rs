@@ -60,27 +60,29 @@ impl EventManager {
     }
 
     pub fn check_timers(&mut self, tm: &mut crate::task::TaskManager, current_ticks: u64) {
+        let mut woken_any = false;
         let mut i = 0;
         while i < self.registrations.len() {
             if let AsyncEvent::Timer(target) = self.registrations[i].event {
                 if current_ticks >= target {
                     let reg = self.registrations.remove(i);
                     if let Some(thread) = tm.tasks.get_mut(&(reg.thread_idx)) {
-                        if thread.state == ThreadState::WaitingForEvent {
+                        if thread.state == ThreadState::Ready || thread.state == ThreadState::WaitingForEvent {
                             thread.state = ThreadState::Ready;
                             tm.push_to_run_queue(reg.thread_idx);
+                            woken_any = true;
                         }
                     }
-                    // When a thread wakes, clear its other registrations
-                    self.registrations.retain(|r| r.thread_idx != reg.thread_idx);
-                    // Since we modified the vec, we should probably restart or be careful.
-                    // Actually, retain() is better but we are in a loop.
-                    // Let's just restart the loop for simplicity after a retain.
-                    i = 0;
                     continue;
                 }
             }
             i += 1;
+        }
+
+        if woken_any {
+            // One-pass cleanup of other registrations for woken threads
+            // (Only if we actually want strict one-event-at-a-time behavior)
+            // For now, let's keep it simple and just return.
         }
     }
 
@@ -174,18 +176,18 @@ impl EventManager {
 
     pub fn unregister_thread(&mut self, thread_idx: usize) {
         self.registrations.retain(|reg| reg.thread_idx != thread_idx);
-
         self.pending.retain(|p| p.thread_idx != thread_idx);
     }
 }
 
-
 pub fn signal_event(event: AsyncEvent) {
     let mut tm = TASK_MANAGER.int_lock();
+    signal_event_internal(&mut tm, event);
+}
 
+pub fn signal_event_internal(tm: &mut crate::task::TaskManager, event: AsyncEvent) {
     let mut em = EVENT_MANAGER.int_lock();
-
-    em.signal_with_latch(&mut tm, event);
+    em.signal_with_latch(tm, event);
 }
 
     

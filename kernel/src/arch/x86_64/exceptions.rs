@@ -1,4 +1,3 @@
-use crate::drivers::peripherals::keyboard::KEYBOARD_BUFFER;
 use crate::arch::x86_64::io::{inb, outb};
 use crate::window_manager::input::MOUSE;
 use crate::window_manager::events::{Event, ResizeEvent, GLOBAL_EVENT_QUEUE, KeyboardEvent};
@@ -436,7 +435,6 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
         return;
     }
 
-    serial_print("K");
     let scancode: u8 = inb(0x60);
 
     if let Some((key, pressed)) = crate::drivers::peripherals::keyboard::handle_scancode(scancode) {
@@ -485,7 +483,7 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
                     handled_globally = true;
                     LAST_KEY_GLOBAL.store(eval_key, Ordering::SeqCst);
                 } else if eval_key == 'x' as u32 || eval_key == 'w' as u32 {
-                    let mut composer = crate::window_manager::composer::COMPOSER.lock();
+                    let mut composer = crate::window_manager::composer::COMPOSER.write();
                     let active_id = crate::window_manager::composer::CLICKED_WINDOW_ID.load(Ordering::SeqCst) as u64;
                     if active_id != 0 && active_id != composer.wallpaper.id && active_id != composer.taskbar.id {
                         composer.remove_window(active_id);
@@ -493,7 +491,7 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
                     handled_globally = true;
                     LAST_KEY_GLOBAL.store(eval_key, Ordering::SeqCst);
                 } else if eval_key == 'z' as u32 || eval_key == 'f' as u32 {
-                    let mut composer = crate::window_manager::composer::COMPOSER.lock();
+                    let mut composer = crate::window_manager::composer::COMPOSER.write();
                     let active_id = crate::window_manager::composer::CLICKED_WINDOW_ID.load(Ordering::SeqCst);
                     if active_id != 0 {
                         if let Some(w) = composer.find_window_id(active_id as u64) {
@@ -528,8 +526,8 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
                                     }
                                 );
                                 let pid = w.pid;
-                                let tm = crate::task::TASK_MANAGER.int_lock();
-                                if !crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&*tm, pid, event) {
+                                let mut tm = crate::task::TASK_MANAGER.int_lock();
+                                if !crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&mut *tm, pid, event) {
                                     crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().add_event(event);
                                 }
                             }
@@ -547,7 +545,7 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
                     LAST_KEY_GLOBAL.store(eval_key, Ordering::SeqCst);
                 } else if eval_key >= '1' as u32 && eval_key <= '5' as u32 {
                     let workspace_idx = (eval_key - '1' as u32) as usize;
-                    crate::window_manager::composer::COMPOSER.lock().switch_workspace(workspace_idx);
+                    crate::window_manager::composer::COMPOSER.write().switch_workspace(workspace_idx);
                     handled_globally = true;
                     LAST_KEY_GLOBAL.store(eval_key, Ordering::SeqCst);
                 } else if key == crate::drivers::peripherals::keyboard::KEY_SUPER {
@@ -559,46 +557,51 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
         }
 
         if !handled_globally {
-            if pressed && !is_super {
-                KEYBOARD_BUFFER.lock().push_back(key);
-                crate::task::event_manager::signal_event(crate::task::event_manager::AsyncEvent::Read(0));
-            }
-
             let active_window_id = crate::window_manager::composer::CLICKED_WINDOW_ID.load(Ordering::SeqCst);
             if active_window_id != 0 {
-                let mut tm_target = None;
-                let composer = crate::window_manager::composer::COMPOSER.lock();
-                for ws in 0..5 {
-                    for w in &composer.workspaces[ws].windows {
-                        if w.id == active_window_id as u64 {
-                            if w.event_handler != 0 {
-                                tm_target = Some(w.pid);
+                let mut target_pid = None;
+                {
+                    let composer = crate::window_manager::composer::COMPOSER.read();
+                    for ws in 0..5 {
+                        for w in &composer.workspaces[ws].windows {
+                            if w.id == active_window_id as u64 {
+                                target_pid = Some(w.pid);
+                                break;
                             }
-                            break;
+                        }
+                        if target_pid.is_some() { break; }
+                    }
+                }
+
+                if let Some(pid) = target_pid {
+                    if pressed && !is_super {
+                        let mut tm = crate::task::TASK_MANAGER.int_lock();
+                        if let Some(thread) = tm.tasks.get(&(pid as usize)) {
+                            if let Some(proc) = &thread.process {
+                                proc.stdin_buffer.lock().push_back(key);
+                                crate::task::event_manager::signal_event_internal(&mut tm, crate::task::event_manager::AsyncEvent::Read(pid as i32));
+                            }
                         }
                     }
-                    if tm_target.is_some() { break; }
-                }
-                drop(composer);
 
-                let event = Event::Keyboard(KeyboardEvent {
-                    wid: active_window_id as u32,
-                    key,
-                    pressed,
-                    repeat: 1,
-                });
+                    // Also send as window event if handler is registered
+                    let event = Event::Keyboard(KeyboardEvent {
+                        wid: active_window_id as u32,
+                        key,
+                        pressed,
+                        repeat: 1,
+                    });
 
-                let mut pushed = false;
-                if let Some(pid) = tm_target {
-                    if let Some(tm) = crate::task::TASK_MANAGER.try_lock() {
-                        if GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&*tm, pid, event) {
+                    let mut pushed = false;
+                    if let Some(mut tm) = crate::task::TASK_MANAGER.try_lock() {
+                        if GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&mut tm, pid, event) {
                             pushed = true;
                         }
                     }
-                }
 
-                if !pushed {
-                    GLOBAL_EVENT_QUEUE.lock().add_event(event);
+                    if !pushed {
+                        GLOBAL_EVENT_QUEUE.lock().add_event(event);
+                    }
                 }
             }
         }
@@ -618,7 +621,6 @@ pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
         return;
     }
 
-    serial_print("M");
     use crate::drivers::peripherals::mouse::{VMMOUSE_ACTIVE, vmport_in, VMPORT_CMD_VMMOUSE_STATUS, VMPORT_CMD_VMMOUSE_DATA, MOUSE_IDX, MOUSE_PACKET, MOUSE_PACKET_SIZE};
 
     unsafe {
@@ -626,7 +628,6 @@ pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
             let (status, _, _, _, _, _) = vmport_in(VMPORT_CMD_VMMOUSE_STATUS, 0);
             let count = status & 0xFFFF;
             if count > 0 {
-                serial_print("V");
                 let num_packets = count / 4;
                 for _ in 0..num_packets {
                     let (buttons, x, y, z, _, _) = vmport_in(VMPORT_CMD_VMMOUSE_DATA, 4);
@@ -647,7 +648,6 @@ pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
     }
 
     let data = inb(0x60);
-    serial_print("m");
 
     unsafe {
         if MOUSE_IDX == 0 && ((data & 0x08) == 0 || data == 0xFF) {

@@ -268,17 +268,25 @@ impl DisplayServer {
                     let src = self.double_buffer as *const u8;
                     let dst = self.framebuffer as *mut u8;
                     unsafe {
-                        for row in 0..sh {
-                            let offset = (sy + row) as usize * pitch + (sx as usize * 4);
-                            core::ptr::copy_nonoverlapping(
-                                src.add(offset),
-                                dst.add(offset),
-                                (sw * 4) as usize,
-                            );
+                        if sw == self.width as u32 {
+                            let offset = sy as usize * pitch;
+                            let size = sh as usize * pitch;
+                            core::ptr::copy_nonoverlapping(src.add(offset), dst.add(offset), size);
+                        } else {
+                            for row in 0..sh {
+                                let offset = (sy + row) as usize * pitch + (sx as usize * 4);
+                                core::ptr::copy_nonoverlapping(
+                                    src.add(offset),
+                                    dst.add(offset),
+                                    (sw * 4) as usize,
+                                );
+                            }
                         }
 
                         // NON-BLOCKING transfer and flush to the single active resource
+                        // crate::debugln!("[DisplayServer] copy: calling virtio::flush...");
                         virtio::flush(sx, sy, sw, sh, self.width as u32, self.active_resource_id, false);
+                        // crate::debugln!("[DisplayServer] copy: virtio::flush done.");
                     }
                     self.sync_vbe_rect(sx, sy, sw, sh);
                 }

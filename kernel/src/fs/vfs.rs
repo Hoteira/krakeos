@@ -3,13 +3,13 @@ use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 use alloc::collections::BTreeMap;
-use crate::sync::YieldMutex;
+use crate::sync::{YieldMutex, YieldRwLock};
 
 pub trait FileSystem: Send + Sync {
     fn root(&mut self) -> Result<Box<dyn VfsNode>, String>;
 }
 
-pub static FILESYSTEMS: YieldMutex<[Option<Box<dyn FileSystem>>; 256]> = YieldMutex::new([const { None }; 256]);
+pub static FILESYSTEMS: YieldRwLock<[Option<Box<dyn FileSystem>>; 256]> = YieldRwLock::new([const { None }; 256]);
 
 pub struct GlobalFileTable {
     pub files: BTreeMap<usize, Box<FileHandle>>,
@@ -17,7 +17,7 @@ pub struct GlobalFileTable {
     pub next_fd: usize,
 }
 
-pub static GLOBAL_FILES: YieldMutex<GlobalFileTable> = YieldMutex::new(GlobalFileTable {
+pub static GLOBAL_FILES: YieldRwLock<GlobalFileTable> = YieldRwLock::new(GlobalFileTable {
     files: BTreeMap::new(),
     refcounts: BTreeMap::new(),
     next_fd: 3,
@@ -31,8 +31,7 @@ pub enum FileHandle {
 pub fn init() {}
 
 pub fn mount(disk_id: u8, fs: Box<dyn FileSystem>) {
-    crate::debugln!("Mounting at index {}, fs box: {:p}", disk_id, fs);
-    FILESYSTEMS.lock()[disk_id as usize] = Some(fs);
+    FILESYSTEMS.write()[disk_id as usize] = Some(fs);
 }
 
 pub fn open_file(disk_id: u8, path_str: &str) -> Result<usize, String> {
@@ -46,7 +45,7 @@ pub fn open_file(disk_id: u8, path_str: &str) -> Result<usize, String> {
         return Err(String::from("Permission denied (read)"));
     }
     
-    let mut table = GLOBAL_FILES.lock();
+    let mut table = GLOBAL_FILES.write();
     let fd = table.next_fd;
     table.next_fd += 1;
     
@@ -57,7 +56,7 @@ pub fn open_file(disk_id: u8, path_str: &str) -> Result<usize, String> {
 }
 
 pub fn get_file(fd: usize) -> Option<&'static mut FileHandle> {
-    let mut table = GLOBAL_FILES.lock();
+    let mut table = GLOBAL_FILES.write();
     if let Some(boxed_handle) = table.files.get_mut(&fd) {
         unsafe {
             Some(&mut *(boxed_handle.as_mut() as *mut FileHandle))
@@ -68,7 +67,7 @@ pub fn get_file(fd: usize) -> Option<&'static mut FileHandle> {
 }
 
 pub fn close_file(fd: usize) {
-    let mut table = GLOBAL_FILES.lock();
+    let mut table = GLOBAL_FILES.write();
     if let Some(count) = table.refcounts.get_mut(&fd) {
         if *count > 0 {
             *count -= 1;
@@ -85,7 +84,7 @@ pub fn close_file(fd: usize) {
 }
 
 pub fn increment_ref(fd: usize) {
-    let mut table = GLOBAL_FILES.lock();
+    let mut table = GLOBAL_FILES.write();
     if table.files.contains_key(&fd) {
         if let Some(count) = table.refcounts.get_mut(&fd) {
             *count += 1;
@@ -115,7 +114,7 @@ pub fn open(disk_id: u8, path_str: &str) -> Result<Box<dyn VfsNode>, String> {
     let components: Vec<String> = actual_path.split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
     let (uid, gid) = get_current_ids();
 
-    let mut fs_lock = FILESYSTEMS.lock();
+    let mut fs_lock = FILESYSTEMS.write();
     if let Some(fs) = &mut fs_lock[actual_disk as usize] {
         let mut node = fs.root()?;
         for component in components.iter() {

@@ -199,35 +199,18 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
         bytes: [u8; N],
     ) -> Result<(), RuntimeError> {
         let lock_guard = self.storage.read();
-        let len = match &*lock_guard {
-            LinearMemoryStorage::Managed(data) => data.len(),
-            LinearMemoryStorage::Sas { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
-            LinearMemoryStorage::Nested { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
+        let (base_ptr, len) = match &*lock_guard {
+            LinearMemoryStorage::Managed(data) => (data.as_ptr() as *mut u8, data.len()),
+            LinearMemoryStorage::Sas { base, current_pages, .. } => (*base as *mut u8, *current_pages as usize * Self::PAGE_SIZE),
+            LinearMemoryStorage::Nested { base, current_pages, .. } => (*base as *mut u8, *current_pages as usize * Self::PAGE_SIZE),
         };
 
         if N > len || index > len - N {
             return Err(TrapError::MemoryOrDataAccessOutOfBounds.into());
         }
 
-        match &*lock_guard {
-            LinearMemoryStorage::Managed(data) => {
-                for (i, byte) in bytes.into_iter().enumerate() {
-                    let dst = unsafe { data.get_unchecked(i + index) };
-                    dst.store(byte, Ordering::Relaxed);
-                }
-            }
-            LinearMemoryStorage::Sas { base, .. } => {
-                for (i, byte) in bytes.into_iter().enumerate() {
-                    let dst = unsafe { &*base.add(i + index) };
-                    dst.store(byte, Ordering::Relaxed);
-                }
-            }
-            LinearMemoryStorage::Nested { base, .. } => {
-                for (i, byte) in bytes.into_iter().enumerate() {
-                    let dst = unsafe { &*base.add(i + index) };
-                    dst.store(byte, Ordering::Relaxed);
-                }
-            }
+        unsafe {
+            core::ptr::copy_nonoverlapping(bytes.as_ptr(), base_ptr.add(index), N);
         }
         Ok(())
     }
@@ -241,10 +224,10 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
 
     pub fn load_bytes<const N: usize>(&self, index: MemIdx) -> Result<[u8; N], RuntimeError> {
         let lock_guard = self.storage.read();
-        let len = match &*lock_guard {
-            LinearMemoryStorage::Managed(data) => data.len(),
-            LinearMemoryStorage::Sas { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
-            LinearMemoryStorage::Nested { current_pages, .. } => *current_pages as usize * Self::PAGE_SIZE,
+        let (base_ptr, len) = match &*lock_guard {
+            LinearMemoryStorage::Managed(data) => (data.as_ptr() as *const u8, data.len()),
+            LinearMemoryStorage::Sas { base, current_pages, .. } => (*base as *const u8, *current_pages as usize * Self::PAGE_SIZE),
+            LinearMemoryStorage::Nested { base, current_pages, .. } => (*base as *const u8, *current_pages as usize * Self::PAGE_SIZE),
         };
 
         if N > len || index > len - N {
@@ -252,25 +235,8 @@ impl<const PAGE_SIZE: usize> LinearMemory<PAGE_SIZE> {
         }
 
         let mut bytes = [0; N];
-        match &*lock_guard {
-            LinearMemoryStorage::Managed(data) => {
-                for (i, byte) in bytes.iter_mut().enumerate() {
-                    let src = unsafe { data.get_unchecked(i + index) };
-                    *byte = src.load(Ordering::Relaxed);
-                }
-            }
-            LinearMemoryStorage::Sas { base, .. } => {
-                for (i, byte) in bytes.iter_mut().enumerate() {
-                    let src = unsafe { &*base.add(i + index) };
-                    *byte = src.load(Ordering::Relaxed);
-                }
-            }
-            LinearMemoryStorage::Nested { base, .. } => {
-                for (i, byte) in bytes.iter_mut().enumerate() {
-                    let src = unsafe { &*base.add(i + index) };
-                    *byte = src.load(Ordering::Relaxed);
-                }
-            }
+        unsafe {
+            core::ptr::copy_nonoverlapping(base_ptr.add(index), bytes.as_mut_ptr(), N);
         }
         Ok(bytes)
     }

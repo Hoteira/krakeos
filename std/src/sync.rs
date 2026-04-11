@@ -180,6 +180,214 @@ impl<'a, T> Drop for MutexGuard<'a, T> {
     }
 }
 
+/// A yielding Reader-Writer lock.
+pub struct RwLock<T> {
+    state: AtomicI32, // negative = writer, positive = readers, 0 = free
+    data: UnsafeCell<T>,
+}
+
+unsafe impl<T: Send + Sync> Sync for RwLock<T> {}
+unsafe impl<T: Send + Sync> Send for RwLock<T> {}
+
+pub struct RwLockReadGuard<'a, T> {
+    lock: &'a AtomicI32,
+    data: &'a T,
+}
+
+pub struct RwLockWriteGuard<'a, T> {
+    lock: &'a AtomicI32,
+    data: &'a mut T,
+}
+
+impl<T> RwLock<T> {
+    pub const fn new(data: T) -> Self {
+        Self {
+            state: AtomicI32::new(0),
+            data: UnsafeCell::new(data),
+        }
+    }
+
+    pub fn read(&self) -> RwLockReadGuard<'_, T> {
+        loop {
+            let current = self.state.load(Ordering::Acquire);
+            if current >= 0 {
+                if self.state.compare_exchange(current, current + 1, Ordering::Release, Ordering::Relaxed).is_ok() {
+                    break;
+                }
+            } else {
+                #[cfg(not(target_arch = "wasm32"))]
+                unsafe { core::arch::asm!("int 0x81"); }
+                #[cfg(target_arch = "wasm32")]
+                crate::os::yield_task();
+            }
+        }
+        RwLockReadGuard {
+            lock: &self.state,
+            data: unsafe { &*self.data.get() },
+        }
+    }
+
+    pub fn write(&self) -> RwLockWriteGuard<'_, T> {
+        loop {
+            if self.state.compare_exchange(0, -1, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+                break;
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            unsafe { core::arch::asm!("int 0x81"); }
+            #[cfg(target_arch = "wasm32")]
+            crate::os::yield_task();
+        }
+        RwLockWriteGuard {
+            lock: &self.state,
+            data: unsafe { &mut *self.data.get() },
+        }
+    }
+}
+
+impl<'a, T> core::ops::Deref for RwLockReadGuard<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target { self.data }
+}
+
+impl<'a, T> Drop for RwLockReadGuard<'a, T> {
+    fn drop(&mut self) {
+        self.lock.fetch_sub(1, Ordering::Release);
+    }
+}
+
+impl<'a, T> core::ops::Deref for RwLockWriteGuard<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target { self.data }
+}
+
+impl<'a, T> core::ops::DerefMut for RwLockWriteGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target { self.data }
+}
+
+impl<'a, T> Drop for RwLockWriteGuard<'a, T> {
+    fn drop(&mut self) {
+        self.lock.store(0, Ordering::Release);
+    }
+}
+
+/// A non-yielding Reader-Writer spinlock.
+/// Safe for use in interrupt contexts.
+pub struct RwSpinlock<T> {
+    state: AtomicI32,
+    data: UnsafeCell<T>,
+}
+
+unsafe impl<T: Send + Sync> Sync for RwSpinlock<T> {}
+unsafe impl<T: Send + Sync> Send for RwSpinlock<T> {}
+
+pub struct RwSpinlockReadGuard<'a, T> {
+    lock: &'a AtomicI32,
+    data: &'a T,
+    rflags: u64,
+}
+
+pub struct RwSpinlockWriteGuard<'a, T> {
+    lock: &'a AtomicI32,
+    data: &'a mut T,
+    rflags: u64,
+}
+
+impl<T> RwSpinlock<T> {
+    pub const fn new(data: T) -> Self {
+        Self {
+            state: AtomicI32::new(0),
+            data: UnsafeCell::new(data),
+        }
+    }
+
+    pub fn read(&self) -> RwSpinlockReadGuard<'_, T> {
+        let rflags: u64;
+        #[cfg(not(target_arch = "wasm32"))]
+        unsafe {
+            core::arch::asm!("pushfq; pop {}", out(reg) rflags);
+            core::arch::asm!("cli");
+        }
+        #[cfg(target_arch = "wasm32")]
+        { rflags = 0; }
+
+        loop {
+            let current = self.state.load(Ordering::Acquire);
+            if current >= 0 {
+                if self.state.compare_exchange(current, current + 1, Ordering::Release, Ordering::Relaxed).is_ok() {
+                    break;
+                }
+            }
+            core::hint::spin_loop();
+        }
+        RwSpinlockReadGuard {
+            lock: &self.state,
+            data: unsafe { &*self.data.get() },
+            rflags,
+        }
+    }
+
+    pub fn write(&self) -> RwSpinlockWriteGuard<'_, T> {
+        let rflags: u64;
+        #[cfg(not(target_arch = "wasm32"))]
+        unsafe {
+            core::arch::asm!("pushfq; pop {}", out(reg) rflags);
+            core::arch::asm!("cli");
+        }
+        #[cfg(target_arch = "wasm32")]
+        { rflags = 0; }
+
+        loop {
+            if self.state.compare_exchange(0, -1, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+                break;
+            }
+            core::hint::spin_loop();
+        }
+        RwSpinlockWriteGuard {
+            lock: &self.state,
+            data: unsafe { &mut *self.data.get() },
+            rflags,
+        }
+    }
+}
+
+impl<'a, T> core::ops::Deref for RwSpinlockReadGuard<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target { self.data }
+}
+
+impl<'a, T> Drop for RwSpinlockReadGuard<'a, T> {
+    fn drop(&mut self) {
+        self.lock.fetch_sub(1, Ordering::Release);
+        #[cfg(not(target_arch = "wasm32"))]
+        unsafe {
+            if (self.rflags & 0x200) != 0 {
+                core::arch::asm!("sti");
+            }
+        }
+    }
+}
+
+impl<'a, T> core::ops::Deref for RwSpinlockWriteGuard<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target { self.data }
+}
+
+impl<'a, T> core::ops::DerefMut for RwSpinlockWriteGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target { self.data }
+}
+
+impl<'a, T> Drop for RwSpinlockWriteGuard<'a, T> {
+    fn drop(&mut self) {
+        self.lock.store(0, Ordering::Release);
+        #[cfg(not(target_arch = "wasm32"))]
+        unsafe {
+            if (self.rflags & 0x200) != 0 {
+                core::arch::asm!("sti");
+            }
+        }
+    }
+}
+
 /// A semaphore for controlling access to a pool of resources.
 pub struct Semaphore {
     count: AtomicI32,

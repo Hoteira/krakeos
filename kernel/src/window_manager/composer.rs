@@ -66,9 +66,9 @@ pub struct Composer {
     pub spacing: usize,
 }
 
-use crate::sync::Mutex;
+use crate::sync::{RwSpinlock, Mutex};
 
-pub static COMPOSER: Mutex<Composer> = Mutex::new(Composer {
+pub static COMPOSER: RwSpinlock<Composer> = RwSpinlock::new(Composer {
     workspaces: [Workspace::new(); 5],
     active_workspace: 0,
     wallpaper: NULL_WINDOW,
@@ -156,8 +156,8 @@ impl Composer {
                 );
                 
                 let mut pushed = false;
-                if let Some(tm) = crate::task::TASK_MANAGER.try_lock() {
-                    if crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&*tm, pid, event) {
+                if let Some(mut tm) = crate::task::TASK_MANAGER.try_lock() {
+                    if crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&mut tm, pid, event) {
                         pushed = true;
                     }
                 }
@@ -332,6 +332,33 @@ impl Composer {
         None
     }
 
+    pub fn find_window_immut(&self, x: usize, y: usize) -> Option<&Window> {
+        let mx = x as i64;
+        let my = y as i64;
+
+        if self.taskbar.w_type != Items::Null {
+            if mx >= self.taskbar.x && mx <= (self.taskbar.x + self.taskbar.width as i64) && my >= self.taskbar.y && my <= (self.taskbar.y + self.taskbar.height as i64) {
+                return Some(&self.taskbar);
+            }
+        }
+
+        let ws = &self.workspaces[self.active_workspace];
+        let mut top_z = u64::MAX;
+        let mut top_idx = 16;
+        for i in 0..16 {
+            if ws.windows[i].w_type != Items::Null {
+                if mx >= ws.windows[i].x && mx <= (ws.windows[i].x + ws.windows[i].width as i64) && my >= ws.windows[i].y && my <= (ws.windows[i].y + ws.windows[i].height as i64) {
+                    if ws.windows[i].z <= top_z {
+                        top_z = ws.windows[i].z;
+                        top_idx = i;
+                    }
+                }
+            }
+        }
+        if top_idx < 16 { return Some(&ws.windows[top_idx]); }
+        None
+    }
+
     pub fn find_window_id(&mut self, id: u64) -> Option<&mut Window> {
         if self.wallpaper.id == id && self.wallpaper.w_type != Items::Null { return Some(&mut self.wallpaper); }
         if self.taskbar.id == id && self.taskbar.w_type != Items::Null { return Some(&mut self.taskbar); }
@@ -340,6 +367,20 @@ impl Composer {
             for i in 0..16 {
                 if self.workspaces[w].windows[i].id == id && self.workspaces[w].windows[i].w_type != Items::Null {
                     return Some(&mut self.workspaces[w].windows[i]);
+                }
+            }
+        }
+        None
+    }
+
+    pub fn find_window_id_immut(&self, id: u64) -> Option<&Window> {
+        if self.wallpaper.id == id && self.wallpaper.w_type != Items::Null { return Some(&self.wallpaper); }
+        if self.taskbar.id == id && self.taskbar.w_type != Items::Null { return Some(&self.taskbar); }
+
+        for w in 0..5 {
+            for i in 0..16 {
+                if self.workspaces[w].windows[i].id == id && self.workspaces[w].windows[i].w_type != Items::Null {
+                    return Some(&self.workspaces[w].windows[i]);
                 }
             }
         }
@@ -570,24 +611,34 @@ impl Composer {
         }
     }
 
-    pub fn update_window_area_rect(&mut self, dirty_x: i32, dirty_y: i32, dirty_w: u32, dirty_h: u32) {
-        DISPLAY_SERVER.lock().mark_dirty(dirty_x, dirty_y, dirty_w, dirty_h);
-        self.recompose_area(dirty_x, dirty_y, dirty_w, dirty_h);
+    pub fn update_window_area_rect(&self, dirty_x: i32, dirty_y: i32, dirty_w: u32, dirty_h: u32) {
+        crate::debugln!("[COMPOSER] update_window_area_rect: {}x{} at {},{}", dirty_w, dirty_h, dirty_x, dirty_y);
         let mut ds = DISPLAY_SERVER.lock();
-        if VIRTIO_ACTIVE.load(core::sync::atomic::Ordering::SeqCst) { ds.copy(); } else { ds.present_rect(dirty_x, dirty_y, dirty_w, dirty_h); }
+        crate::debugln!("[COMPOSER] DISPLAY_SERVER locked.");
+        ds.mark_dirty(dirty_x, dirty_y, dirty_w, dirty_h);
+        self.recompose_area(&mut ds, dirty_x, dirty_y, dirty_w, dirty_h);
+        crate::debugln!("[COMPOSER] recompose_area done.");
+        if VIRTIO_ACTIVE.load(core::sync::atomic::Ordering::SeqCst) {
+            crate::debugln!("[COMPOSER] VIRTIO_ACTIVE, calling ds.copy()...");
+            ds.copy();
+            crate::debugln!("[COMPOSER] ds.copy() done.");
+        } else {
+            crate::debugln!("[COMPOSER] VIRTIO NOT ACTIVE, calling ds.present_rect()...");
+            ds.present_rect(dirty_x, dirty_y, dirty_w, dirty_h);
+            crate::debugln!("[COMPOSER] ds.present_rect() done.");
+        }
     }
 
-    pub fn recompose_area(&mut self, dirty_x: i32, dirty_y: i32, dirty_w: u32, dirty_h: u32) {
-        self.recompose_area_except(dirty_x, dirty_y, dirty_w, dirty_h, 0);
+    pub fn recompose_area(&self, ds: &mut crate::window_manager::display::DisplayServer, dirty_x: i32, dirty_y: i32, dirty_w: u32, dirty_h: u32) {
+        self.recompose_area_except(ds, dirty_x, dirty_y, dirty_w, dirty_h, 0);
     }
 
-    pub fn recompose_area_except(&mut self, dirty_x: i32, dirty_y: i32, dirty_w: u32, dirty_h: u32, ignore_id: u64) {
-        let mut display_server = DISPLAY_SERVER.lock();
-        if display_server.double_buffer != 0 {
-            let db_ptr = display_server.double_buffer as *mut u32;
-            let pitch_u32 = (display_server.pitch / 4) as usize;
-            let height = display_server.height as i32;
-            let width = display_server.width as i32;
+    pub fn recompose_area_except(&self, ds: &mut crate::window_manager::display::DisplayServer, dirty_x: i32, dirty_y: i32, dirty_w: u32, dirty_h: u32, ignore_id: u64) {
+        if ds.double_buffer != 0 {
+            let db_ptr = ds.double_buffer as *mut u32;
+            let pitch_u32 = (ds.pitch / 4) as usize;
+            let height = ds.height as i32;
+            let width = ds.width as i32;
             
             let ws = &self.workspaces[self.active_workspace];
 
@@ -604,7 +655,7 @@ impl Composer {
 
             if let Some(fw) = fullscreen_win {
                 if fw.id != ignore_id {
-                    display_server.copy_to_db_clipped(fw.width as u32, fw.height as u32, fw.get_active_buffer() as usize, fw.x as i32, fw.y as i32, dirty_x, dirty_y, dirty_w, dirty_h, None, false);
+                    ds.copy_to_db_clipped(fw.width as u32, fw.height as u32, fw.get_active_buffer() as usize, fw.x as i32, fw.y as i32, dirty_x, dirty_y, dirty_w, dirty_h, None, false);
                 }
                 return; 
             }
@@ -616,7 +667,32 @@ impl Composer {
 
             if end_x > start_x && end_y > start_y {
                 if self.wallpaper.w_type != Items::Null && self.wallpaper.id != ignore_id {
-                    display_server.copy_to_db_clipped(self.wallpaper.width as u32, self.wallpaper.height as u32, self.wallpaper.get_active_buffer() as usize, self.wallpaper.x as i32, self.wallpaper.y as i32, dirty_x, dirty_y, dirty_w, dirty_h, None, self.wallpaper.treat_as_transparent);
+                    // OPTIMIZATION: If wallpaper is opaque and covers the whole area, use a fast blit
+                    if !self.wallpaper.treat_as_transparent && 
+                       self.wallpaper.x <= start_x as i64 && 
+                       self.wallpaper.y <= start_y as i64 &&
+                       (self.wallpaper.x + self.wallpaper.width as i64) >= end_x as i64 &&
+                       (self.wallpaper.y + self.wallpaper.height as i64) >= end_y as i64 
+                    {
+                        let src_base = self.wallpaper.get_active_buffer() as *const u32;
+                        let src_pitch = self.wallpaper.width as usize;
+                        
+                        crate::debugln!("[COMPOSER] Fast-path wallpaper: src_base={:#x} src_pitch={} area={}x{}->{}x{}", src_base as u64, src_pitch, start_x, start_y, end_x, end_y);
+
+                        for y in start_y..end_y {
+                            let src_off_x = (start_x as i64 - self.wallpaper.x) as usize;
+                            let src_off_y = (y as i64 - self.wallpaper.y) as usize;
+                            // crate::debugln!("[COMPOSER] Row {}: src_off_y={} src_pitch={}", y, src_off_y, src_pitch);
+                            let src_row = unsafe { src_base.add(src_off_y * src_pitch + src_off_x) };
+                            
+                            let dst_row = unsafe { db_ptr.add(y as usize * pitch_u32 + start_x as usize) };
+                            unsafe { core::ptr::copy_nonoverlapping(src_row, dst_row, (end_x - start_x) as usize); }
+                        }
+                        crate::debugln!("[COMPOSER] Fast-path wallpaper done.");
+                        ds.mark_dirty(start_x, start_y, (end_x - start_x) as u32, (end_y - start_y) as u32);
+                    } else {
+                        ds.copy_to_db_clipped(self.wallpaper.width as u32, self.wallpaper.height as u32, self.wallpaper.get_active_buffer() as usize, self.wallpaper.x as i32, self.wallpaper.y as i32, dirty_x, dirty_y, dirty_w, dirty_h, None, self.wallpaper.treat_as_transparent);
+                    }
                 } else {
                     for y in start_y..end_y {
                         let row_offset = y as usize * pitch_u32;
@@ -651,24 +727,30 @@ impl Composer {
                 let i = indices[idx];
                 let w = &ws.windows[i];
                 let border_color = if w.w_type == Items::Window { if w.id == clicked_id as u64 { Some(0xFFFFFFFF) } else { Some(0xFF9070FF) } } else { None };
-                display_server.copy_to_db_clipped(w.width as u32, w.height as u32, w.get_active_buffer() as usize, w.x as i32, w.y as i32, dirty_x, dirty_y, dirty_w, dirty_h, border_color, w.treat_as_transparent);
+                ds.copy_to_db_clipped(w.width as u32, w.height as u32, w.get_active_buffer() as usize, w.x as i32, w.y as i32, dirty_x, dirty_y, dirty_w, dirty_h, border_color, w.treat_as_transparent);
             }
 
             if self.taskbar.w_type != Items::Null && self.taskbar.id != ignore_id && fullscreen_win.is_none() {
-                display_server.copy_to_db_clipped(self.taskbar.width as u32, self.taskbar.height as u32, self.taskbar.get_active_buffer() as usize, self.taskbar.x as i32, self.taskbar.y as i32, dirty_x, dirty_y, dirty_w, dirty_h, None, self.taskbar.treat_as_transparent);
+                ds.copy_to_db_clipped(self.taskbar.width as u32, self.taskbar.height as u32, self.taskbar.get_active_buffer() as usize, self.taskbar.x as i32, self.taskbar.y as i32, dirty_x, dirty_y, dirty_w, dirty_h, None, self.taskbar.treat_as_transparent);
             }
         }
     }
 
-    pub fn recompose_all(&mut self) {
-        let (sw, sh) = { let ds = DISPLAY_SERVER.lock(); (ds.width as u32, ds.height as u32) };
-        self.update_window_area_rect(0, 0, sw, sh);
+    pub fn recompose_all(&self) {
+        let mut ds = DISPLAY_SERVER.lock();
+        let sw = ds.width as u32;
+        let sh = ds.height as u32;
+        self.recompose_area(&mut ds, 0, 0, sw, sh);
+        if VIRTIO_ACTIVE.load(core::sync::atomic::Ordering::SeqCst) { ds.copy(); } else { ds.present_rect(0, 0, sw, sh); }
     }
 
-    pub fn recompose_except(&mut self, except_id: u64) {
-        let (sw, sh) = { let ds = DISPLAY_SERVER.lock(); (ds.width as u32, ds.height as u32) };
-        self.recompose_area_except(0, 0, sw, sh, except_id);
+    pub fn recompose_except(&self, except_id: u64) {
+        crate::debugln!("[COMPOSER] recompose_except: except_id={}", except_id);
         let mut ds = DISPLAY_SERVER.lock();
+        let sw = ds.width as u32;
+        let sh = ds.height as u32;
+        self.recompose_area_except(&mut ds, 0, 0, sw, sh, except_id);
         if VIRTIO_ACTIVE.load(core::sync::atomic::Ordering::SeqCst) { ds.copy(); } else { ds.present_rect(0, 0, sw, sh); }
+        crate::debugln!("[COMPOSER] recompose_except done.");
     }
 }

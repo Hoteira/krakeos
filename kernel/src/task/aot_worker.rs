@@ -18,10 +18,12 @@ static AOT_QUEUE: Mutex<VecDeque<AotRequest>> = Mutex::new(VecDeque::new());
 static AOT_SEMAPHORE: std::sync::Semaphore = std::sync::Semaphore::new(0);
 
 extern "C" fn aot_thread_main() {
+    crate::debugln!("[AOTWorker] Thread started.");
     loop {
         AOT_SEMAPHORE.wait();
         let req_opt = AOT_QUEUE.lock().pop_front();
         if let Some(req) = req_opt {
+            crate::debugln!("[AOTWorker] Pulled request for PID {}", req.pid);
             process_aot_request(req);
         }
     }
@@ -33,6 +35,7 @@ pub fn init() {
 }
 
 pub fn submit_request(req: AotRequest) {
+    crate::debugln!("[AOTWorker] Submitting request for PID {}", req.pid);
     AOT_QUEUE.lock().push_back(req);
     AOT_SEMAPHORE.signal();
 }
@@ -81,7 +84,10 @@ fn process_aot_request(req: AotRequest) {
                     *proc.linear_memory_size.lock() = ctx.memory_size;
                 }
                 task.state = ThreadState::Ready;
+                crate::debugln!("[AOTWorker] pushing PID {} to run queue now", pid_idx);
                 tm.push_to_run_queue(pid_idx);
+            } else {
+                crate::debugln!("[AOTWorker] CRITICAL: PID {} not found in task list!!", req.pid);
             }
         }
         WasmRunResult::Finished(exit_code) => {

@@ -1,10 +1,4 @@
 use crate::arch::x86_64::io::{inb, outb};
-use crate::sync::Mutex;
-use alloc::collections::VecDeque;
-
-#[allow(dead_code)]
-pub static KEYBOARD_BUFFER: Mutex<VecDeque<u32>> = Mutex::new(VecDeque::new());
-
 
 pub const KEY_LEFT: u32 = 0x110001;
 pub const KEY_RIGHT: u32 = 0x110002;

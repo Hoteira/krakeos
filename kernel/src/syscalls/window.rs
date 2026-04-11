@@ -22,7 +22,7 @@ pub fn handle_add_window(context: &mut CPUState) {
             w.pid = proc.pid;
 
             drop(tm);
-            let mut composer = COMPOSER.lock();
+            let mut composer = COMPOSER.write();
             let id = composer.add_window(w);
             if w.w_type == crate::window_manager::window::Items::Window {
                 crate::window_manager::composer::CLICKED_WINDOW_ID.store(id as usize, core::sync::atomic::Ordering::SeqCst);
@@ -41,7 +41,7 @@ pub fn handle_update_window(context: &mut CPUState) {
     let win_size = core::mem::size_of::<Window>() as u64;
     if !super::validate_user_buf(context, context.rdi, win_size) { return; }
 
-    let mut composer = COMPOSER.lock();
+    let mut composer = COMPOSER.write();
 
     let mut tm = crate::task::TASK_MANAGER.int_lock();
     if let Some(current) = tm.current_task_idx() {
@@ -52,7 +52,9 @@ pub fn handle_update_window(context: &mut CPUState) {
             if let Some(existing_win) = composer.find_window_id(w.id as u64) {
                 if existing_win.pid == proc.pid {
                     drop(tm);
+                    crate::debugln!("[Syscall] handle_update_window: calling composer.resize_window...");
                     composer.resize_window(w);
+                    crate::debugln!("[Syscall] handle_update_window: composer.resize_window done.");
                     context.rax = 1;
                 } else {
                     context.rax = 0;
@@ -75,8 +77,8 @@ pub fn handle_update_window_area(context: &mut CPUState) {
     let w = context.r10 as u32;
     let h = context.r8 as u32;
 
-    let mut composer = COMPOSER.lock();
-    if let Some(win) = composer.find_window_id(wid) {
+    let composer = COMPOSER.read();
+    if let Some(win) = composer.find_window_id_immut(wid) {
         let global_x = win.x as i32 + x;
         let global_y = win.y as i32 + y;
         composer.update_window_area_rect(global_x, global_y, w, h);

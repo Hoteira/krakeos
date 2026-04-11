@@ -33,6 +33,8 @@ pub fn handle_wait_for_event(context: &mut CPUState) {
         }
     }
 
+    drop(tm);
+
     // Yield immediately
     unsafe {
         core::arch::asm!("sti");

@@ -1,6 +1,5 @@
 use super::{PollFd, POLLERR, POLLIN, POLLNVAL, POLLOUT};
 use crate::debugln;
-use crate::drivers::peripherals::keyboard::KEYBOARD_BUFFER;
 use crate::task::CPUState;
 use alloc::string::String;
 use alloc::string::ToString;
@@ -81,18 +80,26 @@ pub fn handle_read(context: &mut CPUState) {
     }
     if !super::validate_user_buf(context, user_ptr as u64, user_len as u64) { return; }
 
-    let is_nonblock = {
+    let (proc, is_nonblock) = {
         let tm = crate::task::TASK_MANAGER.int_lock();
         if let Some(idx) = tm.current_task_idx() {
-            tm.tasks.get(&(idx)).unwrap().process.as_ref().unwrap().fd_nonblock.lock().get(fd).copied().unwrap_or(false)
-        } else { false }
+            let t = tm.tasks.get(&(idx)).unwrap();
+            let p = t.process.as_ref().unwrap().clone();
+            let nb = p.fd_nonblock.lock().get(fd).copied().unwrap_or(false);
+            (Some(p), nb)
+        } else { (None, false) }
+    };
+
+    let proc = match proc {
+        Some(p) => p,
+        None => { context.rax = u64::MAX; return; }
     };
 
     loop {
         {
-            let mut keyboard_buffer = KEYBOARD_BUFFER.int_lock();
+            let mut stdin_buffer = proc.stdin_buffer.lock();
             while bytes_written_to_user < user_len {
-                if let Some(keycode) = keyboard_buffer.pop_front() {
+                if let Some(keycode) = stdin_buffer.pop_front() {
                     unsafe {
                         *user_ptr.add(bytes_written_to_user) = keycode as u8;
                     }
@@ -112,6 +119,16 @@ pub fn handle_read(context: &mut CPUState) {
             return;
         }
 
+        // Wait for event
+        let current_idx = crate::task::cpu::get_current_task_idx() as usize;
+        {
+            let mut tm = crate::task::TASK_MANAGER.int_lock();
+            let mut em = crate::task::event_manager::EVENT_MANAGER.int_lock();
+            if let Some(thread) = tm.tasks.get_mut(&current_idx) {
+                thread.state = crate::task::ThreadState::WaitingForEvent;
+                em.register(current_idx, crate::task::event_manager::AsyncEvent::Read(proc.pid as i32));
+            }
+        }
 
         unsafe {
             core::arch::asm!("sti");
@@ -157,7 +174,8 @@ pub fn handle_poll(context: &mut CPUState) {
 
             if pfd.fd == 0 {
                 em.register(current_idx, crate::task::event_manager::AsyncEvent::Read(0));
-                if !KEYBOARD_BUFFER.lock().is_empty() {
+                let proc = tm.tasks.get(&(current_idx)).unwrap().process.as_ref().unwrap();
+                if !proc.stdin_buffer.lock().is_empty() {
                     pfd.revents |= POLLIN;
                 }
             } else if pfd.fd >= 0 {
@@ -537,13 +555,11 @@ pub fn handle_read_file(context: &mut CPUState) {
                         Some(Err(String::from("EWOULDBLOCK")))
                     } else {
                         let n = pipe.read(buf);
-                        crate::debugln!("[kernel] Pipe Read fd={} global={} -> {} bytes", local_fd, fd, n);
                         Some(Ok(n))
                     }
                 }
             }
         } else {
-            crate::debugln!("[kernel] handle_read_file: FAILED to find global FD for local {}", local_fd);
             Some(Err(String::from("EBADF")))
         };
         release_fs_lock();
@@ -574,10 +590,6 @@ pub fn handle_write_file(context: &mut CPUState) {
 
     if !super::validate_user_buf(context, buf_ptr as u64, len as u64) { return; }
 
-    if len > 1024 * 1024 {
-        crate::debugln!("SYS_WRITE: Large write requested: {} bytes to fd {}", len, local_fd);
-    }
-
     let global_fd_opt = {
         let tm = crate::task::TASK_MANAGER.int_lock();
         let current = crate::task::cpu::get_current_task_idx();
@@ -597,10 +609,6 @@ pub fn handle_write_file(context: &mut CPUState) {
             if local_fd == 1 || local_fd == 2 {
                 let s = unsafe { core::slice::from_raw_parts(buf_ptr, len) };
                 let s_str = String::from_utf8_lossy(s);
-                // debug_print might be slow, but usually safe. 
-                // We can acquire FS_LOCK or not. It's not VFS.
-                // But it might use UART which might conflict?
-                // Usually UART is separate.
                 crate::debug_print!("{}", s_str);
                 context.rax = len as u64;
                 return;
@@ -610,42 +618,21 @@ pub fn handle_write_file(context: &mut CPUState) {
         }
         let fd = fd_val as usize;
         
-        if len > 1024 * 1024 {
-            crate::debugln!("SYS_WRITE: Global FD is {}. About to create slice...", fd);
-        }
-        
         let buf = unsafe { core::slice::from_raw_parts(buf_ptr, len) };
 
-        if len > 1024 * 1024 {
-            crate::debugln!("SYS_WRITE: Acquiring FS lock...");
-        }
-        
         acquire_fs_lock();
         let handle_opt = crate::fs::vfs::get_file(fd);
-        
-        if len > 1024 * 1024 {
-            crate::debugln!("SYS_WRITE: FS lock acquired, get_file done. Handle is some: {}", handle_opt.is_some());
-        }
         
         let res = if let Some(handle) = handle_opt {
             use crate::fs::vfs::FileHandle;
             match handle {
                 FileHandle::File { node, offset } => {
-                    if len > 1024 * 1024 {
-                        crate::debugln!("SYS_WRITE: Calling node.write...");
-                    }
                     match node.write(*offset, buf) {
                         Ok(n) => {
-                            if len > 1024 * 1024 {
-                                crate::debugln!("SYS_WRITE: node.write finished successfully. Updating offset...");
-                            }
                             *offset += n as u64;
                             Some(Ok(n))
                         }
                         Err(e) => {
-                            if len > 1024 * 1024 {
-                                crate::debugln!("SYS_WRITE: node.write failed!");
-                            }
                             Some(Err(e))
                         }
                     }
@@ -656,9 +643,6 @@ pub fn handle_write_file(context: &mut CPUState) {
             }
         } else { None };
         
-        if len > 1024 * 1024 {
-            crate::debugln!("SYS_WRITE: Releasing FS lock...");
-        }
         release_fs_lock();
 
         match res {
@@ -857,7 +841,7 @@ pub fn handle_pipe(context: &mut CPUState) {
     let pipe = Pipe::new();
     
     let (g1, g2) = {
-        let mut table = GLOBAL_FILES.lock();
+        let mut table = GLOBAL_FILES.write();
         let fd1 = table.next_fd;
         table.next_fd += 1;
         let fd2 = table.next_fd;
