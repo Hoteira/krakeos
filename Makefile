@@ -27,7 +27,8 @@ QEMU_OPTS := -drive file=$(BUILD_DIR)/disk.img,format=raw,if=virtio \
              -serial mon:stdio --no-reboot \
              -device virtio-gpu-gl-pci,xres=1024,yres=576 \
              -display sdl,gl=on -vga none -m 4G \
-             -accel kvm
+             -accel kvm \
+             -smp 4
 
 .PHONY: all clean run swiftboot kernel userland fs
 
