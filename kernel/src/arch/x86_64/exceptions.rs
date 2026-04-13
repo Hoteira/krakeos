@@ -483,39 +483,42 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
                     handled_globally = true;
                     LAST_KEY_GLOBAL.store(eval_key, Ordering::SeqCst);
                 } else if eval_key == 'x' as u32 || eval_key == 'w' as u32 {
-                    let mut composer = crate::window_manager::composer::COMPOSER.write();
                     let active_id = crate::window_manager::composer::CLICKED_WINDOW_ID.load(Ordering::SeqCst) as u64;
-                    if active_id != 0 && active_id != composer.wallpaper.id && active_id != composer.taskbar.id {
-                        composer.remove_window(active_id);
+                    let needs_recompose = if active_id != 0 {
+                        let mut composer = crate::window_manager::composer::COMPOSER.write();
+                        if active_id != composer.wallpaper.id && active_id != composer.taskbar.id {
+                            composer.remove_window_data(active_id)
+                        } else { false }
+                    } else { false }; // COMPOSER.write() dropped
+                    if needs_recompose {
+                        crate::window_manager::composer::COMPOSER.read().recompose_all();
                     }
                     handled_globally = true;
                     LAST_KEY_GLOBAL.store(eval_key, Ordering::SeqCst);
                 } else if eval_key == 'z' as u32 || eval_key == 'f' as u32 {
-                    let mut composer = crate::window_manager::composer::COMPOSER.write();
                     let active_id = crate::window_manager::composer::CLICKED_WINDOW_ID.load(Ordering::SeqCst);
-                    if active_id != 0 {
+                    // Phase 1: mutate window state and compute resize event.
+                    // COMPOSER.write() is dropped before acquiring TASK_MANAGER to preserve
+                    // lock ordering (Tasks before Composer) and avoid AB-BA deadlock.
+                    let event_and_pid: Option<(crate::window_manager::events::Event, u64)> = if active_id != 0 {
+                        let mut composer = crate::window_manager::composer::COMPOSER.write();
                         if let Some(w) = composer.find_window_id(active_id as u64) {
                             if w.can_resize {
                                 let (screen_w, screen_h) = {
                                     let ds = crate::window_manager::display::DISPLAY_SERVER.lock();
                                     (ds.width as u64, ds.height as u64)
                                 };
-                                
                                 let (target_x, target_y, target_w, target_h, is_transparent) = if w.is_maximized {
                                     w.is_maximized = false;
                                     (w.prev_x, w.prev_y, w.prev_width.max(100), w.prev_height.max(100), true)
                                 } else {
                                     w.is_maximized = true;
-                                    w.prev_width = w.width;
-                                    w.prev_height = w.height;
-                                    w.prev_x = w.x;
-                                    w.prev_y = w.y;
+                                    w.prev_width = w.width; w.prev_height = w.height;
+                                    w.prev_x = w.x; w.prev_y = w.y;
                                     (0, 0, screen_w, screen_h, false)
                                 };
-                                
                                 w.transparent = is_transparent;
                                 w.treat_as_transparent = is_transparent;
-
                                 let event = crate::window_manager::events::Event::Resize(
                                     crate::window_manager::events::ResizeEvent {
                                         wid: w.id as u32,
@@ -525,27 +528,45 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
                                         y: target_y as i32,
                                     }
                                 );
-                                let pid = w.pid;
-                                let mut tm = crate::task::TASK_MANAGER.int_lock();
-                                if !crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&mut *tm, pid, event) {
-                                    crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().add_event(event);
-                                }
-                            }
+                                Some((event, w.pid))
+                            } else { None }
+                        } else { None }
+                    } else { None }; // COMPOSER.write() dropped here
+                    // Phase 2: deliver event — TASK_MANAGER acquired AFTER COMPOSER is released.
+                    if let Some((event, pid)) = event_and_pid {
+                        let mut tm = crate::task::TASK_MANAGER.int_lock();
+                        if !crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().push_to_process(&mut *tm, pid, event) {
+                            drop(tm);
+                            crate::window_manager::events::GLOBAL_EVENT_QUEUE.int_lock().add_event(event);
                         }
                     }
                     handled_globally = true;
                     LAST_KEY_GLOBAL.store(eval_key, Ordering::SeqCst);
                 } else if eval_key == 't' as u32 {
-                    let _ = crate::syscalls::process::spawn_process("/sys/bin/term.wasm", None, None, None);
+                    crate::debugln!("[Shortcut] eval_key='t' detected");
+                    crate::debugln!("[Shortcut] calling request_spawn(/apps/term.wasm)");
+                    crate::task::aot_worker::request_spawn("/apps/term.wasm", true);
+                    crate::debugln!("[Shortcut] request_spawn returned");
                     handled_globally = true;
+                    crate::debugln!("[Shortcut] handled_globally=true");
                     LAST_KEY_GLOBAL.store(eval_key, Ordering::SeqCst);
+                    crate::debugln!("[Shortcut] LAST_KEY_GLOBAL stored");
                 } else if eval_key == 0x0D {
-                    let _ = crate::syscalls::process::spawn_process("/apps/term.wasm", None, None, None);
+                    crate::debugln!("[Shortcut] eval_key=0x0D (Enter) detected");
+                    crate::debugln!("[Shortcut] calling request_spawn(/apps/term.wasm)");
+                    crate::task::aot_worker::request_spawn("/apps/term.wasm", true);
+                    crate::debugln!("[Shortcut] request_spawn returned");
                     handled_globally = true;
+                    crate::debugln!("[Shortcut] handled_globally=true");
                     LAST_KEY_GLOBAL.store(eval_key, Ordering::SeqCst);
+                    crate::debugln!("[Shortcut] LAST_KEY_GLOBAL stored");
                 } else if eval_key >= '1' as u32 && eval_key <= '5' as u32 {
                     let workspace_idx = (eval_key - '1' as u32) as usize;
-                    crate::window_manager::composer::COMPOSER.write().switch_workspace(workspace_idx);
+                    // Data mutation under brief write lock, render under read lock after.
+                    let changed = crate::window_manager::composer::COMPOSER.write().switch_workspace_data(workspace_idx);
+                    if changed {
+                        crate::window_manager::composer::COMPOSER.read().recompose_all();
+                    }
                     handled_globally = true;
                     LAST_KEY_GLOBAL.store(eval_key, Ordering::SeqCst);
                 } else if key == crate::drivers::peripherals::keyboard::KEY_SUPER {

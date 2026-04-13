@@ -396,11 +396,19 @@ fn write_chunk(lba: u64, buffer: &[u8]) {
 }
 
 unsafe fn send_command(out_phys: &[u64], out_lens: &[u32], in_phys: &[u64], in_lens: &[u32]) {
+    let int_enabled = crate::arch::x86_64::idt::interrupts();
     while LOCK.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
-        core::hint::spin_loop();
+        if int_enabled {
+            unsafe {
+                core::arch::asm!("sti");
+                core::arch::asm!("int 0x81");
+                core::arch::asm!("cli");
+            }
+        } else {
+            core::hint::spin_loop();
+        }
     }
 
-    let int_enabled = crate::arch::x86_64::idt::interrupts();
     core::arch::asm!("cli");
 
     let mut blk_queue_guard = BLK_QUEUE.lock();

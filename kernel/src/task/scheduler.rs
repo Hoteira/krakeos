@@ -108,7 +108,9 @@ pub extern "C" fn switch_yield(rsp: u64) -> u64 {
 }
 unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
     unsafe {
-        SYSTEM_TICKS = SYSTEM_TICKS.wrapping_add(1);
+        if is_timer {
+            SYSTEM_TICKS = SYSTEM_TICKS.wrapping_add(1);
+        }
 
         let mut tm = TASK_MANAGER.lock();
         let current_task_idx: i64;

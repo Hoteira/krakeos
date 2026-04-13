@@ -453,6 +453,7 @@ pub fn run_with_buffer(
             let result = linker
                 .module_instantiate_unchecked(&mut store, &effective_validation, None, slot_id)
                 .and_then(|instance| {
+                    /*
                     // Save .wacc cache on first successful AOT compilation
                     if aot && wasm_mtime != 0 && !store.aot_modules.is_empty() {
                         let aot_mod = store.aot_modules.last().unwrap();
@@ -464,6 +465,7 @@ pub fn run_with_buffer(
                             &instance.elem_offsets,
                         );
                     }
+                    */
                     handle_instantiation_result(&mut store, instance)
                 });
 

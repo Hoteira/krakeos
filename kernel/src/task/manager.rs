@@ -143,12 +143,11 @@ impl TaskManager {
 
     pub fn push_to_run_queue(&mut self, tid: usize) {
         if tid == 0 {
-            return; // Never queue the idle task
+            return;
         }
         if let Some(thread) = self.tasks.get_mut(&tid) {
             if !thread.is_queued {
                 thread.is_queued = true;
-                // Always push to the current CPU's queue so it participates in round-robin
                 let mut cpu_id = crate::task::cpu::get_cpu_id() as usize;
                 if cpu_id >= 64 {
                     cpu_id = 0;
@@ -170,52 +169,89 @@ impl TaskManager {
         terminal_size: (u16, u16),
         parent_pid: Option<u64>,
     ) -> Result<(), pmm::FrameError> {
+        crate::spawn_debugln!("[TaskManager] init_user_task entry: slot={}, entry={:#x}", slot, entry_point);
         let pid = slot as u64;
+        crate::spawn_debugln!("[TaskManager] init_user_task: pid={}", pid);
 
+        crate::spawn_debugln!("[TaskManager] init_user_task: calling tasks.remove");
         let mut thread_box = if let Some(existing) = self.tasks.remove(&slot) {
-            crate::debugln!("[TaskManager] Reusing existing task {}", slot);
+            crate::spawn_debugln!("[TaskManager] Reusing existing task {}", slot);
             existing
         } else {
-            Box::new(Thread::new(name))
+            crate::spawn_debugln!("[TaskManager] init_user_task: calling Thread::new");
+            let t = Box::new(Thread::new(name));
+            crate::spawn_debugln!("[TaskManager] init_user_task: Thread::new returned");
+            t
         };
+        crate::spawn_debugln!("[TaskManager] init_user_task: thread_box obtained");
 
+        crate::spawn_debugln!("[TaskManager] init_user_task: resolving uid/gid");
         let (uid, gid) = if let Some(ppid) = parent_pid {
-            if let Some(parent_thread) = self
+            crate::spawn_debugln!("[TaskManager] init_user_task: parent_pid={}", ppid);
+            crate::spawn_debugln!("[TaskManager] init_user_task: calling tasks.values");
+            let parent = self
                 .tasks
                 .values()
-                .find(|t| t.process.as_ref().map_or(false, |p| p.pid == ppid))
-            {
+                .find(|t| t.process.as_ref().map_or(false, |p| p.pid == ppid));
+            crate::spawn_debugln!("[TaskManager] init_user_task: find returned");
+            if let Some(parent_thread) = parent {
+                crate::spawn_debugln!("[TaskManager] init_user_task: parent found");
                 let p = parent_thread.process.as_ref().unwrap();
                 (p.uid, p.gid)
             } else {
+                crate::spawn_debugln!("[TaskManager] init_user_task: parent not found, defaulting to 0,0");
                 (0, 0)
             }
         } else {
+            crate::spawn_debugln!("[TaskManager] init_user_task: no parent_pid, defaulting to 0,0");
             (0, 0)
         };
+        crate::spawn_debugln!("[TaskManager] init_user_task: uid={}, gid={}", uid, gid);
 
+        crate::spawn_debugln!("[TaskManager] init_user_task: calling Process::new");
         let proc = Process::new(pid, uid, gid, parent_pid);
+        crate::spawn_debugln!("[TaskManager] init_user_task: Process::new returned");
 
         if let Some(fds) = fd_table {
-            *proc.fd_table.lock() = fds;
+            crate::spawn_debugln!("[TaskManager] init_user_task: setting fd_table");
+            crate::spawn_debugln!("[TaskManager] init_user_task: calling fd_table.lock");
+            let mut guard = proc.fd_table.lock();
+            crate::spawn_debugln!("[TaskManager] init_user_task: lock acquired");
+            *guard = fds;
+            crate::spawn_debugln!("[TaskManager] init_user_task: fd_table updated");
         }
+        crate::spawn_debugln!("[TaskManager] init_user_task: setting terminal size");
+        crate::spawn_debugln!("[TaskManager] init_user_task: calling terminal_width.lock");
         *proc.terminal_width.lock() = terminal_size.0;
+        crate::spawn_debugln!("[TaskManager] init_user_task: terminal_width set");
+        crate::spawn_debugln!("[TaskManager] init_user_task: calling terminal_height.lock");
         *proc.terminal_height.lock() = terminal_size.1;
+        crate::spawn_debugln!("[TaskManager] init_user_task: terminal_height set");
 
         let thread = &mut *thread_box;
+        crate::spawn_debugln!("[TaskManager] init_user_task: calling proc.clone");
         thread.process = Some(proc.clone());
+        crate::spawn_debugln!("[TaskManager] init_user_task: proc.clone returned");
 
+        crate::spawn_debugln!("[TaskManager] init_user_task: calling pmm::allocate_frames(16)");
         let k_frame = pmm::allocate_frames(16).ok_or(pmm::FrameError::NoMemory)?;
+        crate::spawn_debugln!("[TaskManager] init_user_task: k_frame={:#x}", k_frame);
         thread.kernel_stack = k_frame + 4096 * 16 + paging::HHDM_OFFSET;
+        crate::spawn_debugln!("[TaskManager] init_user_task: kernel_stack={:#x}", thread.kernel_stack);
 
         let stack_pages = (STACK_SIZE / 4096) as usize;
+        crate::spawn_debugln!("[TaskManager] init_user_task: calling pmm::allocate_frames({})", stack_pages);
         let u_frame_phys = pmm::allocate_frames(stack_pages).ok_or(pmm::FrameError::NoMemory)?;
+        crate::spawn_debugln!("[TaskManager] init_user_task: u_frame_phys={:#x}", u_frame_phys);
 
         let u_stack_top = proc.stack_base;
         let u_stack_base = u_stack_top - STACK_SIZE;
+        crate::spawn_debugln!("[TaskManager] init_user_task: u_stack_top={:#x}, u_stack_base={:#x}", u_stack_top, u_stack_base);
 
+        crate::spawn_debugln!("[TaskManager] init_user_task: starting stack mapping loop");
         for i in 0..stack_pages {
             let offset = i as u64 * 4096;
+            crate::spawn_debugln!("[TaskManager] init_user_task: mapping stack page {}", i);
             vmm::map_page(
                 u_stack_base + offset,
                 PhysAddr::new(u_frame_phys + offset),
@@ -223,14 +259,16 @@ impl TaskManager {
                 None,
             );
         }
+        crate::spawn_debugln!("[TaskManager] init_user_task: stack mapping loop finished");
         thread.user_stack = u_stack_top;
+        crate::spawn_debugln!("[TaskManager] init_user_task: thread.user_stack set");
 
-        // Map the Code Slot (64 MiB) - Map first 16 MiB for now
         let code_pages = (64 * 1024 * 1024) / 4096;
+        crate::spawn_debugln!("[TaskManager] init_user_task: starting code mapping loop, code_pages={}", code_pages);
         for i in 0..code_pages {
             let virt = proc.code_base + i as u64 * 4096;
             if i < 4096 {
-                // 16 MiB
+                if i % 1024 == 0 { crate::spawn_debugln!("[TaskManager] init_user_task: mapping code page {}", i); }
                 if let Some(frame) = pmm::allocate_frame() {
                     vmm::map_page(
                         virt,
@@ -241,55 +279,83 @@ impl TaskManager {
                 }
             }
         }
+        crate::spawn_debugln!("[TaskManager] init_user_task: code mapping loop finished");
 
+        crate::spawn_debugln!("[TaskManager] init_user_task: calling core::mem::size_of");
         let state_size = core::mem::size_of::<CPUState>();
+        crate::spawn_debugln!("[TaskManager] init_user_task: state_size={}", state_size);
         let state_ptr = (thread.kernel_stack - state_size as u64) as *mut CPUState;
         thread.cpu_state_ptr = state_ptr as u64;
+        crate::spawn_debugln!("[TaskManager] init_user_task: thread.cpu_state_ptr={:#x}", thread.cpu_state_ptr);
 
         unsafe {
+            crate::spawn_debugln!("[TaskManager] init_user_task: entering unsafe block for stack preparation");
             let stack_phys_base = u_frame_phys + paging::HHDM_OFFSET;
             let mut current_virt_sp = thread.user_stack;
+            crate::spawn_debugln!("[TaskManager] init_user_task: stack_phys_base={:#x}, current_virt_sp={:#x}", stack_phys_base, current_virt_sp);
 
+            crate::spawn_debugln!("[TaskManager] init_user_task: calling Vec::new");
             let mut arg_ptrs = Vec::new();
+            crate::spawn_debugln!("[TaskManager] init_user_task: Vec::new returned");
+            
             let mut push_str = |s: &[u8]| {
                 let len = s.len() + 1;
                 current_virt_sp -= len as u64;
                 let offset = current_virt_sp - u_stack_base;
                 let dest = (stack_phys_base + offset) as *mut u8;
+                crate::spawn_debugln!("[TaskManager] init_user_task: pushing string of len {}, dest={:#x}", s.len(), dest as u64);
                 core::ptr::copy_nonoverlapping(s.as_ptr(), dest, s.len());
                 *dest.add(s.len()) = 0;
                 current_virt_sp
             };
 
-            arg_ptrs.push(push_str(name));
+            crate::spawn_debugln!("[TaskManager] init_user_task: pushing name");
+            let name_ptr = push_str(name);
+            arg_ptrs.push(name_ptr);
+            crate::spawn_debugln!("[TaskManager] init_user_task: name pushed at {:#x}", name_ptr);
+
             if let Some(a_list) = args {
+                crate::spawn_debugln!("[TaskManager] init_user_task: starting args push loop");
                 for &a in a_list {
-                    arg_ptrs.push(push_str(a.as_bytes()));
+                    crate::spawn_debugln!("[TaskManager] init_user_task: pushing arg");
+                    let a_ptr = push_str(a.as_bytes());
+                    arg_ptrs.push(a_ptr);
                 }
+                crate::spawn_debugln!("[TaskManager] init_user_task: args push loop finished");
             }
 
             current_virt_sp &= !15;
+            crate::spawn_debugln!("[TaskManager] init_user_task: current_virt_sp aligned to {:#x}", current_virt_sp);
             let mut push_u64 = |val: u64| {
                 current_virt_sp -= 8;
                 let offset = current_virt_sp - u_stack_base;
                 let dest = (stack_phys_base + offset) as *mut u64;
+                crate::spawn_debugln!("[TaskManager] init_user_task: pushing u64={:#x} to dest={:#x}", val, dest as u64);
                 *dest = val;
             };
 
+            crate::spawn_debugln!("[TaskManager] init_user_task: pushing stack frames");
             push_u64(0);
             push_u64(0);
+            crate::spawn_debugln!("[TaskManager] init_user_task: starting arg_ptrs rev loop");
             for &ptr in arg_ptrs.iter().rev() {
                 push_u64(ptr);
             }
+            crate::spawn_debugln!("[TaskManager] init_user_task: arg_ptrs rev loop finished");
             push_u64(arg_ptrs.len() as u64);
+            crate::spawn_debugln!("[TaskManager] init_user_task: arg_count={} pushed", arg_ptrs.len());
 
-            core::ptr::write_bytes(state_ptr, 0, 1); // Zero all GPRs
+            crate::spawn_debugln!("[TaskManager] init_user_task: calling core::ptr::write_bytes");
+            core::ptr::write_bytes(state_ptr, 0, 1);
+            crate::spawn_debugln!("[TaskManager] init_user_task: state_ptr zeroed");
             (*state_ptr).rip = entry_point;
             (*state_ptr).rdi = arg;
             (*state_ptr).cs = 0x23;
             (*state_ptr).rflags = 0x202;
             (*state_ptr).rsp = (current_virt_sp & !15) - 8;
             (*state_ptr).ss = 0x1B;
+            let final_rsp = (*state_ptr).rsp;
+            crate::spawn_debugln!("[TaskManager] init_user_task: CPUState initialized, rsp={:#x}", final_rsp);
         }
 
         let final_state = if entry_point == 0 {
@@ -298,8 +364,9 @@ impl TaskManager {
             ThreadState::Ready
         };
         thread.state = final_state;
+        crate::spawn_debugln!("[TaskManager] init_user_task: final_state={:?}", thread.state);
         let ptr = thread as *const _ as u64;
-        crate::debugln!(
+        crate::spawn_debugln!(
             "[TaskManager] Initialized User Task {} (Thread at {:#x}, State={:?})",
             slot,
             ptr,
@@ -307,10 +374,15 @@ impl TaskManager {
         );
 
         let is_ready = thread.state == ThreadState::Ready;
+        crate::spawn_debugln!("[TaskManager] init_user_task: calling tasks.insert");
         self.tasks.insert(slot, thread_box);
+        crate::spawn_debugln!("[TaskManager] init_user_task: tasks.insert returned");
         if is_ready {
+            crate::spawn_debugln!("[TaskManager] init_user_task: calling push_to_run_queue");
             self.push_to_run_queue(slot);
+            crate::spawn_debugln!("[TaskManager] init_user_task: push_to_run_queue returned");
         }
+        crate::spawn_debugln!("[TaskManager] init_user_task exit success");
         Ok(())
     }
 

@@ -154,6 +154,17 @@ macro_rules! debugln {
     ($($arg:tt)*) => ($crate::debug_print!("{}\n", format_args!($($arg)*)));
 }
 
+pub static SPAWN_DEBUG: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+#[macro_export]
+macro_rules! spawn_debugln {
+    ($($arg:tt)*) => {
+        if $crate::debug::SPAWN_DEBUG.load(core::sync::atomic::Ordering::Relaxed) {
+            $crate::debugln!($($arg)*);
+        }
+    }
+}
+
 #[macro_export]
 macro_rules! print {
     ($($arg:tt)*) => ($crate::debug_print!("{}", format_args!($($arg)*)));

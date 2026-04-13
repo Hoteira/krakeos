@@ -41,32 +41,44 @@ pub fn handle_update_window(context: &mut CPUState) {
     let win_size = core::mem::size_of::<Window>() as u64;
     if !super::validate_user_buf(context, context.rdi, win_size) { return; }
 
-    let mut composer = COMPOSER.write();
+    let w = unsafe { *(context.rdi as *const Window) };
 
-    let mut tm = crate::task::TASK_MANAGER.int_lock();
-    if let Some(current) = tm.current_task_idx() {
-        if let Some(thread) = tm.tasks.get(&(current)) {
-            let proc = thread.process.as_ref().expect("Thread has no process");
-            let w = unsafe { *(context.rdi as *const Window) };
-
-            if let Some(existing_win) = composer.find_window_id(w.id as u64) {
-                if existing_win.pid == proc.pid {
-                    drop(tm);
-                    crate::debugln!("[Syscall] handle_update_window: calling composer.resize_window...");
-                    composer.resize_window(w);
-                    crate::debugln!("[Syscall] handle_update_window: composer.resize_window done.");
-                    context.rax = 1;
+    // Phase 1: data mutation — hold COMPOSER.write() only for the state update.
+    // update_window_data returns the dirty rect without calling update_window_area_rect,
+    // so we drop the exclusive write lock before touching DISPLAY_SERVER.
+    let dirty_rect: Option<(i32, i32, u32, u32)> = {
+        let mut composer = COMPOSER.write();
+        let mut tm = crate::task::TASK_MANAGER.int_lock();
+        if let Some(current) = tm.current_task_idx() {
+            if let Some(thread) = tm.tasks.get(&(current)) {
+                let proc = thread.process.as_ref().expect("Thread has no process");
+                if let Some(existing_win) = composer.find_window_id(w.id as u64) {
+                    if existing_win.pid == proc.pid {
+                        drop(tm);
+                        context.rax = 1;
+                        composer.update_window_data(w)
+                    } else {
+                        context.rax = 0;
+                        None
+                    }
                 } else {
                     context.rax = 0;
+                    None
                 }
             } else {
                 context.rax = 0;
+                None
             }
         } else {
             context.rax = 0;
+            None
         }
-    } else {
-        context.rax = 0;
+    }; // COMPOSER.write() dropped here — interrupts re-enabled
+
+    // Phase 2: render — read lock only, interrupts re-enabled between composite and flush.
+    if let Some((dx, dy, dw, dh)) = dirty_rect {
+        let composer = COMPOSER.read();
+        composer.update_window_area_rect(dx, dy, dw, dh);
     }
 }
 

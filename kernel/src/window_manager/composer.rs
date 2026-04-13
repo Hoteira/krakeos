@@ -84,6 +84,50 @@ impl Composer {
         }
     }
 
+    /// Like switch_workspace but only updates state — caller must call recompose_all()
+    /// with a read lock after dropping the write lock to avoid long interrupt-disabled windows.
+    /// Returns true if the workspace actually changed (and a recompose is needed).
+    pub fn switch_workspace_data(&mut self, index: usize) -> bool {
+        if index < 5 && index != self.active_workspace {
+            self.active_workspace = index;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Like remove_window but only mutates state — caller must call recompose_all()
+    /// with a read lock after dropping the write lock.
+    /// Returns true if the active workspace was affected (recompose needed).
+    pub fn remove_window_data(&mut self, wid: u64) -> bool {
+        if self.wallpaper.id == wid { self.wallpaper = NULL_WINDOW; return true; }
+        if self.taskbar.id == wid { self.taskbar = NULL_WINDOW; return true; }
+
+        for ws in 0..5 {
+            for i in 0..16 {
+                if self.workspaces[ws].windows[i].id == wid {
+                    self.workspaces[ws].windows[i] = NULL_WINDOW;
+
+                    if let Some(leaf_idx) = self.find_leaf_for_window(ws, i) {
+                        self.remove_node(ws, leaf_idx);
+                        if ws == self.active_workspace {
+                            self.retile_workspace(ws);
+                        }
+                    }
+
+                    if ws == self.active_workspace {
+                        if CLICKED_WINDOW_ID.load(core::sync::atomic::Ordering::SeqCst) == wid as usize {
+                            CLICKED_WINDOW_ID.store(0, core::sync::atomic::Ordering::SeqCst);
+                        }
+                        return true;
+                    }
+                    return false;
+                }
+            }
+        }
+        false
+    }
+
     fn get_taskbar_rect(&self) -> (i32, i32, u32, u32) {
         let (sw, sh) = {
             let ds = DISPLAY_SERVER.lock();
@@ -524,6 +568,9 @@ impl Composer {
                 self.workspaces[ws_idx].windows[inserted_idx].x = ax as i64 + (aw as i64 - w.width as i64) / 2;
                 self.workspaces[ws_idx].windows[inserted_idx].y = ay as i64 + (ah as i64 - w.height as i64) / 2;
             }
+
+            // Auto-focus the newly added window so keyboard events route to it immediately.
+            CLICKED_WINDOW_ID.store(w.id as usize, core::sync::atomic::Ordering::SeqCst);
         }
 
         self.recompose_all();
@@ -582,6 +629,57 @@ impl Composer {
         }
     }
 
+    /// Like resize_window but returns the dirty rect instead of calling update_window_area_rect.
+    /// Use this to separate data mutation (needs &mut self / write lock) from rendering
+    /// (only needs &self / read lock), keeping the exclusive write lock duration short.
+    /// Returns Some((x, y, w, h)) if a redraw is needed, None if suppressed or not found.
+    pub fn update_window_data(&mut self, w: Window) -> Option<(i32, i32, u32, u32)> {
+        if w.id == self.wallpaper.id {
+            self.wallpaper.buffer = w.buffer; self.wallpaper.back_buffer = w.back_buffer; self.wallpaper.flipped = w.flipped;
+            self.wallpaper.width = w.width; self.wallpaper.height = w.height;
+            return Some((0, 0, w.width as u32, w.height as u32));
+        }
+        if w.id == self.taskbar.id {
+            self.taskbar.buffer = w.buffer; self.taskbar.back_buffer = w.back_buffer; self.taskbar.flipped = w.flipped;
+            self.taskbar.width = w.width; self.taskbar.height = w.height;
+            return Some((0, 0, self.taskbar.width as u32, self.taskbar.height as u32));
+        }
+
+        for ws in 0..5 {
+            for i in 0..16 {
+                if w.id == self.workspaces[ws].windows[i].id {
+                    if let Some(_leaf) = self.find_leaf_for_window(ws, i) {
+                        let target = &self.workspaces[ws].windows[i];
+                        if !target.is_maximized {
+                            if w.width != target.tiled_width || w.height != target.tiled_height || w.x != target.tiled_x || w.y != target.tiled_y {
+                                return None;
+                            }
+                        }
+                    }
+
+                    let old_x = self.workspaces[ws].windows[i].x; let old_y = self.workspaces[ws].windows[i].y;
+                    let old_w = self.workspaces[ws].windows[i].width; let old_h = self.workspaces[ws].windows[i].height;
+
+                    self.workspaces[ws].windows[i].buffer = w.buffer; self.workspaces[ws].windows[i].back_buffer = w.back_buffer; self.workspaces[ws].windows[i].flipped = w.flipped;
+                    self.workspaces[ws].windows[i].width = w.width; self.workspaces[ws].windows[i].height = w.height;
+                    self.workspaces[ws].windows[i].x = w.x; self.workspaces[ws].windows[i].y = w.y;
+                    self.workspaces[ws].windows[i].transparent = w.transparent; self.workspaces[ws].windows[i].treat_as_transparent = w.treat_as_transparent;
+                    self.workspaces[ws].windows[i].is_maximized = w.is_maximized;
+
+                    self.retile_workspace(ws);
+
+                    if ws == self.active_workspace {
+                        let min_x = old_x.min(w.x) as i32; let min_y = old_y.min(w.y) as i32;
+                        let max_x = (old_x + old_w as i64).max(w.x + w.width as i64) as i32; let max_y = (old_y + old_h as i64).max(w.y + w.height as i64) as i32;
+                        return Some((min_x, min_y, (max_x - min_x) as u32, (max_y - min_y) as u32));
+                    }
+                    return None;
+                }
+            }
+        }
+        None
+    }
+
     pub fn remove_window(&mut self, wid: u64) {
         if self.wallpaper.id == wid { self.wallpaper = NULL_WINDOW; self.recompose_except(0); return; }
         if self.taskbar.id == wid { self.taskbar = NULL_WINDOW; self.recompose_except(0); return; }
@@ -612,20 +710,23 @@ impl Composer {
     }
 
     pub fn update_window_area_rect(&self, dirty_x: i32, dirty_y: i32, dirty_w: u32, dirty_h: u32) {
-        crate::debugln!("[COMPOSER] update_window_area_rect: {}x{} at {},{}", dirty_w, dirty_h, dirty_x, dirty_y);
-        let mut ds = DISPLAY_SERVER.lock();
-        crate::debugln!("[COMPOSER] DISPLAY_SERVER locked.");
-        ds.mark_dirty(dirty_x, dirty_y, dirty_w, dirty_h);
-        self.recompose_area(&mut ds, dirty_x, dirty_y, dirty_w, dirty_h);
-        crate::debugln!("[COMPOSER] recompose_area done.");
-        if VIRTIO_ACTIVE.load(core::sync::atomic::Ordering::SeqCst) {
-            crate::debugln!("[COMPOSER] VIRTIO_ACTIVE, calling ds.copy()...");
-            ds.copy();
-            crate::debugln!("[COMPOSER] ds.copy() done.");
-        } else {
-            crate::debugln!("[COMPOSER] VIRTIO NOT ACTIVE, calling ds.present_rect()...");
-            ds.present_rect(dirty_x, dirty_y, dirty_w, dirty_h);
-            crate::debugln!("[COMPOSER] ds.present_rect() done.");
+        // Phase 1: composite into the double buffer.
+        // Lock is held with interrupts disabled (Spinlock), but released before the
+        // GPU flush so the keyboard/timer ISRs can fire between composite and present.
+        {
+            let mut ds = DISPLAY_SERVER.lock();
+            ds.mark_dirty(dirty_x, dirty_y, dirty_w, dirty_h);
+            self.recompose_area(&mut ds, dirty_x, dirty_y, dirty_w, dirty_h);
+        } // <-- interrupts re-enabled here
+
+        // Phase 2: copy double-buffer → framebuffer + VirtIO notify (fast).
+        {
+            let mut ds = DISPLAY_SERVER.lock();
+            if VIRTIO_ACTIVE.load(core::sync::atomic::Ordering::SeqCst) {
+                ds.copy();
+            } else {
+                ds.present_rect(dirty_x, dirty_y, dirty_w, dirty_h);
+            }
         }
     }
 
@@ -737,20 +838,26 @@ impl Composer {
     }
 
     pub fn recompose_all(&self) {
+        let (sw, sh) = {
+            let mut ds = DISPLAY_SERVER.lock();
+            let sw = ds.width as u32;
+            let sh = ds.height as u32;
+            self.recompose_area(&mut ds, 0, 0, sw, sh);
+            (sw, sh)
+        }; // interrupts re-enabled
         let mut ds = DISPLAY_SERVER.lock();
-        let sw = ds.width as u32;
-        let sh = ds.height as u32;
-        self.recompose_area(&mut ds, 0, 0, sw, sh);
         if VIRTIO_ACTIVE.load(core::sync::atomic::Ordering::SeqCst) { ds.copy(); } else { ds.present_rect(0, 0, sw, sh); }
     }
 
     pub fn recompose_except(&self, except_id: u64) {
-        crate::debugln!("[COMPOSER] recompose_except: except_id={}", except_id);
+        let (sw, sh) = {
+            let mut ds = DISPLAY_SERVER.lock();
+            let sw = ds.width as u32;
+            let sh = ds.height as u32;
+            self.recompose_area_except(&mut ds, 0, 0, sw, sh, except_id);
+            (sw, sh)
+        }; // interrupts re-enabled
         let mut ds = DISPLAY_SERVER.lock();
-        let sw = ds.width as u32;
-        let sh = ds.height as u32;
-        self.recompose_area_except(&mut ds, 0, 0, sw, sh, except_id);
         if VIRTIO_ACTIVE.load(core::sync::atomic::Ordering::SeqCst) { ds.copy(); } else { ds.present_rect(0, 0, sw, sh); }
-        crate::debugln!("[COMPOSER] recompose_except done.");
     }
 }

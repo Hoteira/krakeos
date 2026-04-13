@@ -74,10 +74,18 @@ pub fn send_command_queue(queue_idx: usize, out_phys: &[u64], out_lens: &[u32], 
     if int_enabled { unsafe { core::arch::asm!("cli"); } }
 
     while QUEUE_LOCKS[queue_idx].compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
-        core::hint::spin_loop();
+        if int_enabled {
+            unsafe {
+                core::arch::asm!("sti");
+                core::arch::asm!("int 0x81");
+                core::arch::asm!("cli");
+            }
+        } else {
+            core::hint::spin_loop();
+        }
     }
     
-    let result = unsafe { send_command_queue_unlocked(queue_idx, out_phys, out_lens, in_phys, in_lens, wait) };
+    let result = unsafe { send_command_queue_unlocked(queue_idx, out_phys, out_lens, in_phys, in_lens, wait, int_enabled) };
     
     QUEUE_LOCKS[queue_idx].store(false, Ordering::Release);
     
@@ -86,7 +94,7 @@ pub fn send_command_queue(queue_idx: usize, out_phys: &[u64], out_lens: &[u32], 
     result
 }
 
-unsafe fn send_command_queue_unlocked(queue_idx: usize, out_phys: &[u64], out_lens: &[u32], in_phys: &[u64], in_lens: &[u32], wait: bool) -> bool {
+unsafe fn send_command_queue_unlocked(queue_idx: usize, out_phys: &[u64], out_lens: &[u32], in_phys: &[u64], in_lens: &[u32], wait: bool, int_enabled: bool) -> bool {
     let vq = match &mut VIRT_QUEUES[queue_idx] {
         Some(v) => v,
         None => { return false; }
@@ -98,6 +106,15 @@ unsafe fn send_command_queue_unlocked(queue_idx: usize, out_phys: &[u64], out_le
     while vq.last_avail_idx.wrapping_sub(vq.last_used_idx) >= (vq.num / 4) {
         let used_ptr = (vq.virt_base + (vq.used_phys - vq.desc_phys)) as *mut VirtqUsed;
         vq.last_used_idx = read_volatile(core::ptr::addr_of!((*used_ptr).idx));
+        if int_enabled {
+            unsafe {
+                core::arch::asm!("sti");
+                core::arch::asm!("int 0x81");
+                core::arch::asm!("cli");
+            }
+        } else {
+            core::hint::spin_loop();
+        }
         timeout -= 1;
         if timeout == 0 { return false; }
     }
@@ -160,7 +177,15 @@ unsafe fn send_command_queue_unlocked(queue_idx: usize, out_phys: &[u64], out_le
             success = true;
             break;
         }
-        core::hint::spin_loop();
+        if int_enabled {
+            unsafe {
+                core::arch::asm!("sti");
+                core::arch::asm!("int 0x81");
+                core::arch::asm!("cli");
+            }
+        } else {
+            core::hint::spin_loop();
+        }
         timeout -= 1;
         if timeout == 0 {
             crate::debugln!("VirtIO GPU: Command timeout! queue={} target={} current={}", vq.queue_index, target_idx, used_idx);

@@ -159,11 +159,6 @@ pub fn main() {
         for event in events.iter() {
             match event {
                 inkui::Event::Keyboard(e) => {
-                    debugln!(
-                        "[term] Keyboard Event: key={:#x} pressed={}",
-                        e.key,
-                        e.pressed
-                    );
                     if e.pressed {
                         if let Some(c) = core::char::from_u32(e.key) {
                             for _ in 0..e.repeat {
@@ -204,6 +199,13 @@ pub fn main() {
                         true,
                     );
                     update_term_size(&win);
+                    // Re-sync label text after resize so any buffered content is rendered
+                    // at the new geometry instead of being blank.
+                    if let Some(widget) = win.find_widget_by_id_mut(2) {
+                        if let inkui::widget::Widget::Label { text, .. } = widget {
+                            text.text = term_buffer.render();
+                        }
+                    }
                     needs_redraw = true;
                 }
                 _ => {}
