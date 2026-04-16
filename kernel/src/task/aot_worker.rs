@@ -37,15 +37,15 @@ extern "C" fn aot_thread_main() {
         crate::spawn_debugln!("[AOTWorker] after AOT_SEMAPHORE.wait()");
         crate::spawn_debugln!("[AOTWorker] entering inner loop");
         loop {
-            crate::spawn_debugln!("[AOTWorker] before PENDING_SPAWN.lock()");
-            let mut q_lock = PENDING_SPAWN.lock();
-            crate::spawn_debugln!("[AOTWorker] after PENDING_SPAWN.lock()");
-            crate::spawn_debugln!("[AOTWorker] before q_lock.pop_front()");
-            let item = q_lock.pop_front();
-            crate::spawn_debugln!("[AOTWorker] after q_lock.pop_front()");
-            crate::spawn_debugln!("[AOTWorker] before drop(q_lock)");
-            drop(q_lock);
-            crate::spawn_debugln!("[AOTWorker] after drop(q_lock)");
+        crate::debugln!("[AOTWorker] before PENDING_SPAWN.lock()");
+        let mut q_lock = PENDING_SPAWN.lock();
+        crate::debugln!("[AOTWorker] after PENDING_SPAWN.lock()");
+        crate::debugln!("[AOTWorker] before q_lock.pop_front()");
+        let item = q_lock.pop_front();
+        crate::debugln!("[AOTWorker] after q_lock.pop_front()");
+        crate::debugln!("[AOTWorker] before drop(q_lock)");
+        drop(q_lock);
+        crate::debugln!("[AOTWorker] after drop(q_lock)");
             match item {
                 Some((p, debug)) => {
                     crate::spawn_debugln!("[AOTWorker] item found: {}", p);
@@ -73,15 +73,15 @@ extern "C" fn aot_thread_main() {
             crate::spawn_debugln!("[AOTWorker] inner loop iteration end");
         }
         crate::spawn_debugln!("[AOTWorker] exited inner loop");
-        crate::spawn_debugln!("[AOTWorker] before AOT_QUEUE.lock()");
+        crate::debugln!("[AOTWorker] before AOT_QUEUE.lock()");
         let mut aot_lock = AOT_QUEUE.lock();
-        crate::spawn_debugln!("[AOTWorker] after AOT_QUEUE.lock()");
-        crate::spawn_debugln!("[AOTWorker] before aot_lock.pop_front()");
+        crate::debugln!("[AOTWorker] after AOT_QUEUE.lock()");
+        crate::debugln!("[AOTWorker] before aot_lock.pop_front()");
         let req_opt = aot_lock.pop_front();
-        crate::spawn_debugln!("[AOTWorker] after aot_lock.pop_front()");
-        crate::spawn_debugln!("[AOTWorker] before drop(aot_lock)");
+        crate::debugln!("[AOTWorker] after aot_lock.pop_front()");
+        crate::debugln!("[AOTWorker] before drop(aot_lock)");
         drop(aot_lock);
-        crate::spawn_debugln!("[AOTWorker] after drop(aot_lock)");
+        crate::debugln!("[AOTWorker] after drop(aot_lock)");
         if let Some(req) = req_opt {
             crate::spawn_debugln!("[AOTWorker] request found for PID {}", req.pid);
             if req.debug {

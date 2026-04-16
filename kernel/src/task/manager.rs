@@ -89,7 +89,11 @@ impl TaskManager {
         let thread = match self.tasks.get(&(next_tid as usize)) {
             Some(t) => t,
             None => {
-                crate::debugln!("TaskManager schedule: next_tid {} not found! Falling back to {}", next_tid, cpu_id);
+                crate::debugln!(
+                    "TaskManager schedule: next_tid {} not found! Falling back to {}",
+                    next_tid,
+                    cpu_id
+                );
                 crate::debugln!("Current keys in tasks map:");
                 for k in self.tasks.keys() {
                     crate::debugln!(" - {}", k);
@@ -231,7 +235,11 @@ impl TaskManager {
         terminal_size: (u16, u16),
         parent_pid: Option<u64>,
     ) -> Result<(), pmm::FrameError> {
-        crate::spawn_debugln!("[TaskManager] init_user_task entry: slot={}, entry={:#x}", slot, entry_point);
+        crate::spawn_debugln!(
+            "[TaskManager] init_user_task entry: slot={}, entry={:#x}",
+            slot,
+            entry_point
+        );
         let pid = slot as u64;
         crate::spawn_debugln!("[TaskManager] init_user_task: pid={}", pid);
 
@@ -261,7 +269,9 @@ impl TaskManager {
                 let p = parent_thread.process.as_ref().unwrap();
                 (p.uid, p.gid)
             } else {
-                crate::spawn_debugln!("[TaskManager] init_user_task: parent not found, defaulting to 0,0");
+                crate::spawn_debugln!(
+                    "[TaskManager] init_user_task: parent not found, defaulting to 0,0"
+                );
                 (0, 0)
             }
         } else {
@@ -299,21 +309,34 @@ impl TaskManager {
         let k_frame = pmm::allocate_frames(256).ok_or(pmm::FrameError::NoMemory)?;
         crate::spawn_debugln!("[TaskManager] init_user_task: k_frame={:#x}", k_frame);
         thread.kernel_stack = k_frame + 1024 * 1024 + paging::HHDM_OFFSET;
-        crate::spawn_debugln!("[TaskManager] init_user_task: kernel_stack={:#x}", thread.kernel_stack);
+        crate::spawn_debugln!(
+            "[TaskManager] init_user_task: kernel_stack={:#x}",
+            thread.kernel_stack
+        );
 
         let stack_pages = (STACK_SIZE / 4096) as usize;
-        crate::spawn_debugln!("[TaskManager] init_user_task: calling pmm::allocate_frames({})", stack_pages);
+        crate::spawn_debugln!(
+            "[TaskManager] init_user_task: calling pmm::allocate_frames({})",
+            stack_pages
+        );
         let u_frame_phys = pmm::allocate_frames(stack_pages).ok_or(pmm::FrameError::NoMemory)?;
-        crate::spawn_debugln!("[TaskManager] init_user_task: u_frame_phys={:#x}", u_frame_phys);
+        crate::spawn_debugln!(
+            "[TaskManager] init_user_task: u_frame_phys={:#x}",
+            u_frame_phys
+        );
 
         let u_stack_top = proc.stack_base;
         let u_stack_base = u_stack_top - STACK_SIZE;
-        crate::spawn_debugln!("[TaskManager] init_user_task: u_stack_top={:#x}, u_stack_base={:#x}", u_stack_top, u_stack_base);
+        crate::spawn_debugln!(
+            "[TaskManager] init_user_task: u_stack_top={:#x}, u_stack_base={:#x}",
+            u_stack_top,
+            u_stack_base
+        );
 
         crate::spawn_debugln!("[TaskManager] init_user_task: starting stack mapping loop");
         for i in 0..stack_pages {
             let offset = i as u64 * 4096;
-            crate::spawn_debugln!("[TaskManager] init_user_task: mapping stack page {}", i);
+            //crate::spawn_debugln!("[TaskManager] init_user_task: mapping stack page {}", i);
             vmm::map_page(
                 u_stack_base + offset,
                 PhysAddr::new(u_frame_phys + offset),
@@ -326,11 +349,16 @@ impl TaskManager {
         crate::spawn_debugln!("[TaskManager] init_user_task: thread.user_stack set");
 
         let code_pages = (64 * 1024 * 1024) / 4096;
-        crate::spawn_debugln!("[TaskManager] init_user_task: starting code mapping loop, code_pages={}", code_pages);
+        crate::spawn_debugln!(
+            "[TaskManager] init_user_task: starting code mapping loop, code_pages={}",
+            code_pages
+        );
         for i in 0..code_pages {
             let virt = proc.code_base + i as u64 * 4096;
             if i < 4096 {
-                if i % 1024 == 0 { crate::spawn_debugln!("[TaskManager] init_user_task: mapping code page {}", i); }
+                if i % 1024 == 0 {
+                    crate::spawn_debugln!("[TaskManager] init_user_task: mapping code page {}", i);
+                }
                 if let Some(frame) = pmm::allocate_frame() {
                     vmm::map_page(
                         virt,
@@ -348,24 +376,37 @@ impl TaskManager {
         crate::spawn_debugln!("[TaskManager] init_user_task: state_size={}", state_size);
         let state_ptr = (thread.kernel_stack - state_size as u64) as *mut CPUState;
         thread.cpu_state_ptr = state_ptr as u64;
-        crate::spawn_debugln!("[TaskManager] init_user_task: thread.cpu_state_ptr={:#x}", thread.cpu_state_ptr);
+        crate::spawn_debugln!(
+            "[TaskManager] init_user_task: thread.cpu_state_ptr={:#x}",
+            thread.cpu_state_ptr
+        );
 
         unsafe {
-            crate::spawn_debugln!("[TaskManager] init_user_task: entering unsafe block for stack preparation");
+            crate::spawn_debugln!(
+                "[TaskManager] init_user_task: entering unsafe block for stack preparation"
+            );
             let stack_phys_base = u_frame_phys + paging::HHDM_OFFSET;
             let mut current_virt_sp = thread.user_stack;
-            crate::spawn_debugln!("[TaskManager] init_user_task: stack_phys_base={:#x}, current_virt_sp={:#x}", stack_phys_base, current_virt_sp);
+            crate::spawn_debugln!(
+                "[TaskManager] init_user_task: stack_phys_base={:#x}, current_virt_sp={:#x}",
+                stack_phys_base,
+                current_virt_sp
+            );
 
             crate::spawn_debugln!("[TaskManager] init_user_task: calling Vec::new");
             let mut arg_ptrs = Vec::new();
             crate::spawn_debugln!("[TaskManager] init_user_task: Vec::new returned");
-            
+
             let mut push_str = |s: &[u8]| {
                 let len = s.len() + 1;
                 current_virt_sp -= len as u64;
                 let offset = current_virt_sp - u_stack_base;
                 let dest = (stack_phys_base + offset) as *mut u8;
-                crate::spawn_debugln!("[TaskManager] init_user_task: pushing string of len {}, dest={:#x}", s.len(), dest as u64);
+                crate::spawn_debugln!(
+                    "[TaskManager] init_user_task: pushing string of len {}, dest={:#x}",
+                    s.len(),
+                    dest as u64
+                );
                 core::ptr::copy_nonoverlapping(s.as_ptr(), dest, s.len());
                 *dest.add(s.len()) = 0;
                 current_virt_sp
@@ -374,7 +415,10 @@ impl TaskManager {
             crate::spawn_debugln!("[TaskManager] init_user_task: pushing name");
             let name_ptr = push_str(name);
             arg_ptrs.push(name_ptr);
-            crate::spawn_debugln!("[TaskManager] init_user_task: name pushed at {:#x}", name_ptr);
+            crate::spawn_debugln!(
+                "[TaskManager] init_user_task: name pushed at {:#x}",
+                name_ptr
+            );
 
             if let Some(a_list) = args {
                 crate::spawn_debugln!("[TaskManager] init_user_task: starting args push loop");
@@ -387,12 +431,19 @@ impl TaskManager {
             }
 
             current_virt_sp &= !15;
-            crate::spawn_debugln!("[TaskManager] init_user_task: current_virt_sp aligned to {:#x}", current_virt_sp);
+            crate::spawn_debugln!(
+                "[TaskManager] init_user_task: current_virt_sp aligned to {:#x}",
+                current_virt_sp
+            );
             let mut push_u64 = |val: u64| {
                 current_virt_sp -= 8;
                 let offset = current_virt_sp - u_stack_base;
                 let dest = (stack_phys_base + offset) as *mut u64;
-                crate::spawn_debugln!("[TaskManager] init_user_task: pushing u64={:#x} to dest={:#x}", val, dest as u64);
+                crate::spawn_debugln!(
+                    "[TaskManager] init_user_task: pushing u64={:#x} to dest={:#x}",
+                    val,
+                    dest as u64
+                );
                 *dest = val;
             };
 
@@ -405,7 +456,10 @@ impl TaskManager {
             }
             crate::spawn_debugln!("[TaskManager] init_user_task: arg_ptrs rev loop finished");
             push_u64(arg_ptrs.len() as u64);
-            crate::spawn_debugln!("[TaskManager] init_user_task: arg_count={} pushed", arg_ptrs.len());
+            crate::spawn_debugln!(
+                "[TaskManager] init_user_task: arg_count={} pushed",
+                arg_ptrs.len()
+            );
 
             crate::spawn_debugln!("[TaskManager] init_user_task: calling core::ptr::write_bytes");
             core::ptr::write_bytes(state_ptr, 0, 1);
@@ -417,7 +471,10 @@ impl TaskManager {
             (*state_ptr).rsp = (current_virt_sp & !15) - 8;
             (*state_ptr).ss = 0x1B;
             let final_rsp = (*state_ptr).rsp;
-            crate::spawn_debugln!("[TaskManager] init_user_task: CPUState initialized, rsp={:#x}", final_rsp);
+            crate::spawn_debugln!(
+                "[TaskManager] init_user_task: CPUState initialized, rsp={:#x}",
+                final_rsp
+            );
         }
 
         let final_state = if entry_point == 0 {
@@ -426,7 +483,10 @@ impl TaskManager {
             ThreadState::Ready
         };
         thread.state = final_state;
-        crate::spawn_debugln!("[TaskManager] init_user_task: final_state={:?}", thread.state);
+        crate::spawn_debugln!(
+            "[TaskManager] init_user_task: final_state={:?}",
+            thread.state
+        );
         let ptr = thread as *const _ as u64;
         crate::spawn_debugln!(
             "[TaskManager] Initialized User Task {} (Thread at {:#x}, State={:?})",

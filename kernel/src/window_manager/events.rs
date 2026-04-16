@@ -49,9 +49,11 @@ impl EventQueue {
             let header = unsafe { &*(header_ptr as *const EventQueueHeader) };
             let head = header.head.load(Ordering::Relaxed);
             let next_head = (head + 1) % capacity;
+            
             if next_head == header.tail.load(Ordering::Acquire) {
                 return true; // queue full — swallow silently (process is registered)
             }
+            
             unsafe { (buf_ptr as *mut Event).add(head as usize).write(event); }
             header.head.store(next_head, Ordering::Release);
             

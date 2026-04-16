@@ -361,43 +361,48 @@ pub fn allocate_frames(count: usize) -> Option<u64> {
 
     if order > MAX_ORDER { return None; }
 
-    let mut alloc = PMM.int_lock();
-    
-    let mut current_order = order;
-    while current_order <= MAX_ORDER && alloc.free_lists[current_order].is_null() {
-        current_order += 1;
-    }
+    let (phys, num_pages) = {
+        let mut alloc = PMM.int_lock();
+        
+        let mut current_order = order;
+        while current_order <= MAX_ORDER && alloc.free_lists[current_order].is_null() {
+            current_order += 1;
+        }
 
-    if current_order > MAX_ORDER {
-        return None;
-    }
+        if current_order > MAX_ORDER {
+            return None;
+        }
 
-    unsafe {
-        let mut phys = pop_free_block(&mut alloc, current_order).unwrap();
+        unsafe {
+            let mut phys = pop_free_block(&mut alloc, current_order).unwrap();
 
-        while current_order > order {
-            current_order -= 1;
-            let buddy_phys = phys + (1u64 << current_order) * PAGE_SIZE;
-            push_free_block(&mut alloc, buddy_phys, current_order);
+            while current_order > order {
+                current_order -= 1;
+                let buddy_phys = phys + (1u64 << current_order) * PAGE_SIZE;
+                push_free_block(&mut alloc, buddy_phys, current_order);
+                
+                let head_desc = &mut (*alloc.page_map.add((phys / PAGE_SIZE) as usize));
+                head_desc.order = current_order as u8;
+            }
+
+            let page_idx = (phys / PAGE_SIZE) as usize;
+            let num_pages = 1 << order;
+            for i in 0..num_pages {
+                let desc = &mut (*alloc.page_map.add(page_idx + i));
+                desc.flags |= 0x01; // Allocated
+            }
             
-            let head_desc = &mut (*alloc.page_map.add((phys / PAGE_SIZE) as usize));
-            head_desc.order = current_order as u8;
+            alloc.used_pages += num_pages;
+            (phys, num_pages)
         }
+    };
 
-        let page_idx = (phys / PAGE_SIZE) as usize;
-        let num_pages = 1 << order;
-        for i in 0..num_pages {
-            let desc = &mut (*alloc.page_map.add(page_idx + i));
-                        desc.flags |= 0x01; // Allocated
-        }
-        
-        alloc.used_pages += num_pages;
-        
-        let virt_ptr = (phys + crate::memory::paging::HHDM_OFFSET) as *mut u8;
+    let virt_ptr = (phys + crate::memory::paging::HHDM_OFFSET) as *mut u8;
+    unsafe {
         core::ptr::write_bytes(virt_ptr, 0, num_pages * PAGE_SIZE as usize);
-
-        Some(phys)
     }
+
+    Some(phys)
 }
 
 pub fn free_frame(addr: u64) {

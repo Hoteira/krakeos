@@ -367,7 +367,11 @@ impl Widget {
         }
 
         let view_height = geo.height.saturating_sub(geo.padding * 2);
-        let max_scroll = geo.content_height.saturating_sub(view_height).saturating_add(20);
+        let max_scroll = if geo.content_height > view_height {
+            geo.content_height - view_height + 20
+        } else {
+            0
+        };
         if geo.scroll_offset_y > max_scroll {
             geo.scroll_offset_y = max_scroll;
         }

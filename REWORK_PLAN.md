@@ -11,63 +11,6 @@
 
 KrakeOS is a bare-metal x86_64 OS that exclusively runs WASM files (via AOT compilation) plus native kernel binaries. The current system boots, runs a desktop with wallpaper, taskbar, and two terminal instances, but has several critical issues listed below. This document is a comprehensive rework plan meant to be handed off between AI agents.
 
-### Current Working State (from boot log)
-- Bootloader → protected mode → long mode ✓
-- Physical memory manager (5120 MB) ✓
-- VirtIO GPU at 1024×576 ✓
-- VirtIO Block / Ext2 filesystem ✓
-- AOT compiler with WACC caching ✓
-- Init / Taskbar / AOT_test ✓
-- Two terminal instances spawn (PIDs 5 & 6) but are **broken** (see §1)
-- `Super+Enter` shortcut to spawn new terminal is **broken** (see §1)
-
----
-
-## Section 1 — Critical Bug Fixes (Do First)
-
-### 1.1 Terminal Broken on Spawn (PIDs 5 & 6)
-
-**Symptoms from log:**
-- Both term instances load font `CaskaydiaNerd.ttf` successfully
-- Both print `WAAAAAAAAA...` and `OCDOSSSSSS...` debug noise (likely a buffer/state issue in term init)
-- Both enter main loop and receive keyboard events (`key=0x73`, `key=0x6c`, etc.)
-- **No text is rendered** — keys are received but nothing appears on screen
-- Font glyph metrics ARE logged for taskbar (`'r'`, `'a'`, etc.) but NOT for terminal windows
-
-**Root cause hypothesis:**
-The terminal window's framebuffer is never drawn/flushed after receiving keyboard input. The tiling resize events (`RESIZING 3 AT 497 X 533`, `RESIZING 4 AT 497 X 533`) happen AFTER `[term] ENTERING MAIN LOOP!` — the terminal receives resize but may not reinitialize its render state properly after AOT compilation restores from WACC.
-
-**Files to investigate:**
-- `apps/term/src/main.rs` — main loop, event handling, render path
-- `apps/term/src/buffer.rs` — terminal buffer, glyph drawing
-- `kernel/src/window_manager/composer.rs` — `resize_window`, event delivery
-- `kernel/src/task/event_manager.rs` — event queue delivery
-
-**Fix tasks:**
-- [ ] Add render-after-resize logic in term: when a resize event arrives, re-render the full buffer and call `window_update`
-- [ ] Trace why `[inkui] Glyph 'X' metrics` only logs for taskbar and not for term windows
-- [ ] Fix the `WAAAAAAAAA` / `OCDOSSSSSS` debug noise (identify what triggers it — likely an assert or panic caught silently)
-- [ ] Ensure keyboard events route to the focused window (check `composer.rs` focus tracking)
-
-### 1.2 `Super+Enter` Does Not Spawn New Terminal
-
-**Symptoms from log:**
-```
-[Shortcut] Super=true Key=0xd Eval=0xd
-```
-The shortcut is detected in the input handler but no `handle_spawn` syscall follows. The compositor detects it but the action is never dispatched.
-
-**Files to investigate:**
-- `kernel/src/window_manager/input.rs` — shortcut dispatch
-- `kernel/src/window_manager/composer.rs` — `spawn_terminal()` or equivalent
-- `kernel/src/syscalls/process.rs` — `handle_spawn`
-
-**Fix tasks:**
-- [ ] Find where `Super+Enter` is supposed to call spawn and why it is not
-- [ ] Verify the kernel knows the path to `term.wasm` at shortcut time
-- [ ] Ensure the shortcut handler runs in a context where spawning is safe (not inside a lock)
-
----
 
 ## Section 2 — Kernel Lockup Prevention (Interrupt Starvation)
 

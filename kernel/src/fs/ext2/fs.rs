@@ -402,7 +402,6 @@ impl Ext2 {
             descriptors[group_idx as usize] = *desc;
         }
 
-        let _lock = self.metadata_lock.lock();
         let bgdt_start_block = if self.block_size == 1024 { 2 } else { 1 };
         let desc_size = size_of::<BlockGroupDescriptor>() as u64;
         let offset = (bgdt_start_block as u64 * self.block_size) + (group_idx as u64 * desc_size);
@@ -413,10 +412,13 @@ impl Ext2 {
     }
 
     pub fn write_superblock(&self) {
-        let _lock = self.metadata_lock.lock();
-        let sb = self.superblock.lock();
+        let sb_val = {
+            let _lock = self.metadata_lock.lock();
+            let sb = self.superblock.lock();
+            *sb
+        };
         let offset = 1024;
-        let ptr = &*sb as *const Superblock as *const u8;
+        let ptr = &sb_val as *const Superblock as *const u8;
         let slice = unsafe { core::slice::from_raw_parts(ptr, size_of::<Superblock>()) };
         self.write_disk_data(offset, slice);
     }
@@ -645,50 +647,68 @@ impl Ext2 {
                 let mut dummy = vec![0u8; block_size as usize];
                 self.read_disk_data(bitmap_block as u64 * block_size, &mut dummy);
 
-                let _lock = self.metadata_lock.lock();
-                bg = self.read_block_group_descriptor(i);
-                if bg.free_blocks_count == 0 { continue; }
+                let mut found_bit = None;
+                let mut bitmap_to_write = None;
+                let mut bg_to_write = None;
+                let mut sb_to_write = None;
+                let mut bit_val = 0;
 
-                let bitmap_block = bg.block_bitmap;
-                let mut bitmap = vec![0u8; block_size as usize];
-                self.read_disk_data(bitmap_block as u64 * block_size, &mut bitmap);
+                {
+                    let _lock = self.metadata_lock.lock();
+                    bg = self.read_block_group_descriptor(i);
+                    if bg.free_blocks_count > 0 {
+                        let mut bitmap = vec![0u8; block_size as usize];
+                        self.read_disk_data(bitmap_block as u64 * block_size, &mut bitmap);
 
-                for byte_idx in 0..block_size as usize {
-                    if bitmap[byte_idx] != 0xFF {
-                        for bit_idx in 0..8 {
-                            if (bitmap[byte_idx] & (1 << bit_idx)) == 0 {
-                                bitmap[byte_idx] |= 1 << bit_idx;
-                                self.write_disk_data(bitmap_block as u64 * block_size, &bitmap);
+                        for byte_idx in 0..block_size as usize {
+                            if bitmap[byte_idx] != 0xFF {
+                                for bit_idx in 0..8 {
+                                    if (bitmap[byte_idx] & (1 << bit_idx)) == 0 {
+                                        bitmap[byte_idx] |= 1 << bit_idx;
+                                        bit_val = (i * blocks_per_group) + (byte_idx as u32 * 8) + bit_idx as u32 + first_data_block;
+                                        found_bit = Some(bit_val);
+                                        
+                                        bitmap_to_write = Some(bitmap.clone());
+                                        
+                                        bg.free_blocks_count -= 1;
+                                        bg_to_write = Some(bg);
 
-                                let mut free_blocks = bg.free_blocks_count;
-                                free_blocks -= 1;
-                                bg.free_blocks_count = free_blocks;
+                                        {
+                                            let mut descriptors = self.bg_descriptors.write();
+                                            descriptors[i as usize] = bg;
+                                        }
 
-                                {
-                                    let mut descriptors = self.bg_descriptors.write();
-                                    descriptors[i as usize] = bg;
+                                        {
+                                            let mut sb = self.superblock.lock();
+                                            sb.free_blocks_count -= 1;
+                                            sb_to_write = Some(*sb);
+                                        }
+                                        break;
+                                    }
                                 }
-
-                                let bgdt_start_block = if block_size == 1024 { 2 } else { 1 };
-                                let offset = (bgdt_start_block as u64 * block_size) + (i as u64 * size_of::<BlockGroupDescriptor>() as u64);
-                                let ptr = &bg as *const BlockGroupDescriptor as *const u8;
-                                let slice = unsafe { core::slice::from_raw_parts(ptr, size_of::<BlockGroupDescriptor>()) };
-                                self.write_disk_data(offset, slice);
-
-                                {
-                                    let mut sb = self.superblock.lock();
-                                    let mut global_free = sb.free_blocks_count;
-                                    global_free -= 1;
-                                    sb.free_blocks_count = global_free;
-                                    let sb_ptr = &*sb as *const Superblock as *const u8;
-                                    let sb_slice = unsafe { core::slice::from_raw_parts(sb_ptr, size_of::<Superblock>()) };
-                                    self.write_disk_data(1024, sb_slice);
-                                }
-
-                                return (i * blocks_per_group) + (byte_idx as u32 * 8) + bit_idx as u32 + first_data_block;
                             }
+                            if found_bit.is_some() { break; }
                         }
                     }
+                }
+
+                if let Some(val) = found_bit {
+                    if let Some(bitmap) = bitmap_to_write {
+                        self.write_disk_data(bitmap_block as u64 * block_size, &bitmap);
+                    }
+                    if let Some(bg_val) = bg_to_write {
+                        let bgdt_start_block = if block_size == 1024 { 2 } else { 1 };
+                        let offset = (bgdt_start_block as u64 * block_size) + (i as u64 * size_of::<BlockGroupDescriptor>() as u64);
+                        let ptr = &bg_val as *const BlockGroupDescriptor as *const u8;
+                        let slice = unsafe { core::slice::from_raw_parts(ptr, size_of::<BlockGroupDescriptor>()) };
+                        self.write_disk_data(offset, slice);
+                    }
+                    if let Some(sb_val) = sb_to_write {
+                        let sb_ptr = &sb_val as *const Superblock as *const u8;
+                        let sb_slice = unsafe { core::slice::from_raw_parts(sb_ptr, size_of::<Superblock>()) };
+                        self.write_disk_data(1024, sb_slice);
+                    }
+                    return val;
                 }
             }
         }
@@ -710,48 +730,68 @@ impl Ext2 {
                 let mut bitmap = vec![0u8; block_size as usize];
                 self.read_disk_data(bitmap_block as u64 * block_size, &mut bitmap);
 
-                let _lock = self.metadata_lock.lock();
-                bg = self.read_block_group_descriptor(i);
-                if bg.free_inodes_count == 0 { continue; }
+                let mut found_bit = None;
+                let mut bitmap_to_write = None;
+                let mut bg_to_write = None;
+                let mut sb_to_write = None;
+                let mut bit_val = 0;
 
-                self.read_disk_data(bitmap_block as u64 * block_size, &mut bitmap);
+                {
+                    let _lock = self.metadata_lock.lock();
+                    bg = self.read_block_group_descriptor(i);
+                    if bg.free_inodes_count > 0 {
+                        let mut bitmap = vec![0u8; block_size as usize];
+                        self.read_disk_data(bitmap_block as u64 * block_size, &mut bitmap);
 
-                for byte_idx in 0..block_size as usize {
-                    if bitmap[byte_idx] != 0xFF {
-                        for bit_idx in 0..8 {
-                            if (bitmap[byte_idx] & (1 << bit_idx)) == 0 {
-                                bitmap[byte_idx] |= 1 << bit_idx;
-                                self.write_disk_data(bitmap_block as u64 * block_size, &bitmap);
+                        for byte_idx in 0..block_size as usize {
+                            if bitmap[byte_idx] != 0xFF {
+                                for bit_idx in 0..8 {
+                                    if (bitmap[byte_idx] & (1 << bit_idx)) == 0 {
+                                        bitmap[byte_idx] |= 1 << bit_idx;
+                                        bit_val = (i * inodes_per_group) + (byte_idx as u32 * 8) + bit_idx as u32 + 1;
+                                        found_bit = Some(bit_val);
+                                        
+                                        bitmap_to_write = Some(bitmap.clone());
+                                        
+                                        bg.free_inodes_count -= 1;
+                                        bg_to_write = Some(bg);
 
-                                let mut free_inodes = bg.free_inodes_count;
-                                free_inodes -= 1;
-                                bg.free_inodes_count = free_inodes;
+                                        {
+                                            let mut descriptors = self.bg_descriptors.write();
+                                            descriptors[i as usize] = bg;
+                                        }
 
-                                {
-                                    let mut descriptors = self.bg_descriptors.write();
-                                    descriptors[i as usize] = bg;
+                                        {
+                                            let mut sb = self.superblock.lock();
+                                            sb.free_inodes_count -= 1;
+                                            sb_to_write = Some(*sb);
+                                        }
+                                        break;
+                                    }
                                 }
-
-                                let bgdt_start_block = if block_size == 1024 { 2 } else { 1 };
-                                let offset = (bgdt_start_block as u64 * block_size) + (i as u64 * size_of::<BlockGroupDescriptor>() as u64);
-                                let ptr = &bg as *const BlockGroupDescriptor as *const u8;
-                                let slice = unsafe { core::slice::from_raw_parts(ptr, size_of::<BlockGroupDescriptor>()) };
-                                self.write_disk_data(offset, slice);
-
-                                {
-                                    let mut sb = self.superblock.lock();
-                                    let mut global_free = sb.free_inodes_count;
-                                    global_free -= 1;
-                                    sb.free_inodes_count = global_free;
-                                    let sb_ptr = &*sb as *const Superblock as *const u8;
-                                    let sb_slice = unsafe { core::slice::from_raw_parts(sb_ptr, size_of::<Superblock>()) };
-                                    self.write_disk_data(1024, sb_slice);
-                                }
-
-                                return (i * inodes_per_group) + (byte_idx as u32 * 8) + bit_idx as u32 + 1;
                             }
+                            if found_bit.is_some() { break; }
                         }
                     }
+                }
+
+                if let Some(val) = found_bit {
+                    if let Some(bitmap) = bitmap_to_write {
+                        self.write_disk_data(bitmap_block as u64 * block_size, &bitmap);
+                    }
+                    if let Some(bg_val) = bg_to_write {
+                        let bgdt_start_block = if block_size == 1024 { 2 } else { 1 };
+                        let offset = (bgdt_start_block as u64 * block_size) + (i as u64 * size_of::<BlockGroupDescriptor>() as u64);
+                        let ptr = &bg_val as *const BlockGroupDescriptor as *const u8;
+                        let slice = unsafe { core::slice::from_raw_parts(ptr, size_of::<BlockGroupDescriptor>()) };
+                        self.write_disk_data(offset, slice);
+                    }
+                    if let Some(sb_val) = sb_to_write {
+                        let sb_ptr = &sb_val as *const Superblock as *const u8;
+                        let sb_slice = unsafe { core::slice::from_raw_parts(sb_ptr, size_of::<Superblock>()) };
+                        self.write_disk_data(1024, sb_slice);
+                    }
+                    return val;
                 }
             }
         }
@@ -1029,9 +1069,7 @@ impl VfsNode for Ext2Node {
     fn write(&mut self, offset: u64, buffer: &[u8]) -> Result<usize, String> {
         let fs = unsafe { &*self.fs };
         let _lock_arc = fs.get_inode_lock(self.inode_idx);
-        let _lock = _lock_arc.write();
-        self.inode = fs.read_inode(self.inode_idx);
-
+        
         let block_size = fs.block_size;
         let mut bytes_written = 0;
         let mut current_offset = offset;
@@ -1044,19 +1082,26 @@ impl VfsNode for Ext2Node {
             let block_idx = (current_offset / block_size) as u32;
             let block_offset = (current_offset % block_size) as usize;
 
-            let mut phys = fs.get_block_address(&self.inode, block_idx);
+            let mut phys = 0;
             let mut newly_allocated = false;
 
-            if phys == 0 {
-                phys = fs.alloc_block();
-                if phys == 0 { return Err(String::from("Failed to allocate block")); }
-                fs.set_block_address(&mut self.inode, block_idx, phys)?;
-                self.inode.blocks += (block_size / 512) as u32;
-                newly_allocated = true;
+            {
+                let _lock = _lock_arc.write();
+                self.inode = fs.read_inode(self.inode_idx);
+                phys = fs.get_block_address(&self.inode, block_idx);
+
+                if phys == 0 {
+                    phys = fs.alloc_block();
+                    if phys == 0 { return Err(String::from("Failed to allocate block")); }
+                    fs.set_block_address(&mut self.inode, block_idx, phys)?;
+                    self.inode.blocks += (block_size / 512) as u32;
+                    newly_allocated = true;
+                    fs.write_inode(self.inode_idx, &self.inode);
+                }
             }
 
-            if block_offset != 0 || (len - bytes_written) < block_size as usize {
-                let to_copy = core::cmp::min(len - bytes_written, (block_size as usize) - block_offset);
+            let to_copy = core::cmp::min(len - bytes_written, (block_size as usize) - block_offset);
+            if block_offset != 0 || to_copy < block_size as usize {
                 if !newly_allocated {
                     fs.read_disk_data(phys as u64 * block_size, &mut bounce_buf);
                 } else {
@@ -1064,26 +1109,28 @@ impl VfsNode for Ext2Node {
                 }
                 bounce_buf[block_offset..block_offset + to_copy].copy_from_slice(&buffer[buf_offset..buf_offset + to_copy]);
                 fs.write_disk_data(phys as u64 * block_size, &bounce_buf);
-                bytes_written += to_copy;
-                current_offset += to_copy as u64;
-                buf_offset += to_copy;
             } else {
-                let to_copy = block_size as usize;
                 fs.write_disk_data(phys as u64 * block_size, &buffer[buf_offset..buf_offset + to_copy]);
-                bytes_written += to_copy;
-                current_offset += to_copy as u64;
-                buf_offset += to_copy;
             }
+
+            bytes_written += to_copy;
+            current_offset += to_copy as u64;
+            buf_offset += to_copy;
 
             crate::fs::cache::GLOBAL_PAGE_CACHE.lock().invalidate(fs.disk_id, self.inode_idx as u64, block_idx);
         }
 
-        let need_size_update = current_offset > self.inode.size as u64;
-        self.inode.mtime = crate::drivers::rtc::unix_timestamp();
-        if need_size_update {
-            self.inode.size = current_offset as u32;
+        {
+            let _lock = _lock_arc.write();
+            self.inode = fs.read_inode(self.inode_idx);
+            let need_size_update = current_offset > self.inode.size as u64;
+            self.inode.mtime = crate::drivers::rtc::unix_timestamp();
+            if need_size_update {
+                self.inode.size = current_offset as u32;
+            }
+            fs.write_inode(self.inode_idx, &self.inode);
         }
-        fs.write_inode(self.inode_idx, &self.inode);
+        
         fs.flush();
 
         Ok(bytes_written)

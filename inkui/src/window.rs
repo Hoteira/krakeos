@@ -308,7 +308,6 @@ impl Window {
             while i < side.len() {
                 if side[i].get_window_id() == self.id as u32 || side[i].get_window_id() == 0 {
                     vec.push(side.remove(i).unwrap());
-                    if vec.len() >= 64 { return vec; }
                 } else {
                     i += 1;
                 }
@@ -322,13 +321,12 @@ impl Window {
             } else {
                 SIDE_QUEUE.lock().push_back(e);
             }
-            if vec.len() >= 64 { break; }
         }
 
         // 3. Fallback to legacy syscall if still empty
         if vec.is_empty() {
             let mut events: [Event; 64] = [Event::None; 64];
-            graphics::get_events(self.id, &mut events);
+            std::os::graphics::get_events(self.id, &mut events);
 
             for e in events {
                 if e == Event::None {
@@ -345,6 +343,23 @@ impl Window {
             vec.retain(|e| !matches!(e, Event::Resize(_)));
             if let Some(r) = last_resize {
                 vec.push(r);
+            }
+        }
+
+        // 5. Coalesce mouse events: keep only the latest mouse event, accumulating scroll
+        let mut scroll_accum = 0;
+        let mouse_count = vec.iter().filter(|e| matches!(e, Event::Mouse(_))).count();
+        if mouse_count > 1 {
+            for e in vec.iter() {
+                if let Event::Mouse(m) = e {
+                    scroll_accum += m.scroll;
+                }
+            }
+            let mut last_mouse = vec.iter().rev().find(|e| matches!(e, Event::Mouse(_))).copied();
+            vec.retain(|e| !matches!(e, Event::Mouse(_)));
+            if let Some(Event::Mouse(mut m)) = last_mouse {
+                m.scroll = scroll_accum;
+                vec.push(Event::Mouse(m));
             }
         }
 
