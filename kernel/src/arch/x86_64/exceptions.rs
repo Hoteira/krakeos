@@ -491,7 +491,7 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
                         } else { false }
                     } else { false }; // COMPOSER.write() dropped
                     if needs_recompose {
-                        crate::window_manager::composer::COMPOSER.read().recompose_all();
+                        crate::window_manager::render_worker::mark_all_dirty();
                     }
                     handled_globally = true;
                     LAST_KEY_GLOBAL.store(eval_key, Ordering::SeqCst);
@@ -565,7 +565,7 @@ pub extern "x86-interrupt" fn keyboard_handler(_info: &mut StackFrame) {
                     // Data mutation under brief write lock, render under read lock after.
                     let changed = crate::window_manager::composer::COMPOSER.write().switch_workspace_data(workspace_idx);
                     if changed {
-                        crate::window_manager::composer::COMPOSER.read().recompose_all();
+                        crate::window_manager::render_worker::mark_all_dirty();
                     }
                     handled_globally = true;
                     LAST_KEY_GLOBAL.store(eval_key, Ordering::SeqCst);
@@ -699,3 +699,29 @@ pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
 }
 
 pub const YIELD_INT: u8 = 129;
+
+/// VirtIO Block completion interrupt handler (IRQ 10 → vector 42).
+/// Reads ISR register (clears the PCI interrupt), sets COMPLETION_FLAG, sends EOI.
+pub extern "x86-interrupt" fn blk_interrupt_handler(_frame: &mut StackFrame) {
+    crate::fs::virtio::on_disk_irq();
+    end_interrupt(crate::fs::virtio::BLK_INT_VEC);
+}
+
+/// VirtIO Net RX interrupt handler (IRQ 11 → vector 43).
+/// Reads and clears the VirtIO ISR status register (mandatory acknowledgement),
+/// drains the RX used ring, then sends EOI.
+pub extern "x86-interrupt" fn net_interrupt_handler(_frame: &mut StackFrame) {
+    // Must read ISR to acknowledge the interrupt to the device.
+    let isr = crate::drivers::network::virtio::read_isr();
+    if isr & 1 != 0 {
+        // Queue interrupt — drain the RX used ring.
+        crate::drivers::network::virtio::poll_rx();
+    }
+    end_interrupt(NET_INT);
+}
+
+/// TLB shootdown IPI handler (vector 0x50 = 80).
+/// Flushes the local TLB by reloading CR3, then sends EOI.
+pub extern "x86-interrupt" fn tlb_shootdown_handler(_frame: &mut StackFrame) {
+    crate::memory::vmm::tlb_shootdown_handler();
+}

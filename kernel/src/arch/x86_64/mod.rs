@@ -6,6 +6,7 @@ pub mod tss;
 pub mod exceptions;
 pub mod acpi;
 pub mod apic;
+pub mod smp;
 
 use core::arch::asm;
 
@@ -38,6 +39,27 @@ pub fn init_pat() {
         let cr3: u64;
         asm!("mov {}, cr3", out(reg) cr3);
         asm!("mov cr3, {}", in(reg) cr3);
+    }
+}
+
+/// Enable SSE/SSE2 for use in kernel and user mode.
+/// Must be called on every CPU (BSP in rust_main, each AP in ap_entrance).
+pub fn init_fpu() {
+    unsafe {
+        // Set CR4.OSFXSR (bit 9) and CR4.OSXMMEXCPT (bit 10)
+        // Without OSFXSR, SSE/SSE2 instructions raise #UD even in ring 0.
+        let mut cr4: u64;
+        asm!("mov {}, cr4", out(reg) cr4);
+        cr4 |= (1 << 9) | (1 << 10);
+        asm!("mov cr4, {}", in(reg) cr4);
+
+        // CR0: set MP (bit 1), clear EM (bit 2) and TS (bit 3)
+        let mut cr0: u64;
+        asm!("mov {}, cr0", out(reg) cr0);
+        cr0 |= 1 << 1;    // MP: monitor FPU (needed for FXSAVE)
+        cr0 &= !(1 << 2); // EM=0: no FPU emulation
+        cr0 &= !(1 << 3); // TS=0: task not switched (SSE without #NM)
+        asm!("mov cr0, {}", in(reg) cr0);
     }
 }
 

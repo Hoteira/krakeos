@@ -23,6 +23,7 @@ static mut GPU_CMD_VIRT: u64 = 0;
 static mut GPU_CMD_PHYS: u64 = 0;
 static GPU_CMD_LOCK: AtomicBool = AtomicBool::new(false);
 static REQ_IDX: AtomicUsize = AtomicUsize::new(0);
+static FENCE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 static mut TRANSFER_REQUESTS_VIRT: *mut VirtioGpuTransferToHost2d = core::ptr::null_mut();
 static mut TRANSFER_REQUESTS_PHYS: u64 = 0;
@@ -456,4 +457,66 @@ pub fn set_scanout(resource_id: u32, width: u32, height: u32) {
         }
     }
     GPU_CMD_LOCK.store(false, Ordering::Release);
+}
+
+/// Double-buffer flip: TRANSFER(back_id, FENCE) → SET_SCANOUT(back_id) → RESOURCE_FLUSH(back_id).
+/// Ensures the GPU has finished reading the host buffer (via FENCE) before flipping the scanout,
+/// then flushes to the display. The caller is responsible for updating active_resource_id after return.
+pub fn flip_and_flush(x: u32, y: u32, w: u32, h: u32, screen_w: u32, screen_h: u32, back_id: u32) {
+    unsafe {
+        let offset = (y * screen_w + x) * 4;
+        let idx = REQ_IDX.fetch_add(1, Ordering::SeqCst) % 64;
+        let fence_id = FENCE_COUNTER.fetch_add(1, Ordering::SeqCst) as u64 + 1;
+
+        // Step 1: TRANSFER_TO_HOST_2D with FENCE, blocking — guarantees DMA complete before flip
+        let req_transfer = TRANSFER_REQUESTS_VIRT.add(idx);
+        core::ptr::write(req_transfer, VirtioGpuTransferToHost2d {
+            hdr: VirtioGpuCtrlHeader {
+                type_: VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D,
+                flags: VIRTIO_GPU_FLAG_FENCE,
+                fence_id,
+                ctx_id: 0,
+                ring_idx: 0,
+                padding: [0; 3],
+            },
+            r: VirtioGpuRect { x, y, width: w, height: h },
+            offset: offset as u64,
+            resource_id: back_id,
+            padding: 0,
+        });
+        let req_phys = TRANSFER_REQUESTS_PHYS + (idx * core::mem::size_of::<VirtioGpuTransferToHost2d>()) as u64;
+        let resp_phys = TRANSFER_RESPONSES_PHYS + (idx * core::mem::size_of::<VirtioGpuCtrlHeader>()) as u64;
+        let resp_virt = TRANSFER_RESPONSES_VIRT.add(idx);
+        send_command_queue(0, &[req_phys], &[core::mem::size_of::<VirtioGpuTransferToHost2d>() as u32],
+                           &[resp_phys], &[24], true);
+        if (*resp_virt).type_ != VIRTIO_GPU_RESP_OK_NODATA {
+            crate::debugln!("VirtIO GPU: flip TRANSFER failed: {:#x}", (*resp_virt).type_);
+        }
+    }
+
+    // Step 2: SET_SCANOUT — flip display to back_id now that data is ready
+    set_scanout(back_id, screen_w, screen_h);
+
+    unsafe {
+        let idx = REQ_IDX.fetch_add(1, Ordering::SeqCst) % 64;
+        // Step 3: RESOURCE_FLUSH — present the newly scanned-out resource (non-blocking)
+        let req_flush = FLUSH_REQUESTS_VIRT.add(idx);
+        core::ptr::write(req_flush, VirtioGpuResourceFlush {
+            hdr: VirtioGpuCtrlHeader {
+                type_: VIRTIO_GPU_CMD_RESOURCE_FLUSH,
+                flags: 0,
+                fence_id: 0,
+                ctx_id: 0,
+                ring_idx: 0,
+                padding: [0; 3],
+            },
+            r: VirtioGpuRect { x, y, width: w, height: h },
+            resource_id: back_id,
+            padding: 0,
+        });
+        let req_phys = FLUSH_REQUESTS_PHYS + (idx * core::mem::size_of::<VirtioGpuResourceFlush>()) as u64;
+        let resp_phys = FLUSH_RESPONSES_PHYS + (idx * core::mem::size_of::<VirtioGpuCtrlHeader>()) as u64;
+        send_command_queue(0, &[req_phys], &[core::mem::size_of::<VirtioGpuResourceFlush>() as u32],
+                           &[resp_phys], &[24], false);
+    }
 }

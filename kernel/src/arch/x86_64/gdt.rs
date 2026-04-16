@@ -1,10 +1,49 @@
 use crate::memory::paging::HHDM_OFFSET;
 use core::arch::asm;
+use core::sync::atomic::Ordering;
 
 #[repr(C, packed)]
 struct GdtDescriptor {
     size: u16,
     offset: u64,
+}
+
+/// Return the virtual base address of the BSP GDT (after high-half relocation).
+/// Called by `smp.rs` before SIPI to let each AP copy the code/data entries.
+pub fn bsp_gdt_base() -> u64 {
+    unsafe {
+        let mut gdtr = GdtDescriptor { size: 0, offset: 0 };
+        asm!("sgdt [{}]", in(reg) &mut gdtr, options(nostack, preserves_flags));
+        gdtr.offset
+    }
+}
+
+/// Load the per-AP GDT published by the BSP in `AP_GDT_BASE`/`AP_GDT_LIMIT`,
+/// then load the TSS at selector 0x28 (GDT slot 5).
+/// Must be called early in `ap_entrance()` before `READY_COUNT` is incremented.
+pub fn init_ap_gdt_tss() {
+    use crate::arch::x86_64::smp::{AP_GDT_BASE, AP_GDT_LIMIT};
+    let base  = AP_GDT_BASE.load(Ordering::SeqCst);
+    let limit = AP_GDT_LIMIT.load(Ordering::SeqCst) as u16;
+    unsafe {
+        let gdtr = GdtDescriptor { size: limit, offset: base };
+        asm!("lgdt [{}]", in(reg) &gdtr, options(nostack, preserves_flags));
+        // Reload segment registers with kernel selectors.
+        // GS and FS are intentionally NOT reloaded here — GS_BASE is managed
+        // via WRMSR (0xC0000101) by init_per_cpu() to point to the per-CPU
+        // CpuLocal struct.  Loading GS from a flat GDT descriptor would set
+        // GS_BASE = 0 and break gs:[24] / gs:[32] accesses in the scheduler.
+        asm!(
+            "mov ax, 0x10",  // kernel data (GDT slot 2)
+            "mov ds, ax",
+            "mov es, ax",
+            "mov ss, ax",
+            out("ax") _,
+            options(nostack, preserves_flags)
+        );
+        // Load TSS at selector 0x28 (GDT slot 5, RPL=0)
+        asm!("ltr {:x}", in(reg) 0x28u16, options(nostack, preserves_flags));
+    }
 }
 
 pub fn reload_gdt_high_half() {

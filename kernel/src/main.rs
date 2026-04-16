@@ -53,6 +53,10 @@ pub extern "C" fn rust_main(bootinfo_ptr: u64) -> ! {
 
     arch::x86_64::gdt::reload_gdt_high_half();
 
+    // Enable SSE/SSE2 on the BSP — must happen before any heap use,
+    // because the allocator and memcpy may emit movdqu/movaps.
+    arch::x86_64::init_fpu();
+
     // Initialize per-CPU state for BSP (CPU 0)
     task::cpu::init_per_cpu(0, 0);
 
@@ -78,21 +82,33 @@ pub extern "C" fn rust_main(bootinfo_ptr: u64) -> ! {
 
     debugln!("SIGNPOST: Heap initialized.");
 
+    // Enumerate all PCI devices and build the device table before driver inits.
+    drivers::registry::enumerate();
+
     fs::dma::init();
     crate::fs::virtio::init();
+    if crate::fs::virtio::is_active() {
+        drivers::registry::set_active(drivers::registry::DriverKind::VirtioBlock);
+    }
     crate::fs::vfs::init();
 
     window_manager::events::GLOBAL_EVENT_QUEUE.lock().init();
     task::init();
     task::aot_worker::init();
+    window_manager::render_worker::init();
     debugln!("SIGNPOST: TaskManager initialized.");
 
     debugln!("SIGNPOST: Calling DISPLAY_SERVER.init()...");
     DISPLAY_SERVER.lock().init();
     debugln!("SIGNPOST: DISPLAY_SERVER initialized.");
     DISPLAY_SERVER.lock().force_full_sync(true);
+    drivers::registry::set_active(drivers::registry::DriverKind::VirtioGpu);
 
     debugln!("SIGNPOST: Drivers initialized.");
+
+    // Init USB host controller — must come before PS/2 init so HID devices
+    // are registered first; PS/2 drivers check has_keyboard/has_pointer().
+    drivers::usb::xhci::init();
 
     drivers::peripherals::keyboard::init();
     drivers::peripherals::mouse::init_mouse();
@@ -110,6 +126,8 @@ pub extern "C" fn rust_main(bootinfo_ptr: u64) -> ! {
         arch::x86_64::apic::set_irq(0, 32);
         arch::x86_64::apic::set_irq(2, 32);
         arch::x86_64::apic::set_irq(1, 33);
+        arch::x86_64::apic::set_irq(10, crate::fs::virtio::BLK_INT_VEC); // VirtIO Block
+        arch::x86_64::apic::set_irq(11, crate::arch::x86_64::exceptions::NET_INT); // VirtIO Net
         arch::x86_64::apic::set_irq(12, 44);
     }
 
@@ -123,6 +141,17 @@ pub extern "C" fn rust_main(bootinfo_ptr: u64) -> ! {
 
     if !hpet_initialized {
         drivers::peripherals::timer::init_pit(1000);
+    }
+
+    // Calibrate LAPIC timer now that HPET (or PIT fallback) is ready.
+    // APs will call init_lapic_timer(32) with this value to get their own preemption clock.
+    arch::x86_64::apic::calibrate_lapic_timer();
+
+    // Boot Application Processors.  Must come AFTER LAPIC calibration so each
+    // AP can call init_lapic_timer() with the BSP-measured tick count.
+    // Must come AFTER task::init() so APs can find tasks in the run queues.
+    if let Some(madt) = arch::x86_64::acpi::get_madt() {
+        arch::x86_64::smp::init(madt);
     }
 
     crate::debugln!("Mounting Ext2...");
@@ -172,6 +201,12 @@ pub fn load_idt() {
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
-    crate::debugln!("[KERNEL PANIC] >> {}", info);
+    let (file, line) = if let Some(loc) = info.location() {
+        (loc.file(), loc.line())
+    } else {
+        ("unknown", 0)
+    };
+    crate::debugln!("[KERNEL PANIC] File: {}, Line: {}", file, line);
+    crate::debugln!("Message: {}", info);
     loop {}
 }

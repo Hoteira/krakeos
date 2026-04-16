@@ -108,6 +108,9 @@ impl Idt {
         self.add_ring_3(exceptions::YIELD_INT as usize, task::yield_handler as u64);
         self.add(exceptions::KEYBOARD_INT as usize, exceptions::keyboard_handler as u64);
         self.add(exceptions::MOUSE_INT as usize, exceptions::mouse_handler as u64);
+        self.add(crate::fs::virtio::BLK_INT_VEC as usize, exceptions::blk_interrupt_handler as u64);
+        self.add(exceptions::NET_INT as usize, exceptions::net_interrupt_handler as u64);
+        self.add(crate::memory::vmm::TLB_SHOOTDOWN_VECTOR as usize, exceptions::tlb_shootdown_handler as u64);
     }
 }
 

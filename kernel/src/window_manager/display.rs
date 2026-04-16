@@ -31,7 +31,7 @@ pub struct DisplayServer {
     pub vbe_framebuffer: u64,
 
     // Damage tracking
-    pub damage_rects: [Option<Rect>; 8],
+    pub damage_rects: [Option<Rect>; 16],
     pub has_damage: bool,
 }
 
@@ -50,7 +50,7 @@ pub static DISPLAY_SERVER: Mutex<DisplayServer> = Mutex::new(DisplayServer {
     buffer2_virt: 0,
     active_resource_id: 1,
     vbe_framebuffer: 0,
-    damage_rects: [None; 8],
+    damage_rects: [None; 16],
     has_damage: false,
 });
 
@@ -63,7 +63,7 @@ impl DisplayServer {
         if w == 0 || h == 0 { return; }
         
         // Try to merge with or add to damage list
-        for i in 0..8 {
+        for i in 0..16 {
             if let Some(r) = self.damage_rects[i] {
                 // Check for overlap or containment
                 if x >= r.x && y >= r.y && (x + w as i32) <= (r.x + r.w as i32) && (y + h as i32) <= (r.y + r.h as i32) {
@@ -75,14 +75,14 @@ impl DisplayServer {
                 return;
             }
         }
-        
+
         // If list is full, merge into a bounding box in the first slot
         let mut min_x = x;
         let mut min_y = y;
         let mut max_x = x + w as i32;
         let mut max_y = y + h as i32;
-        
-        for i in 0..8 {
+
+        for i in 0..16 {
             if let Some(r) = self.damage_rects[i] {
                 if r.x < min_x { min_x = r.x; }
                 if r.y < min_y { min_y = r.y; }
@@ -101,7 +101,7 @@ impl DisplayServer {
     }
 
     pub fn reset_dirty(&mut self) {
-        for i in 0..8 { self.damage_rects[i] = None; }
+        for i in 0..16 { self.damage_rects[i] = None; }
         self.has_damage = false;
     }
 
@@ -140,30 +140,34 @@ impl DisplayServer {
                 let b1 = crate::memory::pmm::allocate_frames(pages).expect("Failed to allocate buffer 1");
                 let b2 = crate::memory::pmm::allocate_frames(pages).expect("Failed to allocate buffer 2");
 
-                // Map framebuffers as uncacheable MMIO so the GPU sees updates immediately
+                // Map both VirtIO framebuffers as uncacheable MMIO so the GPU sees updates immediately
                 let b1_virt = crate::memory::vmm::map_mmio(b1, size_bytes);
-                
-                // Use standard cached RAM for the double buffer to make alpha blending (read-modify-write) 100x faster
+                let b2_virt = crate::memory::vmm::map_mmio(b2, size_bytes);
+
+                // Use standard cached RAM for compositing to make alpha blending (read-modify-write) fast
                 let ram_db = crate::memory::pmm::allocate_frames(pages).expect("Failed to allocate RAM buffer");
                 let ram_virt = ram_db + crate::memory::paging::HHDM_OFFSET;
 
                 {
                     let b1_ptr = b1_virt as *mut u32;
+                    let b2_ptr = b2_virt as *mut u32;
                     let db_ptr = ram_virt as *mut u32;
                     for i in 0..(self.width * self.height) as usize {
                         *b1_ptr.add(i) = 0xFF333333; // Dark gray
-                        *db_ptr.add(i) = 0xFF333333; 
+                        *b2_ptr.add(i) = 0xFF333333;
+                        *db_ptr.add(i) = 0xFF333333;
                     }
                 }
 
                 self.buffer1_phys = b1;
                 self.buffer2_phys = b2;
                 self.buffer1_virt = b1_virt;
-                self.buffer2_virt = 0; // Unused in single-buffer mode
+                self.buffer2_virt = b2_virt;
 
-                self.framebuffer = b1_virt;
-                self.double_buffer = ram_virt;
+                // resource 1 = front (scanout), resource 2 = back (we composite here)
                 self.active_resource_id = 1;
+                self.framebuffer = b2_virt;
+                self.double_buffer = ram_virt;
 
                 // Ensure all cached zeroes from PMM are flushed to physical RAM
                 // before the GPU tries to read them via DMA.
@@ -246,7 +250,7 @@ impl DisplayServer {
                 let mut max_x = 0i32;
                 let mut max_y = 0i32;
                 
-                for i in 0..8 {
+                for i in 0..16 {
                     if let Some(r) = self.damage_rects[i] {
                         if r.x < min_x { min_x = r.x; }
                         if r.y < min_y { min_y = r.y; }
@@ -283,10 +287,16 @@ impl DisplayServer {
                             }
                         }
 
-                        // NON-BLOCKING transfer and flush to the single active resource
-                        // crate::debugln!("[DisplayServer] copy: calling virtio::flush...");
-                        virtio::flush(sx, sy, sw, sh, self.width as u32, self.active_resource_id, false);
-                        // crate::debugln!("[DisplayServer] copy: virtio::flush done.");
+                        // Double-buffer flip: TRANSFER(FENCE) → SET_SCANOUT → RESOURCE_FLUSH
+                        let back_id = 3 - self.active_resource_id;
+                        virtio::flip_and_flush(sx, sy, sw, sh, self.width as u32, self.height as u32, back_id);
+                        // Swap front/back: the buffer we just composed into is now the front
+                        self.active_resource_id = back_id;
+                        self.framebuffer = if self.active_resource_id == 1 {
+                            self.buffer2_virt  // resource 2 is now back
+                        } else {
+                            self.buffer1_virt  // resource 1 is now back
+                        };
                     }
                     self.sync_vbe_rect(sx, sy, sw, sh);
                 }

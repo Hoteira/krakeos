@@ -85,7 +85,16 @@
       "Bash(timeout 20 qemu-system-x86_64 -drive file=build/disk.img,format=raw,if=virtio -serial file:/tmp/krakeos_serial.log --no-reboot -device virtio-gpu-pci,xres=1024,yres=576 -display none -vga none -m 4G -accel kvm)",
       "Bash(genext2fs -d tree -b 262144 -B 1024 build/disk2.img)",
       "Bash(dd if=build/disk2.img of=build/disk.img seek=16384 bs=512 conv=notrunc)",
-      "Bash(timeout 25 qemu-system-x86_64 -drive file=build/disk.img,format=raw,if=virtio -serial file:/tmp/krakeos_serial.log --no-reboot -device virtio-gpu-gl-pci,xres=1024,yres=576 -display sdl,gl=on -vga none -m 4G -accel kvm)"
+      "Bash(timeout 25 qemu-system-x86_64 -drive file=build/disk.img,format=raw,if=virtio -serial file:/tmp/krakeos_serial.log --no-reboot -device virtio-gpu-gl-pci,xres=1024,yres=576 -display sdl,gl=on -vga none -m 4G -accel kvm)",
+      "Bash(RUSTFLAGS=\"-Awarnings\" cargo check --package=kernel -Z json-target-spec --target=swiftboot/bits64.json)",
+      "Bash(RUSTFLAGS=\"-Awarnings\" cargo check --package=std --target=wasm32-wasip2)",
+      "Bash(RUSTFLAGS=\"-Awarnings\" cargo +nightly build --target swiftboot/bits64.json -Z json-target-spec -p kernel)",
+      "Bash(RUSTFLAGS=\"-Awarnings\" cargo +nightly build -Z json-target-spec --package=kernel --target=swiftboot/bits64.json)",
+      "Bash(tee /tmp/krakeos_run.txt)",
+      "Bash(timeout 25 qemu-system-x86_64 -drive file=build/disk.img,format=raw,if=virtio -serial file:/tmp/krakeos_serial.txt --no-reboot -device virtio-gpu-gl-pci,xres=1024,yres=576 -display none -vga none -m 4G -accel kvm -smp 4)",
+      "Bash(DISPLAY=:0 timeout 30 qemu-system-x86_64 -drive file=build/disk.img,format=raw,if=virtio -serial file:/tmp/krakeos_serial2.txt -device virtio-gpu-gl-pci,xres=1024,yres=576 -display sdl,gl=on -vga none -m 4G -accel kvm -smp 4 -d int -D /tmp/qemu_int.txt)",
+      "Bash(DISPLAY=:0 timeout 30 qemu-system-x86_64 -drive file=build/disk.img,format=raw,if=virtio -serial file:/tmp/krakeos_serial3.txt -device virtio-gpu-gl-pci,xres=1024,yres=576 -display sdl,gl=on -vga none -m 4G -accel kvm -smp 4 --no-reboot)",
+      "Bash(DISPLAY=:0 timeout 30 qemu-system-x86_64 -drive file=build/disk.img,format=raw,if=virtio -serial file:/tmp/krakeos_s4.txt -device virtio-gpu-gl-pci,xres=1024,yres=576 -display sdl,gl=on -vga none -m 4G -accel kvm -smp 4 --no-reboot)"
     ]
   }
 }

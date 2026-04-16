@@ -27,6 +27,8 @@ pub struct Thread {
     pub gid: u32,
     pub is_queued: bool,
     pub process: Option<Arc<Process>>,
+    /// If Some(cpu_id), this thread must only run on that CPU.
+    pub pinned_cpu: Option<usize>,
 }
 
 #[repr(C, packed)]
@@ -82,6 +84,7 @@ impl Thread {
             gid: 0,
             is_queued: false,
             process: None,
+            pinned_cpu: None,
         }
     }
 }

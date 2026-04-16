@@ -23,37 +23,39 @@ pub static TASK_MANAGER: Mutex<TaskManager> = Mutex::new(TaskManager {
     thread_count: 0,
     tasks: BTreeMap::new(),
     run_queues: [const { VecDeque::new() }; 64],
-    next_tid: 1,
+    next_tid: 64,
 });
 
 impl TaskManager {
     pub fn init(&mut self) {
-        let mut idle_thread = Thread::new(b"idle");
-        idle_thread.state = ThreadState::Ready;
+        for cpu_id in 0..64 {
+            let mut idle_thread = Thread::new(b"idle");
+            idle_thread.state = ThreadState::Ready;
 
-        unsafe {
-            let kernel_proc = Process::new(0, 0, 0, None);
-            idle_thread.process = Some(kernel_proc);
+            unsafe {
+                let kernel_proc = Process::new(0, 0, 0, None);
+                idle_thread.process = Some(kernel_proc);
 
-            let stack_pages = (STACK_SIZE / 4096) as usize;
-            let stack_phys =
-                pmm::allocate_frames(stack_pages).expect("Idle stack allocation failed");
-            idle_thread.kernel_stack = stack_phys + STACK_SIZE + paging::HHDM_OFFSET;
+                let stack_pages = (STACK_SIZE / 4096) as usize;
+                let stack_phys =
+                    pmm::allocate_frames(stack_pages).expect("Idle stack allocation failed");
+                idle_thread.kernel_stack = stack_phys + STACK_SIZE + paging::HHDM_OFFSET;
 
-            let state_size = core::mem::size_of::<CPUState>();
-            let state_ptr = (idle_thread.kernel_stack - state_size as u64) as *mut CPUState;
-            idle_thread.cpu_state_ptr = state_ptr as u64;
+                let state_size = core::mem::size_of::<CPUState>();
+                let state_ptr = (idle_thread.kernel_stack - state_size as u64) as *mut CPUState;
+                idle_thread.cpu_state_ptr = state_ptr as u64;
 
-            (*state_ptr).rip = crate::task::scheduler::idle as u64;
-            (*state_ptr).cs = 0x08; // 64-bit kernel code segment (GDT index 1)
-            (*state_ptr).rflags = 0x202;
-            (*state_ptr).rsp = idle_thread.kernel_stack;
-            (*state_ptr).ss = 0x10;
+                (*state_ptr).rip = crate::task::scheduler::idle as u64;
+                (*state_ptr).cs = 0x08; // 64-bit kernel code segment (GDT index 1)
+                (*state_ptr).rflags = 0x202;
+                (*state_ptr).rsp = idle_thread.kernel_stack;
+                (*state_ptr).ss = 0x10;
 
-            self.tasks.insert(0, Box::new(idle_thread));
-            self.thread_count = 1;
-            // Do not push idle task to run queues, handle as fallback in get_next_thread
+                self.tasks.insert(cpu_id, Box::new(idle_thread));
+            }
         }
+        self.thread_count = 64;
+        // Do not push idle tasks to run queues, handle as fallback in get_next_thread
     }
 
     pub fn current_task_idx(&self) -> Option<usize> {
@@ -84,7 +86,17 @@ impl TaskManager {
             //crate::debugln!("[TaskManager] SCHEDULING TID 2!");
         }
 
-        let thread = self.tasks.get(&(next_tid as usize)).unwrap();
+        let thread = match self.tasks.get(&(next_tid as usize)) {
+            Some(t) => t,
+            None => {
+                crate::debugln!("TaskManager schedule: next_tid {} not found! Falling back to {}", next_tid, cpu_id);
+                crate::debugln!("Current keys in tasks map:");
+                for k in self.tasks.keys() {
+                    crate::debugln!(" - {}", k);
+                }
+                self.tasks.get(&cpu_id).unwrap()
+            }
+        };
         (
             thread.cpu_state_ptr as *mut CPUState,
             thread.kernel_stack,
@@ -98,6 +110,13 @@ impl TaskManager {
         for _ in 0..q_len {
             if let Some(tid) = self.run_queues[cpu_id].pop_front() {
                 if let Some(t) = self.tasks.get_mut(&tid) {
+                    // Respect CPU pinning: skip tasks pinned to a different CPU
+                    if let Some(pin) = t.pinned_cpu {
+                        if pin != cpu_id {
+                            self.run_queues[pin % 64].push_back(tid);
+                            continue;
+                        }
+                    }
                     if t.state == ThreadState::Ready {
                         t.is_queued = false;
                         return tid as isize;
@@ -109,13 +128,18 @@ impl TaskManager {
             }
         }
 
-        // 2. Try work stealing from other CPUs
+        // 2. Try work stealing from other CPUs (only steal non-pinned tasks)
         for i in 1..64 {
             let target_cpu = (cpu_id + i) % 64;
             let q_len = self.run_queues[target_cpu].len();
             for _ in 0..q_len {
                 if let Some(tid) = self.run_queues[target_cpu].pop_front() {
                     if let Some(t) = self.tasks.get_mut(&tid) {
+                        // Never steal pinned tasks
+                        if t.pinned_cpu.is_some() {
+                            self.run_queues[target_cpu].push_back(tid);
+                            continue;
+                        }
                         if t.state == ThreadState::Ready {
                             t.is_queued = false;
                             return tid as isize;
@@ -127,7 +151,14 @@ impl TaskManager {
             }
         }
 
-        0 // Fallback to idle
+        cpu_id as isize // Fallback to per-CPU idle
+    }
+
+    /// Pin a thread to a specific CPU. It will only ever run on that CPU.
+    pub fn pin_thread_to_cpu(&mut self, tid: usize, cpu_id: usize) {
+        if let Some(thread) = self.tasks.get_mut(&tid) {
+            thread.pinned_cpu = Some(cpu_id);
+        }
     }
 
     pub fn reserve_pid(&mut self) -> Result<usize, pmm::FrameError> {
@@ -142,7 +173,7 @@ impl TaskManager {
     }
 
     pub fn push_to_run_queue(&mut self, tid: usize) {
-        if tid == 0 {
+        if tid < 64 {
             return;
         }
         if let Some(thread) = self.tasks.get_mut(&tid) {
@@ -153,6 +184,37 @@ impl TaskManager {
                     cpu_id = 0;
                 }
                 self.run_queues[cpu_id].push_back(tid);
+            }
+        }
+    }
+
+    /// Explicitly push a newly spawned task to the least loaded CPU's run queue for
+    /// the first time; use `push_to_run_queue` when re-queuing an existing thread.
+    pub fn push_new_task(&mut self, tid: usize) {
+        if tid < 64 {
+            return;
+        }
+        if let Some(thread) = self.tasks.get_mut(&tid) {
+            if !thread.is_queued {
+                thread.is_queued = true;
+                // If the thread is pinned, push directly to the pinned CPU's queue
+                if let Some(pin) = thread.pinned_cpu {
+                    self.run_queues[pin % 64].push_back(tid);
+                    return;
+                }
+                let cpu_count = crate::arch::x86_64::smp::CPU_COUNT
+                    .load(core::sync::atomic::Ordering::Relaxed)
+                    .min(64);
+                let mut best_cpu = 0usize;
+                let mut min_len = usize::MAX;
+                for i in 0..cpu_count {
+                    let len = self.run_queues[i].len();
+                    if len < min_len {
+                        min_len = len;
+                        best_cpu = i;
+                    }
+                }
+                self.run_queues[best_cpu].push_back(tid);
             }
         }
     }
@@ -233,10 +295,10 @@ impl TaskManager {
         thread.process = Some(proc.clone());
         crate::spawn_debugln!("[TaskManager] init_user_task: proc.clone returned");
 
-        crate::spawn_debugln!("[TaskManager] init_user_task: calling pmm::allocate_frames(16)");
-        let k_frame = pmm::allocate_frames(16).ok_or(pmm::FrameError::NoMemory)?;
+        crate::spawn_debugln!("[TaskManager] init_user_task: calling pmm::allocate_frames(256)");
+        let k_frame = pmm::allocate_frames(256).ok_or(pmm::FrameError::NoMemory)?;
         crate::spawn_debugln!("[TaskManager] init_user_task: k_frame={:#x}", k_frame);
-        thread.kernel_stack = k_frame + 4096 * 16 + paging::HHDM_OFFSET;
+        thread.kernel_stack = k_frame + 1024 * 1024 + paging::HHDM_OFFSET;
         crate::spawn_debugln!("[TaskManager] init_user_task: kernel_stack={:#x}", thread.kernel_stack);
 
         let stack_pages = (STACK_SIZE / 4096) as usize;
@@ -378,9 +440,9 @@ impl TaskManager {
         self.tasks.insert(slot, thread_box);
         crate::spawn_debugln!("[TaskManager] init_user_task: tasks.insert returned");
         if is_ready {
-            crate::spawn_debugln!("[TaskManager] init_user_task: calling push_to_run_queue");
-            self.push_to_run_queue(slot);
-            crate::spawn_debugln!("[TaskManager] init_user_task: push_to_run_queue returned");
+            crate::spawn_debugln!("[TaskManager] init_user_task: calling push_new_task");
+            self.push_new_task(slot);
+            crate::spawn_debugln!("[TaskManager] init_user_task: push_new_task returned");
         }
         crate::spawn_debugln!("[TaskManager] init_user_task exit success");
         Ok(())
@@ -408,8 +470,8 @@ impl TaskManager {
         let mut thread = Thread::new(b"thread");
         thread.process = Some(parent_process.clone());
 
-        let k_frame = pmm::allocate_frames(64).ok_or(pmm::FrameError::NoMemory)?;
-        thread.kernel_stack = k_frame + 4096 * 64 + paging::HHDM_OFFSET;
+        let k_frame = pmm::allocate_frames(256).ok_or(pmm::FrameError::NoMemory)?;
+        thread.kernel_stack = k_frame + 1024 * 1024 + paging::HHDM_OFFSET;
 
         let state_size = core::mem::size_of::<CPUState>();
         let state_ptr = (thread.kernel_stack - state_size as u64) as *mut CPUState;
@@ -436,7 +498,7 @@ impl TaskManager {
 
         thread.state = ThreadState::Ready;
         self.tasks.insert(tid, Box::new(thread));
-        self.push_to_run_queue(tid);
+        self.push_new_task(tid);
 
         Ok(tid)
     }

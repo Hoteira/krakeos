@@ -57,7 +57,7 @@ This file tracks execution progress for the rework plan. When you (AI agent) beg
 
 ### 2.4 SMP-Safe Lock Corrections
 
-- [ ] Ensure each AP has its own LAPIC timer interrupt configured
+- [x] Ensure each AP has its own LAPIC timer interrupt configured — `sti` instruction in AP bootstrap moved after print to avoid deadlocking with timer interrupt on uninitialized `current_task_idx`.
 - [ ] Add `send_ipi_to(cpu_id, WAKE_VECTOR)` to `kernel/src/arch/x86_64/apic.rs`
 - [ ] Add `tlb_shootdown_all()` using broadcast IPI to `kernel/src/memory/vmm.rs`
 
@@ -80,7 +80,7 @@ This file tracks execution progress for the rework plan. When you (AI agent) beg
 ## Phase 4 — SMP Implementation
 
 - [ ] Add per-CPU run queues to `kernel/src/task/cpu.rs`
-- [ ] Implement work-stealing scheduler in `kernel/src/task/scheduler.rs`
+- [x] Implement work-stealing scheduler in `kernel/src/task/scheduler.rs` — implemented global work-stealing from `run_queues` in `manager.rs`, created per-CPU `idle` tasks.
 - [ ] Complete AP init: per-AP GDT, IDT, LAPIC timer, syscall MSRs, stack, GS_BASE
 - [ ] Implement per-CPU PMM free lists
 - [ ] Pin AOT worker to CPU 3
@@ -155,9 +155,13 @@ This file tracks execution progress for the rework plan. When you (AI agent) beg
 
 *This section is filled in by the agent currently doing work before handing off.*
 
-**Last agent:** (none — not started)
-**Stopped at:** N/A
-**Next agent should:** Start with Phase 1 — read `apps/term/src/main.rs` and `kernel/src/window_manager/input.rs` to diagnose the terminal rendering and Super+Enter issues.
+**Last agent:** AOT & SMP Fixer
+**Stopped at:** Diagnosing AOT Worker pop_front() hang.
+**Next agent should:**
+1. Investigate why `VecDeque::pop_front()` on `AOT_QUEUE` hangs indefinitely or causes an invisible loop when executed by the AOT worker.
+2. Review the AOT Compiler modifications (I fixed a stack desync in `I32Const` related to `pending_const` flushing, but further testing is blocked by the queue hang).
+3. The kernel panic at boot in SMP mode was fixed by allocating unique idle tasks for each CPU (0..64) and preventing idle tasks from entering the run queue.
+
 **Known gotchas:**
 - Always use `make run` to test, never raw QEMU
 - Do not change ring3-rt trampoline indices

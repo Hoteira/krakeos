@@ -489,3 +489,31 @@ pub fn unmap_and_free_range(virt_start: u64, size: u64) {
         }
     }
 }
+
+/// Vector reserved for TLB shootdown IPIs.
+/// Must match the IDT handler that calls `tlb_shootdown_handler()`.
+pub const TLB_SHOOTDOWN_VECTOR: u8 = 0x50;
+
+/// Flush the local TLB and acknowledge TLB shootdown (called from IDT handler).
+pub fn tlb_shootdown_handler() {
+    unsafe {
+        let cr3: u64;
+        core::arch::asm!("mov {}, cr3", out(reg) cr3);
+        core::arch::asm!("mov cr3, {}", in(reg) cr3);
+    }
+    crate::arch::x86_64::apic::eoi();
+}
+
+/// Invalidate TLBs on all CPUs by broadcasting a shootdown IPI.
+/// Call this after modifying kernel page table entries that are visible
+/// to other CPUs (e.g., `map_page`, `unmap_and_free_range`).
+pub fn tlb_shootdown_all() {
+    // Flush our own TLB first
+    unsafe {
+        let cr3: u64;
+        core::arch::asm!("mov {}, cr3", out(reg) cr3);
+        core::arch::asm!("mov cr3, {}", in(reg) cr3);
+    }
+    // Then kick all other CPUs
+    crate::arch::x86_64::apic::broadcast_ipi_except_self(TLB_SHOOTDOWN_VECTOR);
+}

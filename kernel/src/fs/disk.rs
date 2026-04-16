@@ -125,6 +125,23 @@ pub fn write(lba: u64, disk: u8, buffer: &[u8]) {
     outb(0x1F7, 0xE7);
 }
 
+/// Flush volatile write cache to stable storage.
+/// For VirtIO Block: issues `VIRTIO_BLK_T_FLUSH`.
+/// For legacy PIO: issues the ATA CACHE FLUSH EXT command (0xEA).
+#[allow(dead_code)]
+pub fn flush(disk: u8) {
+    if crate::fs::virtio::is_active() {
+        crate::fs::virtio::flush_write_cache(disk);
+        return;
+    }
+    // Legacy ATA flush
+    unsafe {
+        use crate::arch::x86_64::io::{outb, inb};
+        outb(0x1F7, 0xEA); // CACHE FLUSH EXT
+        while inb(0x1F7) & 0x80 != 0 { core::arch::asm!("int 0x81"); }
+    }
+}
+
 #[allow(dead_code)]
 pub fn reset() {
     outb(0x3f6, 0b00000110);

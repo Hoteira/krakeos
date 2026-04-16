@@ -227,24 +227,28 @@ pub extern "C" fn ap_entrance() -> ! {
 
     // Load the shared IDT (read-only; safe to share across all CPUs)
     unsafe {
-        crate::arch::x86_64::idt::IDT.load();
+        (*(&raw const crate::arch::x86_64::idt::IDT)).load();
     }
 
     // Initialise per-CPU MSRs (NX, PAT, SYSCALL/SYSRET targets)
     crate::arch::x86_64::init_syscall_msrs();
     crate::arch::x86_64::init_pat();
-    // crate::arch::x86_64::init_fpu(); // Stub
+    crate::arch::x86_64::init_fpu(); // Enable SSE/SSE2 on this AP
 
     crate::arch::x86_64::apic::enable_local_apic();
+
+    // Start per-AP LAPIC timer at vector 32 (same as BSP timer IRQ).
+    // Uses the count calibrated by the BSP against HPET; each AP runs
+    // its own countdown so preemption works without relying on IOAPIC routing.
+    crate::arch::x86_64::apic::init_lapic_timer(32);
 
     // AP is fully initialised — signal the BSP
     READY_COUNT.fetch_add(1, Ordering::SeqCst);
 
+    debugln!("SMP: Core ID {} online.", id);
+    
     unsafe { core::arch::asm!("sti"); }
 
-    debugln!("SMP: Core ID {} online.", id);
-
-    // Idle: the BSP's timer broadcasts will preempt this hlt and drive schedule()
     loop {
         unsafe { core::arch::asm!("hlt"); }
     }

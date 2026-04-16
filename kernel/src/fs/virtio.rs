@@ -6,12 +6,22 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 static LOCK: AtomicBool = AtomicBool::new(false);
 
-const VIRTIO_BLK_T_IN: u32 = 0;
-const VIRTIO_BLK_T_OUT: u32 = 1;
+/// Set by the VirtIO Block ISR on each queue completion; cleared before every request.
+static COMPLETION_FLAG: AtomicBool = AtomicBool::new(false);
 
+/// MMIO address of the VirtIO Block ISR status register (must be read to clear the interrupt).
+pub static mut BLK_ISR_ADDR: u64 = 0;
+
+/// IDT vector used for the VirtIO Block IRQ (IRQ10 → 0x20 + 10 = 42).
+pub const BLK_INT_VEC: u8 = 42;
+
+const VIRTIO_BLK_T_IN:    u32 = 0;
+const VIRTIO_BLK_T_OUT:   u32 = 1;
+const VIRTIO_BLK_T_FLUSH: u32 = 4; // Write barrier: flush volatile write cache
 
 const VIRTIO_CAP_COMMON: u8 = 1;
 const VIRTIO_CAP_NOTIFY: u8 = 2;
+const VIRTIO_CAP_ISR:    u8 = 3;
 
 const OFF_DEVICE_FEATURE_SELECT: usize = 0x00;
 const OFF_DEVICE_FEATURE: usize = 0x04;
@@ -167,6 +177,12 @@ pub fn init() {
                 notify_multiplier = virtio.read_capability_data(cap.offset as u8, 16);
                 debugln!("VirtIO Block: Notify mapped at {:#x} -> Phys {:#x}", notify_base, addr);
             }
+        } else if cfg_type == VIRTIO_CAP_ISR {
+            if let Some(bar_base) = bar_base_opt {
+                let addr = (bar_base as u64) + (offset as u64);
+                unsafe { BLK_ISR_ADDR = crate::memory::vmm::map_mmio(addr, length as usize); }
+                debugln!("VirtIO Block: ISR register mapped at {:#x}", unsafe { BLK_ISR_ADDR });
+            }
         }
     }
 
@@ -250,7 +266,7 @@ unsafe fn setup_queue(common_cfg: *mut u8, index: u16, notify_base: u64, notify_
         let used_addr = desc_addr + 2312;
 
         let avail_ptr = (avail_addr + crate::memory::paging::HHDM_OFFSET) as *mut VirtqAvail;
-        (*avail_ptr).flags = 1;
+        (*avail_ptr).flags = 0; // Enable queue interrupts (was VIRTQ_AVAIL_F_NO_INTERRUPT)
 
         write_64(common_cfg.add(OFF_QUEUE_DESC), desc_addr);
         write_64(common_cfg.add(OFF_QUEUE_DRIVER), avail_addr);
@@ -272,6 +288,16 @@ unsafe fn setup_queue(common_cfg: *mut u8, index: u16, notify_base: u64, notify_
             notify_addr,
         });
     }
+}
+
+/// Called from the VirtIO Block ISR (IDT vector BLK_INT_VEC).
+/// Reads the ISR status register (mandatory to clear the PCI interrupt), then
+/// sets COMPLETION_FLAG to wake the waiting `send_command` caller.
+pub fn on_disk_irq() {
+    if unsafe { BLK_ISR_ADDR } != 0 {
+        let _ = unsafe { crate::memory::mmio::read_8(BLK_ISR_ADDR as *mut u8) };
+    }
+    COMPLETION_FLAG.store(true, Ordering::Release);
 }
 
 pub fn read(lba: u64, _disk: u8, target: &mut [u8]) {
@@ -352,6 +378,26 @@ pub fn write(lba: u64, _disk: u8, buffer: &[u8]) {
     }
 }
 
+/// Issue a `VIRTIO_BLK_T_FLUSH` to ensure all preceding writes have reached
+/// stable storage.  Must be called after any sequence of writes that should
+/// survive a power failure (e.g., after updating an Ext2 inode or bitmap).
+pub fn flush_write_cache(_disk: u8) {
+    let header = VirtioBlkReqHeader {
+        type_: VIRTIO_BLK_T_FLUSH,
+        reserved: 0,
+        sector: 0,
+    };
+    let status: u8 = 255;
+    let req_phys    = crate::memory::paging::virt_to_phys(&header as *const _ as u64);
+    let status_phys = crate::memory::paging::virt_to_phys(&status  as *const _ as u64);
+    unsafe {
+        send_command(
+            &[req_phys],  &[core::mem::size_of::<VirtioBlkReqHeader>() as u32],
+            &[status_phys], &[1],
+        );
+    }
+}
+
 fn write_chunk(lba: u64, buffer: &[u8]) {
     let header = VirtioBlkReqHeader {
         type_: VIRTIO_BLK_T_OUT,
@@ -396,105 +442,101 @@ fn write_chunk(lba: u64, buffer: &[u8]) {
 }
 
 unsafe fn send_command(out_phys: &[u64], out_lens: &[u32], in_phys: &[u64], in_lens: &[u32]) {
-    let int_enabled = crate::arch::x86_64::idt::interrupts();
+    // Per-request serialization: only one request in flight at a time.
+    // Spin rather than yield: we may be called from boot context (IF=0),
+    // from an interrupt handler, or from inside a lock-critical section.
+    // The disk ISR fires on CPU 0 via IOAPIC and sets COMPLETION_FLAG
+    // asynchronously; we do not need to explicitly invoke the scheduler.
     while LOCK.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
-        if int_enabled {
-            unsafe {
-                core::arch::asm!("sti");
-                core::arch::asm!("int 0x81");
-                core::arch::asm!("cli");
+        core::hint::spin_loop();
+    }
+
+    // Clear per-request completion flag before submitting (SeqCst: visible to ISR).
+    COMPLETION_FLAG.store(false, Ordering::SeqCst);
+
+    // Phase 1: submit request to virtqueue.
+    // BLK_QUEUE Mutex (Spinlock) disables interrupts for the duration of the submit.
+    // Guard drop re-enables them so the ISR can fire while we wait in Phase 2.
+    {
+        let mut guard = BLK_QUEUE.lock();
+        match guard.as_mut() {
+            None => {
+                LOCK.store(false, Ordering::Release);
+                return;
             }
-        } else {
-            core::hint::spin_loop();
+            Some(vq) => {
+                let total_descs = out_phys.len() + in_phys.len();
+                let num_usize = vq.num as usize;
+                let mut current_desc_idx = vq.free_head as usize;
+                let virt_desc_base = (vq.desc_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqDesc;
+
+                for i in 0..out_phys.len() {
+                    *(virt_desc_base.add(current_desc_idx)) = VirtqDesc {
+                        addr: out_phys[i], len: out_lens[i],
+                        flags: 1, next: ((current_desc_idx + 1) % num_usize) as u16,
+                    };
+                    current_desc_idx = (current_desc_idx + 1) % num_usize;
+                }
+                for i in 0..in_phys.len() {
+                    let flags = if i == in_phys.len() - 1 { 2 } else { 2 | 1 };
+                    *(virt_desc_base.add(current_desc_idx)) = VirtqDesc {
+                        addr: in_phys[i], len: in_lens[i],
+                        flags, next: ((current_desc_idx + 1) % num_usize) as u16,
+                    };
+                    current_desc_idx = (current_desc_idx + 1) % num_usize;
+                }
+
+                let last_idx = (vq.free_head as usize + total_descs - 1) % num_usize;
+                let last_desc_ptr = virt_desc_base.add(last_idx);
+                (*last_desc_ptr).flags &= !1;
+                (*last_desc_ptr).next = 0;
+
+                let avail_ptr = (vq.avail_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqAvail;
+                let idx = (*avail_ptr).idx;
+                (*avail_ptr).ring[(idx % vq.num) as usize] = vq.free_head;
+                core::sync::atomic::fence(Ordering::SeqCst);
+                (*avail_ptr).idx = idx.wrapping_add(1);
+                write_volatile(vq.notify_addr as *mut u16, vq.queue_index);
+
+                vq.free_head = ((vq.free_head as usize + total_descs) % num_usize) as u16;
+            }
         }
-    }
+    } // BLK_QUEUE guard dropped here; ISR may now fire if interrupts were enabled
 
-    core::arch::asm!("cli");
-
-    let mut blk_queue_guard = BLK_QUEUE.lock();
-    let vq = match blk_queue_guard.as_mut() {
-        Some(q) => q,
-        None => {
-            LOCK.store(false, Ordering::Release);
-            if int_enabled { core::arch::asm!("sti"); }
-            return;
-        }
-    };
-
-    let total_descs = out_phys.len() + in_phys.len();
-    let num_usize = vq.num as usize;
-    let mut current_desc_idx = vq.free_head as usize;
-
-
-    let virt_desc_base = (vq.desc_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqDesc;
-
-    for i in 0..out_phys.len() {
-        let desc = VirtqDesc {
-            addr: out_phys[i],
-            len: out_lens[i],
-            flags: 1,
-            next: ((current_desc_idx + 1) % num_usize) as u16,
-        };
-        unsafe { *(virt_desc_base).add(current_desc_idx) = desc; }
-        current_desc_idx = (current_desc_idx + 1) % num_usize;
-    }
-
-
-    for i in 0..in_phys.len() {
-        let flags = if i == in_phys.len() - 1 { 2 } else { 2 | 1 };
-        let desc = VirtqDesc {
-            addr: in_phys[i],
-            len: in_lens[i],
-            flags,
-            next: ((current_desc_idx + 1) % num_usize) as u16,
-        };
-        unsafe { *(virt_desc_base).add(current_desc_idx) = desc; }
-        current_desc_idx = (current_desc_idx + 1) % num_usize;
-    }
-
-
-    let last_idx = (vq.free_head as usize + total_descs - 1) % num_usize;
-    let last_desc_ptr = unsafe { (virt_desc_base).add(last_idx) };
-    unsafe {
-        (*last_desc_ptr).flags &= !1;
-        (*last_desc_ptr).next = 0;
-    }
-
-
-    let avail_ptr = (vq.avail_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqAvail;
-    let idx = unsafe { (*avail_ptr).idx };
-    unsafe { (*avail_ptr).ring[(idx % vq.num) as usize] = vq.free_head; }
-
-    core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
-    unsafe { (*avail_ptr).idx = idx.wrapping_add(1); }
-
-
-    unsafe { write_volatile(vq.notify_addr as *mut u16, vq.queue_index); }
-
-
-    vq.free_head = ((vq.free_head as usize + total_descs) % num_usize) as u16;
-
-    let used_ptr = (vq.used_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqUsed;
+    // Phase 2: per-request completion wait.
+    // Fast path: ISR calls on_disk_irq() → sets COMPLETION_FLAG.
+    // Fallback: poll used ring directly (works if IRQ not routed via IOAPIC).
+    let mut timeout: u64 = 1_000_000_000;
     loop {
-        let used_idx = unsafe { read_volatile(core::ptr::addr_of!((*used_ptr).idx)) };
-        if used_idx != vq.last_used_idx {
+        if COMPLETION_FLAG.load(Ordering::Acquire) {
+            COMPLETION_FLAG.store(false, Ordering::Release);
             break;
         }
-        
-        if int_enabled {
-            unsafe { 
-                core::arch::asm!("sti");
-                core::arch::asm!("int 0x81");
-                core::arch::asm!("cli");
+        // Polled fallback: check used ring under BLK_QUEUE lock.
+        {
+            let guard = BLK_QUEUE.lock();
+            if let Some(vq) = guard.as_ref() {
+                let used_ptr = (vq.used_phys + crate::memory::paging::HHDM_OFFSET) as *const VirtqUsed;
+                let used_idx = read_volatile(core::ptr::addr_of!((*used_ptr).idx));
+                if used_idx != vq.last_used_idx { break; }
             }
-        } else {
-            core::hint::spin_loop();
+        }
+        // Spin: on a multi-CPU system the disk ISR fires on CPU 0 via IOAPIC
+        // and sets COMPLETION_FLAG via a Release store; we will see it on the
+        // next Acquire load above without needing an explicit scheduler yield.
+        // Timer preemption continues to work normally in the background.
+        core::hint::spin_loop();
+        timeout -= 1;
+        if timeout == 0 { break; }
+    }
+
+    // Phase 3: advance the used-ring consumer index.
+    {
+        let mut guard = BLK_QUEUE.lock();
+        if let Some(vq) = guard.as_mut() {
+            vq.last_used_idx = vq.last_used_idx.wrapping_add(1);
         }
     }
 
-    vq.last_used_idx = vq.last_used_idx.wrapping_add(1);
-
     LOCK.store(false, Ordering::Release);
-
-    if int_enabled { core::arch::asm!("sti"); }
 }

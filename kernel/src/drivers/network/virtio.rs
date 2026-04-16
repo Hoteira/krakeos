@@ -10,6 +10,9 @@ use alloc::string::String;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 static LOCK: AtomicBool = AtomicBool::new(false);
+/// Mapped virtual address of the VirtIO Net ISR status register.
+/// Read (and clear) on every interrupt to acknowledge pending RX/config events.
+pub static mut NET_ISR_ADDR: u64 = 0;
 
 const VIRTIO_CAP_COMMON: u8 = 1;
 const VIRTIO_CAP_NOTIFY: u8 = 2;
@@ -161,6 +164,8 @@ pub fn init() -> Result<(), String> {
             } else if cfg_type == VIRTIO_CAP_NOTIFY {
                 notify_base = vmm::map_mmio(addr, length as usize);
                 notify_multiplier = device.read_capability_data(cap.offset as u8, 16);
+            } else if cfg_type == VIRTIO_CAP_ISR {
+                unsafe { NET_ISR_ADDR = vmm::map_mmio(addr, length as usize); }
             } else if cfg_type == 4 {
                 // Device specific (MAC)
                 let virt_addr = vmm::map_mmio(addr, length as usize);
@@ -239,6 +244,14 @@ pub fn init() -> Result<(), String> {
 
         // Populate RX queue
         fill_rx_queue(&mut net_dev);
+
+        // Enable RX interrupts: clear VIRTQ_AVAIL_F_NO_INTERRUPT on queue 0.
+        // The device will now assert its legacy PCI interrupt (IRQ 11 → vector 43)
+        // when it places a received packet in the used ring.
+        if let Some(vq) = &net_dev.rx_queue {
+            let avail_ptr = (vq.avail_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqAvail;
+            (*avail_ptr).flags = 0; // 0 = interrupts enabled
+        }
 
         *NET_DEVICE.lock() = Some(net_dev);
 
@@ -485,4 +498,14 @@ pub fn send_packet(data: &[u8]) -> usize {
 
     unsafe { write_16(vq.notify_addr as *mut u8, vq.queue_index); }
     0
+}
+
+/// Read and clear the VirtIO Net ISR status register.
+/// Returns the ISR byte: bit 0 = queue interrupt, bit 1 = config change.
+/// Must be called from the network interrupt handler to acknowledge the interrupt.
+pub fn read_isr() -> u8 {
+    unsafe {
+        if NET_ISR_ADDR == 0 { return 0; }
+        crate::memory::mmio::read_8(NET_ISR_ADDR as *mut u8)
+    }
 }
