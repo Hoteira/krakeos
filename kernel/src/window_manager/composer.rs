@@ -720,13 +720,19 @@ impl Composer {
         } // <-- interrupts re-enabled here
 
         // Phase 2: copy double-buffer → framebuffer + VirtIO notify (fast).
-        {
+        let flip_params = {
             let mut ds = DISPLAY_SERVER.lock();
             if VIRTIO_ACTIVE.load(core::sync::atomic::Ordering::SeqCst) {
-                ds.copy();
+                ds.copy()
             } else {
                 ds.present_rect(dirty_x, dirty_y, dirty_w, dirty_h);
+                None
             }
+        };
+
+        if let Some((sx, sy, sw, sh, screen_w, screen_h, back_id)) = flip_params {
+            crate::drivers::video::virtio::flip_and_flush(sx, sy, sw, sh, screen_w, screen_h, back_id);
+            DISPLAY_SERVER.lock().finish_copy(back_id);
         }
     }
 
@@ -838,26 +844,44 @@ impl Composer {
     }
 
     pub fn recompose_all(&self) {
-        let (sw, sh) = {
+        let flip_params = {
             let mut ds = DISPLAY_SERVER.lock();
             let sw = ds.width as u32;
             let sh = ds.height as u32;
+            ds.mark_dirty(0, 0, sw, sh);
             self.recompose_area(&mut ds, 0, 0, sw, sh);
-            (sw, sh)
-        }; // interrupts re-enabled
-        let mut ds = DISPLAY_SERVER.lock();
-        if VIRTIO_ACTIVE.load(core::sync::atomic::Ordering::SeqCst) { ds.copy(); } else { ds.present_rect(0, 0, sw, sh); }
+            if VIRTIO_ACTIVE.load(core::sync::atomic::Ordering::SeqCst) {
+                ds.copy()
+            } else {
+                ds.present_rect(0, 0, sw, sh);
+                None
+            }
+        };
+
+        if let Some((sx, sy, sw, sh, screen_w, screen_h, back_id)) = flip_params {
+            crate::drivers::video::virtio::flip_and_flush(sx, sy, sw, sh, screen_w, screen_h, back_id);
+            DISPLAY_SERVER.lock().finish_copy(back_id);
+        }
     }
 
     pub fn recompose_except(&self, except_id: u64) {
-        let (sw, sh) = {
+        let flip_params = {
             let mut ds = DISPLAY_SERVER.lock();
             let sw = ds.width as u32;
             let sh = ds.height as u32;
+            ds.mark_dirty(0, 0, sw, sh);
             self.recompose_area_except(&mut ds, 0, 0, sw, sh, except_id);
-            (sw, sh)
-        }; // interrupts re-enabled
-        let mut ds = DISPLAY_SERVER.lock();
-        if VIRTIO_ACTIVE.load(core::sync::atomic::Ordering::SeqCst) { ds.copy(); } else { ds.present_rect(0, 0, sw, sh); }
+            if VIRTIO_ACTIVE.load(core::sync::atomic::Ordering::SeqCst) {
+                ds.copy()
+            } else {
+                ds.present_rect(0, 0, sw, sh);
+                None
+            }
+        };
+
+        if let Some((sx, sy, sw, sh, screen_w, screen_h, back_id)) = flip_params {
+            crate::drivers::video::virtio::flip_and_flush(sx, sy, sw, sh, screen_w, screen_h, back_id);
+            DISPLAY_SERVER.lock().finish_copy(back_id);
+        }
     }
 }

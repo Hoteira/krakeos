@@ -163,6 +163,7 @@ fn process_aot_request(req: AotRequest) {
                     let ctx = &mut *(info.ctx_ptr as *mut std::wasm::aot::runtime::Ring3Context);
                     ctx.stack_base = info.stack_base as *mut u128;
                     ctx.stack_limit = info.stack_limit as usize;
+                    ctx.module_addr = info.module_addr;
                     crate::spawn_debugln!("[AOTWorker] partial ctx updated");
                     ctx.locals_base = (info.stack_base - 8 * 1024 * 1024) as *mut u128;
                     crate::spawn_debugln!("[AOTWorker] ctx updated fully");

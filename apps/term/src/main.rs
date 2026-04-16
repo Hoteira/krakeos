@@ -39,10 +39,6 @@ fn update_term_size(win: &Window) {
 }
 
 pub fn main() {
-    debugln!(
-        "WAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-    );
-
     let width = 800;
     let height = 400;
 
@@ -62,14 +58,10 @@ pub fn main() {
         let _ = std::os::krakeos::terminal_set_window_size(0, rows, cols);
     }
 
-    debugln!("OCDOSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS");
-
     let screen_w = std::os::graphics::get_screen_width();
     let screen_h = std::os::graphics::get_screen_height();
     let x = (screen_w / 2).saturating_sub(width / 2);
     let y = (screen_h / 2).saturating_sub(height / 2);
-
-    debugln!("OCDOSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS");
 
     let mut fds_out = [0i32; 2];
     std::os::pipe(&mut fds_out);
@@ -206,6 +198,9 @@ pub fn main() {
                             text.text = term_buffer.render();
                         }
                     }
+                    needs_redraw = true;
+                }
+                inkui::Event::Redraw(_) => {
                     needs_redraw = true;
                 }
                 _ => {}

@@ -108,53 +108,53 @@ pub fn handle_get_events(context: &mut CPUState) {
     let buf_size = (max_events as u64) * (core::mem::size_of::<Event>() as u64);
     if !super::validate_user_buf(context, context.rsi, buf_size) { return; }
 
-    // If the process has a registered queue, drain from it directly.
+    let mut count = 0usize;
+    let buf_ptr = context.rsi as *mut Event;
+
+    // Phase 1: Local Event Queue
     {
         let tm = TASK_MANAGER.int_lock();
         if let Some(idx) = tm.current_task_idx() {
             if let Some(thread) = tm.tasks.get(&(idx)) {
                 if let Some(proc) = thread.process.as_ref() {
-                    let buf_ptr = context.rsi as *mut Event;
-
                     let (header_ptr, buf_virt, capacity) = *proc.event_queue.lock();
                     if header_ptr != 0 {
                         let header = unsafe { &*(header_ptr as *const EventQueueHeader) };
-                        let mut count = 0usize;
                         while count < max_events {
                             let tail = header.tail.load(Ordering::Relaxed);
                             if tail == header.head.load(Ordering::Acquire) {
                                 break;
                             }
                             let event = unsafe { (buf_virt as *const Event).add(tail as usize).read() };
-                            header.tail.store((tail + 1) % capacity, Ordering::Release);
+                            
                             if event.get_window_id() == wid || wid == 0 {
+                                // Match! Remove from queue and copy to user
+                                header.tail.store((tail + 1) % capacity, Ordering::Release);
                                 unsafe { buf_ptr.add(count).write(event); }
                                 count += 1;
+                            } else {
+                                // Not for this window. Stop draining local queue so we don't
+                                // discard events for other windows.
+                                break;
                             }
                         }
-                        context.rax = count as u64;
-                        return;
                     }
                 }
             }
         }
     }
 
-    // Fallback: processes without a registered queue use the global queue.
-    unsafe {
-        let buf_ptr = context.rsi as *mut Event;
-
-        let events = GLOBAL_EVENT_QUEUE.int_lock().get_and_remove_events(wid, max_events);
-        let user_slice = core::slice::from_raw_parts_mut(buf_ptr, max_events);
-        let mut count = 0;
-        for (i, evt) in events.into_iter().enumerate() {
-            if i < max_events {
-                user_slice[i] = evt;
-                count += 1;
-            }
+    // Phase 2: Global Event Queue
+    if count < max_events {
+        let mut global_queue = GLOBAL_EVENT_QUEUE.int_lock();
+        let global_events = global_queue.get_and_remove_events(wid, max_events - count);
+        for evt in global_events {
+            unsafe { buf_ptr.add(count).write(evt); }
+            count += 1;
         }
-        context.rax = count as u64;
     }
+
+    context.rax = count as u64;
 }
 
 pub fn handle_register_event_queue(context: &mut CPUState) {

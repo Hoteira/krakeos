@@ -241,7 +241,7 @@ impl DisplayServer {
         }
     }
 
-    pub fn copy(&mut self) {
+    pub fn copy(&mut self) -> Option<(u32, u32, u32, u32, u32, u32, u32)> {
         if VIRTIO_ACTIVE.load(Ordering::SeqCst) {
             if self.has_damage {
                 // 1. Calculate a single bounding box for all damage this frame
@@ -286,21 +286,17 @@ impl DisplayServer {
                                 );
                             }
                         }
-
-                        // Double-buffer flip: TRANSFER(FENCE) → SET_SCANOUT → RESOURCE_FLUSH
-                        let back_id = 3 - self.active_resource_id;
-                        virtio::flip_and_flush(sx, sy, sw, sh, self.width as u32, self.height as u32, back_id);
-                        // Swap front/back: the buffer we just composed into is now the front
-                        self.active_resource_id = back_id;
-                        self.framebuffer = if self.active_resource_id == 1 {
-                            self.buffer2_virt  // resource 2 is now back
-                        } else {
-                            self.buffer1_virt  // resource 1 is now back
-                        };
                     }
+
+                    let back_id = 3 - self.active_resource_id;
+                    let screen_w = self.width as u32;
+                    let screen_h = self.height as u32;
+                    
+                    self.reset_dirty();
                     self.sync_vbe_rect(sx, sy, sw, sh);
+                    
+                    return Some((sx, sy, sw, sh, screen_w, screen_h, back_id));
                 }
-                
                 self.reset_dirty();
             }
         } else {
@@ -313,6 +309,16 @@ impl DisplayServer {
                 );
             }
         }
+        None
+    }
+
+    pub fn finish_copy(&mut self, back_id: u32) {
+        self.active_resource_id = back_id;
+        self.framebuffer = if self.active_resource_id == 1 {
+            self.buffer2_virt
+        } else {
+            self.buffer1_virt
+        };
     }
 
     pub fn copy_to_fb(&mut self, x: i32, y: i32, width: u32, height: u32) {

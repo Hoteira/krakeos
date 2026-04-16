@@ -164,7 +164,7 @@ pub extern "C" fn rust_main(bootinfo_ptr: u64) -> ! {
     }
 
     crate::debugln!("Spawning trivial test process (WASM)...");
-    match crate::syscalls::spawn_process("/sys/bin/init.wasm", None, None, None, false) {
+    match crate::syscalls::spawn_process("/sys/bin/init.wasm", None, None, None, true) {
         Ok(pid) => crate::debugln!("Trivial test process spawned with PID {}", pid),
         Err(e) => {
             crate::debugln!("Failed to spawn trivial test: {}", e);

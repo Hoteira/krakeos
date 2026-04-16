@@ -530,9 +530,28 @@ impl<'a, T: Config> Store<'a, T> {
                         unsafe {
                             *ctx.table0_ptr.add(i) = match entry {
                                 Ref::Func(addr) => {
-                                    if let FuncInst::WasmFunc(wf) = self.functions.get(*addr) {
-                                        wf.aot_ptr.unwrap_or(0) as u64
-                                    } else { 0 }
+                                    let func = self.functions.get(*addr);
+                                    match func {
+                                        FuncInst::WasmFunc(wf) => wf.aot_ptr.unwrap_or(0) as u64,
+                                        FuncInst::HostFunc(_) => {
+                                            // Find the import index for this host function
+                                            let mut import_idx = None;
+                                            let mod_inst = self.modules.get(module_addr);
+                                            for (j, &f_addr) in mod_inst.func_addrs.iter().enumerate() {
+                                                if f_addr == *addr {
+                                                    import_idx = Some(j);
+                                                    break;
+                                                }
+                                            }
+                                            if let Some(idx) = import_idx {
+                                                // Point to the CallHost trampoline entry in the jump table?
+                                                // No, we need a stub that passes the index.
+                                                // For now, we point to 0 and let CallIndirect handle it if it can.
+                                                // Actually, let's point to a special value.
+                                                0xDEADC0DE00000000 | (idx as u64)
+                                            } else { 0 }
+                                        }
+                                    }
                                 }
                                 _ => 0,
                             };

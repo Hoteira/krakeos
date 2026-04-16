@@ -267,9 +267,9 @@ impl Ext2 {
             let mut cache = self.cache.lock();
             for i in 0..num_sectors {
                 let lba = start_lba + i;
-                if let Some(cached) = cache.get(lba) {
-                    let buf_start = (i * 512) as usize;
-                    buffer[buf_start..buf_start + 512].copy_from_slice(cached);
+                let buf_start = (i * 512) as usize;
+                if cache.get(lba).is_none() {
+                    cache.insert(lba, &buffer[buf_start..buf_start + 512], false);
                 }
             }
             return;

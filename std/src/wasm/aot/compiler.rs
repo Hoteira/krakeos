@@ -96,7 +96,91 @@ impl<'a> AotCompiler<'a> {
     }
 
     pub fn compile_module(&mut self) -> crate::wasm::aot::runtime::AotModule {
+        // MARKER
         let mut func_offsets = Vec::new();
+
+        // --- Dead Code Elimination (Pass 1: Reachability) ---
+        let imported = self.validation_info.imports_length.imported_functions;
+        let total = imported + self.validation_info.functions.len();
+        let mut reachable = crate::alloc::vec![false; total];
+        let mut worklist: Vec<usize> = crate::alloc::vec::Vec::new();
+
+        // Mark all as reachable for now
+        for i in 0..total {
+            reachable[i] = true;
+        }
+        /*
+        for exp in &self.validation_info.exports {
+            if let crate::wasm::common::reader::types::export::ExportDesc::FuncIdx(idx) = exp.desc {
+                if !reachable[idx] {
+                    reachable[idx] = true;
+                    worklist.push(idx);
+                }
+            }
+        }
+
+        // 2. Start function is reachable
+        if let Some(idx) = self.validation_info.start {
+            if !reachable[idx as usize] {
+                reachable[idx as usize] = true;
+                worklist.push(idx as usize);
+            }
+        }
+
+        // 3. Table entries are reachable (assume RefFuncs for now)
+        let mut all_reachable = false;
+        for elem in &self.validation_info.elements {
+            match &elem.init {
+                crate::wasm::common::reader::types::element::ElemItems::RefFuncs(indices) => {
+                    for &idx in indices {
+                        if !reachable[idx as usize] {
+                            reachable[idx as usize] = true;
+                            worklist.push(idx as usize);
+                        }
+                    }
+                }
+                _ => {
+                    // Constant expressions might reference functions; be conservative
+                    all_reachable = true;
+                }
+            }
+        }
+
+        if all_reachable {
+            for i in 0..total { reachable[i] = true; }
+        } else {
+            // Transitively find all reachable functions
+            while let Some(func_idx) = worklist.pop() {
+                if func_idx < imported { continue; }
+                let (span, _) = self.validation_info.func_blocks_stps[func_idx - imported];
+                let mut reader = WasmReader::new(self.validation_info.wasm);
+                reader.pc = span.from;
+                let _ = crate::wasm::common::validation::code::read_declared_locals(&mut reader).unwrap();
+
+                let body_end = span.from + span.len;
+                while reader.pc < body_end {
+                    if let Ok(instr) = Instruction::read(&mut reader) {
+                        match instr {
+                            Instruction::Call(idx) => {
+                                if !reachable[idx as usize] {
+                                    reachable[idx as usize] = true;
+                                    worklist.push(idx as usize);
+                                }
+                            }
+                            Instruction::RefFunc(idx) => {
+                                if !reachable[idx as usize] {
+                                    reachable[idx as usize] = true;
+                                    worklist.push(idx as usize);
+                                }
+                            }
+                            _ => {}
+                        }
+                    } else { break; }
+                }
+            }
+        }
+
+        */
 
         // 0. Jump to the first function to skip trap handlers
         let entry_jump_label = self.emitter.new_label();
@@ -155,6 +239,11 @@ impl<'a> AotCompiler<'a> {
             let offset = self.emitter.code.len();
             func_offsets.push(offset);
 
+            if !reachable[func_idx] {
+                self.emitter.ud2();
+                continue;
+            }
+
             self.compile_function_body(i);
         }
 
@@ -165,7 +254,8 @@ impl<'a> AotCompiler<'a> {
     fn compile_function_body(&mut self, local_func_idx: usize) {
         self.control_stack.clear();
         self.stack_depth = 0;
-        self.trap_halt_label = self.emitter.new_label();
+        
+        let local_trap_halt_label = self.emitter.new_label();
 
         let total_imported_funcs = self.validation_info.imports_length.imported_functions;
         let func_idx = local_func_idx + total_imported_funcs;
@@ -273,8 +363,7 @@ impl<'a> AotCompiler<'a> {
 
         while !self.control_stack.is_empty() {
             let instr = Instruction::read(&mut reader).unwrap();
-            self.emit_integrity_check();
-            self.compile_instruction(instr, &mut reader);
+            self.compile_instruction(instr, &mut reader, local_trap_halt_label);
         }
 
         self.emitter.mov_mem64_reg(Reg::RBP, -56, Reg::RSP); // Save results pointer securely
@@ -282,7 +371,7 @@ impl<'a> AotCompiler<'a> {
         let epilogue_label = self.emitter.new_label();
         self.emitter.jmp_label(epilogue_label);
 
-        self.emitter.bind_label(self.trap_halt_label);
+        self.emitter.bind_label(local_trap_halt_label);
         self.emitter.xor_reg_reg(Reg::RAX, Reg::RAX);
         self.emitter.mov_mem64_reg(Reg::RBP, -56, Reg::RAX); // Null result pointer for traps
 
@@ -377,7 +466,12 @@ impl<'a> AotCompiler<'a> {
         self.emitter.call_reg(Reg::RAX);
     }
 
-    fn compile_instruction(&mut self, instr: Instruction, reader: &mut WasmReader) {
+    fn compile_instruction(&mut self, instr: Instruction, reader: &mut WasmReader, trap_halt_label: usize) {
+        // Restore context registers once at the start of each instruction
+        self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48);
+        self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16);
+        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -64);
+
         match instr {
             Instruction::Nop => {}
             Instruction::Unreachable => self.emitter.jmp_label(self.trap_unreachable_label),
@@ -394,11 +488,16 @@ impl<'a> AotCompiler<'a> {
                 self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48); // Pass Context in RDI
                 self.emitter.call_reg(Reg::RAX);
 
-                self.emitter.mov_reg_reg(Reg::RSP, Reg::RAX); // RAX = new SP from callee
+                self.emitter.mov_reg_reg(Reg::RSP, Reg::RAX);
                 self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48);
                 self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16);
-                self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -64); // Restore current locals_base
+                self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -64);
                 self.emit_sp_sanity_check();
+
+                // Check trap_code
+                self.emitter.mov_reg_mem64(Reg::RAX, Reg::RDI, 64); // trap_code pointer
+                self.emitter.cmp_mem32_imm32(Reg::RAX, 0, 0); // cmp dword ptr [rax], 0
+                self.emitter.jcc_label(0x85, trap_halt_label); // jne local trap_halt_label
 
                 self.stack_depth = (self.stack_depth as isize - 1 + result_count as isize
                     - param_count as isize) as usize;
@@ -410,21 +509,16 @@ impl<'a> AotCompiler<'a> {
             Instruction::Select => {
                 self.emitter.pop_wasm_stack(Reg::RCX); // condition
                 self.emitter.test_reg32_reg32(Reg::RCX, Reg::RCX);
-                let else_label = self.emitter.new_label();
-                self.emitter.jcc_label(0x84, else_label);
 
-                // Condition is true: result is val1 (pushed first, so at RSP + 16)
-                self.emitter.mov_reg_mem64(Reg::RAX, Reg::RSP, 16);
-                self.emitter.mov_reg_mem64(Reg::RDX, Reg::RSP, 24);
-                let end_label = self.emitter.new_label();
-                self.emitter.jmp_label(end_label);
-
-                self.emitter.bind_label(else_label);
-                // Condition is false: result is val2 (pushed second, so at RSP)
-                self.emitter.mov_reg_mem64(Reg::RAX, Reg::RSP, 0);
+                self.emitter.mov_reg_mem64(Reg::RAX, Reg::RSP, 0); // val2 (pushed second)
                 self.emitter.mov_reg_mem64(Reg::RDX, Reg::RSP, 8);
+                self.emitter.mov_reg_mem64(Reg::R10, Reg::RSP, 16); // val1 (pushed first)
+                self.emitter.mov_reg_mem64(Reg::R11, Reg::RSP, 24);
 
-                self.emitter.bind_label(end_label);
+                // If condition is true (non-zero), select val1
+                self.emitter.cmov_reg_reg(0x45, Reg::RAX, Reg::R10); // CMOVNE RAX, R10
+                self.emitter.cmov_reg_reg(0x45, Reg::RDX, Reg::R11); // CMOVNE RDX, R11
+
                 self.emitter.add_reg_imm32(Reg::RSP, 32); // Pop val1 and val2
                 self.emitter.push_wasm_stack(Reg::RAX);
                 self.emitter.mov_mem64_reg(Reg::RSP, 8, Reg::RDX);
@@ -450,7 +544,6 @@ impl<'a> AotCompiler<'a> {
             }
 
             Instruction::RefFunc(idx) => {
-                self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48); // context
                 self.emitter.mov_reg_mem64(Reg::RAX, Reg::RDI, 112); // func_table_ptr
                 self.emitter
                     .mov_reg_mem64(Reg::RAX, Reg::RAX, (idx as i32) * 8); // load absolute addr
@@ -1360,7 +1453,7 @@ impl<'a> AotCompiler<'a> {
                     // Check trap_code
                     self.emitter.mov_reg_mem64(Reg::RAX, Reg::RDI, 64); // trap_code pointer
                     self.emitter.cmp_mem32_imm32(Reg::RAX, 0, 0); // cmp dword ptr [rax], 0
-                    self.emitter.jcc_label(0x85, self.trap_halt_label); // jne trap_halt_label
+                    self.emitter.jcc_label(0x85, trap_halt_label); // jne trap_halt_label
                 } else {
                     // Local function call
                     self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48); // Pass Context in RDI
@@ -1376,7 +1469,7 @@ impl<'a> AotCompiler<'a> {
                     // Check trap_code
                     self.emitter.mov_reg_mem64(Reg::RAX, Reg::RDI, 64); // trap_code pointer
                     self.emitter.cmp_mem32_imm32(Reg::RAX, 0, 0); // cmp dword ptr [rax], 0
-                    self.emitter.jcc_label(0x85, self.trap_halt_label); // jne trap_halt_label
+                    self.emitter.jcc_label(0x85, trap_halt_label); // jne trap_halt_label
                 }
                 self.stack_depth = (self.stack_depth as isize + result_count as isize
                     - param_count as isize) as usize;
@@ -1413,7 +1506,7 @@ impl<'a> AotCompiler<'a> {
                 // Check trap_code
                 self.emitter.mov_reg_mem64(Reg::RAX, Reg::RDI, 64); // trap_code pointer
                 self.emitter.cmp_mem32_imm32(Reg::RAX, 0, 0); // cmp dword ptr [rax], 0
-                self.emitter.jcc_label(0x85, self.trap_halt_label); // jne trap_halt_label
+                self.emitter.jcc_label(0x85, trap_halt_label); // jne trap_halt_label
 
                 self.stack_depth = (self.stack_depth as isize - 1 + result_count as isize
                     - param_count as isize) as usize;

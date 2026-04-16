@@ -50,7 +50,15 @@ fn dump_ctx(ctx: &Ring3Context) {
 
 #[no_mangle]
 pub extern "C" fn trap_generic(ctx: &mut Ring3Context, rbp_val: *mut u128) -> *mut u128 {
-    print_str("AOT TRAP! (generic)\n  rbp=");
+    let mut rip: u64 = 0;
+    unsafe {
+        // Read return address from stack. 
+        // emit_call_trampoline used 'call RAX', so it's at [RSP].
+        core::arch::asm!("mov {}, [rsp]", out(reg) rip);
+    }
+    print_str("AOT TRAP! (generic)\n  rip=");
+    print_hex(rip);
+    print_str("\n  rbp=");
     print_hex(rbp_val as u64);
     print_str("\n  trap_code=");
     print_hex(unsafe { *ctx.trap_code } as u64);

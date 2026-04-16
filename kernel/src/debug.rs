@@ -81,21 +81,6 @@ impl SerialDebug {
             }
         }
     }
-
-    pub fn write_kb(&self, s: &str) {
-        for byte in s.bytes() {
-            match byte {
-                0x20..=0x7e | b'\n' => {
-                    self.write_byte(byte);
-                }
-                b'\r' => {}
-
-                _ => {
-                    self.write_byte(0xfe);
-                }
-            }
-        }
-    }
 }
 
 impl fmt::Write for SerialDebug {
@@ -133,13 +118,17 @@ impl<'a> fmt::Write for ArrayWriter<'a> {
     }
 }
 
+pub static DEBUG_LOCK: crate::sync::Mutex<()> = crate::sync::Mutex::new(());
+
 pub fn serial_print_str(s: &str) {
+    let _lock = DEBUG_LOCK.lock();
     SerialDebug::new().write_string(s);
 }
 
 #[doc(hidden)]
 pub fn _debug_print(args: fmt::Arguments) {
     use core::fmt::Write;
+    let _lock = DEBUG_LOCK.lock();
     SerialDebug::new().write_fmt(args).unwrap();
 }
 
@@ -171,9 +160,7 @@ macro_rules! print {
 }
 
 #[macro_export]
-
 macro_rules! println {
     () => ($crate::print!("\n"));
     ($($arg:tt)*) => ($crate::print!("{}\n", format_args!($($arg)*)));
-
 }

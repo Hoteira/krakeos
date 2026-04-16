@@ -1129,6 +1129,20 @@ impl X64Emitter {
         self.modrm(3, 3, reg as u8);
     }
 
+    pub fn cmovcc_reg_mem64(&mut self, cc: u8, dst: Reg, base: Reg, offset: i32) {
+        self.rex(true, dst as u8, 0, base as u8);
+        self.emit_u8(0x0F);
+        self.emit_u8(0x40 | (cc & 0x0F));
+        self.emit_modrm_mem(dst, base, offset);
+    }
+
+    pub fn cmov_reg_reg(&mut self, cc: u8, dst: Reg, src: Reg) {
+        self.rex(true, dst as u8, 0, src as u8);
+        self.emit_u8(0x0F);
+        self.emit_u8(0x40 | (cc & 0x0F));
+        self.modrm(3, dst as u8, src as u8);
+    }
+
     // --- SETcc instructions ---
 
     /// SETcc: set byte based on condition code

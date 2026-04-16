@@ -613,9 +613,73 @@ pub extern "C" fn krakeos_debug_get_process_list(ctx: &mut Ring3Context, sp: *mu
     }
 }
 
+/// kill(pid: u64, result_ptr: u32)
+#[no_mangle]
+pub extern "C" fn krakeos_debug_kill(_ctx: &mut Ring3Context, sp: *mut u128) -> *mut u128 {
+    unsafe {
+        sp.add(2)
+    }
+}
+
+/// dump-vma(result_ptr: u32)
+#[no_mangle]
+pub extern "C" fn krakeos_debug_dump_vma(_ctx: &mut Ring3Context, sp: *mut u128) -> *mut u128 {
+    unsafe {
+        sp.add(1)
+    }
+}
+
+/// get-memory-usage() -> (u64, u64)
+#[no_mangle]
+pub extern "C" fn krakeos_debug_get_memory_usage(_ctx: &mut Ring3Context, sp: *mut u128) -> *mut u128 {
+    unsafe {
+        let result_sp = sp.sub(2);
+        *result_sp = 0;
+        *result_sp.add(1) = 0;
+        result_sp
+    }
+}
+
 // =============================================================================
 // KrakeOS Container
 // =============================================================================
+
+/// plant(wasm_ptr: u32, wasm_len: u32, offset: u32, size: u32, fds_ptr: u32, fds_len: u32) -> u64
+#[no_mangle]
+pub extern "C" fn krakeos_container_plant(_ctx: &mut Ring3Context, sp: *mut u128) -> *mut u128 {
+    unsafe {
+        // consumes 6 args, returns 1
+        let result_sp = sp.add(6).sub(1);
+        *result_sp = 0; // Fails
+        result_sp
+    }
+}
+
+/// plant-from-path(path_ptr: u32, path_len: u32, offset: u32, size: u32, fds_ptr: u32, fds_len: u32) -> u64
+#[no_mangle]
+pub extern "C" fn krakeos_container_plant_from_path(_ctx: &mut Ring3Context, sp: *mut u128) -> *mut u128 {
+    unsafe {
+        let result_sp = sp.add(6).sub(1);
+        *result_sp = 0;
+        result_sp
+    }
+}
+
+/// harvest(child_id: u64, result_ptr: u32)
+#[no_mangle]
+pub extern "C" fn krakeos_container_harvest(_ctx: &mut Ring3Context, sp: *mut u128) -> *mut u128 {
+    unsafe {
+        sp.add(2)
+    }
+}
+
+/// list-children(result_ptr: u32)
+#[no_mangle]
+pub extern "C" fn krakeos_container_list_children(_ctx: &mut Ring3Context, sp: *mut u128) -> *mut u128 {
+    unsafe {
+        sp.add(1)
+    }
+}
 
 /// kill-child(id: i64, result_ptr: i32)
 #[no_mangle]

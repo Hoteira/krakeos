@@ -35,8 +35,17 @@ impl<T> Spinlock<T> {
         #[cfg(target_arch = "wasm32")]
         { rflags = 0; }
 
+        let mut count = 0;
         while self.lock.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
             core::hint::spin_loop();
+            #[cfg(target_arch = "wasm32")]
+            {
+                count += 1;
+                if count >= 1000 {
+                    count = 0;
+                    crate::os::yield_task();
+                }
+            }
         }
 
         SpinlockGuard {

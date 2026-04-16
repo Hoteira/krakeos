@@ -313,6 +313,7 @@ pub extern "C" fn aot_f64_nearest(a: f64) -> f64 {
 }
 
 #[unsafe(no_mangle)]
+#[unsafe(no_mangle)]
 pub extern "C" fn aot_f32_min(a: f32, b: f32) -> f32 {
     let bits_a = a.to_bits();
     let bits_b = b.to_bits();
@@ -1553,6 +1554,14 @@ pub fn get_trampoline_table() -> *const usize {
         SyncPtr(aot_call_indirect as *const ()),
         SyncPtr(aot_call_host as *const ()),
         SyncPtr(aot_ref_func as *const ()),
+        SyncPtr(aot_f32_ceil as *const ()),
+        SyncPtr(aot_f32_floor as *const ()),
+        SyncPtr(aot_f32_trunc as *const ()),
+        SyncPtr(aot_f32_nearest as *const ()),
+        SyncPtr(aot_f64_ceil as *const ()),
+        SyncPtr(aot_f64_floor as *const ()),
+        SyncPtr(aot_f64_trunc as *const ()),
+        SyncPtr(aot_f64_nearest as *const ()),
         SyncPtr(aot_v128_load_lane as *const ()),
         SyncPtr(aot_v128_store_lane as *const ()),
         SyncPtr(aot_v128_and as *const ()),
