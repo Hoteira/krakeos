@@ -56,23 +56,27 @@ pub fn handle_socket(context: &mut CPUState) {
 
     let mut tm = crate::task::TASK_MANAGER.int_lock();
     if let Some(current) = tm.current_task_idx() {
-        let pid = tm.tasks.get(&(current)).unwrap().process.as_ref().unwrap().pid;
+        let pid = if let Some(t) = tm.tasks.get(&(current)) {
+            if let Some(p) = t.process.as_ref() { p.pid } else { context.rax = u64::MAX; return; }
+        } else { context.rax = u64::MAX; return; };
+        
         let socket_id = crate::net::socket::SOCKET_MANAGER.lock().create_socket(pid, socket_kind);
         
         if let Some(thread) = tm.tasks.get_mut(&(current)) {
-            let proc = thread.process.as_ref().unwrap();
-            let mut table = proc.socket_table.lock();
-            for i in 0..table.len() {
-                if table[i].is_none() {
-                    table[i] = Some(socket_id);
-                    context.rax = i as u64;
-                    return;
+            if let Some(proc) = thread.process.as_ref() {
+                let mut table = proc.socket_table.lock();
+                for i in 0..table.len() {
+                    if table[i].is_none() {
+                        table[i] = Some(socket_id);
+                        context.rax = i as u64;
+                        return;
+                    }
                 }
+                let new_fd = table.len();
+                table.push(Some(socket_id));
+                context.rax = new_fd as u64;
+                return;
             }
-            let new_fd = table.len();
-            table.push(Some(socket_id));
-            context.rax = new_fd as u64;
-            return;
         }
     }
     context.rax = u64::MAX;
@@ -213,19 +217,22 @@ pub fn handle_accept(context: &mut CPUState) {
         
         let mut tm = crate::task::TASK_MANAGER.int_lock();
         if let Some(current) = tm.current_task_idx() {
-            let proc = tm.tasks.get(&(current)).unwrap().process.as_ref().unwrap();
-            let mut table = proc.socket_table.lock();
-            for i in 0..table.len() {
-                if table[i].is_none() {
-                    table[i] = Some(new_sid);
-                    context.rax = i as u64;
+            if let Some(t) = tm.tasks.get(&(current)) {
+                if let Some(proc) = t.process.as_ref() {
+                    let mut table = proc.socket_table.lock();
+                    for i in 0..table.len() {
+                        if table[i].is_none() {
+                            table[i] = Some(new_sid);
+                            context.rax = i as u64;
+                            return;
+                        }
+                    }
+                    let new_fd = table.len();
+                    table.push(Some(new_sid));
+                    context.rax = new_fd as u64;
                     return;
                 }
             }
-            let new_fd = table.len();
-            table.push(Some(new_sid));
-            context.rax = new_fd as u64;
-            return;
         }
     }
     context.rax = u64::MAX;
@@ -288,12 +295,15 @@ pub fn handle_close_socket(context: &mut CPUState) {
     let fd = context.rdi as usize;
     let mut tm = crate::task::TASK_MANAGER.int_lock();
     if let Some(current) = tm.current_task_idx() {
-        let proc = tm.tasks.get(&(current)).unwrap().process.as_ref().unwrap();
-        let mut table = proc.socket_table.lock();
-        if fd < table.len() {
-            table[fd] = None;
-            context.rax = 0;
-            return;
+        if let Some(t) = tm.tasks.get(&(current)) {
+            if let Some(proc) = t.process.as_ref() {
+                let mut table = proc.socket_table.lock();
+                if fd < table.len() {
+                    table[fd] = None;
+                    context.rax = 0;
+                    return;
+                }
+            }
         }
     }
     context.rax = u64::MAX;

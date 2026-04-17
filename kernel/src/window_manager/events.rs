@@ -41,25 +41,26 @@ impl EventQueue {
 
         if let Some(thread) = tm.tasks.get_mut(&(pid as usize)) {
             if thread.state == crate::task::ThreadState::Zombie { return false; }
-            let proc = thread.process.as_ref().unwrap();
-            let (header_ptr, buf_ptr, capacity) = *proc.event_queue.lock();
-            if header_ptr == 0 {
-                return false;
+            if let Some(proc) = thread.process.as_ref() {
+                let (header_ptr, buf_ptr, capacity) = *proc.event_queue.lock();
+                if header_ptr == 0 {
+                    return false;
+                }
+                let header = unsafe { &*(header_ptr as *const EventQueueHeader) };
+                let head = header.head.load(Ordering::Relaxed);
+                let next_head = (head + 1) % capacity;
+                
+                if next_head == header.tail.load(Ordering::Acquire) {
+                    return true; // queue full — swallow silently (process is registered)
+                }
+                
+                unsafe { (buf_ptr as *mut Event).add(head as usize).write(event); }
+                header.head.store(next_head, Ordering::Release);
+                
+                // Wake up the thread if it's waiting for an event
+                crate::task::event_manager::signal_event_internal(tm, crate::task::event_manager::AsyncEvent::Generic(pid));
+                return true;
             }
-            let header = unsafe { &*(header_ptr as *const EventQueueHeader) };
-            let head = header.head.load(Ordering::Relaxed);
-            let next_head = (head + 1) % capacity;
-            
-            if next_head == header.tail.load(Ordering::Acquire) {
-                return true; // queue full — swallow silently (process is registered)
-            }
-            
-            unsafe { (buf_ptr as *mut Event).add(head as usize).write(event); }
-            header.head.store(next_head, Ordering::Release);
-            
-            // Wake up the thread if it's waiting for an event
-            crate::task::event_manager::signal_event_internal(tm, crate::task::event_manager::AsyncEvent::Generic(pid));
-            return true;
         }
         false
     }

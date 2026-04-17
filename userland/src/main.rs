@@ -48,8 +48,8 @@ pub fn main() {
 
     println!("Desktop Environment Initialized.");
 
-    if let Ok(mut file) = File::open("/sys/img/wallpaper2.png") {
-    ...
+    if let Ok(mut file) = File::open("/sys/img/wallpaper2.png") {}
+
     std::thread::spawn(|| {
         std::wasm::run("/apps/container_test.wasm", "/", &[(0, 0), (1, 1), (2, 2)], true);
     });

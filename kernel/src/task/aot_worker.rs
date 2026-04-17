@@ -4,7 +4,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use crate::task::{TASK_MANAGER, ThreadState};
 use std::wasm::runner::{WasmRunResult, run_with_buffer};
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{Ordering, AtomicI64};
 
 pub struct AotRequest {
     pub pid: u64,
@@ -17,7 +17,7 @@ pub struct AotRequest {
 }
 
 static AOT_QUEUE: Mutex<VecDeque<AotRequest>> = Mutex::new(VecDeque::new());
-static AOT_SEMAPHORE: std::sync::Semaphore = std::sync::Semaphore::new(0);
+static AOT_WORKER_TID: AtomicI64 = AtomicI64::new(-1);
 
 static PENDING_SPAWN: Mutex<VecDeque<(String, bool)>> = Mutex::new(VecDeque::new());
 
@@ -25,16 +25,43 @@ pub fn request_spawn(path: &str, debug: bool) {
     let mut q = PENDING_SPAWN.lock();
     q.push_back((String::from(path), debug));
     drop(q);
-    AOT_SEMAPHORE.signal();
+    let tid = AOT_WORKER_TID.load(Ordering::SeqCst);
+    if tid >= 0 {
+        crate::task::event_manager::signal_event(crate::task::event_manager::AsyncEvent::Generic(tid as u64));
+    }
 }
 
 extern "C" fn aot_thread_main() {
     crate::spawn_debugln!("[AOTWorker] aot_thread_main entry");
     crate::spawn_debugln!("[AOTWorker] entering outer loop");
+    let my_tid = AOT_WORKER_TID.load(Ordering::SeqCst) as u64;
     loop {
-        crate::spawn_debugln!("[AOTWorker] before AOT_SEMAPHORE.wait()");
-        AOT_SEMAPHORE.wait();
-        crate::spawn_debugln!("[AOTWorker] after AOT_SEMAPHORE.wait()");
+        {
+            let mut tm = TASK_MANAGER.int_lock();
+            let current_idx = crate::task::cpu::get_current_task_idx() as usize;
+            let mut em = crate::task::event_manager::EVENT_MANAGER.int_lock();
+
+            let p_len = PENDING_SPAWN.lock().len();
+            let a_len = AOT_QUEUE.lock().len();
+
+            if p_len == 0 && a_len == 0 {
+                if !em.check_pending(current_idx, crate::task::event_manager::AsyncEvent::Generic(my_tid)) {
+                    if let Some(thread) = tm.tasks.get_mut(&current_idx) {
+                        thread.state = ThreadState::WaitingForEvent;
+                        em.register(current_idx, crate::task::event_manager::AsyncEvent::Generic(my_tid));
+                    }
+                }
+            } else {
+                em.check_pending(current_idx, crate::task::event_manager::AsyncEvent::Generic(my_tid));
+            }
+        }
+
+        unsafe {
+            core::arch::asm!("sti");
+            core::arch::asm!("int 0x81");
+            core::arch::asm!("cli");
+        }
+
         crate::spawn_debugln!("[AOTWorker] entering inner loop");
         loop {
         crate::debugln!("[AOTWorker] before PENDING_SPAWN.lock()");
@@ -103,7 +130,10 @@ extern "C" fn aot_thread_main() {
 
 pub fn init() {
     let mut tm = TASK_MANAGER.lock();
-    let _ = tm.spawn_thread(0, aot_thread_main as u64, 0, 0);
+    if let Ok(tid) = tm.spawn_thread(0, aot_thread_main as u64, 0, 0) {
+        AOT_WORKER_TID.store(tid as i64, Ordering::SeqCst);
+        tm.pin_thread_to_cpu(tid, 3);
+    }
 }
 
 pub fn submit_request(req: AotRequest) {
@@ -117,9 +147,10 @@ pub fn submit_request(req: AotRequest) {
     crate::spawn_debugln!("[AOTWorker] before drop(q)");
     drop(q);
     crate::spawn_debugln!("[AOTWorker] after drop(q)");
-    crate::spawn_debugln!("[AOTWorker] before AOT_SEMAPHORE.signal()");
-    AOT_SEMAPHORE.signal();
-    crate::spawn_debugln!("[AOTWorker] after AOT_SEMAPHORE.signal()");
+    let tid = AOT_WORKER_TID.load(Ordering::SeqCst);
+    if tid >= 0 {
+        crate::task::event_manager::signal_event(crate::task::event_manager::AsyncEvent::Generic(tid as u64));
+    }
     crate::spawn_debugln!("[AOTWorker] submit_request exit");
 }
 

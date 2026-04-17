@@ -78,7 +78,7 @@ pub struct EventQueueHeader {
 /// automatically on drop.
 pub struct EventQueue {
     header: alloc::boxed::Box<EventQueueHeader>,
-    buf: alloc::vec::Vec<Event>,
+    buf: alloc::boxed::Box<[Event]>,
 }
 
 impl EventQueue {
@@ -90,7 +90,7 @@ impl EventQueue {
                 capacity: capacity as u32,
                 _pad: 0,
             }),
-            buf: alloc::vec![Event::None; capacity],
+            buf: alloc::vec![Event::None; capacity].into_boxed_slice(),
         }
     }
 

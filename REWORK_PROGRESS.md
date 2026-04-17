@@ -83,7 +83,7 @@ This file tracks execution progress for the rework plan. When you (AI agent) beg
 - [x] Implement work-stealing scheduler in `kernel/src/task/scheduler.rs` — implemented global work-stealing from `run_queues` in `manager.rs`, created per-CPU `idle` tasks.
 - [ ] Complete AP init: per-AP GDT, IDT, LAPIC timer, syscall MSRs, stack, GS_BASE
 - [ ] Implement per-CPU PMM free lists
-- [ ] Pin AOT worker to CPU 3
+- [x] Pin AOT worker to CPU 3
 
 ---
 
@@ -131,7 +131,8 @@ This file tracks execution progress for the rework plan. When you (AI agent) beg
 
 ## Phase 9 — Tiling WM Optimization
 
-- [ ] Fix double-resize bug: compute layout once, send one resize event per window
+- [x] Fix double-resize bug: compute layout once, send one resize event per window — FIXED: Tiling now reliably dispatches Resize events exactly once. Added proper event coalescing in `inkui`.
+- [x] Fix the event system and how events are received @inkui — FIXED: `inkui` previously instantiated a separate event queue per `Window`, overwriting the process-wide event queue pointer in the kernel. This caused older windows in the same process to never receive events (such as `Resize`), preventing them from matching `tiled_width` and appearing on-screen. `inkui` now uses a static `GLOBAL_EVENT_QUEUE` per process.
 - [ ] Implement damage rect tracking in `kernel/src/window_manager/composer.rs`
 - [ ] Decouple render loop from syscall handlers
 - [ ] Ensure zero new spinlocks introduced
@@ -155,12 +156,12 @@ This file tracks execution progress for the rework plan. When you (AI agent) beg
 
 *This section is filled in by the agent currently doing work before handing off.*
 
-**Last agent:** AOT & SMP Fixer
-**Stopped at:** Diagnosing AOT Worker pop_front() hang.
+**Last agent:** Kernel Stability Fixer
+**Stopped at:** Fixed AOT Worker invisible loop and pinned it to CPU 3. Also cleaned up `unwrap()` panics across kernel syscalls to ensure stability.
 **Next agent should:**
-1. Investigate why `VecDeque::pop_front()` on `AOT_QUEUE` hangs indefinitely or causes an invisible loop when executed by the AOT worker.
-2. Review the AOT Compiler modifications (I fixed a stack desync in `I32Const` related to `pending_const` flushing, but further testing is blocked by the queue hang).
-3. The kernel panic at boot in SMP mode was fixed by allocating unique idle tasks for each CPU (0..64) and preventing idle tasks from entering the run queue.
+1. Review the AOT Compiler modifications in `std` (I32Const stack desync fix) since the queue hang is now resolved.
+2. Complete remaining Phase 4 SMP implementation tasks (per-AP GDT/IDT, LAPIC timer, per-CPU run queues, etc.).
+3. Implement `BTreeMap` sector cache replacement in `kernel/src/fs/ext2/fs.rs` (it's partially a HashCache right now, check if fully matching the plan).
 
 **Known gotchas:**
 - Always use `make run` to test, never raw QEMU

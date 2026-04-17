@@ -83,10 +83,12 @@ pub fn handle_read(context: &mut CPUState) {
     let (proc, is_nonblock) = {
         let tm = crate::task::TASK_MANAGER.int_lock();
         if let Some(idx) = tm.current_task_idx() {
-            let t = tm.tasks.get(&(idx)).unwrap();
-            let p = t.process.as_ref().unwrap().clone();
-            let nb = p.fd_nonblock.lock().get(fd).copied().unwrap_or(false);
-            (Some(p), nb)
+            if let Some(t) = tm.tasks.get(&(idx)) {
+                if let Some(p) = t.process.as_ref() {
+                    let nb = p.fd_nonblock.lock().get(fd).copied().unwrap_or(false);
+                    (Some(p.clone()), nb)
+                } else { (None, false) }
+            } else { (None, false) }
         } else { (None, false) }
     };
 
@@ -158,7 +160,10 @@ pub fn handle_poll(context: &mut CPUState) {
         let mut ready_count = 0;
 
         let mut tm = crate::task::TASK_MANAGER.int_lock();
-        let current_idx = tm.current_task_idx().unwrap();
+        let current_idx = match tm.current_task_idx() {
+            Some(idx) => idx,
+            None => { context.rax = u64::MAX; return; }
+        };
         let mut em = crate::task::event_manager::EVENT_MANAGER.int_lock();
 
         if em.check_pending(current_idx, crate::task::event_manager::AsyncEvent::Generic(current_idx as u64)) {
@@ -174,33 +179,42 @@ pub fn handle_poll(context: &mut CPUState) {
 
             if pfd.fd == 0 {
                 em.register(current_idx, crate::task::event_manager::AsyncEvent::Read(0));
-                let proc = tm.tasks.get(&(current_idx)).unwrap().process.as_ref().unwrap();
-                if !proc.stdin_buffer.lock().is_empty() {
-                    pfd.revents |= POLLIN;
+                if let Some(t) = tm.tasks.get(&(current_idx)) {
+                    if let Some(proc) = t.process.as_ref() {
+                        if !proc.stdin_buffer.lock().is_empty() {
+                            pfd.revents |= POLLIN;
+                        }
+                    }
                 }
             } else if pfd.fd >= 0 {
-                let proc = tm.tasks.get(&(current_idx)).unwrap().process.as_ref().unwrap();
-                let fd_table = proc.fd_table.lock();
-                if (pfd.fd as usize) < fd_table.len() {
-                    let gfd = fd_table[pfd.fd as usize];
-                    if gfd != -1 {
-                        if let Some(handle) = crate::fs::vfs::get_file(gfd as usize) {
-                            use crate::fs::vfs::FileHandle;
-                            match handle {
-                                FileHandle::Pipe { pipe } => {
-                                    em.register(current_idx, crate::task::event_manager::AsyncEvent::IO(pipe.id()));
-                                    if (pfd.events & POLLIN) != 0 && pipe.available() > 0 { pfd.revents |= POLLIN; }
-                                    if (pfd.events & POLLOUT) != 0 && pipe.available() < 4096 { pfd.revents |= POLLOUT; }
-                                }
-                                FileHandle::File { .. } => {
-                                    // Regular files are always ready
-                                    if (pfd.events & POLLIN) != 0 { pfd.revents |= POLLIN; }
-                                    if (pfd.events & POLLOUT) != 0 { pfd.revents |= POLLOUT; }
-                                }
+                let mut valid_fd = false;
+                if let Some(t) = tm.tasks.get(&(current_idx)) {
+                    if let Some(proc) = t.process.as_ref() {
+                        let fd_table = proc.fd_table.lock();
+                        if (pfd.fd as usize) < fd_table.len() {
+                            let gfd = fd_table[pfd.fd as usize];
+                            if gfd != -1 {
+                                valid_fd = true;
+                                if let Some(handle) = crate::fs::vfs::get_file(gfd as usize) {
+                                    use crate::fs::vfs::FileHandle;
+                                    match handle {
+                                        FileHandle::Pipe { pipe } => {
+                                            em.register(current_idx, crate::task::event_manager::AsyncEvent::IO(pipe.id()));
+                                            if (pfd.events & POLLIN) != 0 && pipe.available() > 0 { pfd.revents |= POLLIN; }
+                                            if (pfd.events & POLLOUT) != 0 && pipe.available() < 4096 { pfd.revents |= POLLOUT; }
+                                        }
+                                        FileHandle::File { .. } => {
+                                            // Regular files are always ready
+                                            if (pfd.events & POLLIN) != 0 { pfd.revents |= POLLIN; }
+                                            if (pfd.events & POLLOUT) != 0 { pfd.revents |= POLLOUT; }
+                                        }
+                                    }
+                                } else { pfd.revents = POLLERR; }
                             }
-                        } else { pfd.revents = POLLERR; }
-                    } else { pfd.revents = POLLNVAL; }
-                } else { pfd.revents = POLLNVAL; }
+                        }
+                    }
+                }
+                if !valid_fd { pfd.revents = POLLNVAL; }
             } else { pfd.revents = POLLNVAL; }
 
             if pfd.revents != 0 { ready_count += 1; }
@@ -318,8 +332,11 @@ pub fn handle_create(context: &mut CPUState, syscall_num: u64) {
     let (uid, gid) = {
         let tm = crate::task::TASK_MANAGER.int_lock();
         if let Some(idx) = tm.current_task_idx() {
-            let p = tm.tasks.get(&idx).unwrap().process.as_ref().unwrap();
-            (p.uid, p.gid)
+            if let Some(t) = tm.tasks.get(&idx) {
+                if let Some(p) = t.process.as_ref() {
+                    (p.uid, p.gid)
+                } else { (0, 0) }
+            } else { (0, 0) }
         } else { (0, 0) }
     };
 
@@ -406,8 +423,11 @@ pub fn handle_remove(context: &mut CPUState) {
     let (uid, gid) = {
         let tm = crate::task::TASK_MANAGER.int_lock();
         if let Some(idx) = tm.current_task_idx() {
-            let p = tm.tasks.get(&idx).unwrap().process.as_ref().unwrap();
-            (p.uid, p.gid)
+            if let Some(t) = tm.tasks.get(&idx) {
+                if let Some(p) = t.process.as_ref() {
+                    (p.uid, p.gid)
+                } else { (0, 0) }
+            } else { (0, 0) }
         } else { (0, 0) }
     };
 
@@ -449,8 +469,11 @@ pub fn handle_rename(context: &mut CPUState) {
     let (uid, gid) = {
         let tm = crate::task::TASK_MANAGER.int_lock();
         if let Some(idx) = tm.current_task_idx() {
-            let p = tm.tasks.get(&idx).unwrap().process.as_ref().unwrap();
-            (p.uid, p.gid)
+            if let Some(t) = tm.tasks.get(&idx) {
+                if let Some(p) = t.process.as_ref() {
+                    (p.uid, p.gid)
+                } else { (0, 0) }
+            } else { (0, 0) }
         } else { (0, 0) }
     };
 
@@ -529,7 +552,11 @@ pub fn handle_read_file(context: &mut CPUState) {
         let is_nonblock = {
             let tm = crate::task::TASK_MANAGER.int_lock();
             if let Some(idx) = tm.current_task_idx() {
-                tm.tasks.get(&(idx)).unwrap().process.as_ref().unwrap().fd_nonblock.lock().get(local_fd).copied().unwrap_or(false)
+                if let Some(t) = tm.tasks.get(&(idx)) {
+                    if let Some(p) = t.process.as_ref() {
+                        p.fd_nonblock.lock().get(local_fd).copied().unwrap_or(false)
+                    } else { false }
+                } else { false }
             } else { false }
         };
 
@@ -1291,7 +1318,8 @@ pub fn handle_readlinkat(context: &mut CPUState) {
         let tm = crate::task::TASK_MANAGER.int_lock();
         let current = crate::task::cpu::get_current_task_idx();
         if current >= 0 {
-            let proc = tm.tasks.get(&(current as usize)).unwrap().process.as_ref().unwrap();
+            if let Some(t) = tm.tasks.get(&(current as usize)) {
+                if let Some(proc) = t.process.as_ref() {
 
             // Helper to get CWD without re-locking TM (which get_current_cwd does)
             let get_proc_cwd = || {
@@ -1319,6 +1347,8 @@ pub fn handle_readlinkat(context: &mut CPUState) {
                     } else { get_proc_cwd() }
                 } else { get_proc_cwd() }
             } else { get_proc_cwd() }
+                } else { String::from("/") }
+            } else { String::from("/") }
         } else { String::from("/") }
     } else if dirfd == 3 { // WASI Root
         String::from("/")

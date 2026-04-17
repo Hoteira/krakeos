@@ -94,10 +94,11 @@ pub struct Window {
     pub focus: WidgetId,
 
     pub font: Option<TrueTypeFont>,
-    pub event_queue: std::os::EventQueue,
 
     dirty: bool,
 }
+
+static GLOBAL_EVENT_QUEUE: Mutex<Option<std::os::EventQueue>> = Mutex::new(None);
 
 impl Window {
     pub fn new(title: &str, width: usize, height: usize) -> Self {
@@ -105,8 +106,14 @@ impl Window {
 
         let pid = std::process::get_pid();
         std::debugln!("[inkui] Creating window '{}' with pid {}", title, pid);
-        let event_queue = std::os::EventQueue::new(512);
-        event_queue.register();
+        {
+            let mut q = GLOBAL_EVENT_QUEUE.lock();
+            if q.is_none() {
+                let event_queue = std::os::EventQueue::new(512);
+                event_queue.register();
+                *q = Some(event_queue);
+            }
+        }
 
         Window {
             id: 0,
@@ -129,7 +136,6 @@ impl Window {
             w_type: Items::Window,
             focus: 0,
             font: None,
-            event_queue,
             dirty: true,
         }
     }
@@ -315,24 +321,26 @@ impl Window {
         }
 
         // 2. Drain registered queue
-        while let Some(e) = self.event_queue.pop() {
-            if e.get_window_id() == self.id as u32 || e.get_window_id() == 0 {
-                vec.push(e);
-            } else {
-                SIDE_QUEUE.lock().push_back(e);
+        {
+            let q = GLOBAL_EVENT_QUEUE.lock();
+            if let Some(event_queue) = q.as_ref() {
+                while let Some(e) = event_queue.pop() {
+                    if e.get_window_id() == self.id as u32 || e.get_window_id() == 0 {
+                        vec.push(e);
+                    } else {
+                        SIDE_QUEUE.lock().push_back(e);
+                    }
+                }
             }
         }
 
         // 3. Fallback to legacy syscall if still empty
         if vec.is_empty() {
             let mut events: [Event; 64] = [Event::None; 64];
-            std::os::graphics::get_events(self.id, &mut events);
+            let count = std::os::graphics::get_events(self.id, &mut events);
 
-            for e in events {
-                if e == Event::None {
-                    break;
-                }
-                vec.push(e);
+            for i in 0..count {
+                vec.push(events[i]);
             }
         }
 

@@ -491,7 +491,7 @@ pub fn handle_kill(context: &mut CPUState) {
         can_kill = true;
     } else {
         if let Some(current_thread) = tm.tasks.get(&(current_idx as usize)) {
-            let current_proc = current_thread.process.as_ref().unwrap();
+            if let Some(current_proc) = current_thread.process.as_ref() {
 
             // Allow if killing self
             if current_proc.pid == target_pid {
@@ -510,6 +510,7 @@ pub fn handle_kill(context: &mut CPUState) {
                         }
                     }
                 }
+            }
             }
         }
     }
