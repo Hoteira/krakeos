@@ -20,7 +20,7 @@ APPS_DIR := $(TREE_DIR)/apps
 KERNEL_TARGET := swiftboot/bits64.json
 PIE_TARGET := bits64pie.json
 WASM_TARGET := wasm32-wasip2
-UNSTABLE_FLAGS := -Z json-target-spec
+UNSTABLE_FLAGS := -Z json-target-spec -Z build-std=core,compiler_builtins,alloc -Z build-std-features=compiler-builtins-mem
 
 # QEMU Options
 QEMU_OPTS := -drive file=$(BUILD_DIR)/disk.img,format=raw,if=virtio \
@@ -47,7 +47,7 @@ kernel: $(BUILD_DIR) swiftboot ring3-rt
 	$(DD) if=$(BUILD_DIR)/kernel.bin of=$(BUILD_DIR)/disk.img seek=6144 bs=512 conv=notrunc
 
 ring3-rt: $(BUILD_DIR)
-	$(CARGO) rustc -Z json-target-spec --package ring3-rt --bin ring3_rt --target $(PIE_TARGET) --release \
+	$(CARGO) rustc $(UNSTABLE_FLAGS) --package ring3-rt --bin ring3_rt --target $(PIE_TARGET) --release \
 		-- -C link-arg=-Tring3-rt/ring3rt.ld -C relocation-model=pic
 	$(OBJCOPY) -O binary $(TARGET_DIR)/bits64pie/release/ring3_rt $(BUILD_DIR)/ring3_rt.bin
 	python3 ring3-rt/apply_relocs.py $(TARGET_DIR)/bits64pie/release/ring3_rt $(BUILD_DIR)/ring3_rt.bin
@@ -60,19 +60,19 @@ SYS_WASM_TARGETS := $(addprefix build-, $(SYS_WASM_APPS))
 APP_WASM_TARGETS := $(addprefix build-, $(APP_WASM_APPS))
 
 $(SYS_WASM_TARGETS): build-%:
-	$(CARGO) build --package=$* --target=$(WASM_TARGET) --release
+	$(CARGO) build $(UNSTABLE_FLAGS) --package=$* --target=$(WASM_TARGET) --release
 	mkdir -p $(SYS_BIN_DIR)
 	cp $(TARGET_DIR)/$(WASM_TARGET)/release/$*.wasm $(SYS_BIN_DIR)/$*.wasm
 
 $(APP_WASM_TARGETS): build-%:
-	$(CARGO) build --package=$* --target=$(WASM_TARGET) --release
+	$(CARGO) build $(UNSTABLE_FLAGS) --package=$* --target=$(WASM_TARGET) --release
 	mkdir -p $(APPS_DIR)
 	cp $(TARGET_DIR)/$(WASM_TARGET)/release/$*.wasm $(APPS_DIR)/$*.wasm
 
 userland: $(SYS_WASM_TARGETS) $(APP_WASM_TARGETS) build-dummy
 
 build-dummy:
-	$(CARGO) build --package=dummy --target=wasm32-wasip1 --release
+	$(CARGO) build $(UNSTABLE_FLAGS) --package=dummy --target=wasm32-wasip1 --release
 	mkdir -p $(APPS_DIR)
 	cp $(TARGET_DIR)/wasm32-wasip1/release/dummy.wasm $(APPS_DIR)/dummy.wasm
 

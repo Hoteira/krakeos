@@ -1,0 +1,6 @@
+target/
+build/
+.git/
+**/target/
+**/build/
+.claude/

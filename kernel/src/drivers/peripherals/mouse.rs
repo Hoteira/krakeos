@@ -6,63 +6,6 @@ pub static mut MOUSE_PACKET: [u8; 4] = [0; 4];
 pub static mut MOUSE_IDX: usize = 0;
 pub static mut MOUSE_PACKET_SIZE: usize = 3;
 
-pub static mut VMMOUSE_ACTIVE: bool = false;
-
-const VMPORT_MAGIC: u32 = 0x564D5868;
-const VMPORT_PORT: u16 = 0x5658;
-pub const VMPORT_CMD_VMMOUSE_DATA: u32 = 39;
-pub const VMPORT_CMD_VMMOUSE_STATUS: u32 = 40;
-const VMPORT_CMD_VMMOUSE_COMMAND: u32 = 41;
-
-const VMMOUSE_READ_ID: u32 = 0x45414552;
-const VMMOUSE_REQUEST_ABSOLUTE: u32 = 0x53424152;
-
-pub fn vmport_in(command: u32, ebx: u32) -> (u32, u32, u32, u32, u32, u32) {
-    let mut eax = VMPORT_MAGIC;
-    let mut ecx = command;
-    let mut edx = VMPORT_PORT as u32;
-    let mut ebx_val = ebx;
-    let mut esi = 0;
-    let mut edi = 0;
-
-    unsafe {
-        core::arch::asm!(
-            "push rbx",
-            "mov ebx, {0:e}",
-            "in eax, dx",
-            "mov {0:e}, ebx",
-            "pop rbx",
-            inout(reg) ebx_val,
-            inout("eax") eax,
-            inout("ecx") ecx,
-            inout("edx") edx,
-            inout("esi") esi,
-            inout("edi") edi,
-        );
-    }
-    (eax, ebx_val, ecx, edx, esi, edi)
-}
-
-pub fn init_vmmouse() -> bool {
-    vmport_in(VMPORT_CMD_VMMOUSE_COMMAND, VMMOUSE_READ_ID);
-
-    let (status, _, _, _, _, _) = vmport_in(VMPORT_CMD_VMMOUSE_STATUS, 0);
-    let count = status & 0xFFFF;
-    if count == 0 {
-        return false;
-    }
-
-    let (version, _, _, _, _, _) = vmport_in(VMPORT_CMD_VMMOUSE_DATA, 1);
-    if version != 0x3442554a {
-        return false;
-    }
-
-    vmport_in(VMPORT_CMD_VMMOUSE_COMMAND, VMMOUSE_REQUEST_ABSOLUTE);
-
-    unsafe { VMMOUSE_ACTIVE = true; }
-    true
-}
-
 const CMD_ENABLE_AUX: u8 = 0xA8;
 const CMD_GET_COMPAQ_STATUS: u8 = 0x20;
 const CMD_SET_COMPAQ_STATUS: u8 = 0x60;
@@ -93,10 +36,6 @@ pub fn init_mouse() {
     // Unmask IRQ 12 on slave PIC
     unsafe {
         (*(&raw const crate::arch::x86_64::pic::PICS)).slave.unmask_irq(4);
-    }
-
-    if init_vmmouse() {
-        println!("Mouse: VMMouse initialized successfully (Absolute Mode).");
     }
 
     // Standard PS/2 Mouse Initialization

@@ -144,27 +144,6 @@ impl Mouse {
     }
 }
 
-pub fn handle_vmmouse(buttons: u32, x: u32, y: u32, z: u32) {
-    let (screen_w, screen_h) = {
-        let ds = DISPLAY_SERVER.lock();
-        (ds.width as isize, ds.height as isize)
-    };
-    
-    let abs_x = (x as isize * screen_w) / 0xFFFF;
-    let abs_y = (y as isize * screen_h) / 0xFFFF;
-    
-    let mut mouse = MOUSE.lock();
-    let dx = abs_x - mouse.x;
-    let dy = abs_y - mouse.y;
-    
-    let left = (buttons & 0x20) != 0;
-    let right = (buttons & 0x10) != 0;
-    let center = (buttons & 0x08) != 0;
-    let scroll = z as i8;
-    
-    mouse.update(dx, dy, left, right, center, scroll, false);
-}
-
 pub fn handle_mouse_update() {
     let packet = unsafe { crate::drivers::peripherals::mouse::MOUSE_PACKET };
     let dx = packet[1] as i8 as isize;

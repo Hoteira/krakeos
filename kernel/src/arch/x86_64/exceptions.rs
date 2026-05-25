@@ -642,31 +642,7 @@ pub extern "x86-interrupt" fn mouse_handler(_info: &mut StackFrame) {
         return;
     }
 
-    use crate::drivers::peripherals::mouse::{VMMOUSE_ACTIVE, vmport_in, VMPORT_CMD_VMMOUSE_STATUS, VMPORT_CMD_VMMOUSE_DATA, MOUSE_IDX, MOUSE_PACKET, MOUSE_PACKET_SIZE};
-
-    unsafe {
-        if VMMOUSE_ACTIVE {
-            let (status, _, _, _, _, _) = vmport_in(VMPORT_CMD_VMMOUSE_STATUS, 0);
-            let count = status & 0xFFFF;
-            if count > 0 {
-                let num_packets = count / 4;
-                for _ in 0..num_packets {
-                    let (buttons, x, y, z, _, _) = vmport_in(VMPORT_CMD_VMMOUSE_DATA, 4);
-                    crate::window_manager::input::handle_vmmouse(buttons, x, y, z);
-                }
-            }
-            
-            let mut limit = 5;
-            while (inb(0x64) & 1) == 1 && limit > 0 {
-                let _ = inb(0x60);
-                limit -= 1;
-            }
-
-            IN_IRQ.store(false, Ordering::SeqCst);
-            end_interrupt(MOUSE_INT);
-            return;
-        }
-    }
+    use crate::drivers::peripherals::mouse::{MOUSE_IDX, MOUSE_PACKET, MOUSE_PACKET_SIZE};
 
     let data = inb(0x60);
 
