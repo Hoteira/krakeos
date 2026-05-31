@@ -1,6 +1,7 @@
 use crate::task::{ThreadState, TASK_MANAGER};
 use crate::sync::Mutex;
 use alloc::vec::Vec;
+use core::sync::atomic::Ordering;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
@@ -66,9 +67,10 @@ impl EventManager {
             if let AsyncEvent::Timer(target) = self.registrations[i].event {
                 if current_ticks >= target {
                     let reg = self.registrations.remove(i);
-                    if let Some(thread) = tm.tasks.get_mut(&(reg.thread_idx)) {
-                        if thread.state == ThreadState::Ready || thread.state == ThreadState::WaitingForEvent {
-                            thread.state = ThreadState::Ready;
+                    if let Some(thread) = tm.tasks.get(&(reg.thread_idx)) {
+                        let st = thread.state.load(Ordering::Acquire);
+                        if st == ThreadState::Ready || st == ThreadState::WaitingForEvent {
+                            thread.state.store(ThreadState::Ready, Ordering::Release);
                             tm.push_to_run_queue(reg.thread_idx);
                             woken_any = true;
                         }
@@ -106,9 +108,9 @@ impl EventManager {
             if self.registrations[i].event == event {
                 let reg = self.registrations.remove(i);
 
-                if let Some(thread) = tm.tasks.get_mut(&(reg.thread_idx)) {
-                    if thread.state == ThreadState::WaitingForEvent {
-                        thread.state = ThreadState::Ready;
+                if let Some(thread) = tm.tasks.get(&(reg.thread_idx)) {
+                    if thread.state.load(Ordering::Acquire) == ThreadState::WaitingForEvent {
+                        thread.state.store(ThreadState::Ready, Ordering::Release);
                         tm.push_to_run_queue(reg.thread_idx);
                         woken_tids.push(reg.thread_idx);
                     }

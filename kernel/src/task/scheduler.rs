@@ -1,9 +1,12 @@
-use crate::task::manager::TASK_MANAGER;
-use crate::task::thread::CPUState;
+use crate::task::manager::{self, TASK_MANAGER};
 use core::arch::{asm, naked_asm};
+use core::sync::atomic::{AtomicU64, Ordering};
 
+/// Global preemption tick counter. Each CPU's LAPIC timer increments this, so it
+/// is shared across all cores; `AtomicU64` makes the per-tick increment race-free
+/// (previously a `static mut` written outside any lock — a real SMP data race).
 #[unsafe(no_mangle)]
-pub static mut SYSTEM_TICKS: u64 = 0;
+pub static SYSTEM_TICKS: AtomicU64 = AtomicU64::new(0);
 
 pub fn idle() {
     loop {
@@ -11,91 +14,61 @@ pub fn idle() {
     }
 }
 
-#[unsafe(naked)]
-pub extern "C" fn timer_handler() {
-    unsafe {
-        naked_asm!(
-            "push rbp",
-            "push rax",
-            "push rbx",
-            "push rcx",
-            "push rdx",
-            "push rsi",
-            "push rdi",
-            "push r8",
-            "push r9",
-            "push r10",
-            "push r11",
-            "push r12",
-            "push r13",
-            "push r14",
-            "push r15",
-            "mov rdi, rsp",
-            "and rsp, -16",
-            "call switch_timer",
-            "mov rsp, rax",
-            "pop r15",
-            "pop r14",
-            "pop r13",
-            "pop r12",
-            "pop r11",
-            "pop r10",
-            "pop r9",
-            "pop r8",
-            "pop rdi",
-            "pop rsi",
-            "pop rdx",
-            "pop rcx",
-            "pop rbx",
-            "pop rax",
-            "pop rbp",
-            "iretq",
-        );
-    }
+/// Generates a naked interrupt entry that snapshots every GPR into a `CPUState`
+/// frame on the current stack, passes a pointer to it (in `rdi`) to `$switch`,
+/// then resumes on the stack pointer that `$switch` returns in `rax`.
+///
+/// `timer_handler` and `yield_handler` are byte-for-byte identical apart from
+/// the switch routine they call, so they share this macro.
+macro_rules! context_switch_entry {
+    ($name:ident, $switch:ident) => {
+        #[unsafe(naked)]
+        pub extern "C" fn $name() {
+            unsafe {
+                naked_asm!(
+                    "push rbp",
+                    "push rax",
+                    "push rbx",
+                    "push rcx",
+                    "push rdx",
+                    "push rsi",
+                    "push rdi",
+                    "push r8",
+                    "push r9",
+                    "push r10",
+                    "push r11",
+                    "push r12",
+                    "push r13",
+                    "push r14",
+                    "push r15",
+                    "mov rdi, rsp",
+                    "and rsp, -16",
+                    concat!("call ", stringify!($switch)),
+                    "mov rsp, rax",
+                    "pop r15",
+                    "pop r14",
+                    "pop r13",
+                    "pop r12",
+                    "pop r11",
+                    "pop r10",
+                    "pop r9",
+                    "pop r8",
+                    "pop rdi",
+                    "pop rsi",
+                    "pop rdx",
+                    "pop rcx",
+                    "pop rbx",
+                    "pop rax",
+                    "pop rbp",
+                    "iretq",
+                );
+            }
+        }
+    };
 }
 
-#[unsafe(naked)]
-pub extern "C" fn yield_handler() {
-    unsafe {
-        naked_asm!(
-            "push rbp",
-            "push rax",
-            "push rbx",
-            "push rcx",
-            "push rdx",
-            "push rsi",
-            "push rdi",
-            "push r8",
-            "push r9",
-            "push r10",
-            "push r11",
-            "push r12",
-            "push r13",
-            "push r14",
-            "push r15",
-            "mov rdi, rsp",
-            "and rsp, -16",
-            "call switch_yield",
-            "mov rsp, rax",
-            "pop r15",
-            "pop r14",
-            "pop r13",
-            "pop r12",
-            "pop r11",
-            "pop r10",
-            "pop r9",
-            "pop r8",
-            "pop rdi",
-            "pop rsi",
-            "pop rdx",
-            "pop rcx",
-            "pop rbx",
-            "pop rax",
-            "pop rbp",
-            "iretq",
-        );
-    }
-}
+context_switch_entry!(timer_handler, switch_timer);
+context_switch_entry!(yield_handler, switch_yield);
 
 #[unsafe(no_mangle)]
 pub extern "C" fn switch_timer(rsp: u64) -> u64 {
@@ -108,39 +81,52 @@ pub extern "C" fn switch_yield(rsp: u64) -> u64 {
 }
 unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
     unsafe {
-        if is_timer {
-            SYSTEM_TICKS = SYSTEM_TICKS.wrapping_add(1);
-        }
+        let cpu = crate::task::cpu::get_cpu_id() as usize;
 
-        let mut tm = TASK_MANAGER.lock();
-        let current_task_idx: i64;
-        asm!("mov {}, gs:[24]", out(reg) current_task_idx);
+        // Bump the shared tick counter atomically (every core's timer hits this).
+        let ticks = if is_timer {
+            SYSTEM_TICKS.fetch_add(1, Ordering::Relaxed).wrapping_add(1)
+        } else {
+            SYSTEM_TICKS.load(Ordering::Relaxed)
+        };
 
-        if is_timer {
+        // Timer wakeups are processed on a single core. This is the ONLY point on
+        // the per-tick path that takes the task-map lock, and only on CPU 0 — every
+        // other core's context switch below runs entirely lock-free w.r.t. the map.
+        if is_timer && cpu == 0 {
+            let mut tm = TASK_MANAGER.lock();
             crate::task::event_manager::EVENT_MANAGER
                 .lock()
-                .check_timers(&mut tm, SYSTEM_TICKS);
+                .check_timers(&mut tm, ticks);
         }
 
-        if current_task_idx >= 0 {
-            if let Some(thread) = tm.tasks.get_mut(&(current_task_idx as usize)) {
-                thread.cpu_state_ptr = rsp;
-                let raw_ptr = thread.fpu_state.as_mut_ptr() as u64;
-                let fpu_ptr = (raw_ptr + 15) & !15;
-                asm!("fxsave [{}]", in(reg) fpu_ptr);
-            }
+        // --- Save the outgoing thread (per-CPU `current` slot; no map lock) ---
+        let cur = manager::sched_take_current(cpu);
+        if let Some(ref c) = cur {
+            c.cpu_state_ptr.store(rsp, Ordering::Release);
+            let fpu_ptr = c.fpu_ptr();
+            asm!("fxsave [{}]", in(reg) fpu_ptr);
         }
 
-        let (new_state, k_stack, new_task_idx) = tm.schedule(rsp as *mut CPUState, is_timer);
-        asm!("mov gs:[24], {}", in(reg) new_task_idx);
+        // Re-enqueue the thread deferred on the previous switch: by now this CPU has
+        // left that thread's kernel stack, so another core may safely run it.
+        manager::sched_flush_prev(cpu);
 
-        if new_task_idx >= 0 {
-            if let Some(thread) = tm.tasks.get(&(new_task_idx as usize)) {
-                let raw_ptr = thread.fpu_state.as_ptr() as u64;
-                let fpu_ptr = (raw_ptr + 15) & !15;
-                asm!("fxrstor [{}]", in(reg) fpu_ptr);
-            }
-        }
+        // --- Pick the next thread (per-CPU run-queue locks + atomics only) ---
+        let next = manager::sched_pick_next(cpu);
+
+        // Restore its FPU and read its switch frame before handing the Arc to the
+        // per-CPU `current` slot.
+        let fpu_ptr = next.fpu_ptr();
+        asm!("fxrstor [{}]", in(reg) fpu_ptr);
+        let k_stack = next.kernel_stack;
+        let next_tid = next.tid as i64;
+        let new_rsp = next.cpu_state_ptr.load(Ordering::Acquire);
+
+        // Publish `next` as current; defer `cur` for re-enqueue on the next switch.
+        manager::sched_set_prev_current(cpu, cur, next);
+
+        asm!("mov gs:[24], {}", in(reg) next_tid);
 
         if k_stack != 0 {
             crate::arch::x86_64::tss::set_tss(k_stack);
@@ -151,6 +137,6 @@ unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
             crate::arch::x86_64::exceptions::end_interrupt(crate::arch::x86_64::exceptions::TIMER_INT);
         }
 
-        new_state as u64
+        new_rsp
     }
 }

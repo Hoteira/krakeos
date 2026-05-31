@@ -49,6 +49,33 @@ pub mod task;
 pub mod thread;
 pub mod time;
 
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+pub extern "C" fn strlen(s: *const u8) -> usize {
+    let mut len = 0;
+    unsafe {
+        while *s.add(len) != 0 {
+            len += 1;
+        }
+    }
+    len
+}
+
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+pub extern "C" fn memcmp(s1: *const u8, s2: *const u8, n: usize) -> i32 {
+    unsafe {
+        for i in 0..n {
+            let a = *s1.add(i);
+            let b = *s2.add(i);
+            if a != b {
+                return (a as i32) - (b as i32);
+            }
+        }
+    }
+    0
+}
+
 #[cfg(any(feature = "userland", target_arch = "wasm32"))]
 #[cfg_attr(not(test), panic_handler)]
 fn panic(info: &core::panic::PanicInfo) -> ! {

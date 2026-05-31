@@ -30,8 +30,6 @@ pub trait Read {
         let mut total_read = 0;
         loop {
             if buf.len() == buf.capacity() {
-                // Reserve significantly more space to avoid tiny reads.
-                // Double the capacity or add at least 4096 bytes.
                 let additional = core::cmp::max(buf.capacity(), 4096);
                 buf.reserve(additional);
             }
@@ -66,6 +64,16 @@ pub trait Read {
         } else {
             Err(Error::from_raw_os_error(-1)) // Invalid UTF-8
         }
+    }
+}
+
+impl Read for &[u8] {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        let amt = core::cmp::min(buf.len(), self.len());
+        let (a, b) = self.split_at(amt);
+        buf[..amt].copy_from_slice(a);
+        *self = b;
+        Ok(amt)
     }
 }
 

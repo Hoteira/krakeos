@@ -31,7 +31,18 @@ pub unsafe extern "C" fn rust_start(stack: *const usize) -> ! {
     let res = crate::os::process_get_slot_info(&mut slot_info as *mut _ as *mut u8);
     
     let (heap_start, heap_size) = if res == 0 {
-        (slot_info.linear_memory_base as usize, 128 * 1024 * 1024)
+        #[cfg(target_arch = "wasm32")]
+        {
+            // Grow by 128MB upfront to give Talc a single large contiguous span.
+            // This prevents O(N) slowdowns from having hundreds of 1MB spans.
+            core::arch::wasm32::memory_grow(0, 2048);
+            let current_pages = core::arch::wasm32::memory_size(0);
+            (slot_info.linear_memory_base as usize, current_pages * 65536)
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            (slot_info.linear_memory_base as usize, 128 * 1024 * 1024)
+        }
     } else {
         let start = crate::os::brk(0);
         (start, 128 * 1024 * 1024)

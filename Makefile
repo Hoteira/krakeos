@@ -60,19 +60,19 @@ SYS_WASM_TARGETS := $(addprefix build-, $(SYS_WASM_APPS))
 APP_WASM_TARGETS := $(addprefix build-, $(APP_WASM_APPS))
 
 $(SYS_WASM_TARGETS): build-%:
-	$(CARGO) build $(UNSTABLE_FLAGS) --package=$* --target=$(WASM_TARGET) --release
+	$(CARGO) build $(UNSTABLE_FLAGS) -Z build-std=core,alloc --package=$* --target=$(WASM_TARGET) --release
 	mkdir -p $(SYS_BIN_DIR)
 	cp $(TARGET_DIR)/$(WASM_TARGET)/release/$*.wasm $(SYS_BIN_DIR)/$*.wasm
 
 $(APP_WASM_TARGETS): build-%:
-	$(CARGO) build $(UNSTABLE_FLAGS) --package=$* --target=$(WASM_TARGET) --release
+	$(CARGO) build $(UNSTABLE_FLAGS) -Z build-std=core,alloc --package=$* --target=$(WASM_TARGET) --release
 	mkdir -p $(APPS_DIR)
 	cp $(TARGET_DIR)/$(WASM_TARGET)/release/$*.wasm $(APPS_DIR)/$*.wasm
 
 userland: $(SYS_WASM_TARGETS) $(APP_WASM_TARGETS) build-dummy
 
 build-dummy:
-	$(CARGO) build $(UNSTABLE_FLAGS) --package=dummy --target=wasm32-wasip1 --release
+	$(CARGO) build $(UNSTABLE_FLAGS) -Z build-std=core,alloc --package=dummy --target=wasm32-wasip1 --release
 	mkdir -p $(APPS_DIR)
 	cp $(TARGET_DIR)/wasm32-wasip1/release/dummy.wasm $(APPS_DIR)/dummy.wasm
 

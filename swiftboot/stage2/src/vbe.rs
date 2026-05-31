@@ -1,7 +1,5 @@
-use crate::debug::debug;
 use crate::{BOOT, MAX_BPP, MAX_HEIGHT, MAX_WIDTH, MIN_BPP, MIN_HEIGHT, MIN_WIDTH, VBE_MODE};
 use core::arch::asm;
-use log::debug;
 
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]

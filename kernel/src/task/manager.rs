@@ -2,35 +2,213 @@ use crate::memory::address::PhysAddr;
 use crate::memory::{paging, pmm, vmm};
 use crate::sync::Mutex;
 use crate::task::process::Process;
-use crate::task::thread::{CPUState, Thread, ThreadState};
-use alloc::boxed::Box;
-use alloc::collections::{BTreeMap, VecDeque};
+use crate::task::thread::{CPUState, Thread, ThreadState, NO_PIN};
+use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::cell::UnsafeCell;
+use core::hash::{BuildHasherDefault, Hasher};
+use core::sync::atomic::Ordering;
+use hashbrown::HashMap;
 
 pub const MAX_THREADS: usize = 999999;
 pub const MAX_PROCESSES: usize = 64;
 pub const STACK_SIZE: u64 = 1024 * 1024;
 
+/// Number of CPUs the scheduler is sized for. The per-CPU idle threads occupy
+/// task ids `0..MAX_CPUS`; user thread ids therefore start at `MAX_CPUS`.
+pub const MAX_CPUS: usize = 64;
+
+/// Hasher for integer task-id keys. The keys are small, dense integers that are
+/// already well distributed, so storing them verbatim is a perfectly good hash
+/// and far cheaper than a general-purpose one on the context-switch lookup path.
+#[derive(Default)]
+pub struct TidHasher(u64);
+
+impl Hasher for TidHasher {
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0 << 8) | b as u64;
+        }
+    }
+    #[inline]
+    fn write_usize(&mut self, i: usize) {
+        self.0 = i as u64;
+    }
+}
+
+/// Task table keyed by task id, holding reference-counted threads. `Arc` lets the
+/// scheduler keep stable handles to threads inside per-CPU run queues and each
+/// CPU's current/prev slots WITHOUT holding the task-map lock on the context-switch
+/// hot path — the whole point of this design. A thread stays alive as long as it is
+/// referenced (running, queued, or pending re-enqueue) even after removal from the map.
+type TaskMap = HashMap<usize, Arc<Thread>, BuildHasherDefault<TidHasher>>;
+
 pub struct TaskManager {
     pub thread_count: usize,
-    pub tasks: BTreeMap<usize, Box<Thread>>,
-    pub run_queues: [VecDeque<usize>; 64],
+    pub tasks: TaskMap,
     pub next_tid: usize,
 }
 
+/// Guards only the task *map* (insert / remove / lookup-by-tid), taken by
+/// spawn / exit / syscalls. It is NOT taken on the per-tick run-queue scheduling
+/// path, so cores no longer serialize on one global lock every timer tick.
 pub static TASK_MANAGER: Mutex<TaskManager> = Mutex::new(TaskManager {
     thread_count: 0,
-    tasks: BTreeMap::new(),
-    run_queues: [const { VecDeque::new() }; 64],
-    next_tid: 64,
+    tasks: HashMap::with_hasher(BuildHasherDefault::new()),
+    next_tid: MAX_CPUS,
 });
+
+/// Per-CPU run queues, each with its own independent lock and holding `Arc<Thread>`
+/// directly. The scheduler enqueues/dequeues here without touching the task map.
+pub static RUN_QUEUES: [Mutex<VecDeque<Arc<Thread>>>; MAX_CPUS] =
+    [const { Mutex::new(VecDeque::new()) }; MAX_CPUS];
+
+/// Per-CPU scheduler slots. Each entry is only ever accessed by its owning CPU with
+/// interrupts disabled (on the context-switch path), so the `UnsafeCell`s are sound.
+pub struct PerCpu {
+    /// Thread currently running on this CPU.
+    pub current: UnsafeCell<Option<Arc<Thread>>>,
+    /// Thread we just switched away from, awaiting re-enqueue. Deferred until the
+    /// next switch so this CPU has fully left the thread's kernel stack before any
+    /// other CPU can run it (closes the context-switch stack-reuse race).
+    pub prev: UnsafeCell<Option<Arc<Thread>>>,
+    /// This CPU's idle thread (run when no other thread is Ready).
+    pub idle: UnsafeCell<Option<Arc<Thread>>>,
+}
+unsafe impl Sync for PerCpu {}
+
+pub static PER_CPU: [PerCpu; MAX_CPUS] = [const {
+    PerCpu {
+        current: UnsafeCell::new(None),
+        prev: UnsafeCell::new(None),
+        idle: UnsafeCell::new(None),
+    }
+}; MAX_CPUS];
+
+/// Online CPU count, clamped to the scheduler's capacity.
+#[inline]
+fn online_cpus() -> usize {
+    crate::arch::x86_64::smp::CPU_COUNT
+        .load(Ordering::Relaxed)
+        .clamp(1, MAX_CPUS)
+}
+
+/// Enqueue `t` onto a run queue, routing to its pinned CPU if pinned, else to
+/// `target_cpu`. Idempotent: a thread already marked queued is left alone.
+fn enqueue_arc(t: Arc<Thread>, target_cpu: usize) {
+    // swap returns the previous value; if it was already true it's already queued.
+    if t.is_queued.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let pin = t.pinned_cpu.load(Ordering::Relaxed);
+    let cpu = if pin != NO_PIN { pin % MAX_CPUS } else { target_cpu % MAX_CPUS };
+    RUN_QUEUES[cpu].lock().push_back(t);
+}
+
+/// Re-route an already-queued (is_queued==true) thread to its pinned CPU's queue.
+/// Used by `sched_pick_next` to fix up mis-located pinned threads.
+fn requeue_pinned(t: Arc<Thread>) {
+    let pin = t.pinned_cpu.load(Ordering::Relaxed);
+    let cpu = if pin != NO_PIN { pin % MAX_CPUS } else { 0 };
+    RUN_QUEUES[cpu].lock().push_back(t);
+}
+
+/// Take a clone of the thread currently running on `cpu` (interrupts are disabled
+/// on the caller's context-switch path, so this CPU-private slot needs no lock).
+pub fn sched_take_current(cpu: usize) -> Option<Arc<Thread>> {
+    unsafe { (*PER_CPU[cpu].current.get()).clone() }
+}
+
+/// Re-enqueue the thread deferred on the previous switch. By now this CPU has long
+/// left that thread's kernel stack, so it is safe for another CPU to pick it up.
+pub fn sched_flush_prev(cpu: usize) {
+    let prev = unsafe { (*PER_CPU[cpu].prev.get()).take() };
+    if let Some(p) = prev {
+        // Idle threads are never queued; only Ready threads get re-enqueued (a
+        // blocked/zombie thread is simply dropped here and re-enqueued, if ever,
+        // by its wakeup path).
+        if !p.is_idle && p.state.load(Ordering::Acquire) == ThreadState::Ready {
+            enqueue_arc(p, cpu);
+        }
+    }
+}
+
+/// Publish `next` as the current thread on `cpu` and defer the outgoing `cur` for
+/// re-enqueue on the next switch (see `prev` field docs).
+pub fn sched_set_prev_current(cpu: usize, cur: Option<Arc<Thread>>, next: Arc<Thread>) {
+    unsafe {
+        *PER_CPU[cpu].current.get() = Some(next);
+        *PER_CPU[cpu].prev.get() = cur;
+    }
+}
+
+/// Choose the next thread to run on `cpu` using only per-CPU run-queue locks and
+/// atomic thread fields — never the task-map lock. Returns the CPU's idle thread
+/// when nothing else is runnable.
+pub fn sched_pick_next(cpu: usize) -> Arc<Thread> {
+    // 1. Local queue: first Ready task (single pass).
+    let mut mis_pinned: Vec<Arc<Thread>> = Vec::new();
+    {
+        let mut q = RUN_QUEUES[cpu].lock();
+        let n = q.len();
+        for _ in 0..n {
+            let Some(t) = q.pop_front() else { break };
+            let pin = t.pinned_cpu.load(Ordering::Relaxed);
+            if pin != NO_PIN && pin % MAX_CPUS != cpu {
+                // Belongs to a different CPU; redistribute after releasing the lock.
+                mis_pinned.push(t);
+                continue;
+            }
+            if t.state.load(Ordering::Acquire) == ThreadState::Ready {
+                t.is_queued.store(false, Ordering::Release);
+                drop(q);
+                for m in mis_pinned {
+                    requeue_pinned(m);
+                }
+                return t;
+            } else {
+                // Not ready (Sleeping/WaitingForEvent): keep it queued.
+                q.push_back(t);
+            }
+        }
+    }
+    for m in mis_pinned {
+        requeue_pinned(m);
+    }
+
+    // 2. Work-stealing: scan only online CPUs, head-only (O(num_cpus)).
+    let cpu_count = online_cpus();
+    for i in 1..cpu_count {
+        let victim = (cpu + i) % cpu_count;
+        let mut vq = RUN_QUEUES[victim].lock();
+        if let Some(t) = vq.pop_front() {
+            if t.pinned_cpu.load(Ordering::Relaxed) == NO_PIN
+                && t.state.load(Ordering::Acquire) == ThreadState::Ready
+            {
+                t.is_queued.store(false, Ordering::Release);
+                return t;
+            }
+            vq.push_back(t);
+        }
+    }
+
+    // 3. Nothing runnable: this CPU's idle thread.
+    unsafe { (*PER_CPU[cpu].idle.get()).clone().expect("idle thread not initialised") }
+}
 
 impl TaskManager {
     pub fn init(&mut self) {
-        for cpu_id in 0..64 {
+        for cpu_id in 0..MAX_CPUS {
             let mut idle_thread = Thread::new(b"idle");
-            idle_thread.state = ThreadState::Ready;
+            idle_thread.tid = cpu_id;
+            idle_thread.is_idle = true;
+            idle_thread.state.store(ThreadState::Ready, Ordering::Relaxed);
 
             unsafe {
                 let kernel_proc = Process::new(0, 0, 0, None);
@@ -43,19 +221,24 @@ impl TaskManager {
 
                 let state_size = core::mem::size_of::<CPUState>();
                 let state_ptr = (idle_thread.kernel_stack - state_size as u64) as *mut CPUState;
-                idle_thread.cpu_state_ptr = state_ptr as u64;
+                idle_thread.cpu_state_ptr.store(state_ptr as u64, Ordering::Relaxed);
 
                 (*state_ptr).rip = crate::task::scheduler::idle as u64;
                 (*state_ptr).cs = 0x08; // 64-bit kernel code segment (GDT index 1)
                 (*state_ptr).rflags = 0x202;
                 (*state_ptr).rsp = idle_thread.kernel_stack;
                 (*state_ptr).ss = 0x10;
-
-                self.tasks.insert(cpu_id, Box::new(idle_thread));
             }
+
+            let arc = Arc::new(idle_thread);
+            // Keep a per-CPU handle for the scheduler's idle fallback, plus a map
+            // entry (key == cpu_id) so tid-based lookups still resolve it.
+            unsafe {
+                *PER_CPU[cpu_id].idle.get() = Some(arc.clone());
+            }
+            self.tasks.insert(cpu_id, arc);
         }
-        self.thread_count = 64;
-        // Do not push idle tasks to run queues, handle as fallback in get_next_thread
+        self.thread_count = MAX_CPUS;
     }
 
     pub fn current_task_idx(&self) -> Option<usize> {
@@ -63,105 +246,10 @@ impl TaskManager {
         if idx >= 0 { Some(idx as usize) } else { None }
     }
 
-    pub fn schedule(
-        &mut self,
-        cpu_state: *mut CPUState,
-        _is_timer: bool,
-    ) -> (*mut CPUState, u64, i64) {
-        let cpu_id = crate::task::cpu::get_cpu_id() as usize;
-        let current_task_idx = crate::task::cpu::get_current_task_idx();
-
-        if current_task_idx >= 0 {
-            if let Some(thread) = self.tasks.get_mut(&(current_task_idx as usize)) {
-                thread.cpu_state_ptr = cpu_state as u64;
-                if thread.state == ThreadState::Ready {
-                    self.push_to_run_queue(current_task_idx as usize);
-                }
-            }
-        }
-
-        let next_tid = self.get_next_thread(cpu_id);
-
-        if next_tid == 2 {
-            //crate::debugln!("[TaskManager] SCHEDULING TID 2!");
-        }
-
-        let thread = match self.tasks.get(&(next_tid as usize)) {
-            Some(t) => t,
-            None => {
-                crate::debugln!(
-                    "TaskManager schedule: next_tid {} not found! Falling back to {}",
-                    next_tid,
-                    cpu_id
-                );
-                crate::debugln!("Current keys in tasks map:");
-                for k in self.tasks.keys() {
-                    crate::debugln!(" - {}", k);
-                }
-                self.tasks.get(&cpu_id).unwrap()
-            }
-        };
-        (
-            thread.cpu_state_ptr as *mut CPUState,
-            thread.kernel_stack,
-            next_tid as i64,
-        )
-    }
-
-    fn get_next_thread(&mut self, cpu_id: usize) -> isize {
-        // 1. Try to find a Ready task in local queue
-        let q_len = self.run_queues[cpu_id].len();
-        for _ in 0..q_len {
-            if let Some(tid) = self.run_queues[cpu_id].pop_front() {
-                if let Some(t) = self.tasks.get_mut(&tid) {
-                    // Respect CPU pinning: skip tasks pinned to a different CPU
-                    if let Some(pin) = t.pinned_cpu {
-                        if pin != cpu_id {
-                            self.run_queues[pin % 64].push_back(tid);
-                            continue;
-                        }
-                    }
-                    if t.state == ThreadState::Ready {
-                        t.is_queued = false;
-                        return tid as isize;
-                    } else {
-                        // Not ready (e.g. Sleeping or WaitingForEvent), put back at end
-                        self.run_queues[cpu_id].push_back(tid);
-                    }
-                }
-            }
-        }
-
-        // 2. Try work stealing from other CPUs (only steal non-pinned tasks)
-        for i in 1..64 {
-            let target_cpu = (cpu_id + i) % 64;
-            let q_len = self.run_queues[target_cpu].len();
-            for _ in 0..q_len {
-                if let Some(tid) = self.run_queues[target_cpu].pop_front() {
-                    if let Some(t) = self.tasks.get_mut(&tid) {
-                        // Never steal pinned tasks
-                        if t.pinned_cpu.is_some() {
-                            self.run_queues[target_cpu].push_back(tid);
-                            continue;
-                        }
-                        if t.state == ThreadState::Ready {
-                            t.is_queued = false;
-                            return tid as isize;
-                        } else {
-                            self.run_queues[target_cpu].push_back(tid);
-                        }
-                    }
-                }
-            }
-        }
-
-        cpu_id as isize // Fallback to per-CPU idle
-    }
-
     /// Pin a thread to a specific CPU. It will only ever run on that CPU.
-    pub fn pin_thread_to_cpu(&mut self, tid: usize, cpu_id: usize) {
-        if let Some(thread) = self.tasks.get_mut(&tid) {
-            thread.pinned_cpu = Some(cpu_id);
+    pub fn pin_thread_to_cpu(&self, tid: usize, cpu_id: usize) {
+        if let Some(thread) = self.tasks.get(&tid) {
+            thread.pinned_cpu.store(cpu_id, Ordering::Relaxed);
         }
     }
 
@@ -169,58 +257,49 @@ impl TaskManager {
         let tid = self.next_tid;
         self.next_tid += 1;
         let mut t = Thread::new(b"reserved");
-        t.state = ThreadState::Reserved;
+        t.tid = tid;
+        t.state.store(ThreadState::Reserved, Ordering::Relaxed);
 
-        self.tasks.insert(tid, Box::new(t));
+        self.tasks.insert(tid, Arc::new(t));
         self.thread_count += 1;
         Ok(tid)
     }
 
-    pub fn push_to_run_queue(&mut self, tid: usize) {
-        if tid < 64 {
+    /// Re-queue an existing thread (e.g. on wakeup). Routes to its pinned CPU or to
+    /// the calling CPU. No-op for idle threads and for already-queued threads.
+    pub fn push_to_run_queue(&self, tid: usize) {
+        if tid < MAX_CPUS {
             return;
         }
-        if let Some(thread) = self.tasks.get_mut(&tid) {
-            if !thread.is_queued {
-                thread.is_queued = true;
-                let mut cpu_id = crate::task::cpu::get_cpu_id() as usize;
-                if cpu_id >= 64 {
-                    cpu_id = 0;
-                }
-                self.run_queues[cpu_id].push_back(tid);
-            }
+        if let Some(thread) = self.tasks.get(&tid) {
+            enqueue_arc(thread.clone(), crate::task::cpu::get_cpu_id() as usize);
         }
     }
 
-    /// Explicitly push a newly spawned task to the least loaded CPU's run queue for
-    /// the first time; use `push_to_run_queue` when re-queuing an existing thread.
-    pub fn push_new_task(&mut self, tid: usize) {
-        if tid < 64 {
+    /// Push a newly spawned task to the least-loaded online CPU's run queue (or its
+    /// pinned CPU). Use `push_to_run_queue` when re-queuing an existing thread.
+    pub fn push_new_task(&self, tid: usize) {
+        if tid < MAX_CPUS {
             return;
         }
-        if let Some(thread) = self.tasks.get_mut(&tid) {
-            if !thread.is_queued {
-                thread.is_queued = true;
-                // If the thread is pinned, push directly to the pinned CPU's queue
-                if let Some(pin) = thread.pinned_cpu {
-                    self.run_queues[pin % 64].push_back(tid);
-                    return;
-                }
-                let cpu_count = crate::arch::x86_64::smp::CPU_COUNT
-                    .load(core::sync::atomic::Ordering::Relaxed)
-                    .min(64);
-                let mut best_cpu = 0usize;
-                let mut min_len = usize::MAX;
-                for i in 0..cpu_count {
-                    let len = self.run_queues[i].len();
-                    if len < min_len {
-                        min_len = len;
-                        best_cpu = i;
-                    }
-                }
-                self.run_queues[best_cpu].push_back(tid);
+        let Some(thread) = self.tasks.get(&tid) else { return };
+        let thread = thread.clone();
+        if thread.pinned_cpu.load(Ordering::Relaxed) != NO_PIN {
+            enqueue_arc(thread, 0);
+            return;
+        }
+        // Choose the least-loaded online CPU by current queue length.
+        let cpu_count = online_cpus();
+        let mut best_cpu = 0usize;
+        let mut min_len = usize::MAX;
+        for i in 0..cpu_count {
+            let len = RUN_QUEUES[i].lock().len();
+            if len < min_len {
+                min_len = len;
+                best_cpu = i;
             }
         }
+        enqueue_arc(thread, best_cpu);
     }
 
     pub fn init_user_task(
@@ -243,17 +322,13 @@ impl TaskManager {
         let pid = slot as u64;
         crate::spawn_debugln!("[TaskManager] init_user_task: pid={}", pid);
 
-        crate::spawn_debugln!("[TaskManager] init_user_task: calling tasks.remove");
-        let mut thread_box = if let Some(existing) = self.tasks.remove(&slot) {
-            crate::spawn_debugln!("[TaskManager] Reusing existing task {}", slot);
-            existing
-        } else {
-            crate::spawn_debugln!("[TaskManager] init_user_task: calling Thread::new");
-            let t = Box::new(Thread::new(name));
-            crate::spawn_debugln!("[TaskManager] init_user_task: Thread::new returned");
-            t
-        };
-        crate::spawn_debugln!("[TaskManager] init_user_task: thread_box obtained");
+        // Build a fresh thread for this slot, replacing any existing entry (its Arc
+        // is dropped once nothing else references it). We mutate it freely here as an
+        // owned local, then wrap it in `Arc` at insertion.
+        self.tasks.remove(&slot);
+        let mut thread = Thread::new(name);
+        thread.tid = slot;
+        crate::spawn_debugln!("[TaskManager] init_user_task: thread obtained");
 
         crate::spawn_debugln!("[TaskManager] init_user_task: resolving uid/gid");
         let (uid, gid) = if let Some(ppid) = parent_pid {
@@ -300,7 +375,6 @@ impl TaskManager {
         *proc.terminal_height.lock() = terminal_size.1;
         crate::spawn_debugln!("[TaskManager] init_user_task: terminal_height set");
 
-        let thread = &mut *thread_box;
         crate::spawn_debugln!("[TaskManager] init_user_task: calling proc.clone");
         thread.process = Some(proc.clone());
         crate::spawn_debugln!("[TaskManager] init_user_task: proc.clone returned");
@@ -375,10 +449,10 @@ impl TaskManager {
         let state_size = core::mem::size_of::<CPUState>();
         crate::spawn_debugln!("[TaskManager] init_user_task: state_size={}", state_size);
         let state_ptr = (thread.kernel_stack - state_size as u64) as *mut CPUState;
-        thread.cpu_state_ptr = state_ptr as u64;
+        thread.cpu_state_ptr.store(state_ptr as u64, Ordering::Relaxed);
         crate::spawn_debugln!(
             "[TaskManager] init_user_task: thread.cpu_state_ptr={:#x}",
-            thread.cpu_state_ptr
+            thread.cpu_state_ptr.load(Ordering::Relaxed)
         );
 
         unsafe {
@@ -482,22 +556,22 @@ impl TaskManager {
         } else {
             ThreadState::Ready
         };
-        thread.state = final_state;
+        thread.state.store(final_state, Ordering::Relaxed);
         crate::spawn_debugln!(
             "[TaskManager] init_user_task: final_state={:?}",
-            thread.state
+            thread.state.load(Ordering::Relaxed)
         );
-        let ptr = thread as *const _ as u64;
+        let ptr = &thread as *const _ as u64;
         crate::spawn_debugln!(
             "[TaskManager] Initialized User Task {} (Thread at {:#x}, State={:?})",
             slot,
             ptr,
-            thread.state
+            thread.state.load(Ordering::Relaxed)
         );
 
-        let is_ready = thread.state == ThreadState::Ready;
+        let is_ready = final_state == ThreadState::Ready;
         crate::spawn_debugln!("[TaskManager] init_user_task: calling tasks.insert");
-        self.tasks.insert(slot, thread_box);
+        self.tasks.insert(slot, Arc::new(thread));
         crate::spawn_debugln!("[TaskManager] init_user_task: tasks.insert returned");
         if is_ready {
             crate::spawn_debugln!("[TaskManager] init_user_task: calling push_new_task");
@@ -528,6 +602,7 @@ impl TaskManager {
         };
 
         let mut thread = Thread::new(b"thread");
+        thread.tid = tid;
         thread.process = Some(parent_process.clone());
 
         let k_frame = pmm::allocate_frames(256).ok_or(pmm::FrameError::NoMemory)?;
@@ -535,7 +610,7 @@ impl TaskManager {
 
         let state_size = core::mem::size_of::<CPUState>();
         let state_ptr = (thread.kernel_stack - state_size as u64) as *mut CPUState;
-        thread.cpu_state_ptr = state_ptr as u64;
+        thread.cpu_state_ptr.store(state_ptr as u64, Ordering::Relaxed);
 
         unsafe {
             core::ptr::write_bytes(state_ptr, 0, 1);
@@ -556,25 +631,28 @@ impl TaskManager {
             (*state_ptr).rdi = arg;
         }
 
-        thread.state = ThreadState::Ready;
-        self.tasks.insert(tid, Box::new(thread));
+        thread.state.store(ThreadState::Ready, Ordering::Relaxed);
+        self.tasks.insert(tid, Arc::new(thread));
         self.push_new_task(tid);
 
         Ok(tid)
     }
 
-    pub fn get_tasks(&self) -> alloc::collections::btree_map::Values<usize, Box<Thread>> {
+    pub fn get_tasks(&self) -> hashbrown::hash_map::Values<'_, usize, Arc<Thread>> {
         self.tasks.values()
     }
 
     pub fn current_thread(&self) -> &Thread {
-        let idx = crate::task::cpu::get_current_task_idx() as usize;
-        self.tasks.get(&idx).expect("No current thread")
-    }
-
-    pub fn current_thread_mut(&mut self) -> &mut Thread {
-        let idx = crate::task::cpu::get_current_task_idx() as usize;
-        self.tasks.get_mut(&idx).expect("No current thread")
+        // Fall back to this CPU's idle task rather than panicking if the lookup
+        // misses (current_task_idx can be briefly -1 during bring-up/teardown).
+        let raw = crate::task::cpu::get_current_task_idx();
+        let cpu = crate::task::cpu::get_cpu_id() as usize;
+        let key = if raw >= 0 && self.tasks.contains_key(&(raw as usize)) {
+            raw as usize
+        } else {
+            cpu
+        };
+        &**self.tasks.get(&key).expect("idle task missing")
     }
 }
 
@@ -598,11 +676,11 @@ pub fn kill_process(pid: u64) {
     }
 
     {
-        let mut tm = TASK_MANAGER.lock();
-        for (tid, thread) in tm.tasks.iter_mut() {
+        let tm = TASK_MANAGER.lock();
+        for thread in tm.tasks.values() {
             if let Some(proc) = &thread.process {
                 if proc.pid == pid {
-                    thread.state = ThreadState::Zombie;
+                    thread.state.store(ThreadState::Zombie, Ordering::Release);
                     *proc.event_queue.lock() = (0, 0, 0);
                 }
             }

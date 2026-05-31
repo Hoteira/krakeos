@@ -14,7 +14,7 @@ use gdt::GDT;
 
 use crate::debug::debug;
 use crate::mmap::{get_mmap, MemoryMap};
-use crate::rsdp::{get_rsdp, Rsdp};
+use crate::rsdp::Rsdp;
 use crate::vbe::{find_vbe_mode, get_vbe_info, VbeInfoBlock, VbeModeInfoBlock};
 use core::arch::asm;
 use core::panic::PanicInfo;

@@ -51,7 +51,9 @@ impl File {
             open_at(3, 0, path.as_ptr(), path.len(), 0, 0, result.as_mut_ptr());
 
             if result[0] != 0 {
-                crate::debugln!("[File::open] FAILED result[0]={}", result[0]);
+                if !path.ends_with(".wacc") {
+                    crate::debugln!("[File::open] FAILED result[0]={}", result[0]);
+                }
                 Err(Error::from_raw_os_error(2)) // ENOENT
             } else {
                 let fd = unsafe { core::ptr::read_unaligned(result.as_ptr().add(4) as *const i32) };
@@ -187,7 +189,7 @@ impl Read for File {
     fn read_to_end(&mut self, buf: &mut alloc::vec::Vec<u8>) -> Result<usize> {
         if let Ok(st) = self.stat() {
             let file_size = st.size as usize;
-            if file_size > 0 {
+            if file_size > 0 && file_size < 128 * 1024 * 1024 { // Sanity check: < 128MB
                 // Only reserve if we need to
                 let required_capacity = buf.len() + file_size;
                 if buf.capacity() < required_capacity {

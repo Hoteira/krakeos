@@ -1,0 +1,38 @@
+# Kernel-only build image (mirrors Dockerfile but stops after `make kernel`).
+# Used to verify kernel changes without the unrelated WASM userland break.
+FROM rust:bullseye
+
+RUN apt-get update && apt-get install -y \
+    clang \
+    llvm \
+    lld \
+    make \
+    genext2fs \
+    python3 \
+    gcc-multilib \
+    binutils \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG TOOLCHAIN=nightly
+RUN rustup toolchain install $TOOLCHAIN && \
+    rustup default $TOOLCHAIN && \
+    rustup component add rust-src --toolchain $TOOLCHAIN && \
+    rustup target add wasm32-wasip1 wasm32-wasip2 --toolchain $TOOLCHAIN
+
+WORKDIR /app
+COPY . .
+
+RUN find . -name "Cargo.toml" -exec sed -i '1i cargo-features = ["edition2024"]' {} +
+RUN find . -name "config.toml" -path "*/.cargo/*" -exec sed -i '/\[unstable\]/,/\[/d' {} +
+RUN find std/src -name "*.rs" -exec sed -i 's/#[no_mangle]/#[unsafe(no_mangle)]/g' {} +
+RUN sed -i 's/unsafe { core::intrinsics::fabsf64(self) }/Self::from_bits(self.to_bits() \& 0x7FFFFFFFFFFFFFFF)/g' std/src/math.rs && \
+    sed -i 's/unsafe { core::intrinsics::fabsf32(self) }/Self::from_bits(self.to_bits() \& 0x7FFFFFFF)/g' std/src/math.rs
+RUN printf '\n#[cfg(target_arch = "wasm32")]\n#[unsafe(no_mangle)]\npub extern "C" fn __wasi_init_tp() {}\n\n#[cfg(target_arch = "wasm32")]\n#[unsafe(no_mangle)]\npub extern "C" fn __wasm_call_dtors() {}\n\n#[cfg(target_arch = "wasm32")]\n#[unsafe(no_mangle)]\npub extern "C" fn __wasi_proc_exit(code: i32) -> ! { crate::os::exit(code as u64); loop {} }\n' >> std/src/rt/mod.rs
+RUN sed -i 's/RUSTFLAGS="-Awarnings"/RUSTFLAGS="-Awarnings"/g' Makefile && \
+    sed -i 's/cargo --quiet/cargo --quiet -Z json-target-spec/g' Makefile && \
+    sed -i 's/Command::new("cargo")/Command::new("cargo").arg("-Z").arg("json-target-spec")/g' swiftboot/cargo-compile/src/main.rs
+
+# Kernel only (depends on swiftboot + ring3-rt). Stops before the WASM userland.
+RUN make kernel
+
+CMD ["true"]

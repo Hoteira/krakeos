@@ -8,6 +8,7 @@ use crate::debugln;
 
 pub static CPU_COUNT: AtomicUsize = AtomicUsize::new(1);
 pub static READY_COUNT: AtomicUsize = AtomicUsize::new(0);
+pub static NEXT_CPU_ID: AtomicUsize = AtomicUsize::new(1);
 
 /// Per-AP GDT base virtual address, written by BSP in boot_ap() before SIPI,
 /// read by the AP in init_ap_gdt_tss() before READY_COUNT is incremented.
@@ -34,6 +35,8 @@ pub fn init(madt_ptr: u64) {
 
     // 2. Discover APs and boot them
     let mut offset = core::mem::size_of::<Madt>();
+    let bsp_lapic_id = apic::get_id();
+
     while offset < madt.header.length as usize {
         let entry_ptr = (madt_ptr + offset as u64) as *const u8;
         let entry_type = unsafe { *entry_ptr };
@@ -44,7 +47,7 @@ pub fn init(madt_ptr: u64) {
             let flags = unsafe { core::ptr::read_unaligned(entry_ptr.add(4) as *const u32) };
 
             let is_enabled = (flags & 1) != 0;
-            if is_enabled && lapic_id != 0 {
+            if is_enabled && lapic_id != bsp_lapic_id {
                 boot_ap(lapic_id);
             }
         }
@@ -207,17 +210,19 @@ fn boot_ap(lapic_id: u8) {
 
     if success {
         CPU_COUNT.fetch_add(1, Ordering::SeqCst);
+        NEXT_CPU_ID.fetch_add(1, Ordering::SeqCst);
     } else {
-        debugln!("SMP: AP {} failed to boot!", lapic_id);
+        debugln!("SMP: AP with lapic_id {} failed to boot!", lapic_id);
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ap_entrance() -> ! {
-    let id = apic::get_id();
+    let cpu_id = NEXT_CPU_ID.load(Ordering::SeqCst);
+    let lapic_id = apic::get_id();
 
     // Initialize per-CPU state (GS base) before doing anything else
-    crate::task::cpu::init_per_cpu(id as u32, id);
+    crate::task::cpu::init_per_cpu(cpu_id as u32, lapic_id);
 
     // Load the per-AP GDT and TSS BEFORE signalling READY_COUNT.
     // The BSP stores AP_GDT_BASE/LIMIT before the SIPI and advances to
@@ -245,7 +250,7 @@ pub extern "C" fn ap_entrance() -> ! {
     // AP is fully initialised — signal the BSP
     READY_COUNT.fetch_add(1, Ordering::SeqCst);
 
-    debugln!("SMP: Core ID {} online.", id);
+    debugln!("SMP: Core ID {} (LAPIC {}) online.", cpu_id, lapic_id);
     
     unsafe { core::arch::asm!("sti"); }
 

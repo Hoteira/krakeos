@@ -5,6 +5,9 @@ edition = "2024"
 
 [dependencies]
 std = { path = "../std", default-features = false }
+# Used by the task scheduler (task/manager.rs) for the O(1) task table.
+# no_std build relies on default features for the `Global` allocator default.
+hashbrown = "0.15"
 
 [features]
 default = []

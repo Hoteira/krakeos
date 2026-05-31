@@ -45,7 +45,7 @@ pub extern "C" fn _start() -> ! {
         );
     }
 
-    let mut bootinfo = ebx as *mut BootInfo;
+    let bootinfo = ebx as *mut BootInfo;
     unsafe {
         (*bootinfo).kernel_stack = STACK_ADDRESS;
         (*bootinfo).pml4 = 0x2_0000;
@@ -71,7 +71,6 @@ pub extern "C" fn _start() -> ! {
 
         unsafe {
             let fb = (*bootinfo).mode.framebuffer;
-            let w = (*bootinfo).mode.width as u64;
             let h = (*bootinfo).mode.height as u64;
             let p = (*bootinfo).mode.pitch as u64;
             let size = h * p;

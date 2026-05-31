@@ -126,8 +126,8 @@ pub fn handle_read(context: &mut CPUState) {
         {
             let mut tm = crate::task::TASK_MANAGER.int_lock();
             let mut em = crate::task::event_manager::EVENT_MANAGER.int_lock();
-            if let Some(thread) = tm.tasks.get_mut(&current_idx) {
-                thread.state = crate::task::ThreadState::WaitingForEvent;
+            if let Some(thread) = tm.tasks.get(&current_idx) {
+                thread.state.store(crate::task::ThreadState::WaitingForEvent, core::sync::atomic::Ordering::Release);
                 em.register(current_idx, crate::task::event_manager::AsyncEvent::Read(proc.pid as i32));
             }
         }
@@ -153,7 +153,7 @@ pub fn handle_poll(context: &mut CPUState) {
     }
     if !super::validate_user_buf(context, fds_ptr as u64, (nfds * core::mem::size_of::<PollFd>()) as u64) { return; }
 
-    let start_ticks = unsafe { crate::task::SYSTEM_TICKS };
+    let start_ticks = crate::task::SYSTEM_TICKS.load(core::sync::atomic::Ordering::Relaxed);
     let end_ticks = if timeout_ms >= 0 { Some(start_ticks + timeout_ms as u64) } else { None };
 
     loop {
@@ -230,15 +230,15 @@ pub fn handle_poll(context: &mut CPUState) {
         }
 
         if let Some(end) = end_ticks {
-            if unsafe { crate::task::SYSTEM_TICKS } >= end {
+            if crate::task::SYSTEM_TICKS.load(core::sync::atomic::Ordering::Relaxed) >= end {
                 em.unregister_thread(current_idx);
                 context.rax = 0;
                 return;
             }
         }
 
-        if let Some(thread) = tm.tasks.get_mut(&current_idx) {
-            thread.state = crate::task::ThreadState::WaitingForEvent;
+        if let Some(thread) = tm.tasks.get(&current_idx) {
+            thread.state.store(crate::task::ThreadState::WaitingForEvent, core::sync::atomic::Ordering::Release);
         }
 
         drop(em);

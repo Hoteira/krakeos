@@ -20,6 +20,9 @@ fn lang_start<T: crate::process::Termination + 'static>(
 ) -> isize {
     #[cfg(target_arch = "wasm32")]
     unsafe {
+        // Grow memory by 128MB upfront (2048 pages) to prevent Talc span fragmentation.
+        core::arch::wasm32::memory_grow(0, 2048);
+        
         let mut argc: usize = 0;
         let mut argv_buf_size: usize = 0;
         if args_sizes_get(&mut argc, &mut argv_buf_size) == 0 {

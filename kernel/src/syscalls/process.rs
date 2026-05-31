@@ -258,7 +258,7 @@ pub fn spawn_process(
                 let task = tm.tasks.get_mut(&(pid_idx_elf)).unwrap();
 
                 unsafe {
-                    let cpu_state = &mut *(task.cpu_state_ptr as *mut crate::task::CPUState);
+                    let cpu_state = &mut *(task.cpu_state_ptr.load(core::sync::atomic::Ordering::Acquire) as *mut crate::task::CPUState);
                     cpu_state.rip = entry_point;
                 }
 
@@ -309,7 +309,7 @@ pub fn spawn_ext_process(
 
         let task = tm.tasks.get_mut(&(pid_idx)).unwrap();
         unsafe {
-            core::ptr::write(task.cpu_state_ptr as *mut CPUState, state);
+            core::ptr::write(task.cpu_state_ptr.load(core::sync::atomic::Ordering::Acquire) as *mut CPUState, state);
         }
     }
 
@@ -369,8 +369,8 @@ pub fn handle_exit(context: &mut CPUState) {
     {
         let mut tm = crate::task::TASK_MANAGER.int_lock();
         if let Some(thread) = tm.tasks.get_mut(&(pid as usize)) {
-            thread.exit_code = exit_code;
-            thread.state = crate::task::ThreadState::Zombie;
+            thread.exit_code.store(exit_code, core::sync::atomic::Ordering::Relaxed);
+            thread.state.store(crate::task::ThreadState::Zombie, core::sync::atomic::Ordering::Release);
 
             if let Some(proc) = &thread.process {
                 let mut fd_table = proc.fd_table.lock();
@@ -545,9 +545,9 @@ pub fn handle_wait_pid(context: &mut CPUState) {
 
     let mut tm = crate::task::TASK_MANAGER.int_lock();
     if let Some(task) = tm.tasks.get_mut(&target_pid) {
-        match task.state {
+        match task.state.load(core::sync::atomic::Ordering::Acquire) {
             crate::task::ThreadState::Zombie => {
-                let exit_code = task.exit_code;
+                let exit_code = task.exit_code.load(core::sync::atomic::Ordering::Relaxed);
                 context.rax = exit_code;
 
                 let pid = target_pid as u64;
@@ -593,7 +593,7 @@ pub fn handle_get_process_list(context: &mut CPUState) {
     let struct_size = 48;
 
     for (i, task) in tm.tasks.iter() {
-        if task.state != crate::task::ThreadState::Null {
+        if task.state.load(core::sync::atomic::Ordering::Acquire) != crate::task::ThreadState::Null {
             if count >= max_count {
                 break;
             }
@@ -602,7 +602,7 @@ pub fn handle_get_process_list(context: &mut CPUState) {
             unsafe {
                 let ptr = buf_ptr.add(offset);
                 *(ptr as *mut u64) = *i as u64;
-                *(ptr.add(8) as *mut u64) = match task.state {
+                *(ptr.add(8) as *mut u64) = match task.state.load(core::sync::atomic::Ordering::Acquire) {
                     crate::task::ThreadState::Null => 0,
                     crate::task::ThreadState::Reserved => 1,
                     crate::task::ThreadState::Ready => 2,
@@ -673,8 +673,8 @@ pub fn handle_sleep(context: &mut CPUState) {
     let current_idx = crate::task::cpu::get_current_task_idx() as usize;
 
     if let Some(task) = tm.tasks.get_mut(&current_idx) {
-        let wake_at = unsafe { crate::task::SYSTEM_TICKS } + duration;
-        task.state = crate::task::ThreadState::WaitingForEvent;
+        let wake_at = crate::task::SYSTEM_TICKS.load(core::sync::atomic::Ordering::Relaxed) + duration;
+        task.state.store(crate::task::ThreadState::WaitingForEvent, core::sync::atomic::Ordering::Release);
 
         let mut em = crate::task::event_manager::EVENT_MANAGER.int_lock();
         em.register(
@@ -718,9 +718,9 @@ pub fn handle_thread_exit(context: &mut CPUState) {
         let mut tm = crate::task::TASK_MANAGER.int_lock();
         let current = crate::task::cpu::get_current_task_idx();
         if current >= 0 {
-            if let Some(task) = tm.tasks.get_mut(&(current as usize)) {
-                task.state = crate::task::ThreadState::Zombie;
-                task.exit_code = 0;
+            if let Some(task) = tm.tasks.get(&(current as usize)) {
+                task.state.store(crate::task::ThreadState::Zombie, core::sync::atomic::Ordering::Release);
+                task.exit_code.store(0, core::sync::atomic::Ordering::Relaxed);
             }
         }
     }

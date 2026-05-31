@@ -95,17 +95,30 @@ unsafe fn grow_handler(min_size: usize) -> Option<(usize, usize)> {
     // Userland: grow using sys::alloc_pages (brk/mmap)
     #[cfg(feature = "userland")]
     {
-        // Grow in 1MB chunks to reduce syscall overhead
-        let growth_size = if min_size < 1024 * 1024 { 1024 * 1024 } else { min_size };
+        let heap = unsafe { &*ALLOCATOR.heap.get() };
+        let is_first = heap.region_count == 0;
+        
+        let growth_size = if is_first {
+            128 * 1024 * 1024
+        } else {
+            if min_size < 1024 * 1024 { 1024 * 1024 } else { min_size }
+        };
+        
         let ptr = crate::sys::alloc_pages(growth_size);
         if ptr.is_null() { return None; }
 
-        let start = ptr as usize;
-        let actual_size = if cfg!(target_arch = "wasm32") {
+        let mut start = ptr as usize;
+        let mut actual_size = if cfg!(target_arch = "wasm32") {
             (growth_size + 65535) & !65535
         } else {
             (growth_size + 4095) & !4095
         };
+
+        if is_first {
+            // Add a 4KB gap to catch NULL-adjacent underflows
+            start += 4096;
+            actual_size = actual_size.saturating_sub(4096);
+        }
 
         Some((start, start + actual_size))
     }

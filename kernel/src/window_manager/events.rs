@@ -39,8 +39,8 @@ impl EventQueue {
     pub fn push_to_process(&self, tm: &mut crate::task::TaskManager, pid: u64, event: Event) -> bool {
         use core::sync::atomic::Ordering;
 
-        if let Some(thread) = tm.tasks.get_mut(&(pid as usize)) {
-            if thread.state == crate::task::ThreadState::Zombie { return false; }
+        if let Some(thread) = tm.tasks.get(&(pid as usize)) {
+            if thread.state.load(Ordering::Acquire) == crate::task::ThreadState::Zombie { return false; }
             if let Some(proc) = thread.process.as_ref() {
                 let (header_ptr, buf_ptr, capacity) = *proc.event_queue.lock();
                 if header_ptr == 0 {

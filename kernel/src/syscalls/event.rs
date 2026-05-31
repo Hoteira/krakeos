@@ -27,8 +27,8 @@ pub fn handle_wait_for_event(context: &mut CPUState) {
             return;
         }
 
-        if let Some(thread) = tm.tasks.get_mut(&current_idx) {
-            thread.state = ThreadState::WaitingForEvent;
+        if let Some(thread) = tm.tasks.get(&current_idx) {
+            thread.state.store(ThreadState::WaitingForEvent, core::sync::atomic::Ordering::Release);
             em.register(current_idx, event);
         }
     }

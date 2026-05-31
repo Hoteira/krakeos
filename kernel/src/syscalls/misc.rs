@@ -25,9 +25,7 @@ pub fn handle_date(context: &mut CPUState) {
 }
 
 pub fn handle_ticks(context: &mut CPUState) {
-    unsafe {
-        context.rax = crate::task::SYSTEM_TICKS;
-    }
+    context.rax = crate::task::SYSTEM_TICKS.load(core::sync::atomic::Ordering::Relaxed);
 }
 
 pub fn handle_get_total_mem(context: &mut CPUState) {

@@ -46,8 +46,8 @@ extern "C" fn aot_thread_main() {
 
             if p_len == 0 && a_len == 0 {
                 if !em.check_pending(current_idx, crate::task::event_manager::AsyncEvent::Generic(my_tid)) {
-                    if let Some(thread) = tm.tasks.get_mut(&current_idx) {
-                        thread.state = ThreadState::WaitingForEvent;
+                    if let Some(thread) = tm.tasks.get(&current_idx) {
+                        thread.state.store(ThreadState::WaitingForEvent, core::sync::atomic::Ordering::Release);
                         em.register(current_idx, crate::task::event_manager::AsyncEvent::Generic(my_tid));
                     }
                 }
@@ -183,7 +183,7 @@ fn process_aot_request(req: AotRequest) {
                 crate::spawn_debugln!("[AOTWorker] task found for PID {}", pid_idx);
                 unsafe {
                     crate::spawn_debugln!("[AOTWorker] entering unsafe block");
-                    let state = &mut *(task.cpu_state_ptr as *mut crate::task::CPUState);
+                    let state = &mut *(task.cpu_state_ptr.load(core::sync::atomic::Ordering::Acquire) as *mut crate::task::CPUState);
                     state.rip = info.entry_addr;
                     state.rdi = info.ctx_ptr;
                     state.cs = 0x23;
@@ -220,7 +220,7 @@ fn process_aot_request(req: AotRequest) {
                     crate::spawn_debugln!("[AOTWorker] linear_memory_size updated");
                     crate::spawn_debugln!("[AOTWorker] leaving unsafe block");
                 }
-                task.state = ThreadState::Ready;
+                task.state.store(ThreadState::Ready, core::sync::atomic::Ordering::Release);
                 crate::spawn_debugln!("[AOTWorker] [AOTWorker] pushing PID {} to run queue now", pid_idx);
                 crate::spawn_debugln!("[AOTWorker] before tm.push_to_run_queue(pid_idx)");
                 tm.push_to_run_queue(pid_idx);
