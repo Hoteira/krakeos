@@ -5,6 +5,7 @@ use crate::wasm::common::assert_validated::UnwrapValidatedExt;
 use crate::wasm::common::indices::{FuncIdx, GlobalIdx, LabelIdx, LocalIdx};
 use crate::wasm::common::reader::types::BlockType;
 use crate::wasm::common::reader::types::ValType;
+use crate::wasm::common::reader::types::NumType;
 use crate::wasm::common::reader::types::instruction::Instruction;
 use crate::wasm::common::reader::types::memarg::MemArg;
 use crate::wasm::common::reader::types::opcode::*;
@@ -31,6 +32,15 @@ pub struct AotCompiler<'a> {
     pub trap_unimplemented_atomic_label: usize,
     pub trap_halt_label: usize,
     pub result_count: usize,
+    /// Phase 1 top-of-stack register cache: number of the top operand-stack
+    /// slots currently held in registers (RAX = second, RBX = top) instead of
+    /// on the physical RSP stack. 0, 1, or 2. Always 0 at every control-flow
+    /// boundary because all non-fast instructions flush it first.
+    pub cache_count: u8,
+    /// Value type of each local (params first, then declared locals) for the
+    /// function currently being compiled. Used to keep only GP-cacheable
+    /// (i32/i64) locals on the fast path.
+    pub local_types: Vec<ValType>,
 }
 
 pub struct ControlBlock {
@@ -92,6 +102,8 @@ impl<'a> AotCompiler<'a> {
             trap_unimplemented_atomic_label,
             trap_halt_label,
             result_count: 0,
+            cache_count: 0,
+            local_types: Vec::new(),
         }
     }
 
@@ -254,7 +266,8 @@ impl<'a> AotCompiler<'a> {
     fn compile_function_body(&mut self, local_func_idx: usize) {
         self.control_stack.clear();
         self.stack_depth = 0;
-        
+        self.cache_count = 0;
+
         let local_trap_halt_label = self.emitter.new_label();
 
         let total_imported_funcs = self.validation_info.imports_length.imported_functions;
@@ -292,6 +305,16 @@ impl<'a> AotCompiler<'a> {
         let locals =
             crate::wasm::common::validation::code::read_declared_locals(&mut reader).unwrap();
         let total_locals = param_count + locals.len();
+
+        // Record local value types (params first, then declared locals) so the
+        // fast-path register cache only applies to GP-cacheable i32/i64 locals.
+        self.local_types.clear();
+        for vt in func_type.params.valtypes.iter() {
+            self.local_types.push(*vt);
+        }
+        for vt in locals.iter() {
+            self.local_types.push(*vt);
+        }
 
         // 3. Stack limit check BEFORE allocating locals
         {
@@ -471,6 +494,72 @@ impl<'a> AotCompiler<'a> {
         self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48);
         self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16);
         self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -64);
+
+        // ── Phase 1 fast path: top-of-stack integer register cache ──────────
+        // A small set of hot integer ops keep their operands/results in
+        // registers (RAX = second, RBX = top) instead of round-tripping through
+        // the RSP memory stack. Every other instruction calls flush_cache()
+        // first, which spills any cached values back to memory and leaves the
+        // cache empty — so the slow path below is unchanged, and the cache is
+        // provably empty at every control-flow boundary (all control flow is
+        // handled on the slow path).
+        match &instr {
+            Instruction::I32Const(v) => {
+                let v = *v;
+                let r = self.cache_push_reg();
+                self.emitter.mov_reg_imm64(r, (v as u32) as u64);
+                self.stack_depth += 1;
+                return;
+            }
+            Instruction::LocalGet(idx) if self.local_is_gp(*idx) => {
+                let off = (*idx as i32) * 16;
+                let r = self.cache_push_reg();
+                self.emitter.mov_reg_mem64(r, Reg::R13, off);
+                self.stack_depth += 1;
+                return;
+            }
+            Instruction::LocalSet(idx) if self.local_is_gp(*idx) => {
+                let off = (*idx as i32) * 16;
+                let r = self.cache_pop_reg();
+                self.store_local_from_reg(off, r);
+                self.stack_depth -= 1;
+                return;
+            }
+            Instruction::LocalTee(idx) if self.local_is_gp(*idx) => {
+                let off = (*idx as i32) * 16;
+                let r = self.cache_top_reg();
+                self.store_local_from_reg(off, r);
+                return;
+            }
+            Instruction::I32Add => {
+                self.fast_binop_i32(|e| e.add_reg32_reg32(Reg::RAX, Reg::RBX));
+                return;
+            }
+            Instruction::I32Sub => {
+                self.fast_binop_i32(|e| e.sub_reg32_reg32(Reg::RAX, Reg::RBX));
+                return;
+            }
+            Instruction::I32Mul => {
+                self.fast_binop_i32(|e| e.imul_reg32_reg32(Reg::RAX, Reg::RBX));
+                return;
+            }
+            Instruction::I32And => {
+                self.fast_binop_i32(|e| e.and_reg32_reg32(Reg::RAX, Reg::RBX));
+                return;
+            }
+            Instruction::I32Or => {
+                self.fast_binop_i32(|e| e.or_reg32_reg32(Reg::RAX, Reg::RBX));
+                return;
+            }
+            Instruction::I32Xor => {
+                self.fast_binop_i32(|e| e.xor_reg32_reg32(Reg::RAX, Reg::RBX));
+                return;
+            }
+            _ => {
+                // Every other instruction sees the canonical memory-stack state.
+                self.flush_cache();
+            }
+        }
 
         match instr {
             Instruction::Nop => {}
@@ -1684,6 +1773,121 @@ impl<'a> AotCompiler<'a> {
             self.emitter
                 .add_reg_imm32(Reg::RSP, (drop_count * 16) as u32);
         }
+    }
+
+    // ── Phase 1 top-of-stack register cache helpers ─────────────────────────
+
+    /// True if local `idx` is i32/i64 (safe to hold in a 64-bit GP register).
+    /// Floats and v128 keep using the slow movups path (v128 would lose its
+    /// high 64 bits in a GP register).
+    fn local_is_gp(&self, idx: usize) -> bool {
+        matches!(
+            self.local_types.get(idx),
+            Some(ValType::NumType(NumType::I32)) | Some(ValType::NumType(NumType::I64))
+        )
+    }
+
+    /// Spill every cached operand value back onto the physical RSP stack and
+    /// empty the cache. After this the memory stack matches `stack_depth`
+    /// exactly, so the unchanged slow path behaves identically to before.
+    fn flush_cache(&mut self) {
+        match self.cache_count {
+            1 => self.emitter.push_wasm_stack(Reg::RAX), // top
+            2 => {
+                self.emitter.push_wasm_stack(Reg::RAX); // second (deeper, pushed first)
+                self.emitter.push_wasm_stack(Reg::RBX); // top
+            }
+            _ => {}
+        }
+        self.cache_count = 0;
+    }
+
+    /// Reserve the register that will hold a newly pushed top-of-stack value.
+    /// When the cache is already full, the deeper cached value is spilled to
+    /// memory to make room. Caller writes the value into the returned register.
+    fn cache_push_reg(&mut self) -> Reg {
+        match self.cache_count {
+            0 => {
+                self.cache_count = 1;
+                Reg::RAX
+            }
+            1 => {
+                self.cache_count = 2;
+                Reg::RBX
+            }
+            _ => {
+                // Full: spill old 'second' (RAX) to memory, demote old top
+                // (RBX) to 'second', new value becomes top in RBX.
+                self.emitter.push_wasm_stack(Reg::RAX);
+                self.emitter.mov_reg_reg(Reg::RAX, Reg::RBX);
+                Reg::RBX
+            }
+        }
+    }
+
+    /// Return the register holding the top-of-stack value and remove it from the
+    /// cache, loading from memory if nothing is cached.
+    fn cache_pop_reg(&mut self) -> Reg {
+        match self.cache_count {
+            2 => {
+                self.cache_count = 1; // new top is RAX, already in place
+                Reg::RBX
+            }
+            1 => {
+                self.cache_count = 0;
+                Reg::RAX
+            }
+            _ => {
+                self.emitter.pop_wasm_stack(Reg::RAX);
+                Reg::RAX
+            }
+        }
+    }
+
+    /// Return the register holding the top-of-stack value, leaving it on the
+    /// stack (for local.tee). Caches the top if it was only in memory.
+    fn cache_top_reg(&mut self) -> Reg {
+        match self.cache_count {
+            2 => Reg::RBX,
+            1 => Reg::RAX,
+            _ => {
+                self.emitter.pop_wasm_stack(Reg::RAX);
+                self.cache_count = 1;
+                Reg::RAX
+            }
+        }
+    }
+
+    /// Store `r` (low 64 bits) into local slot at `off`, zeroing the slot's high
+    /// 64 bits to match the zero-extension done by push_wasm_stack.
+    fn store_local_from_reg(&mut self, off: i32, r: Reg) {
+        self.emitter.mov_mem64_reg(Reg::R13, off, r);
+        self.emitter.xor_reg_reg(Reg::R11, Reg::R11);
+        self.emitter.mov_mem64_reg(Reg::R13, off + 8, Reg::R11);
+    }
+
+    /// Fast i32 binop: bring the top two operands into RAX (second) / RBX (top),
+    /// run `op` (which computes RAX = RAX <op> RBX), and leave the result cached
+    /// as the new top in RAX.
+    fn fast_binop_i32<F>(&mut self, op: F)
+    where
+        F: FnOnce(&mut X64Emitter),
+    {
+        match self.cache_count {
+            2 => {} // RAX = second, RBX = top already
+            1 => {
+                // top in RAX; move it to RBX, load second from memory into RAX
+                self.emitter.mov_reg_reg(Reg::RBX, Reg::RAX);
+                self.emitter.pop_wasm_stack(Reg::RAX);
+            }
+            _ => {
+                self.emitter.pop_wasm_stack(Reg::RBX); // top
+                self.emitter.pop_wasm_stack(Reg::RAX); // second
+            }
+        }
+        op(&mut self.emitter);
+        self.cache_count = 1; // result (new top) in RAX
+        self.stack_depth -= 1;
     }
 
     fn emit_binop_i32<F>(&mut self, op: F)
