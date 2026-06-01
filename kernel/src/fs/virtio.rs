@@ -2,7 +2,7 @@ use crate::debugln;
 use crate::memory::pmm;
 use core::ptr::{read_volatile, write_volatile};
 use crate::sync::Mutex;
-use core::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, Ordering};
 
 static LOCK: AtomicBool = AtomicBool::new(false);
 
@@ -18,8 +18,21 @@ static BLK_WAITER: AtomicI64 = AtomicI64::new(-1);
 /// MMIO address of the VirtIO Block ISR status register (must be read to clear the interrupt).
 pub static mut BLK_ISR_ADDR: u64 = 0;
 
-/// IDT vector used for the VirtIO Block IRQ (IRQ10 → 0x20 + 10 = 42).
+/// IDT vector used for the VirtIO Block IRQ (legacy 0x20 + IRQ; the ACTUAL IRQ is read
+/// from the device at init — QEMU often assigns IRQ 11, not 10).
 pub const BLK_INT_VEC: u8 = 42;
+
+/// The device's PCI interrupt line (IRQ), captured at init. 0xFF = unknown/none.
+/// The kernel routes this IRQ to `BLK_INT_VEC` once the IOAPIC is up (see main.rs) —
+/// previously the IRQ was hardcoded to 10, but this device is IRQ 11, so the disk
+/// completion ISR was routed to the net handler and never fired (the driver was
+/// silently relying on the slow tick safety-poll).
+static BLK_IRQ_LINE: AtomicU8 = AtomicU8::new(0xFF);
+
+/// The IRQ the block device asserts, for the kernel to route to `BLK_INT_VEC`.
+pub fn irq_line() -> u8 {
+    BLK_IRQ_LINE.load(Ordering::SeqCst)
+}
 
 const VIRTIO_BLK_T_IN:    u32 = 0;
 const VIRTIO_BLK_T_OUT:   u32 = 1;
@@ -137,6 +150,12 @@ pub fn init() {
 
     let virtio = device.unwrap();
     debugln!("VirtIO Block: Found device at Bus {}, Device {}, Func {}", virtio.bus, virtio.device, virtio.function);
+
+    // Capture the device's actual INTx line so the kernel can route it to BLK_INT_VEC
+    // once the IOAPIC is initialised (QEMU may assign IRQ 11, not the legacy 10).
+    let int_line = (virtio.read_u32(0x3C) & 0xFF) as u8;
+    BLK_IRQ_LINE.store(int_line, Ordering::SeqCst);
+    debugln!("VirtIO Block: INTx line = IRQ {}", int_line);
 
     if virtio.enable_bus_mastering() {
         debugln!("VirtIO Block: Bus mastering enabled.");

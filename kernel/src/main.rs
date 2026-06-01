@@ -126,9 +126,16 @@ pub extern "C" fn rust_main(bootinfo_ptr: u64) -> ! {
         arch::x86_64::apic::set_irq(0, 32);
         arch::x86_64::apic::set_irq(2, 32);
         arch::x86_64::apic::set_irq(1, 33);
-        arch::x86_64::apic::set_irq(10, crate::fs::virtio::BLK_INT_VEC); // VirtIO Block
         arch::x86_64::apic::set_irq(11, crate::arch::x86_64::exceptions::NET_INT); // VirtIO Net
         arch::x86_64::apic::set_irq(12, 44);
+        // VirtIO Block: route the device's ACTUAL INTx line (captured at init). QEMU
+        // assigns this device IRQ 11, not the legacy 10 — the old hardcoded route sent
+        // completions to the net handler, so the disk ISR never fired. Routed last so
+        // it wins if it happens to share IRQ 11 with the (usually-absent) net device.
+        let blk_irq = crate::fs::virtio::irq_line();
+        if blk_irq != 0xFF {
+            arch::x86_64::apic::set_irq(blk_irq, crate::fs::virtio::BLK_INT_VEC);
+        }
     }
 
     // VirtIO network (via the virtio-drivers crate). Absent in the default QEMU
