@@ -8,6 +8,9 @@ std = { path = "../std", default-features = false }
 # Used by the task scheduler (task/manager.rs) for the O(1) task table.
 # no_std build relies on default features for the `Global` allocator default.
 hashbrown = "0.15"
+# Rust VirtIO driver library. `alloc` only (no embedded-io / std). Provides the
+# transports + VirtIONet/VirtIOBlk/VirtIOGpu drivers we are migrating onto.
+virtio-drivers = { version = "0.11", default-features = false, features = ["alloc"] }
 
 [features]
 default = []

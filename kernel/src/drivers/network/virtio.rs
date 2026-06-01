@@ -1,511 +1,201 @@
-#![allow(static_mut_refs)]
-use crate::debugln;
-use crate::drivers::pci::{PciCapability, PciDevice};
-use crate::memory::mmio::{read_8, read_16, read_32, write_8, write_16, write_32, write_64};
-use crate::memory::pmm;
-use crate::memory::vmm;
+//! VirtIO network driver, built on the `virtio-drivers` crate's `VirtIONet` over a
+//! PCI transport. The public API (`init`, `send_packet`, `recv_packet`, `poll_rx`,
+//! `read_isr`) is preserved so the net stack and syscalls are unchanged.
+
+use crate::arch::x86_64::io::{inl, outl};
+use crate::drivers::virtio_hal::KrakenHal;
 use crate::sync::Mutex;
 use alloc::collections::VecDeque;
 use alloc::string::String;
-use core::sync::atomic::{AtomicBool, Ordering};
+use alloc::vec::Vec;
 
-static LOCK: AtomicBool = AtomicBool::new(false);
-/// Mapped virtual address of the VirtIO Net ISR status register.
-/// Read (and clear) on every interrupt to acknowledge pending RX/config events.
-pub static mut NET_ISR_ADDR: u64 = 0;
+use virtio_drivers::device::net::{TxBuffer, VirtIONet};
+use virtio_drivers::transport::pci::bus::{ConfigurationAccess, DeviceFunction, PciRoot};
+use virtio_drivers::transport::pci::PciTransport;
+use virtio_drivers::transport::Transport;
 
-const VIRTIO_CAP_COMMON: u8 = 1;
-const VIRTIO_CAP_NOTIFY: u8 = 2;
-const VIRTIO_CAP_ISR: u8 = 3;
+/// Virtqueue depth handed to the crate (power of two, <= device maximum).
+const NET_QUEUE_SIZE: usize = 16;
+/// Per-buffer length for RX/TX (Ethernet MTU + virtio-net header headroom).
+const NET_BUF_LEN: usize = 2048;
 
-const OFF_DEVICE_FEATURE_SELECT: usize = 0x00;
-const OFF_DEVICE_FEATURE: usize = 0x04;
-const OFF_DRIVER_FEATURE_SELECT: usize = 0x08;
-const OFF_DRIVER_FEATURE: usize = 0x0C;
-const OFF_MSIX_CONFIG: usize = 0x10;
-const OFF_NUM_QUEUES: usize = 0x12;
-const OFF_DEVICE_STATUS: usize = 0x14;
-const OFF_CONFIG_GENERATION: usize = 0x15;
-const OFF_QUEUE_SELECT: usize = 0x16;
-const OFF_QUEUE_SIZE: usize = 0x18;
-const OFF_QUEUE_MSIX_VECTOR: usize = 0x1A;
-const OFF_QUEUE_ENABLE: usize = 0x1C;
-const OFF_QUEUE_NOTIFY_OFF: usize = 0x1E;
-const OFF_QUEUE_DESC: usize = 0x20;
-const OFF_QUEUE_DRIVER: usize = 0x28;
-const OFF_QUEUE_DEVICE: usize = 0x30;
+/// PCI configuration-space access via legacy `0xCF8/0xCFC` port I/O.
+#[derive(Clone)]
+struct PortCam;
 
-const STATUS_ACKNOWLEDGE: u8 = 1;
-const STATUS_DRIVER: u8 = 2;
-const STATUS_DRIVER_OK: u8 = 4;
-const STATUS_FEATURES_OK: u8 = 8;
-
-const VIRTIO_NET_F_MAC: u32 = 1 << 5;
-const VIRTIO_NET_F_STATUS: u32 = 1 << 16;
-
-#[repr(C, align(16))]
-#[derive(Debug, Clone, Copy)]
-struct VirtqDesc {
-    addr: u64,
-    len: u32,
-    flags: u16,
-    next: u16,
+impl PortCam {
+    #[inline]
+    fn address(df: DeviceFunction, offset: u8) -> u32 {
+        0x8000_0000
+            | ((df.bus as u32) << 16)
+            | ((df.device as u32) << 11)
+            | ((df.function as u32) << 8)
+            | ((offset as u32) & 0xFC)
+    }
 }
 
-#[repr(C, align(2))]
-#[derive(Debug, Clone, Copy)]
-struct VirtqAvail {
-    flags: u16,
-    idx: u16,
-    ring: [u16; 256],
-    used_event: u16,
+impl ConfigurationAccess for PortCam {
+    fn read_word(&self, df: DeviceFunction, register_offset: u8) -> u32 {
+        let addr = Self::address(df, register_offset);
+        unsafe {
+            outl(0xCF8, addr);
+            inl(0xCFC)
+        }
+    }
+
+    fn write_word(&mut self, df: DeviceFunction, register_offset: u8, data: u32) {
+        let addr = Self::address(df, register_offset);
+        unsafe {
+            outl(0xCF8, addr);
+            outl(0xCFC, data);
+        }
+    }
+
+    unsafe fn unsafe_clone(&self) -> Self {
+        PortCam
+    }
 }
 
-#[repr(C, align(4))]
-#[derive(Debug, Clone, Copy)]
-struct VirtqUsedElem {
-    id: u32,
-    len: u32,
-}
-
-#[repr(C, align(4))]
-#[derive(Debug, Clone, Copy)]
-struct VirtqUsed {
-    flags: u16,
-    idx: u16,
-    ring: [VirtqUsedElem; 256],
-    avail_event: u16,
-}
-
-struct VirtQueue {
-    desc_phys: u64,
-    avail_phys: u64,
-    used_phys: u64,
-    queue_index: u16,
-    num: u16,
-    free_head: u16,
-    last_used_idx: u16,
-    notify_addr: u64,
-}
-
-// VirtIO Net Header (Legacy/Modern merge)
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct VirtioNetHdr {
-    flags: u8,
-    gso_type: u8,
-    hdr_len: u16,
-    gso_size: u16,
-    csum_start: u16,
-    csum_offset: u16,
-}
+type NetDev = VirtIONet<KrakenHal, PciTransport, NET_QUEUE_SIZE>;
 
 pub struct VirtioNetDevice {
+    dev: NetDev,
+    #[allow(dead_code)]
     mac: [u8; 6],
-    rx_queue: Option<VirtQueue>,
-    tx_queue: Option<VirtQueue>,
-    rx_buffers: VecDeque<(u64, u64, u32)>, // phys, virt, len
-    rx_packet_queue: Mutex<VecDeque<alloc::vec::Vec<u8>>>,
+    /// Raw packets delivered to userspace via `recv_packet` (the kernel net stack is
+    /// fed separately through `crate::net::on_receive` in `poll_rx`).
+    rx_packet_queue: VecDeque<Vec<u8>>,
 }
 
 pub static NET_DEVICE: Mutex<Option<VirtioNetDevice>> = Mutex::new(None);
 
+/// Program any memory BARs that firmware left unset (swiftboot does no PCI BAR
+/// assignment), so the crate's transport can read valid BAR addresses.
+fn program_bars(pci: &crate::drivers::pci::PciDevice) {
+    let mut bar = 0u8;
+    while bar < 6 {
+        let raw = pci.read_bar_raw(bar);
+        let is_io = raw & 1 == 1;
+        let is_64 = (raw & 0x6) == 0x4;
+        if !is_io && raw != 0 {
+            let cur = pci.get_bar(bar).unwrap_or(0);
+            if cur < 0xC000_0000 {
+                let addr = crate::drivers::pci::allocate_bar_address(0x100_0000); // 16 MiB
+                pci.write_bar(bar, addr);
+                crate::debugln!("VirtIO Net: remapped BAR {} -> {:#x}", bar, addr);
+            }
+        }
+        // A 64-bit BAR consumes the next index for its high half.
+        bar += if is_64 { 2 } else { 1 };
+    }
+}
+
 pub fn init() -> Result<(), String> {
-    let device_opt = crate::drivers::pci::find_device(0x1AF4, 0x1000); // Legacy
-    let device = if let Some(d) = device_opt {
-        d
-    } else {
-        if let Some(d) = crate::drivers::pci::find_device(0x1AF4, 0x1041) {
-            // Modern
-            d
-        } else {
-            return Err(String::from("VirtIO Net: Device not found."));
-        }
+    let pci = crate::drivers::pci::find_device(0x1AF4, 0x1041) // modern virtio-net
+        .or_else(|| crate::drivers::pci::find_device(0x1AF4, 0x1000)); // transitional
+    let pci = match pci {
+        Some(d) => d,
+        None => return Err(String::from("VirtIO Net: device not found")),
     };
-
-    debugln!(
-        "VirtIO Net: Found device at Bus {}, Device {}, Func {}",
-        device.bus,
-        device.device,
-        device.function
+    crate::debugln!(
+        "VirtIO Net: found at {}:{}.{}",
+        pci.bus,
+        pci.device,
+        pci.function
     );
-    device.enable_bus_mastering();
 
-    let caps = device.list_capabilities();
-    let mut common_cfg_ptr: *mut u8 = core::ptr::null_mut();
-    let mut notify_base: u64 = 0;
-    let mut notify_multiplier: u32 = 0;
-    let mut device_cfg_ptr: *mut u8 = core::ptr::null_mut();
+    pci.enable_bus_mastering();
+    program_bars(&pci);
 
-    for cap in caps {
-        if cap.id != 0x09 {
-            continue;
-        }
+    let df = DeviceFunction {
+        bus: pci.bus,
+        device: pci.device,
+        function: pci.function,
+    };
+    let mut root = PciRoot::new(PortCam);
+    let transport = PciTransport::new::<KrakenHal, PortCam>(&mut root, df)
+        .map_err(|e| {
+            crate::debugln!("VirtIO Net: transport init failed: {:?}", e);
+            String::from("VirtIO Net: transport init failed")
+        })?;
 
-        let cfg_type = device.read_u8(cap.offset as u32 + 3);
-        let bar = device.read_u8(cap.offset as u32 + 4);
-        let offset = device.read_u32(cap.offset as u32 + 8);
-        let length = device.read_u32(cap.offset as u32 + 12);
+    let dev = NetDev::new(transport, NET_BUF_LEN).map_err(|e| {
+        crate::debugln!("VirtIO Net: device init failed: {:?}", e);
+        String::from("VirtIO Net: device init failed")
+    })?;
 
-        let mut bar_base_opt = device.get_bar(bar);
-        if bar_base_opt.is_none() || bar_base_opt.unwrap() < 0xC0000000 {
-            let remapped_addr = crate::drivers::pci::allocate_bar_address(0x1000000); // 16MB
-            device.write_bar(bar, remapped_addr);
-            debugln!("VirtIO Net: Remapped BAR {} to {:#x}", bar, remapped_addr);
-            bar_base_opt = device.get_bar(bar);
-        }
+    let mac = dev.mac_address();
+    crate::println!(
+        "VirtIO Net: MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+        mac[0],
+        mac[1],
+        mac[2],
+        mac[3],
+        mac[4],
+        mac[5]
+    );
 
-        if let Some(bar_base) = bar_base_opt {
-            let addr = (bar_base as u64) + (offset as u64);
-
-            if cfg_type == VIRTIO_CAP_COMMON {
-                let virt_addr = vmm::map_mmio(addr, length as usize);
-                common_cfg_ptr = virt_addr as *mut u8;
-            } else if cfg_type == VIRTIO_CAP_NOTIFY {
-                notify_base = vmm::map_mmio(addr, length as usize);
-                notify_multiplier = device.read_capability_data(cap.offset as u8, 16);
-            } else if cfg_type == VIRTIO_CAP_ISR {
-                unsafe { NET_ISR_ADDR = vmm::map_mmio(addr, length as usize); }
-            } else if cfg_type == 4 {
-                // Device specific (MAC)
-                let virt_addr = vmm::map_mmio(addr, length as usize);
-                device_cfg_ptr = virt_addr as *mut u8;
-            }
-        }
-    }
-
-    if common_cfg_ptr.is_null() {
-        return Err(String::from("VirtIO Net: Common config not found."));
-    }
-
-    unsafe {
-        // Reset
-        write_8(common_cfg_ptr.add(OFF_DEVICE_STATUS), 0);
-
-        // Acknowledge
-        let mut status = read_8(common_cfg_ptr.add(OFF_DEVICE_STATUS));
-        status |= STATUS_ACKNOWLEDGE;
-        write_8(common_cfg_ptr.add(OFF_DEVICE_STATUS), status);
-
-        // Driver
-        status |= STATUS_DRIVER;
-        write_8(common_cfg_ptr.add(OFF_DEVICE_STATUS), status);
-
-        // Features
-        write_32(common_cfg_ptr.add(OFF_DEVICE_FEATURE_SELECT), 0);
-        let features = read_32(common_cfg_ptr.add(OFF_DEVICE_FEATURE));
-
-        let mut driver_features = 0;
-        if (features & VIRTIO_NET_F_MAC) != 0 {
-            driver_features |= VIRTIO_NET_F_MAC;
-        }
-        if (features & VIRTIO_NET_F_STATUS) != 0 {
-            driver_features |= VIRTIO_NET_F_STATUS;
-        }
-
-        write_32(common_cfg_ptr.add(OFF_DRIVER_FEATURE_SELECT), 0);
-        write_32(common_cfg_ptr.add(OFF_DRIVER_FEATURE), driver_features);
-
-        status |= STATUS_FEATURES_OK;
-        write_8(common_cfg_ptr.add(OFF_DEVICE_STATUS), status);
-
-        let final_status = read_8(common_cfg_ptr.add(OFF_DEVICE_STATUS));
-        if (final_status & STATUS_FEATURES_OK) == 0 {
-            return Err(String::from("VirtIO Net: Feature negotiation failed."));
-        }
-
-        // Get MAC
-        let mut mac = [0u8; 6];
-        if !device_cfg_ptr.is_null() {
-            for i in 0..6 {
-                mac[i] = read_8(device_cfg_ptr.add(i));
-            }
-            debugln!(
-                "VirtIO Net: MAC Address: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
-            );
-        }
-
-        // Queues: 0=RX, 1=TX
-        let rx_queue = setup_queue(common_cfg_ptr, 0, notify_base, notify_multiplier);
-        let tx_queue = setup_queue(common_cfg_ptr, 1, notify_base, notify_multiplier);
-
-        if rx_queue.is_none() || tx_queue.is_none() {
-            return Err(String::from("VirtIO Net: Failed to setup queues."));
-        }
-
-        let mut net_dev = VirtioNetDevice {
-            mac,
-            rx_queue,
-            tx_queue,
-            rx_buffers: VecDeque::new(),
-            rx_packet_queue: Mutex::new(VecDeque::new()),
-        };
-
-        // Populate RX queue
-        fill_rx_queue(&mut net_dev);
-
-        // Enable RX interrupts: clear VIRTQ_AVAIL_F_NO_INTERRUPT on queue 0.
-        // The device will now assert its legacy PCI interrupt (IRQ 11 → vector 43)
-        // when it places a received packet in the used ring.
-        if let Some(vq) = &net_dev.rx_queue {
-            let avail_ptr = (vq.avail_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqAvail;
-            (*avail_ptr).flags = 0; // 0 = interrupts enabled
-        }
-
-        *NET_DEVICE.lock() = Some(net_dev);
-
-        status |= STATUS_DRIVER_OK;
-        write_8(common_cfg_ptr.add(OFF_DEVICE_STATUS), status);
-
-        debugln!("VirtIO Net: Initialized.");
-    }
+    *NET_DEVICE.lock() = Some(VirtioNetDevice {
+        dev,
+        mac,
+        rx_packet_queue: VecDeque::new(),
+    });
+    crate::debugln!("VirtIO Net: initialized.");
     Ok(())
 }
 
-unsafe fn setup_queue(
-    common_cfg: *mut u8,
-    index: u16,
-    notify_base: u64,
-    notify_multiplier: u32,
-) -> Option<VirtQueue> {
-    write_16(common_cfg.add(OFF_QUEUE_SELECT), index);
-
-    let max_size = read_16(common_cfg.add(OFF_QUEUE_SIZE));
-    if max_size == 0 {
-        return None;
-    }
-
-    let size = 256;
-    write_16(common_cfg.add(OFF_QUEUE_SIZE), size);
-
-    let size_bytes = 16 * size as usize + 6 + 2 * size as usize + 2 + 6 + 8 * size as usize + 2;
-    let pages = (size_bytes + 4095) / 4096;
-
-    let frame = pmm::allocate_frames(pages)?;
-    let virt_frame = (frame + crate::memory::paging::HHDM_OFFSET) as *mut u8;
-    core::ptr::write_bytes(virt_frame, 0, pages * 4096);
-
-    let desc_addr = frame;
-    let avail_addr = desc_addr + (16 * size as u64);
-    let used_addr = (avail_addr + 6 + 2 * size as u64 + 2 + 3) & !3; // Align 4
-
-    let desc_ptr = (desc_addr + crate::memory::paging::HHDM_OFFSET) as *mut VirtqDesc;
-    for i in 0..size {
-        (*desc_ptr.add(i as usize)).next = (i + 1);
-        (*desc_ptr.add(i as usize)).flags = 0;
-    }
-    (*desc_ptr.add((size - 1) as usize)).next = 0xFFFF; // End of list
-
-    write_64(common_cfg.add(OFF_QUEUE_DESC), desc_addr);
-    write_64(common_cfg.add(OFF_QUEUE_DRIVER), avail_addr);
-    write_64(common_cfg.add(OFF_QUEUE_DEVICE), used_addr);
-
-    let notify_off = read_16(common_cfg.add(OFF_QUEUE_NOTIFY_OFF));
-    let notify_addr = notify_base + (notify_off as u64 * notify_multiplier as u64);
-
-    write_16(common_cfg.add(OFF_QUEUE_ENABLE), 1);
-
-    Some(VirtQueue {
-        desc_phys: desc_addr,
-        avail_phys: avail_addr,
-        used_phys: used_addr,
-        queue_index: index,
-        num: size,
-        free_head: 0,
-        last_used_idx: 0,
-        notify_addr,
-    })
-}
-
-unsafe fn fill_rx_queue(dev: &mut VirtioNetDevice) {
-    if let Some(vq) = &mut dev.rx_queue {
-        let num_bufs = vq.num as usize;
-        for _ in 0..num_bufs {
-            if vq.free_head == 0xFFFF {
-                break;
-            }
-
-            if let Some(frame) = pmm::allocate_frame() {
-                let virt = frame + crate::memory::paging::HHDM_OFFSET;
-                dev.rx_buffers.push_back((frame, virt, 2048));
-
-                let desc_idx = vq.free_head;
-                let desc_ptr = (vq.desc_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqDesc;
-                let next_idx = (*desc_ptr.add(desc_idx as usize)).next;
-
-                (*desc_ptr.add(desc_idx as usize)) = VirtqDesc {
-                    addr: frame,
-                    len: 2048,
-                    flags: 2, // WRITABLE
-                    next: 0,
-                };
-
-                vq.free_head = next_idx;
-
-                let avail_ptr = (vq.avail_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqAvail;
-                let idx = (*avail_ptr).idx;
-                (*avail_ptr).ring[(idx % vq.num) as usize] = desc_idx;
-
-                core::sync::atomic::fence(Ordering::SeqCst);
-                (*avail_ptr).idx = idx.wrapping_add(1);
-            }
-        }
-        write_16(vq.notify_addr as *mut u8, vq.queue_index);
-    }
-}
-
-unsafe fn recycle_tx_descriptors(dev: &mut VirtioNetDevice) {
-    if let Some(vq) = &mut dev.tx_queue {
-        let used_ptr = (vq.used_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqUsed;
-        let current_used_idx = (*used_ptr).idx;
-
-        while vq.last_used_idx != current_used_idx {
-            let elem = (*used_ptr).ring[(vq.last_used_idx % vq.num) as usize];
-            let id = elem.id as usize;
-            let desc_ptr = (vq.desc_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqDesc;
-            let addr = (*desc_ptr.add(id)).addr;
-
-            if addr != 0 {
-                pmm::free_frame(addr);
-            }
-
-            (*desc_ptr.add(id)).flags = 0;
-            (*desc_ptr.add(id)).next = vq.free_head;
-            vq.free_head = id as u16;
-
-            vq.last_used_idx = vq.last_used_idx.wrapping_add(1);
-        }
-    }
-}
-
+/// Drain the RX virtqueue: feed each packet to the kernel net stack and queue it for
+/// `recv_packet`, then service the loopback queue. Returns 0 (kept for ABI parity).
 pub fn poll_rx() {
-    if let Some(dev) = NET_DEVICE.lock().as_mut() {
-        if let Some(vq) = &mut dev.rx_queue {
-            let used_ptr = (vq.used_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqUsed;
-            let used_idx = unsafe { (*used_ptr).idx };
-
-            while vq.last_used_idx != used_idx {
-                let elem = unsafe { (*used_ptr).ring[(vq.last_used_idx % vq.num) as usize] };
-                let id = elem.id;
-                let len = elem.len;
-
-                let desc_ptr = (vq.desc_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqDesc;
-                let desc = unsafe { *desc_ptr.add(id as usize) };
-
-                let virt_addr = desc.addr + crate::memory::paging::HHDM_OFFSET;
-                let hdr_size = core::mem::size_of::<VirtioNetHdr>();
-
-                if len as usize > hdr_size {
-                    let packet_len = len as usize - hdr_size;
-                    let mut packet = alloc::vec![0u8; packet_len];
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(
-                            (virt_addr as *const u8).add(hdr_size),
-                            packet.as_mut_ptr(),
-                            packet_len,
-                        );
-                    }
-
-                    crate::net::on_receive(&packet);
-                    dev.rx_packet_queue.lock().push_back(packet);
+    if let Some(nd) = NET_DEVICE.lock().as_mut() {
+        while nd.dev.can_recv() {
+            match nd.dev.receive() {
+                Ok(rx) => {
+                    let pkt = rx.packet().to_vec();
+                    crate::net::on_receive(&pkt);
+                    let _ = nd.dev.recycle_rx_buffer(rx);
+                    nd.rx_packet_queue.push_back(pkt);
                 }
-
-                let avail_ptr = (vq.avail_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqAvail;
-                let idx = unsafe { (*avail_ptr).idx };
-                unsafe { (*avail_ptr).ring[(idx % vq.num) as usize] = id as u16; }
-                core::sync::atomic::fence(Ordering::SeqCst);
-                unsafe { (*avail_ptr).idx = idx.wrapping_add(1); }
-
-                vq.last_used_idx = vq.last_used_idx.wrapping_add(1);
-            }
-
-            if vq.last_used_idx != used_idx {
-                unsafe { write_16(vq.notify_addr as *mut u8, vq.queue_index); }
+                Err(_) => break,
             }
         }
     }
     crate::net::poll_loopback();
 }
 
-pub fn recv_packet() -> Option<alloc::vec::Vec<u8>> {
-    if let Some(dev) = NET_DEVICE.lock().as_mut() {
-        poll_rx();
-        dev.rx_packet_queue.lock().pop_front()
-    } else {
-        crate::net::poll_loopback();
-        None
-    }
+pub fn recv_packet() -> Option<Vec<u8>> {
+    poll_rx();
+    let mut guard = NET_DEVICE.lock();
+    guard.as_mut().and_then(|nd| nd.rx_packet_queue.pop_front())
 }
 
+/// Transmit a raw Ethernet frame. Returns 0 on success, nonzero error code otherwise.
 pub fn send_packet(data: &[u8]) -> usize {
-    let mut net_device_guard = NET_DEVICE.lock();
-    let dev = if let Some(d) = net_device_guard.as_mut() {
-        d
-    } else {
-        return 1;
+    let mut guard = NET_DEVICE.lock();
+    let nd = match guard.as_mut() {
+        Some(d) => d,
+        None => return 1,
     };
-
-    unsafe { recycle_tx_descriptors(dev); }
-
-    let vq = if let Some(q) = &mut dev.tx_queue {
-        q
-    } else {
-        return 2;
-    };
-
-    let head_idx = vq.free_head;
-    if head_idx == 0xFFFF { return 3; }
-
-    let desc_ptr = (vq.desc_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqDesc;
-    let next_idx = unsafe { (*desc_ptr.add(head_idx as usize)).next };
-
-    let hdr_frame = match pmm::allocate_frame() {
-        Some(f) => f,
-        None => return 5,
-    };
-    let hdr_virt = hdr_frame + crate::memory::paging::HHDM_OFFSET;
-    let hdr = VirtioNetHdr::default();
-    unsafe { *(hdr_virt as *mut VirtioNetHdr) = hdr; }
-
-    let total_len = core::mem::size_of::<VirtioNetHdr>() + data.len();
-    if total_len > 4096 { return 4; }
-
-    let ptr = hdr_virt as *mut u8;
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            data.as_ptr(),
-            ptr.add(core::mem::size_of::<VirtioNetHdr>()),
-            data.len(),
-        );
-
-        (*desc_ptr.add(head_idx as usize)) = VirtqDesc {
-            addr: hdr_frame,
-            len: total_len as u32,
-            flags: 0,
-            next: 0,
-        };
+    let tx = TxBuffer::from(data);
+    match nd.dev.send(tx) {
+        Ok(()) => 0,
+        Err(_) => 2,
     }
-
-    vq.free_head = next_idx;
-
-    let avail_ptr = (vq.avail_phys + crate::memory::paging::HHDM_OFFSET) as *mut VirtqAvail;
-    let idx = unsafe { (*avail_ptr).idx };
-    unsafe { (*avail_ptr).ring[(idx % vq.num) as usize] = head_idx; }
-
-    core::sync::atomic::fence(Ordering::SeqCst);
-    unsafe { (*avail_ptr).idx = idx.wrapping_add(1); }
-
-    unsafe { write_16(vq.notify_addr as *mut u8, vq.queue_index); }
-    0
 }
 
-/// Read and clear the VirtIO Net ISR status register.
-/// Returns the ISR byte: bit 0 = queue interrupt, bit 1 = config change.
-/// Must be called from the network interrupt handler to acknowledge the interrupt.
+/// Acknowledge a device interrupt. Returns 1 if a queue interrupt is pending (so the
+/// handler should `poll_rx`), 0 otherwise. Mirrors the old ISR-status read.
 pub fn read_isr() -> u8 {
-    unsafe {
-        if NET_ISR_ADDR == 0 { return 0; }
-        crate::memory::mmio::read_8(NET_ISR_ADDR as *mut u8)
+    let mut guard = NET_DEVICE.lock();
+    match guard.as_mut() {
+        // ack_interrupt() takes &mut self, so it can't go in a match guard.
+        Some(nd) => {
+            if nd.dev.ack_interrupt() {
+                1
+            } else {
+                0
+            }
+        }
+        None => 0,
     }
 }

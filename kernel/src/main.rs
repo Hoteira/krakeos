@@ -131,6 +131,13 @@ pub extern "C" fn rust_main(bootinfo_ptr: u64) -> ! {
         arch::x86_64::apic::set_irq(12, 44);
     }
 
+    // VirtIO network (via the virtio-drivers crate). Absent in the default QEMU
+    // config, in which case init() returns Err and the system continues without net.
+    match crate::drivers::network::virtio::init() {
+        Ok(()) => println!("[net] VirtIO net online"),
+        Err(e) => debugln!("[net] {}", e),
+    }
+
     debugln!("SIGNPOST: Initializing HPET...");
     let mut hpet_initialized = false;
     if let Some(hpet) = arch::x86_64::acpi::get_hpet() {
