@@ -130,10 +130,16 @@ pub fn sched_take_current(cpu: usize) -> Option<Arc<Thread>> {
 pub fn sched_flush_prev(cpu: usize) {
     let prev = unsafe { (*PER_CPU[cpu].prev.get()).take() };
     if let Some(p) = prev {
+        // We have now switched off `p`'s kernel stack, so it is safe for another CPU
+        // to run it. Clear on_cpu BEFORE reading state: paired with the waker (which
+        // sets state=Ready before reading on_cpu), this ordering guarantees exactly
+        // one of {this flush, the waker} re-enqueues a just-woken thread — no lost
+        // wakeup, and never an enqueue while the thread is still executing.
+        p.on_cpu.store(false, Ordering::SeqCst);
         // Idle threads are never queued; only Ready threads get re-enqueued (a
-        // blocked/zombie thread is simply dropped here and re-enqueued, if ever,
-        // by its wakeup path).
-        if !p.is_idle && p.state.load(Ordering::Acquire) == ThreadState::Ready {
+        // blocked/zombie thread is dropped here and re-enqueued, if ever, by its
+        // wakeup path).
+        if !p.is_idle && p.state.load(Ordering::SeqCst) == ThreadState::Ready {
             enqueue_arc(p, cpu);
         }
     }
@@ -142,6 +148,8 @@ pub fn sched_flush_prev(cpu: usize) {
 /// Publish `next` as the current thread on `cpu` and defer the outgoing `cur` for
 /// re-enqueue on the next switch (see `prev` field docs).
 pub fn sched_set_prev_current(cpu: usize, cur: Option<Arc<Thread>>, next: Arc<Thread>) {
+    // `next` is now running on this CPU; mark it so wakers don't re-enqueue it.
+    next.on_cpu.store(true, Ordering::SeqCst);
     unsafe {
         *PER_CPU[cpu].current.get() = Some(next);
         *PER_CPU[cpu].prev.get() = cur;
@@ -265,14 +273,21 @@ impl TaskManager {
         Ok(tid)
     }
 
-    /// Re-queue an existing thread (e.g. on wakeup). Routes to its pinned CPU or to
-    /// the calling CPU. No-op for idle threads and for already-queued threads.
+    /// Wake / re-queue an existing thread. Callers set `state = Ready` BEFORE calling
+    /// this (the required ordering for the race-free wake protocol). If the thread is
+    /// still executing on a CPU (`on_cpu`), we do NOT enqueue it here — that CPU's
+    /// `sched_flush_prev` will enqueue it once it has switched off the thread's stack
+    /// (and observes the Ready state we just set). This prevents the woken thread from
+    /// being run on a second CPU while still live on the first.
     pub fn push_to_run_queue(&self, tid: usize) {
         if tid < MAX_CPUS {
             return;
         }
         if let Some(thread) = self.tasks.get(&tid) {
-            enqueue_arc(thread.clone(), crate::task::cpu::get_cpu_id() as usize);
+            if !thread.on_cpu.load(Ordering::SeqCst) {
+                enqueue_arc(thread.clone(), crate::task::cpu::get_cpu_id() as usize);
+            }
+            // else: still on-cpu — flush_prev on its CPU will enqueue it.
         }
     }
 

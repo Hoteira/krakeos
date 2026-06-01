@@ -220,7 +220,7 @@ fn process_aot_request(req: AotRequest) {
                     crate::spawn_debugln!("[AOTWorker] linear_memory_size updated");
                     crate::spawn_debugln!("[AOTWorker] leaving unsafe block");
                 }
-                task.state.store(ThreadState::Ready, core::sync::atomic::Ordering::Release);
+                task.state.store(ThreadState::Ready, core::sync::atomic::Ordering::SeqCst);
                 crate::spawn_debugln!("[AOTWorker] [AOTWorker] pushing PID {} to run queue now", pid_idx);
                 crate::spawn_debugln!("[AOTWorker] before tm.push_to_run_queue(pid_idx)");
                 tm.push_to_run_queue(pid_idx);

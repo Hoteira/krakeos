@@ -94,18 +94,27 @@ unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
         // the per-tick path that takes the task-map lock, and only on CPU 0 — every
         // other core's context switch below runs entirely lock-free w.r.t. the map.
         if is_timer && cpu == 0 {
-            let mut tm = TASK_MANAGER.lock();
-            crate::task::event_manager::EVENT_MANAGER
-                .lock()
-                .check_timers(&mut tm, ticks);
+            {
+                let mut tm = TASK_MANAGER.lock();
+                crate::task::event_manager::EVENT_MANAGER
+                    .lock()
+                    .check_timers(&mut tm, ticks);
+            } // task-map lock dropped before the disk safety poll (which re-takes it)
+            // Safety net for a missed disk-completion IRQ.
+            crate::fs::virtio::disk_safety_poll();
         }
 
         // --- Save the outgoing thread (per-CPU `current` slot; no map lock) ---
         let cur = manager::sched_take_current(cpu);
         if let Some(ref c) = cur {
             c.cpu_state_ptr.store(rsp, Ordering::Release);
-            let fpu_ptr = c.fpu_ptr();
-            asm!("fxsave [{}]", in(reg) fpu_ptr);
+            // Idle threads never execute FPU/SSE instructions, so their save area
+            // holds nothing meaningful (and is never restored from) — skip the
+            // ~512-byte fxsave whenever we're leaving an idle thread.
+            if !c.is_idle {
+                let fpu_ptr = c.fpu_ptr();
+                asm!("fxsave [{}]", in(reg) fpu_ptr);
+            }
         }
 
         // Re-enqueue the thread deferred on the previous switch: by now this CPU has
@@ -116,9 +125,13 @@ unsafe fn common_switch(rsp: u64, is_timer: bool) -> u64 {
         let next = manager::sched_pick_next(cpu);
 
         // Restore its FPU and read its switch frame before handing the Arc to the
-        // per-CPU `current` slot.
-        let fpu_ptr = next.fpu_ptr();
-        asm!("fxrstor [{}]", in(reg) fpu_ptr);
+        // per-CPU `current` slot. Idle won't read the FPU, so skip the fxrstor when
+        // switching into it (the physical regs keep the prior thread's now-saved
+        // values, which is harmless since idle never touches them).
+        if !next.is_idle {
+            let fpu_ptr = next.fpu_ptr();
+            asm!("fxrstor [{}]", in(reg) fpu_ptr);
+        }
         let k_stack = next.kernel_stack;
         let next_tid = next.tid as i64;
         let new_rsp = next.cpu_state_ptr.load(Ordering::Acquire);

@@ -65,6 +65,12 @@ pub struct Thread {
     pub is_queued: AtomicBool,
     /// Per-CPU idle threads are never enqueued and never deferred for re-enqueue.
     pub is_idle: bool,
+    /// True while this thread is executing on (or mid-switch off of) a CPU. A waker
+    /// must NOT re-enqueue a thread whose `on_cpu` is still set, or it could be run
+    /// on a second CPU while still using its kernel stack on the first. Set true when
+    /// the thread becomes current; cleared by the owning CPU in `sched_flush_prev`
+    /// once it has switched off the thread's stack.
+    pub on_cpu: core::sync::atomic::AtomicBool,
     /// Set once at construction; read-only afterwards.
     pub process: Option<Arc<Process>>,
     /// CPU this thread is pinned to, or `NO_PIN`. Written by `pin_thread_to_cpu`.
@@ -132,6 +138,7 @@ impl Thread {
             gid: 0,
             is_queued: AtomicBool::new(false),
             is_idle: false,
+            on_cpu: AtomicBool::new(false),
             process: None,
             pinned_cpu: AtomicUsize::new(NO_PIN),
         }

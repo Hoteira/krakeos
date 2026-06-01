@@ -2,12 +2,18 @@ use crate::debugln;
 use crate::memory::pmm;
 use core::ptr::{read_volatile, write_volatile};
 use crate::sync::Mutex;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 
 static LOCK: AtomicBool = AtomicBool::new(false);
 
 /// Set by the VirtIO Block ISR on each queue completion; cleared before every request.
 static COMPLETION_FLAG: AtomicBool = AtomicBool::new(false);
+
+/// Task id of the thread currently blocked waiting for disk completion, or -1 if
+/// none (or the waiter is spinning in a non-yield-safe context). The disk ISR wakes
+/// this thread. Only one request is in flight at a time (serialized by `LOCK`), so a
+/// single waiter slot suffices.
+static BLK_WAITER: AtomicI64 = AtomicI64::new(-1);
 
 /// MMIO address of the VirtIO Block ISR status register (must be read to clear the interrupt).
 pub static mut BLK_ISR_ADDR: u64 = 0;
@@ -297,7 +303,10 @@ pub fn on_disk_irq() {
     if unsafe { BLK_ISR_ADDR } != 0 {
         let _ = unsafe { crate::memory::mmio::read_8(BLK_ISR_ADDR as *mut u8) };
     }
-    COMPLETION_FLAG.store(true, Ordering::Release);
+    // Set completion BEFORE waking, so a waiter that re-checks after registering
+    // observes it (lost-wakeup safety).
+    COMPLETION_FLAG.store(true, Ordering::SeqCst);
+    wake_disk_waiter();
 }
 
 pub fn read(lba: u64, _disk: u8, target: &mut [u8]) {
@@ -441,6 +450,117 @@ fn write_chunk(lba: u64, buffer: &[u8]) {
     }
 }
 
+/// True only when it is safe to cooperatively yield the CPU instead of busy-waiting:
+/// interrupts must be enabled (so we are not in an ISR or an interrupts-off critical
+/// section) AND a real thread must be scheduled to return to. During early boot the
+/// ext2 mount reads the disk with interrupts disabled and `current_task_idx == -1`
+/// (no task yet); yielding there would abandon the boot thread, so we must spin.
+#[inline]
+fn yield_safe() -> bool {
+    let flags: u64;
+    unsafe { core::arch::asm!("pushfq; pop {}", out(reg) flags) };
+    let interrupts_enabled = (flags & (1 << 9)) != 0;
+    interrupts_enabled && crate::task::cpu::get_current_task_idx() >= 0
+}
+
+/// Wait one "tick" for disk completion. When safe, yield the CPU (`int 0x81`) so the
+/// scheduler can run other threads instead of pinning this core; returns `true`.
+/// Otherwise spin (PAUSE) and return `false` so the caller counts it against the
+/// bounded spin timeout.
+#[inline]
+fn yield_or_spin() -> bool {
+    if yield_safe() {
+        unsafe { core::arch::asm!("int 0x81") };
+        true
+    } else {
+        core::hint::spin_loop();
+        false
+    }
+}
+
+/// Block the calling thread until the disk ISR wakes it (true sleep, not a poll).
+/// Returns `true` if it blocked/yielded (so the caller does not count it against the
+/// spin timeout), `false` if it had to spin (boot/ISR context with no thread to
+/// return to). Race-free against the ISR via SeqCst ordering + a completion re-check
+/// after registering as the waiter (closes the lost-wakeup window).
+fn block_for_disk_completion() -> bool {
+    if !yield_safe() {
+        core::hint::spin_loop();
+        return false;
+    }
+    let tid = crate::task::cpu::get_current_task_idx();
+
+    // Mark ourselves not-runnable and register as the disk waiter.
+    {
+        let tm = crate::task::TASK_MANAGER.lock();
+        match tm.tasks.get(&(tid as usize)) {
+            Some(t) => t
+                .state
+                .store(crate::task::ThreadState::WaitingForEvent, Ordering::SeqCst),
+            None => return false, // unexpected; fall back to spin
+        }
+    }
+    BLK_WAITER.store(tid, Ordering::SeqCst);
+
+    // Lost-wakeup guard: if completion landed between submit and now, don't sleep.
+    if COMPLETION_FLAG.load(Ordering::SeqCst) {
+        BLK_WAITER.store(-1, Ordering::SeqCst);
+        if let Some(t) = crate::task::TASK_MANAGER.lock().tasks.get(&(tid as usize)) {
+            t.state
+                .store(crate::task::ThreadState::Ready, Ordering::SeqCst);
+        }
+        return true;
+    }
+
+    // Sleep. The disk ISR sets us Ready and re-queues us when the request completes.
+    unsafe { core::arch::asm!("int 0x81") };
+    true
+}
+
+/// Wake the thread (if any) blocked in `block_for_disk_completion`. Called from the
+/// disk ISR after `COMPLETION_FLAG` is set. Sets the waiter Ready BEFORE re-queuing
+/// (the ordering the on_cpu-aware `push_to_run_queue` relies on).
+fn wake_disk_waiter() {
+    let tid = BLK_WAITER.swap(-1, Ordering::SeqCst);
+    if tid >= 0 {
+        let tm = crate::task::TASK_MANAGER.lock();
+        if let Some(t) = tm.tasks.get(&(tid as usize)) {
+            t.state
+                .store(crate::task::ThreadState::Ready, Ordering::SeqCst);
+            tm.push_to_run_queue(tid as usize);
+        }
+    }
+}
+
+/// Tick-driven safety net against a missed disk-completion IRQ. Called from the timer
+/// path on CPU 0. If a thread is blocked on disk and the device has actually completed
+/// the request (used-ring advanced) even though its interrupt never arrived, wake the
+/// waiter — bounding the worst case to ~one timer tick instead of an indefinite hang.
+/// Cheap when idle: a single atomic load short-circuits when no waiter is blocked.
+pub fn disk_safety_poll() {
+    if BLK_WAITER.load(Ordering::SeqCst) < 0 {
+        return;
+    }
+    // BLK_QUEUE is dropped before wake_disk_waiter (which takes TASK_MANAGER), so we
+    // never hold the block-queue lock and the task lock at the same time.
+    let done = COMPLETION_FLAG.load(Ordering::SeqCst) || {
+        let guard = BLK_QUEUE.lock();
+        match guard.as_ref() {
+            Some(vq) => unsafe {
+                let used_ptr =
+                    (vq.used_phys + crate::memory::paging::HHDM_OFFSET) as *const VirtqUsed;
+                let used_idx = read_volatile(core::ptr::addr_of!((*used_ptr).idx));
+                used_idx != vq.last_used_idx
+            },
+            None => false,
+        }
+    };
+    if done {
+        COMPLETION_FLAG.store(true, Ordering::SeqCst);
+        wake_disk_waiter();
+    }
+}
+
 unsafe fn send_command(out_phys: &[u64], out_lens: &[u32], in_phys: &[u64], in_lens: &[u32]) {
     // Per-request serialization: only one request in flight at a time.
     // Spin rather than yield: we may be called from boot context (IF=0),
@@ -448,7 +568,8 @@ unsafe fn send_command(out_phys: &[u64], out_lens: &[u32], in_phys: &[u64], in_l
     // The disk ISR fires on CPU 0 via IOAPIC and sets COMPLETION_FLAG
     // asynchronously; we do not need to explicitly invoke the scheduler.
     while LOCK.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
-        core::hint::spin_loop();
+        // Contend without pinning the core: yield to the scheduler when safe.
+        yield_or_spin();
     }
 
     // Clear per-request completion flag before submitting (SeqCst: visible to ISR).
@@ -508,8 +629,8 @@ unsafe fn send_command(out_phys: &[u64], out_lens: &[u32], in_phys: &[u64], in_l
     // Fallback: poll used ring directly (works if IRQ not routed via IOAPIC).
     let mut timeout: u64 = 1_000_000_000;
     loop {
-        if COMPLETION_FLAG.load(Ordering::Acquire) {
-            COMPLETION_FLAG.store(false, Ordering::Release);
+        if COMPLETION_FLAG.load(Ordering::SeqCst) {
+            COMPLETION_FLAG.store(false, Ordering::SeqCst);
             break;
         }
         // Polled fallback: check used ring under BLK_QUEUE lock.
@@ -521,13 +642,14 @@ unsafe fn send_command(out_phys: &[u64], out_lens: &[u32], in_phys: &[u64], in_l
                 if used_idx != vq.last_used_idx { break; }
             }
         }
-        // Spin: on a multi-CPU system the disk ISR fires on CPU 0 via IOAPIC
-        // and sets COMPLETION_FLAG via a Release store; we will see it on the
-        // next Acquire load above without needing an explicit scheduler yield.
-        // Timer preemption continues to work normally in the background.
-        core::hint::spin_loop();
-        timeout -= 1;
-        if timeout == 0 { break; }
+        // Block this thread until the disk ISR wakes it (true sleep) when we have a
+        // thread context to return to — so the core runs other work while the DMA is
+        // in flight. Only genuine spins (boot/ISR contexts) count against the bounded
+        // timeout; a blocked waiter sleeps until the ISR re-queues it.
+        if !block_for_disk_completion() {
+            timeout -= 1;
+            if timeout == 0 { break; }
+        }
     }
 
     // Phase 3: advance the used-ring consumer index.

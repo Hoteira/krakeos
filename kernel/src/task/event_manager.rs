@@ -70,7 +70,8 @@ impl EventManager {
                     if let Some(thread) = tm.tasks.get(&(reg.thread_idx)) {
                         let st = thread.state.load(Ordering::Acquire);
                         if st == ThreadState::Ready || st == ThreadState::WaitingForEvent {
-                            thread.state.store(ThreadState::Ready, Ordering::Release);
+                            // SeqCst: ordered before the on_cpu check in push_to_run_queue.
+                            thread.state.store(ThreadState::Ready, Ordering::SeqCst);
                             tm.push_to_run_queue(reg.thread_idx);
                             woken_any = true;
                         }
@@ -110,7 +111,7 @@ impl EventManager {
 
                 if let Some(thread) = tm.tasks.get(&(reg.thread_idx)) {
                     if thread.state.load(Ordering::Acquire) == ThreadState::WaitingForEvent {
-                        thread.state.store(ThreadState::Ready, Ordering::Release);
+                        thread.state.store(ThreadState::Ready, Ordering::SeqCst);
                         tm.push_to_run_queue(reg.thread_idx);
                         woken_tids.push(reg.thread_idx);
                     }
