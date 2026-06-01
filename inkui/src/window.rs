@@ -18,14 +18,19 @@ pub struct FrameBuffer {
     pub flipped: AtomicBool,
 }
 
+/// Sanity cap on a window buffer (~4096x4096x4 = 64 MiB). A larger request means a
+/// bad width/height computation; clamp it so we log the value instead of OOMing.
+const MAX_FB_SIZE: usize = 64 * 1024 * 1024;
+
 impl FrameBuffer {
-    pub fn new(size: usize) -> Self {
+    pub fn new(mut size: usize) -> Self {
+        if size > MAX_FB_SIZE {
+            std::debugln!("[inkui] FrameBuffer::new clamped huge size {}", size);
+            size = MAX_FB_SIZE;
+        }
         let u32_len = (size + 3) / 4;
-        std::os::debug_print("[inkui] FrameBuffer::new: allocating...\n");
         let front = alloc::vec![0u32; u32_len];
-        std::os::debug_print("[inkui] FrameBuffer::new: front done\n");
         let back = alloc::vec![0u32; u32_len];
-        std::os::debug_print("[inkui] FrameBuffer::new: back done\n");
         Self {
             front,
             back,
@@ -34,7 +39,11 @@ impl FrameBuffer {
         }
     }
 
-    pub fn resize(&mut self, size: usize) {
+    pub fn resize(&mut self, mut size: usize) {
+        if size > MAX_FB_SIZE {
+            std::debugln!("[inkui] FrameBuffer::resize clamped huge size {}", size);
+            size = MAX_FB_SIZE;
+        }
         if self.size < size {
             let u32_len = (size + 3) / 4;
             self.front = alloc::vec![0u32; u32_len];
@@ -65,7 +74,7 @@ impl FrameBuffer {
     }
 }
 
-use titanf::TrueTypeFont;
+use fontdue::Font;
 use std::println;
 
 pub struct Window {
@@ -93,7 +102,7 @@ pub struct Window {
     pub w_type: Items,
     pub focus: WidgetId,
 
-    pub font: Option<TrueTypeFont>,
+    pub font: Option<Font>,
 
     dirty: bool,
 }
@@ -145,7 +154,7 @@ impl Window {
     }
 
     pub fn load_font(&mut self, data: &'static [u8]) {
-        if let Ok(font) = TrueTypeFont::load_font(data) {
+        if let Ok(font) = Font::from_bytes(data, fontdue::FontSettings::default()) {
             self.font = Some(font);
         }
     }
@@ -606,7 +615,7 @@ pub fn paint_recursive(
     buffer: &mut [u32],
     width0: usize,
     widget: &mut Widget,
-    font: &mut Option<TrueTypeFont>,
+    font: &mut Option<Font>,
 ) {
     widget.draw(buffer, width0, font);
 

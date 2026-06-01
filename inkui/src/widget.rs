@@ -746,10 +746,10 @@ impl Widget {
 }
 
 use crate::LinearGradient;
-use titanf::TrueTypeFont;
+use fontdue::Font;
 
 impl Widget {
-    pub fn draw(&mut self, framebuffer: &mut [u32], buffer_width: usize, font: &mut Option<TrueTypeFont>) {
+    pub fn draw(&mut self, framebuffer: &mut [u32], buffer_width: usize, font: &mut Option<Font>) {
         if buffer_width == 0 { return; }
 
         match self {

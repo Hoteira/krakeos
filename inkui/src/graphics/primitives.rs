@@ -1,8 +1,26 @@
 use crate::graphics::{draw_pixel, draw_u32};
 use crate::math::{ceil_f32, sqrt_f64};
 use crate::types::{Color, Size};
+use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
-use titanf::TrueTypeFont;
+use fontdue::Font;
+use std::sync::Mutex;
+
+/// A rasterized glyph + its metrics, cached so the same (char, size) is rasterized
+/// only once. The terminal re-renders all its text on every redraw, so without this
+/// each keystroke re-rasterizes the whole screen of glyphs — the dominant cause of
+/// typing lag, and especially expensive with fontdue (no internal cache).
+struct CachedGlyph {
+    width: usize,
+    height: usize,
+    advance: usize,
+    xmin: i32,
+    ymin: i32,
+    bitmap: Vec<u8>,
+}
+
+/// Keyed by (char, size-bits). Bounded in practice — a terminal uses a small glyph set.
+static GLYPH_CACHE: Mutex<BTreeMap<(u32, u32), CachedGlyph>> = Mutex::new(BTreeMap::new());
 
 pub fn draw_line(buffer: &mut [u32], width0: usize, x0: usize, y0: usize, x1: usize, y1: usize, color: Color, width: usize) {
     let dx = (x1 as isize - x0 as isize).abs();
@@ -426,7 +444,7 @@ pub fn draw_text_formatted(
     x: usize,
     y: usize,
     text: &str,
-    font: &mut TrueTypeFont,
+    font: &mut Font,
     default_size: f32,
     default_color: Color,
     max_width: usize,
@@ -483,19 +501,43 @@ pub fn draw_text_formatted(
             continue;
         }
 
-        let (metrics, bitmap) = font.get_char::<true>(c, segment.size);
-        if c != ' ' && c != '\n' && c != '\0' {
-            std::debug_print!("[inkui] Glyph '");
-            let mut b = [0u8; 4];
-            std::os::debug_print(c.encode_utf8(&mut b));
-            std::debugln!("' metrics: w={} h={} advance={}", metrics.width, metrics.height, metrics.advance_width);
-        }
+        // fontdue glyph: row-major coverage bitmap + metrics. Adapt fontdue's metric
+        // names to the values this layout code expects (titanf's `base_line` is the
+        // top-of-bitmap offset from the baseline = -(ymin + height)).
+        // Clamp a bogus (huge/NaN/<=0) px before it reaches fontdue (false for NaN).
+        let px = if segment.size >= 1.0 && segment.size <= 256.0 {
+            segment.size
+        } else {
+            14.0
+        };
+        // Cache lookup: rasterize each (char, size) at most once. The guard held here
+        // covers this glyph's metric reads + bitmap blit below.
+        let mut glyph_cache = GLYPH_CACHE.lock();
+        let g = glyph_cache
+            .entry((c as u32, px.to_bits()))
+            .or_insert_with(|| {
+                // metrics() does NOT allocate the bitmap, so we can reject an absurd
+                // glyph (some Nerd-Font icons) before rasterize() OOMs the app.
+                let m = font.metrics(c, px);
+                let advance = if m.advance_width > 0.0 { (m.advance_width + 0.5) as usize } else { 0 };
+                if m.width > 4096 || m.height > 4096 {
+                    return CachedGlyph { width: 0, height: 0, advance, xmin: m.xmin, ymin: m.ymin, bitmap: Vec::new() };
+                }
+                let (_m2, bitmap) = font.rasterize(c, px);
+                CachedGlyph { width: m.width, height: m.height, advance, xmin: m.xmin, ymin: m.ymin, bitmap }
+            });
+        let gw = g.width;
+        let gh = g.height;
+        let adv_w = g.advance;
+        let lsb = g.xmin as isize;
+        let base_line = -((g.ymin + g.height as i32) as isize);
+        let bitmap = &g.bitmap;
 
-        let next_x_end = (current_x as isize + metrics.left_side_bearing + metrics.advance_width as isize) as usize;
+        let next_x_end = (current_x as isize + lsb + adv_w as isize) as usize;
 
         if max_width > 0 && next_x_end >= x + max_width {
             if current_x == x {
-                current_x += metrics.advance_width;
+                current_x += adv_w;
                 i += 1;
                 continue;
             }
@@ -505,13 +547,13 @@ pub fn draw_text_formatted(
             continue;
         }
 
-        let glyph_y_start = (current_baseline_isize + metrics.base_line as isize) as isize;
-        let glyph_x = (current_x as isize + metrics.left_side_bearing) as usize;
+        let glyph_y_start = current_baseline_isize + base_line;
+        let glyph_x = (current_x as isize + lsb) as usize;
 
 
         if segment.bg_color.a > 0 {
             let bg_x = current_x;
-            let bg_w = metrics.advance_width;
+            let bg_w = adv_w;
 
 
             let bg_y_isize = current_baseline_isize - (segment.size * 0.8) as isize;
@@ -537,8 +579,8 @@ pub fn draw_text_formatted(
             }
         }
 
-        if glyph_y_start + (metrics.height as isize) >= clip_y as isize && glyph_y_start <= limit_y as isize {
-            for row in 0..metrics.height {
+        if glyph_y_start + (gh as isize) >= clip_y as isize && glyph_y_start <= limit_y as isize {
+            for row in 0..gh {
                 let dest_y_isize = glyph_y_start + row as isize;
 
                 if dest_y_isize < clip_y as isize { continue; }
@@ -548,12 +590,12 @@ pub fn draw_text_formatted(
                 if max_height > 0 && dest_y >= clip_y + max_height { continue; }
                 if dest_y >= buffer.len() / buffer_width { continue; }
 
-                for col in 0..metrics.width {
+                for col in 0..gw {
                     let dest_x = glyph_x + col;
                     if dest_x >= buffer_width { continue; }
                     if max_width > 0 && dest_x >= x + max_width { continue; }
 
-                    let bitmap_alpha = bitmap[row * metrics.width + col];
+                    let bitmap_alpha = bitmap[row * gw + col];
                     if bitmap_alpha > 0 {
                         let mut pixel_color = segment.color;
                         pixel_color.a = ((pixel_color.a as u16 * bitmap_alpha as u16) / 255) as u8;
@@ -563,7 +605,7 @@ pub fn draw_text_formatted(
             }
         }
 
-        current_x += metrics.advance_width;
+        current_x += adv_w;
         i += 1;
     }
 
@@ -577,7 +619,7 @@ pub fn draw_text(
     x: usize,
     y: usize,
     text: &str,
-    font: &mut TrueTypeFont,
+    font: &mut Font,
     size: f32,
     color: Color,
 ) {

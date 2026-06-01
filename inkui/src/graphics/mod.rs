@@ -41,3 +41,11 @@ pub fn draw_u32(buffer: &mut [u32], width: usize, x: usize, y: usize, color: u32
         buffer[idx] = color;
     }
 }
+
+/// Temporary build de-risk: forces `tiny-skia` and `fontdue` to compile under the
+/// WASM `-Z build-std` constraint. Remove once the real renderer migration lands.
+#[doc(hidden)]
+pub fn _derisk_graphics_libs() -> usize {
+    let w = tiny_skia::Pixmap::new(2, 2).map(|p| p.width() as usize).unwrap_or(0);
+    w + core::mem::size_of::<fontdue::Font>()
+}
