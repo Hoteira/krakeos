@@ -616,6 +616,55 @@ impl<'a> AotCompiler<'a> {
             Instruction::I64LeU => { self.v_relop_gp(0x96, true); return; }
             Instruction::I64GeS => { self.v_relop_gp(0x9D, true); return; }
             Instruction::I64GeU => { self.v_relop_gp(0x93, true); return; }
+            // float / v128 locals (cached whole-slot in an XMM register)
+            Instruction::LocalGet(idx) if self.local_is_xmm(*idx) => {
+                let off = (*idx as i32) * 16;
+                let x = self.vpush_xmm();
+                self.emitter.movups_xmm_mem(x, Reg::R13, off);
+                self.stack_depth += 1;
+                return;
+            }
+            Instruction::LocalSet(idx) if self.local_is_xmm(*idx) => {
+                let off = (*idx as i32) * 16;
+                let x = self.vpop_xmm(&[]);
+                self.emitter.movups_mem_xmm(Reg::R13, off, x);
+                self.stack_depth -= 1;
+                return;
+            }
+            Instruction::LocalTee(idx) if self.local_is_xmm(*idx) => {
+                let off = (*idx as i32) * 16;
+                let x = self.vtop_xmm();
+                self.emitter.movups_mem_xmm(Reg::R13, off, x);
+                return;
+            }
+            // float constants (materialized via a transient GP register)
+            Instruction::F32Const(val) => {
+                let bits = (val.to_bits() as u32) as u64;
+                let t = self.alloc_gp(&[]);
+                self.emitter.mov_reg_imm64(t, bits);
+                let x = self.vpush_xmm();
+                self.emitter.movq_xmm_reg(x, t);
+                self.stack_depth += 1;
+                return;
+            }
+            Instruction::F64Const(val) => {
+                let bits = val.to_bits();
+                let t = self.alloc_gp(&[]);
+                self.emitter.mov_reg_imm64(t, bits);
+                let x = self.vpush_xmm();
+                self.emitter.movq_xmm_reg(x, t);
+                self.stack_depth += 1;
+                return;
+            }
+            // scalar float arithmetic
+            Instruction::F32Add => { self.v_binop_xmm(|e, a, b| e.addss_xmm_xmm(a, b)); return; }
+            Instruction::F32Sub => { self.v_binop_xmm(|e, a, b| e.subss_xmm_xmm(a, b)); return; }
+            Instruction::F32Mul => { self.v_binop_xmm(|e, a, b| e.mulss_xmm_xmm(a, b)); return; }
+            Instruction::F32Div => { self.v_binop_xmm(|e, a, b| e.divss_xmm_xmm(a, b)); return; }
+            Instruction::F64Add => { self.v_binop_xmm(|e, a, b| e.addsd_xmm_xmm(a, b)); return; }
+            Instruction::F64Sub => { self.v_binop_xmm(|e, a, b| e.subsd_xmm_xmm(a, b)); return; }
+            Instruction::F64Mul => { self.v_binop_xmm(|e, a, b| e.mulsd_xmm_xmm(a, b)); return; }
+            Instruction::F64Div => { self.v_binop_xmm(|e, a, b| e.divsd_xmm_xmm(a, b)); return; }
             _ => {
                 // Every other instruction sees the canonical memory-stack state.
                 self.flush_cache();
@@ -1848,6 +1897,17 @@ impl<'a> AotCompiler<'a> {
         )
     }
 
+    /// True if local `idx` is f32/f64/v128 (cached whole-slot in an XMM
+    /// register via 16-byte movups, which preserves all 128 bits for v128).
+    fn local_is_xmm(&self, idx: usize) -> bool {
+        matches!(
+            self.local_types.get(idx),
+            Some(ValType::NumType(NumType::F32))
+                | Some(ValType::NumType(NumType::F64))
+                | Some(ValType::VecType)
+        )
+    }
+
     fn gp_in_vstack(&self, r: Reg) -> bool {
         let ru = r as u8;
         self.vstack
@@ -1999,6 +2059,19 @@ impl<'a> AotCompiler<'a> {
         let a = self.vpop_gp(&[b]);
         op(&mut self.emitter, a, b);
         self.vstack.push(VLoc::Gp(a));
+        self.stack_depth -= 1;
+    }
+
+    /// Fast scalar-float binop: pop top (b) and second (a), run `op(e, a, b)`
+    /// which computes a = a <op> b, and push the result (a) as the new top.
+    fn v_binop_xmm<F>(&mut self, op: F)
+    where
+        F: FnOnce(&mut X64Emitter, XmmReg, XmmReg),
+    {
+        let b = self.vpop_xmm(&[]);
+        let a = self.vpop_xmm(&[b]);
+        op(&mut self.emitter, a, b);
+        self.vstack.push(VLoc::Xmm(a));
         self.stack_depth -= 1;
     }
 
