@@ -523,19 +523,19 @@ impl<'a> AotCompiler<'a> {
     }
 
     fn compile_instruction(&mut self, instr: Instruction, reader: &mut WasmReader, trap_halt_label: usize) {
-        // Restore context registers once at the start of each instruction
-        self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48);
-        self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16);
-        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -64);
+        // Phase 3: the context registers RDI (context), R14 (memory base) and
+        // R13 (locals base) are only ever clobbered by calls, and every call
+        // site reloads all three afterward — so we no longer reload them at the
+        // start of every instruction (that was 3 redundant memory loads per op).
 
-        // ── Phase 1 fast path: top-of-stack integer register cache ──────────
-        // A small set of hot integer ops keep their operands/results in
-        // registers (RAX = second, RBX = top) instead of round-tripping through
+        // ── Phase 2 fast path: N-register virtual stack ─────────────────────
+        // Hot value-stack ops keep their operands/results in registers (a
+        // free-list of GP + XMM registers) instead of round-tripping through
         // the RSP memory stack. Every other instruction calls flush_cache()
         // first, which spills any cached values back to memory and leaves the
-        // cache empty — so the slow path below is unchanged, and the cache is
-        // provably empty at every control-flow boundary (all control flow is
-        // handled on the slow path).
+        // virtual stack empty — so the slow path below is unchanged, and the
+        // cache is provably empty at every control-flow boundary (all control
+        // flow is handled on the slow path).
         match &instr {
             Instruction::I32Const(v) => {
                 let v = *v;
@@ -2202,7 +2202,7 @@ impl<'a> AotCompiler<'a> {
         self.emitter.add_reg_imm32(Reg::RSP, 16);
         self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48); // Restore Context
         self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16); // Restore R14
-        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -24); // Restore R13
+        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -64); // Restore current locals_base
         self.emitter.push_wasm_stack(Reg::RAX);
     }
 
@@ -2214,7 +2214,7 @@ impl<'a> AotCompiler<'a> {
         self.emitter.add_reg_imm32(Reg::RSP, 16);
         self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48); // Restore Context
         self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16); // Restore R14
-        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -24); // Restore R13
+        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -64); // Restore current locals_base
         self.emitter.push_v128(XmmReg::XMM0);
     }
 
@@ -2226,7 +2226,7 @@ impl<'a> AotCompiler<'a> {
         self.emitter.add_reg_imm32(Reg::RSP, 16);
         self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48); // Restore Context
         self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16); // Restore R14
-        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -24); // Restore R13
+        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -64); // Restore current locals_base
         self.emitter.push_v128(XmmReg::XMM0);
     }
 
@@ -2241,7 +2241,7 @@ impl<'a> AotCompiler<'a> {
         self.emitter.add_reg_imm32(Reg::RSP, 16);
         self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48); // Restore Context
         self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16); // Restore R14
-        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -24); // Restore R13
+        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -64); // Restore current locals_base
         self.emitter.push_wasm_stack(Reg::RAX);
     }
 
@@ -2256,7 +2256,7 @@ impl<'a> AotCompiler<'a> {
         self.emitter.add_reg_imm32(Reg::RSP, 16);
         self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48); // Restore Context
         self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16); // Restore R14
-        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -24); // Restore R13
+        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -64); // Restore current locals_base
         self.emitter.push_wasm_stack(Reg::RAX);
     }
 
@@ -2271,7 +2271,7 @@ impl<'a> AotCompiler<'a> {
         self.emitter.add_reg_imm32(Reg::RSP, 16);
         self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48); // Restore Context
         self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16); // Restore R14
-        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -24); // Restore R13
+        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -64); // Restore current locals_base
         self.emitter.push_wasm_stack(Reg::RAX);
     }
 
@@ -2286,7 +2286,7 @@ impl<'a> AotCompiler<'a> {
         self.emitter.add_reg_imm32(Reg::RSP, 16);
         self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48); // Restore Context
         self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16); // Restore R14
-        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -24); // Restore R13
+        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -64); // Restore current locals_base
         self.emitter.push_wasm_stack(Reg::RAX);
     }
 
@@ -2300,7 +2300,7 @@ impl<'a> AotCompiler<'a> {
         self.emitter.add_reg_imm32(Reg::RSP, 16);
         self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48); // Restore Context
         self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16); // Restore R14
-        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -24); // Restore R13
+        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -64); // Restore current locals_base
         self.emitter.push_wasm_stack(Reg::RAX);
         self.stack_depth -= 1;
     }
@@ -2314,7 +2314,7 @@ impl<'a> AotCompiler<'a> {
         self.emitter.add_reg_imm32(Reg::RSP, 16);
         self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48); // Restore Context
         self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16); // Restore R14
-        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -24); // Restore R13
+        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -64); // Restore current locals_base
         self.emitter.push_v128(XmmReg::XMM0);
         self.stack_depth -= 1;
     }
@@ -2328,7 +2328,7 @@ impl<'a> AotCompiler<'a> {
         self.emitter.add_reg_imm32(Reg::RSP, 16);
         self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48); // Restore Context
         self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16); // Restore R14
-        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -24); // Restore R13
+        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -64); // Restore current locals_base
         self.emitter.push_v128(XmmReg::XMM0);
         self.stack_depth -= 1;
     }
@@ -2366,7 +2366,7 @@ impl<'a> AotCompiler<'a> {
         self.emitter.add_reg_imm32(Reg::RSP, 16);
         self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48); // Restore Context
         self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16); // Restore R14
-        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -24); // Restore R13
+        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -64); // Restore current locals_base
         self.emitter.push_wasm_stack(Reg::RAX);
         self.stack_depth -= 1;
     }
@@ -2380,7 +2380,7 @@ impl<'a> AotCompiler<'a> {
         self.emitter.add_reg_imm32(Reg::RSP, 16);
         self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48); // Restore Context
         self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16); // Restore R14
-        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -24); // Restore R13
+        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -64); // Restore current locals_base
         self.emitter.push_wasm_stack(Reg::RAX);
         self.stack_depth -= 1;
     }
@@ -3134,7 +3134,7 @@ impl<'a> AotCompiler<'a> {
         self.emitter.add_reg_imm32(Reg::RSP, 16);
         self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48); // Restore Context
         self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16); // Restore R14
-        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -24); // Restore R13
+        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -64); // Restore current locals_base
         // Result is now at top of stack (last 16 bytes we allocated)
     }
 
@@ -3284,7 +3284,7 @@ impl<'a> AotCompiler<'a> {
         self.emitter.add_reg_imm32(Reg::RSP, 16);
         self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48); // Restore Context
         self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16); // Restore R14
-        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -24); // Restore R13
+        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -64); // Restore current locals_base
 
         self.emitter.movups_xmm_mem(XmmReg::XMM0, Reg::RSP, 0);
         self.emitter.add_reg_imm32(Reg::RSP, 16);
@@ -3312,7 +3312,7 @@ impl<'a> AotCompiler<'a> {
         self.emitter.add_reg_imm32(Reg::RSP, 16);
         self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48); // Restore Context
         self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16); // Restore R14
-        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -24); // Restore R13
+        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -64); // Restore current locals_base
 
         self.emitter.add_reg_imm32(Reg::RSP, 32); // remove XMM1 and XMM0 copy
         self.emitter.movups_xmm_mem(XmmReg::XMM0, Reg::RSP, -16); // Load from XMM0 slot
@@ -3349,7 +3349,7 @@ impl<'a> AotCompiler<'a> {
         self.emitter.add_reg_imm32(Reg::RSP, 16);
         self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48); // Restore Context
         self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16); // Restore R14
-        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -24); // Restore R13
+        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -64); // Restore current locals_base
 
         self.emitter.add_reg_imm32(Reg::RSP, 48); // remove XMM2, XMM1, XMM0 copy
         self.emitter.movups_xmm_mem(XmmReg::XMM0, Reg::RSP, -16); // Load from XMM0 slot
@@ -3376,7 +3376,7 @@ impl<'a> AotCompiler<'a> {
         self.emitter.add_reg_imm32(Reg::RSP, 16);
         self.emitter.mov_reg_mem64(Reg::RDI, Reg::RBP, -48); // Restore Context
         self.emitter.mov_reg_mem64(Reg::R14, Reg::RDI, 16); // Restore R14
-        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -24); // Restore R13
+        self.emitter.mov_reg_mem64(Reg::R13, Reg::RBP, -64); // Restore current locals_base
 
         self.emitter.add_reg_imm32(Reg::RSP, 16);
         self.emitter.push_wasm_stack(Reg::RAX);
