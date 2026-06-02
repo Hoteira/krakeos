@@ -152,10 +152,9 @@ impl LineReader {
                         if let Some(ch) = s.chars().next() {
                             buffer.insert(cursor, ch);
                             cursor += 1;
-                            
-                            // Echo the UTF-8 bytes back
-                            file_write(STDOUT, &utf8_buf);
-                            
+
+                            // End-of-line typing is echoed locally by the
+                            // terminal; only a mid-line insert needs a reprint.
                             if cursor < buffer.len() {
                                 self.redraw_line(prompt, &buffer, cursor);
                             }
@@ -165,9 +164,10 @@ impl LineReader {
                 c if c >= 0x20 => {
                     buffer.insert(cursor, c as char);
                     cursor += 1;
-                    if cursor == buffer.len() {
-                        file_write(STDOUT, &[c]);
-                    } else {
+                    // End-of-line typing is echoed locally by the terminal (no
+                    // round-trip). Only a mid-line insert needs the shell to
+                    // reprint the line authoritatively.
+                    if cursor < buffer.len() {
                         self.redraw_line(prompt, &buffer, cursor);
                     }
                 }

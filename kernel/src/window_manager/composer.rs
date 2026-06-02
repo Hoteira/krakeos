@@ -862,6 +862,26 @@ impl Composer {
                     self.retile_workspace(ws);
 
                     if ws == self.active_workspace {
+                        let geom_changed =
+                            old_x != w.x || old_y != w.y || old_w != w.width || old_h != w.height;
+                        let is_tiled = self.find_leaf_for_window(ws, i).is_some();
+
+                        // A tiling rearrange (spawn/close shuffles neighbours) commits
+                        // geometry changes one window at a time as each app echoes its new
+                        // size back. A per-window union(old,new) flush can leave a moved
+                        // window's vacated area un-erased if any echo is dropped/suppressed
+                        // or arrives out of order — that's the "ghost trail". Recomposing
+                        // the whole screen on a tiled geometry change is always buffer-safe
+                        // (every window is drawn at its own committed size) and guarantees
+                        // no stale pixels survive. Floating moves keep the cheap union flush.
+                        if geom_changed && is_tiled {
+                            let (sw, sh) = {
+                                let ds = DISPLAY_SERVER.lock();
+                                (ds.width as u32, ds.height as u32)
+                            };
+                            return Some((0, 0, sw, sh));
+                        }
+
                         let min_x = old_x.min(w.x) as i32;
                         let min_y = old_y.min(w.y) as i32;
                         let max_x = (old_x + old_w as i64).max(w.x + w.width as i64) as i32;

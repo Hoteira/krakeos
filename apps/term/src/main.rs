@@ -147,16 +147,27 @@ pub fn main() {
         }
 
         let mut needs_redraw = false;
+        // Local echo: render printable typed characters immediately instead of
+        // waiting for the shell to bounce them back through the pipe (which
+        // costs a full term->shell->term scheduler round-trip per keystroke).
+        // The shell's readline has its end-of-line echo disabled to match, so
+        // characters are not drawn twice.
+        let mut local_echo = false;
 
         for event in events.iter() {
             match event {
                 inkui::Event::Keyboard(e) => {
                     if e.pressed {
                         if let Some(c) = core::char::from_u32(e.key) {
+                            let mut buf = [0u8; 4];
+                            let s = c.encode_utf8(&mut buf);
+                            let printable = (c as u32) >= 0x20 && c != '\u{7f}';
                             for _ in 0..e.repeat {
-                                let mut buf = [0u8; 4];
-                                let s = c.encode_utf8(&mut buf);
                                 std::os::file_write(unsafe { TERM_WRITE_FD }, s.as_bytes());
+                                if printable {
+                                    term_buffer.input_buffer.extend_from_slice(s.as_bytes());
+                                    local_echo = true;
+                                }
                             }
                         } else {
                             let seq = match e.key {
@@ -220,7 +231,7 @@ pub fn main() {
             debugln!("[term] Read unknown code: {}", n);
         }
 
-        if n > 0 && n < usize::MAX - 1 {
+        if (n > 0 && n < usize::MAX - 1) || local_echo {
             // Reset dirty before processing so we can detect changes
             term_buffer.dirty = false;
             let mut consumed = 0;
