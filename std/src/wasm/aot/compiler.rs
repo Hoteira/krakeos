@@ -32,11 +32,11 @@ pub struct AotCompiler<'a> {
     pub trap_unimplemented_atomic_label: usize,
     pub trap_halt_label: usize,
     pub result_count: usize,
-    /// Phase 1 top-of-stack register cache: number of the top operand-stack
-    /// slots currently held in registers (RAX = second, RBX = top) instead of
-    /// on the physical RSP stack. 0, 1, or 2. Always 0 at every control-flow
-    /// boundary because all non-fast instructions flush it first.
-    pub cache_count: u8,
+    /// Phase 2 virtual stack: the top operand-stack slots currently held in
+    /// registers (deepest first), instead of on the physical RSP stack. Values
+    /// below these live in memory. Always empty at every control-flow boundary
+    /// because all non-fast instructions flush it first.
+    pub vstack: Vec<VLoc>,
     /// Value type of each local (params first, then declared locals) for the
     /// function currently being compiled. Used to keep only GP-cacheable
     /// (i32/i64) locals on the fast path.
@@ -59,6 +59,39 @@ pub enum ControlBlockKind {
     If,
     Func,
 }
+
+/// Where a cached operand-stack value currently lives (Phase 2 virtual stack).
+#[derive(Clone, Copy)]
+pub enum VLoc {
+    Gp(Reg),
+    Xmm(XmmReg),
+}
+
+/// GP registers usable by the virtual-stack allocator. Excludes RSP/RBP (stack
+/// frame), RCX (shift counts), RDI (context), R11 (zeroing scratch in
+/// push_wasm_stack / store_local_from_reg), and R12-R15 (locals/memory base +
+/// callee-saved). These all survive the per-instruction context reload (which
+/// only touches RDI/R13/R14), so cached values persist across a run of fast ops.
+const GP_POOL: [Reg; 7] = [
+    Reg::RAX,
+    Reg::RBX,
+    Reg::RDX,
+    Reg::RSI,
+    Reg::R8,
+    Reg::R9,
+    Reg::R10,
+];
+
+/// XMM registers usable by the virtual-stack allocator. XMM0/XMM1 stay free as
+/// slow-path scratch (used after a flush).
+const XMM_POOL: [XmmReg; 6] = [
+    XmmReg::XMM2,
+    XmmReg::XMM3,
+    XmmReg::XMM4,
+    XmmReg::XMM5,
+    XmmReg::XMM6,
+    XmmReg::XMM7,
+];
 
 impl<'a> AotCompiler<'a> {
     pub fn new(validation_info: &'a ValidationInfo<'a>) -> Self {
@@ -102,7 +135,7 @@ impl<'a> AotCompiler<'a> {
             trap_unimplemented_atomic_label,
             trap_halt_label,
             result_count: 0,
-            cache_count: 0,
+            vstack: Vec::new(),
             local_types: Vec::new(),
         }
     }
@@ -266,7 +299,7 @@ impl<'a> AotCompiler<'a> {
     fn compile_function_body(&mut self, local_func_idx: usize) {
         self.control_stack.clear();
         self.stack_depth = 0;
-        self.cache_count = 0;
+        self.vstack.clear();
 
         let local_trap_halt_label = self.emitter.new_label();
 
@@ -506,55 +539,83 @@ impl<'a> AotCompiler<'a> {
         match &instr {
             Instruction::I32Const(v) => {
                 let v = *v;
-                let r = self.cache_push_reg();
+                let r = self.vpush_gp();
                 self.emitter.mov_reg_imm64(r, (v as u32) as u64);
+                self.stack_depth += 1;
+                return;
+            }
+            Instruction::I64Const(v) => {
+                let v = *v;
+                let r = self.vpush_gp();
+                self.emitter.mov_reg_imm64(r, v as u64);
                 self.stack_depth += 1;
                 return;
             }
             Instruction::LocalGet(idx) if self.local_is_gp(*idx) => {
                 let off = (*idx as i32) * 16;
-                let r = self.cache_push_reg();
+                let r = self.vpush_gp();
                 self.emitter.mov_reg_mem64(r, Reg::R13, off);
                 self.stack_depth += 1;
                 return;
             }
             Instruction::LocalSet(idx) if self.local_is_gp(*idx) => {
                 let off = (*idx as i32) * 16;
-                let r = self.cache_pop_reg();
+                let r = self.vpop_gp(&[]);
                 self.store_local_from_reg(off, r);
                 self.stack_depth -= 1;
                 return;
             }
             Instruction::LocalTee(idx) if self.local_is_gp(*idx) => {
                 let off = (*idx as i32) * 16;
-                let r = self.cache_top_reg();
+                let r = self.vtop_gp();
                 self.store_local_from_reg(off, r);
                 return;
             }
-            Instruction::I32Add => {
-                self.fast_binop_i32(|e| e.add_reg32_reg32(Reg::RAX, Reg::RBX));
-                return;
-            }
-            Instruction::I32Sub => {
-                self.fast_binop_i32(|e| e.sub_reg32_reg32(Reg::RAX, Reg::RBX));
-                return;
-            }
-            Instruction::I32Mul => {
-                self.fast_binop_i32(|e| e.imul_reg32_reg32(Reg::RAX, Reg::RBX));
-                return;
-            }
-            Instruction::I32And => {
-                self.fast_binop_i32(|e| e.and_reg32_reg32(Reg::RAX, Reg::RBX));
-                return;
-            }
-            Instruction::I32Or => {
-                self.fast_binop_i32(|e| e.or_reg32_reg32(Reg::RAX, Reg::RBX));
-                return;
-            }
-            Instruction::I32Xor => {
-                self.fast_binop_i32(|e| e.xor_reg32_reg32(Reg::RAX, Reg::RBX));
-                return;
-            }
+            // i32 arithmetic / bitwise
+            Instruction::I32Add => { self.v_binop_gp(|e, a, b| e.add_reg32_reg32(a, b)); return; }
+            Instruction::I32Sub => { self.v_binop_gp(|e, a, b| e.sub_reg32_reg32(a, b)); return; }
+            Instruction::I32Mul => { self.v_binop_gp(|e, a, b| e.imul_reg32_reg32(a, b)); return; }
+            Instruction::I32And => { self.v_binop_gp(|e, a, b| e.and_reg32_reg32(a, b)); return; }
+            Instruction::I32Or  => { self.v_binop_gp(|e, a, b| e.or_reg32_reg32(a, b)); return; }
+            Instruction::I32Xor => { self.v_binop_gp(|e, a, b| e.xor_reg32_reg32(a, b)); return; }
+            // i64 arithmetic / bitwise
+            Instruction::I64Add => { self.v_binop_gp(|e, a, b| e.add_reg_reg(a, b)); return; }
+            Instruction::I64Sub => { self.v_binop_gp(|e, a, b| e.sub_reg_reg(a, b)); return; }
+            Instruction::I64Mul => { self.v_binop_gp(|e, a, b| e.imul_reg_reg(a, b)); return; }
+            Instruction::I64And => { self.v_binop_gp(|e, a, b| e.and_reg_reg(a, b)); return; }
+            Instruction::I64Or  => { self.v_binop_gp(|e, a, b| e.or_reg_reg(a, b)); return; }
+            Instruction::I64Xor => { self.v_binop_gp(|e, a, b| e.xor_reg_reg(a, b)); return; }
+            // shifts (count -> CL)
+            Instruction::I32Shl  => { self.v_shift_gp(|e, a| e.shl_reg32_cl(a)); return; }
+            Instruction::I32ShrS => { self.v_shift_gp(|e, a| e.sar_reg32_cl(a)); return; }
+            Instruction::I32ShrU => { self.v_shift_gp(|e, a| e.shr_reg32_cl(a)); return; }
+            Instruction::I64Shl  => { self.v_shift_gp(|e, a| e.shl_reg_cl(a)); return; }
+            Instruction::I64ShrS => { self.v_shift_gp(|e, a| e.sar_reg_cl(a)); return; }
+            Instruction::I64ShrU => { self.v_shift_gp(|e, a| e.shr_reg_cl(a)); return; }
+            // i32 comparisons
+            Instruction::I32Eqz => { self.v_eqz(false); return; }
+            Instruction::I32Eq  => { self.v_relop_gp(0x94, false); return; }
+            Instruction::I32Ne  => { self.v_relop_gp(0x95, false); return; }
+            Instruction::I32LtS => { self.v_relop_gp(0x9C, false); return; }
+            Instruction::I32LtU => { self.v_relop_gp(0x92, false); return; }
+            Instruction::I32GtS => { self.v_relop_gp(0x9F, false); return; }
+            Instruction::I32GtU => { self.v_relop_gp(0x97, false); return; }
+            Instruction::I32LeS => { self.v_relop_gp(0x9E, false); return; }
+            Instruction::I32LeU => { self.v_relop_gp(0x96, false); return; }
+            Instruction::I32GeS => { self.v_relop_gp(0x9D, false); return; }
+            Instruction::I32GeU => { self.v_relop_gp(0x93, false); return; }
+            // i64 comparisons
+            Instruction::I64Eqz => { self.v_eqz(true); return; }
+            Instruction::I64Eq  => { self.v_relop_gp(0x94, true); return; }
+            Instruction::I64Ne  => { self.v_relop_gp(0x95, true); return; }
+            Instruction::I64LtS => { self.v_relop_gp(0x9C, true); return; }
+            Instruction::I64LtU => { self.v_relop_gp(0x92, true); return; }
+            Instruction::I64GtS => { self.v_relop_gp(0x9F, true); return; }
+            Instruction::I64GtU => { self.v_relop_gp(0x97, true); return; }
+            Instruction::I64LeS => { self.v_relop_gp(0x9E, true); return; }
+            Instruction::I64LeU => { self.v_relop_gp(0x96, true); return; }
+            Instruction::I64GeS => { self.v_relop_gp(0x9D, true); return; }
+            Instruction::I64GeU => { self.v_relop_gp(0x93, true); return; }
             _ => {
                 // Every other instruction sees the canonical memory-stack state.
                 self.flush_cache();
@@ -1775,11 +1836,11 @@ impl<'a> AotCompiler<'a> {
         }
     }
 
-    // ── Phase 1 top-of-stack register cache helpers ─────────────────────────
+    // ── Phase 2 N-register virtual stack helpers ────────────────────────────
 
     /// True if local `idx` is i32/i64 (safe to hold in a 64-bit GP register).
-    /// Floats and v128 keep using the slow movups path (v128 would lose its
-    /// high 64 bits in a GP register).
+    /// Floats/v128 use their own paths (XMM for floats; v128 stays on the slow
+    /// movups path since it would lose its high 64 bits in a GP register).
     fn local_is_gp(&self, idx: usize) -> bool {
         matches!(
             self.local_types.get(idx),
@@ -1787,73 +1848,135 @@ impl<'a> AotCompiler<'a> {
         )
     }
 
-    /// Spill every cached operand value back onto the physical RSP stack and
-    /// empty the cache. After this the memory stack matches `stack_depth`
-    /// exactly, so the unchanged slow path behaves identically to before.
+    fn gp_in_vstack(&self, r: Reg) -> bool {
+        let ru = r as u8;
+        self.vstack
+            .iter()
+            .any(|v| matches!(v, VLoc::Gp(x) if *x as u8 == ru))
+    }
+
+    fn xmm_in_vstack(&self, x: XmmReg) -> bool {
+        let xu = x as u8;
+        self.vstack
+            .iter()
+            .any(|v| matches!(v, VLoc::Xmm(y) if *y as u8 == xu))
+    }
+
+    /// Spill the deepest register-held value to the physical stack (it sits just
+    /// above the in-memory portion, so a single push keeps ordering correct).
+    fn spill_deepest(&mut self) {
+        if self.vstack.is_empty() {
+            return;
+        }
+        match self.vstack.remove(0) {
+            VLoc::Gp(r) => self.emitter.push_wasm_stack(r),
+            VLoc::Xmm(x) => self.emitter.push_v128(x),
+        }
+    }
+
+    /// Allocate a free GP pool register, spilling deepest cached values until one
+    /// is available. `pinned` registers (operands of the op in progress) are
+    /// never returned.
+    fn alloc_gp(&mut self, pinned: &[Reg]) -> Reg {
+        loop {
+            for &r in GP_POOL.iter() {
+                let ru = r as u8;
+                if !self.gp_in_vstack(r) && !pinned.iter().any(|p| *p as u8 == ru) {
+                    return r;
+                }
+            }
+            self.spill_deepest();
+        }
+    }
+
+    fn alloc_xmm(&mut self, pinned: &[XmmReg]) -> XmmReg {
+        loop {
+            for &x in XMM_POOL.iter() {
+                let xu = x as u8;
+                if !self.xmm_in_vstack(x) && !pinned.iter().any(|p| *p as u8 == xu) {
+                    return x;
+                }
+            }
+            self.spill_deepest();
+        }
+    }
+
+    /// Spill every cached value back onto the physical RSP stack (deepest first)
+    /// and empty the virtual stack. After this the memory stack matches
+    /// `stack_depth`, so the unchanged slow path behaves identically.
     fn flush_cache(&mut self) {
-        match self.cache_count {
-            1 => self.emitter.push_wasm_stack(Reg::RAX), // top
-            2 => {
-                self.emitter.push_wasm_stack(Reg::RAX); // second (deeper, pushed first)
-                self.emitter.push_wasm_stack(Reg::RBX); // top
-            }
-            _ => {}
-        }
-        self.cache_count = 0;
-    }
-
-    /// Reserve the register that will hold a newly pushed top-of-stack value.
-    /// When the cache is already full, the deeper cached value is spilled to
-    /// memory to make room. Caller writes the value into the returned register.
-    fn cache_push_reg(&mut self) -> Reg {
-        match self.cache_count {
-            0 => {
-                self.cache_count = 1;
-                Reg::RAX
-            }
-            1 => {
-                self.cache_count = 2;
-                Reg::RBX
-            }
-            _ => {
-                // Full: spill old 'second' (RAX) to memory, demote old top
-                // (RBX) to 'second', new value becomes top in RBX.
-                self.emitter.push_wasm_stack(Reg::RAX);
-                self.emitter.mov_reg_reg(Reg::RAX, Reg::RBX);
-                Reg::RBX
+        let entries = core::mem::take(&mut self.vstack);
+        for v in entries {
+            match v {
+                VLoc::Gp(r) => self.emitter.push_wasm_stack(r),
+                VLoc::Xmm(x) => self.emitter.push_v128(x),
             }
         }
     }
 
-    /// Return the register holding the top-of-stack value and remove it from the
-    /// cache, loading from memory if nothing is cached.
-    fn cache_pop_reg(&mut self) -> Reg {
-        match self.cache_count {
-            2 => {
-                self.cache_count = 1; // new top is RAX, already in place
-                Reg::RBX
-            }
-            1 => {
-                self.cache_count = 0;
-                Reg::RAX
-            }
-            _ => {
-                self.emitter.pop_wasm_stack(Reg::RAX);
-                Reg::RAX
+    /// Allocate a GP register for a new top-of-stack value and record it.
+    fn vpush_gp(&mut self) -> Reg {
+        let r = self.alloc_gp(&[]);
+        self.vstack.push(VLoc::Gp(r));
+        r
+    }
+
+    fn vpush_xmm(&mut self) -> XmmReg {
+        let x = self.alloc_xmm(&[]);
+        self.vstack.push(VLoc::Xmm(x));
+        x
+    }
+
+    /// Return the GP register holding the top-of-stack value and remove it from
+    /// the virtual stack, materializing from memory (avoiding `pinned`) if empty.
+    fn vpop_gp(&mut self, pinned: &[Reg]) -> Reg {
+        match self.vstack.pop() {
+            Some(VLoc::Gp(r)) => r,
+            Some(VLoc::Xmm(_)) => Reg::RAX, // type mismatch impossible after validation
+            None => {
+                let r = self.alloc_gp(pinned);
+                self.emitter.pop_wasm_stack(r);
+                r
             }
         }
     }
 
-    /// Return the register holding the top-of-stack value, leaving it on the
-    /// stack (for local.tee). Caches the top if it was only in memory.
-    fn cache_top_reg(&mut self) -> Reg {
-        match self.cache_count {
-            2 => Reg::RBX,
-            1 => Reg::RAX,
-            _ => {
-                self.emitter.pop_wasm_stack(Reg::RAX);
-                self.cache_count = 1;
-                Reg::RAX
+    fn vpop_xmm(&mut self, pinned: &[XmmReg]) -> XmmReg {
+        match self.vstack.pop() {
+            Some(VLoc::Xmm(x)) => x,
+            Some(VLoc::Gp(_)) => XmmReg::XMM0, // type mismatch impossible after validation
+            None => {
+                let x = self.alloc_xmm(pinned);
+                self.emitter.pop_v128(x);
+                x
+            }
+        }
+    }
+
+    /// Return the GP register holding the top-of-stack value, leaving it on the
+    /// virtual stack (for local.tee), materializing from memory if needed.
+    fn vtop_gp(&mut self) -> Reg {
+        match self.vstack.last().copied() {
+            Some(VLoc::Gp(r)) => r,
+            Some(VLoc::Xmm(_)) => Reg::RAX,
+            None => {
+                let r = self.alloc_gp(&[]);
+                self.emitter.pop_wasm_stack(r);
+                self.vstack.push(VLoc::Gp(r));
+                r
+            }
+        }
+    }
+
+    fn vtop_xmm(&mut self) -> XmmReg {
+        match self.vstack.last().copied() {
+            Some(VLoc::Xmm(x)) => x,
+            Some(VLoc::Gp(_)) => XmmReg::XMM0,
+            None => {
+                let x = self.alloc_xmm(&[]);
+                self.emitter.pop_v128(x);
+                self.vstack.push(VLoc::Xmm(x));
+                x
             }
         }
     }
@@ -1866,28 +1989,58 @@ impl<'a> AotCompiler<'a> {
         self.emitter.mov_mem64_reg(Reg::R13, off + 8, Reg::R11);
     }
 
-    /// Fast i32 binop: bring the top two operands into RAX (second) / RBX (top),
-    /// run `op` (which computes RAX = RAX <op> RBX), and leave the result cached
-    /// as the new top in RAX.
-    fn fast_binop_i32<F>(&mut self, op: F)
+    /// Fast GP binop: pop top (b) and second (a), run `op(e, a, b)` which computes
+    /// a = a <op> b, and push the result (a) as the new top.
+    fn v_binop_gp<F>(&mut self, op: F)
     where
-        F: FnOnce(&mut X64Emitter),
+        F: FnOnce(&mut X64Emitter, Reg, Reg),
     {
-        match self.cache_count {
-            2 => {} // RAX = second, RBX = top already
-            1 => {
-                // top in RAX; move it to RBX, load second from memory into RAX
-                self.emitter.mov_reg_reg(Reg::RBX, Reg::RAX);
-                self.emitter.pop_wasm_stack(Reg::RAX);
-            }
-            _ => {
-                self.emitter.pop_wasm_stack(Reg::RBX); // top
-                self.emitter.pop_wasm_stack(Reg::RAX); // second
-            }
-        }
-        op(&mut self.emitter);
-        self.cache_count = 1; // result (new top) in RAX
+        let b = self.vpop_gp(&[]);
+        let a = self.vpop_gp(&[b]);
+        op(&mut self.emitter, a, b);
+        self.vstack.push(VLoc::Gp(a));
         self.stack_depth -= 1;
+    }
+
+    /// Fast GP shift: count (b) -> CL, then `op(e, a)` shifts value a by CL.
+    fn v_shift_gp<F>(&mut self, op: F)
+    where
+        F: FnOnce(&mut X64Emitter, Reg),
+    {
+        let b = self.vpop_gp(&[]);
+        let a = self.vpop_gp(&[b]);
+        self.emitter.mov_reg_reg(Reg::RCX, b); // RCX is never a pool reg
+        op(&mut self.emitter, a);
+        self.vstack.push(VLoc::Gp(a));
+        self.stack_depth -= 1;
+    }
+
+    /// Fast GP relational op: cmp second (a) with top (b), set a = (a cc b) ? 1 : 0.
+    fn v_relop_gp(&mut self, cc: u8, is64: bool) {
+        let b = self.vpop_gp(&[]);
+        let a = self.vpop_gp(&[b]);
+        if is64 {
+            self.emitter.cmp_reg_reg(a, b);
+        } else {
+            self.emitter.cmp_reg32_reg32(a, b);
+        }
+        self.emitter.setcc(cc, a);
+        self.emitter.movzx_reg_reg8(a, a);
+        self.vstack.push(VLoc::Gp(a));
+        self.stack_depth -= 1;
+    }
+
+    /// Fast i32/i64 eqz: a = (a == 0) ? 1 : 0.
+    fn v_eqz(&mut self, is64: bool) {
+        let a = self.vpop_gp(&[]);
+        if is64 {
+            self.emitter.test_reg_reg(a, a);
+        } else {
+            self.emitter.test_reg32_reg32(a, a);
+        }
+        self.emitter.setcc(0x94, a); // SETZ
+        self.emitter.movzx_reg_reg8(a, a);
+        self.vstack.push(VLoc::Gp(a));
     }
 
     fn emit_binop_i32<F>(&mut self, op: F)
