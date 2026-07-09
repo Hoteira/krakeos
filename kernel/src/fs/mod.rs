@@ -215,6 +215,12 @@ fn sync_desc(idx: usize) {
     }
 }
 
+pub fn truncate_file(desc_idx: usize, length: usize) {
+    if desc_idx >= ramfs::RAMFS_DESC_OFFSET {
+        ramfs::truncate_file(desc_idx, length);
+    }
+}
+
 pub fn create_file(name: &str) -> Option<usize> {
     if ramfs::is_ram_file(name) {
         return ramfs::create_file(name);

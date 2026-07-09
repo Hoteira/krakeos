@@ -114,6 +114,9 @@ pub fn dispatch(frame: &mut TrapFrame) {
                 let buf = unsafe { core::slice::from_raw_parts(ptr, len) };
                 if let Ok(path) = core::str::from_utf8(buf) {
                     if let Some(desc_idx) = crate::fs::find_file(path) {
+                        if (flags & 8) != 0 {
+                            crate::fs::truncate_file(desc_idx, 0);
+                        }
                         frame.regs[10] = desc_idx;
                     } else if (flags & 1) != 0 {
                         if let Some(desc_idx) = crate::fs::create_file(path) {

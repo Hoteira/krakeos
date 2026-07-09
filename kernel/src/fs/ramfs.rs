@@ -22,14 +22,19 @@ pub static mut RAM_FS: RamFS = RamFS {
 };
 
 pub fn is_ram_file(name: &str) -> bool {
-    name.ends_with(".gpu.ram")
+    name.ends_with(".ram")
+}
+
+pub fn get_ram_basename(name: &str) -> &str {
+    name.rsplit('/').next().unwrap_or(name)
 }
 
 pub fn find_file(name: &str) -> Option<usize> {
+    let basename = get_ram_basename(name);
     unsafe {
         for (i, file_opt) in RAM_FS.files.iter().enumerate() {
             if let Some(file) = file_opt {
-                if file.name == name {
+                if get_ram_basename(&file.name) == basename {
                     return Some(RAMFS_DESC_OFFSET + i);
                 }
             }
@@ -43,11 +48,15 @@ pub fn create_file(name: &str) -> Option<usize> {
         return Some(idx);
     }
 
+    let basename = get_ram_basename(name);
+    let mut abs_name = String::from("/");
+    abs_name.push_str(basename);
+
     unsafe {
         for (i, file_opt) in RAM_FS.files.iter_mut().enumerate() {
             if file_opt.is_none() {
                 *file_opt = Some(RamFile {
-                    name: String::from(name),
+                    name: abs_name,
                     data: Vec::new(),
                     waiting_thread: None,
                 });
@@ -65,6 +74,15 @@ pub fn get_file_size(desc_idx: usize) -> usize {
             file.data.len()
         } else {
             0
+        }
+    }
+}
+
+pub fn truncate_file(desc_idx: usize, length: usize) {
+    let i = desc_idx - RAMFS_DESC_OFFSET;
+    unsafe {
+        if let Some(file) = &mut RAM_FS.files[i] {
+            file.data.truncate(length);
         }
     }
 }
