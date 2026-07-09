@@ -9,6 +9,7 @@ pub enum ThreadState {
     Ready,
     Running,
     Waiting,
+    Sleeping(u64),
 }
 
 #[derive(Copy, Clone)]
@@ -131,15 +132,28 @@ impl Scheduler {
 pub unsafe fn switch(current_sp: usize) -> usize {
     let sched = &mut *core::ptr::addr_of_mut!(SCHEDULER);
     
-    sched.threads[sched.current].sp = current_sp;
-    sched.threads[sched.current].state = ThreadState::Ready;
+    let current_time = crate::csr::read_time();
+    for i in 0..8 {
+        if let ThreadState::Sleeping(wakeup_time) = sched.threads[i].state {
+            if current_time >= wakeup_time {
+                sched.threads[i].state = ThreadState::Ready;
+            }
+        }
+    }
+    
+    if sched.threads[sched.current].state == ThreadState::Running {
+        sched.threads[sched.current].sp = current_sp;
+        sched.threads[sched.current].state = ThreadState::Ready;
+    } else if sched.threads[sched.current].state == ThreadState::Waiting || matches!(sched.threads[sched.current].state, ThreadState::Sleeping(_)) {
+        sched.threads[sched.current].sp = current_sp;
+    }
 
     let mut next = (sched.current + 1) % 8;
     while sched.threads[next].state != ThreadState::Ready {
         next = (next + 1) % 8;
         if next == sched.current {
-            // If we loop back and no threads are Ready, what happens? 
-            // In a real OS we would idle, here we assume at least one is Ready.
+            // Idle if no threads are ready
+            // We just let the current thread keep running or loop until timer fires
             break;
         }
     }

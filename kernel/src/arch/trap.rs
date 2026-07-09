@@ -141,7 +141,7 @@ pub extern "C" fn trap_handler(sp: usize) -> usize {
     if is_interrupt {
         match code {
             5 => {
-                let next_tick = csr::read_time() + 2_000_000;
+                let next_tick = csr::read_time() + 10_000;
                 sbi::set_timer(next_tick);
                 
                 return unsafe { scheduler::switch(sp) };
@@ -152,9 +152,9 @@ pub extern "C" fn trap_handler(sp: usize) -> usize {
         }
     } else {
         if code == 8 { // U-mode ecall
-            crate::sys::syscall::dispatch(frame);
+            let new_sp = crate::sys::syscall::dispatch(frame);
             frame.sepc += 4;
-            return sp;
+            return new_sp.unwrap_or(sp);
         }
 
         if code == 2 { // Illegal Instruction

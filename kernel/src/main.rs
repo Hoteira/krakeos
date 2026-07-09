@@ -140,7 +140,7 @@ pub extern "C" fn main(hart_id: usize, dtb_ptr: usize) -> ! {
     csr::enable_timer_interrupt();
     csr::enable_global_interrupts();
     
-    let next_tick = csr::read_time() + 2_000_000;
+    let next_tick = csr::read_time() + 10_000;
     sbi::set_timer(next_tick);
 
     loop {

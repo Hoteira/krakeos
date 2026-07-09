@@ -79,6 +79,16 @@ pub fn sys_wait_fs_event(fd: usize) -> usize {
     ret
 }
 
+pub fn sys_sleep(ms: usize) {
+    unsafe { core::arch::asm!("ecall", in("a7") 13, in("a0") ms); }
+}
+
+pub fn sys_fstat(fd: usize) -> usize {
+    let mut ret: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 14, inout("a0") fd => ret); }
+    ret
+}
+
 fn run_wasm(path: &str) {
     let msg = b"wasm_runner: opening module...\n";
     sys_write(1, 0, msg);
@@ -183,7 +193,18 @@ fn run_wasm(path: &str) {
     let fd_fdstat_get = Func::wrap(&mut store, |mut _caller: Caller<'_, HostState>, _fd: i32, _stat_ptr: i32| -> i32 { 0 });
     let _ = linker.define("wasi_snapshot_preview1", "fd_fdstat_get", fd_fdstat_get);
     
-    let fd_filestat_get = Func::wrap(&mut store, |mut _caller: Caller<'_, HostState>, _fd: i32, _buf_ptr: i32| -> i32 { 0 });
+    let fd_filestat_get = Func::wrap(&mut store, |mut caller: Caller<'_, HostState>, fd: i32, buf_ptr: i32| -> i32 { 
+        let size = sys_fstat(fd as usize) as u64;
+        let memory = caller.get_export("memory").unwrap().into_memory().unwrap();
+        
+        let mut stat = [0u8; 64];
+        stat[16] = 4; // regular file
+        stat[24] = 1; // nlink
+        stat[32..40].copy_from_slice(&size.to_le_bytes()); // size
+        
+        let _ = memory.write(&mut caller, buf_ptr as usize, &stat);
+        0 
+    });
     let _ = linker.define("wasi_snapshot_preview1", "fd_filestat_get", fd_filestat_get);
 
     let fd_prestat_get = Func::wrap(&mut store, |mut _caller: Caller<'_, HostState>, _fd: i32, _buf_ptr: i32| -> i32 { 8 });
@@ -203,8 +224,9 @@ fn run_wasm(path: &str) {
                 offset as usize
             } else if whence == 1 { // CUR
                 (current as i64 + offset) as usize
-            } else { // END (not properly supported without stat)
-                offset as usize
+            } else { // END
+                let size = sys_fstat(fd_idx) as i64;
+                (size + offset) as usize
             };
             caller.data_mut().fd_offsets[fd_idx] = new_offset;
             
@@ -321,6 +343,10 @@ fn run_wasm(path: &str) {
 
     linker.define("krakeos", "wait_fs_event", Func::wrap(&mut store, |mut _caller: Caller<'_, HostState>, fd: u32| -> u32 {
         sys_wait_fs_event(fd as usize) as u32
+    })).unwrap();
+
+    linker.define("krakeos", "sleep", Func::wrap(&mut store, |mut _caller: Caller<'_, HostState>, ms: u32| {
+        sys_sleep(ms as usize);
     })).unwrap();
 
     let instance = match linker.instantiate_and_start(&mut store, &module) {

@@ -10,8 +10,10 @@ pub const SYS_SBRK: usize = 5;
 pub const SYS_FB_FLUSH: usize = 10;
 pub const SYS_WAIT_FS_EVENT: usize = 11;
 pub const SYS_SPAWN: usize = 12;
+pub const SYS_SLEEP: usize = 13;
+pub const SYS_FSTAT: usize = 14;
 
-pub fn dispatch(frame: &mut TrapFrame) {
+pub fn dispatch(frame: &mut TrapFrame) -> Option<usize> {
     let id = frame.regs[17]; // a7
     let a0 = frame.regs[10];
     let a1 = frame.regs[11];
@@ -22,6 +24,8 @@ pub fn dispatch(frame: &mut TrapFrame) {
     unsafe {
         core::arch::asm!("csrs sstatus, {}", in(reg) 1 << 18);
     }
+    
+    let mut ret_sp = None;
 
     match id {
         SYS_EXIT => {
@@ -195,22 +199,10 @@ pub fn dispatch(frame: &mut TrapFrame) {
                 if crate::fs::ramfs::wait_for_event(desc_idx, tid) {
                     unsafe {
                         crate::sys::scheduler::SCHEDULER.threads[tid].state = crate::sys::scheduler::ThreadState::Waiting;
+                        let new_sp = crate::sys::scheduler::switch(frame as *mut _ as usize);
+                        frame.regs[10] = 0; // Return 0
+                        ret_sp = Some(new_sp);
                     }
-                    frame.regs[10] = 0;
-                    
-                    // We need to yield! We can't call scheduler::switch easily from here,
-                    // so we enable S-mode interrupts and wait for the next timer tick to context switch us out.
-                    unsafe {
-                        core::arch::asm!("csrs sstatus, 2"); // Enable SIE
-                        loop {
-                            if crate::sys::scheduler::SCHEDULER.threads[tid].state != crate::sys::scheduler::ThreadState::Waiting {
-                                break;
-                            }
-                            core::arch::asm!("wfi");
-                        }
-                        core::arch::asm!("csrc sstatus, 2"); // Disable SIE again
-                    }
-                    return;
                 } else {
                     frame.regs[10] = 1; // Error
                 }
@@ -224,6 +216,22 @@ pub fn dispatch(frame: &mut TrapFrame) {
             crate::sys::scheduler::Scheduler::spawn_user_thread(entry, arg);
             frame.regs[10] = 0;
         }
+        SYS_SLEEP => {
+            let ms = a0;
+            let ticks = ms as u64 * 10_000;
+            let wakeup = crate::csr::read_time() + ticks;
+            unsafe {
+                let tid = crate::sys::scheduler::SCHEDULER.current;
+                crate::sys::scheduler::SCHEDULER.threads[tid].state = crate::sys::scheduler::ThreadState::Sleeping(wakeup);
+                let new_sp = crate::sys::scheduler::switch(frame as *mut _ as usize);
+                frame.regs[10] = 0;
+                ret_sp = Some(new_sp);
+            }
+        }
+        SYS_FSTAT => {
+            let fd = a0;
+            frame.regs[10] = crate::fs::get_file_size(fd);
+        }
         _ => {
             crate::println!("Unknown syscall: {}", id);
             frame.regs[10] = usize::MAX;
@@ -234,4 +242,6 @@ pub fn dispatch(frame: &mut TrapFrame) {
     unsafe {
         core::arch::asm!("csrc sstatus, {}", in(reg) 1 << 18);
     }
+
+    ret_sp
 }
