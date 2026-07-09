@@ -1,9 +1,0 @@
-[package]
-name = "userland"
-version = "0.1.0"
-edition = "2024"
-
-# No workspace inheritance if not needed, keep it simple for standalone binary
-[dependencies]
-std = { path = "../std" }
-inkui = { path = "../inkui" }

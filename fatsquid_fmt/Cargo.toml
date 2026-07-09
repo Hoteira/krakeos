@@ -1,0 +1,9 @@
+[package]
+name = "fatsquid_fmt"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fatfs = "0.3.6"
+fscommon = "0.1.1"
+mbrman = "0.6.1"
