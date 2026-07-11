@@ -22,27 +22,8 @@ use linked_list_allocator::LockedHeap;
 pub static ALLOCATOR: LockedHeap = LockedHeap::empty();
 pub static mut ROOT_PAGE_TABLE: *mut paging::PageTable = core::ptr::null_mut();
 
-core::arch::global_asm!(
-    ".section .text",
-    ".align 12",
-    ".global user_thread_start",
-    "user_thread_start:",
-    "li a7, 1",
-    "li a0, 85", // 'U'
-    "1:",
-    "nop", // was ecall
-    "li t0, 5000000",
-    "2:",
-    "addi t0, t0, -1",
-    "bnez t0, 2b",
-    "j 1b",
-    ".align 12",
-    "kernel_code_resume:"
-);
-
 unsafe extern "C" {
     static __kernel_end: u8;
-    pub static user_thread_start: u8;
 }
 
 #[panic_handler]
@@ -51,17 +32,8 @@ fn panic(info: &PanicInfo) -> ! {
     loop {}
 }
 
-fn task_a() {
-    loop {
-        // println!("Task A running...");
-        for _ in 0..5000000 { unsafe { core::arch::asm!("nop"); } }
-    }
-}
-
-
-
 #[no_mangle]
-pub extern "C" fn main(hart_id: usize, dtb_ptr: usize) -> ! {
+pub extern "C" fn main(_hart_id: usize, dtb_ptr: usize) -> ! {
     unsafe {
         core::arch::asm!("csrw stvec, {}", in(reg) trap::trap_vector as *const () as usize);
     }
@@ -84,13 +56,11 @@ pub extern "C" fn main(hart_id: usize, dtb_ptr: usize) -> ! {
         paging::map_range(root_table_ptr, 0x10000000, 0x10000000, 4096, paging::PTE_R | paging::PTE_W);
         // Map VirtIO MMIO Region (0x10001000 - 0x10008000)
         paging::map_range(root_table_ptr, 0x10001000, 0x10001000, 0x8000, paging::PTE_R | paging::PTE_W);
+        // Map Goldfish RTC (/dev/system/time reads it every frame)
+        paging::map_range(root_table_ptr, crate::drivers::rtc::GOLDFISH_RTC_BASE, crate::drivers::rtc::GOLDFISH_RTC_BASE, 4096, paging::PTE_R | paging::PTE_W);
         
         let ram_size = mem_end - 0x80000000;
         paging::map_range(root_table_ptr, 0x80000000, 0x80000000, ram_size, paging::PTE_R | paging::PTE_W | paging::PTE_X);
-
-        // Upgrade user code page to PTE_U
-        let user_code_addr = core::ptr::addr_of!(user_thread_start) as usize;
-        paging::map_page(root_table_ptr, user_code_addr, user_code_addr, paging::PTE_R | paging::PTE_X | paging::PTE_U);
 
         let satp_val = (8u64 << 60) | ((root_table_ptr as u64) >> 12);
         csr::write_satp(satp_val);
@@ -102,6 +72,9 @@ pub extern "C" fn main(hart_id: usize, dtb_ptr: usize) -> ! {
     if virtio::init() {
         println!("VirtIO Block Initialized.");
         fs::mount();
+        unsafe {
+            core::arch::asm!("csrs sstatus, {}", in(reg) 1 << 13);
+        }
     } else {
         println!("VirtIO Block Init Failed.");
     }
@@ -113,26 +86,26 @@ pub extern "C" fn main(hart_id: usize, dtb_ptr: usize) -> ! {
     }
 
     scheduler::Scheduler::init_main();
-    println!("Loading wasm_runner.elf...");
+    println!("Loading /bin/wasm_runner.elf...");
     
-    // Load wasm_runner.elf from disk
-    let desc_idx = match fs::find_file("wasm_runner.elf") {
+    // Load /bin/wasm_runner.elf from disk
+    let desc_idx = match fs::find_file("/bin/wasm_runner.elf") {
         Some(idx) => idx,
         None => {
-            println!("wasm_runner.elf not found on disk!");
+            println!("/bin/wasm_runner.elf not found on disk!");
             loop {}
         }
     };
     
     let size = fs::get_file_size(desc_idx);
-    println!("Found wasm_runner.elf, size: {} bytes", size);
+    println!("Found /bin/wasm_runner.elf, size: {} bytes", size);
     
     let mut elf_bytes = alloc::vec![0; size];
     let br = fs::read_file(desc_idx, 0, &mut elf_bytes);
     if br == size {
         sys::elf::load_elf_and_spawn(&elf_bytes);
     } else {
-        println!("Failed to read wasm_runner.elf");
+        println!("Failed to read /bin/wasm_runner.elf");
     }
 
     println!("Starting Scheduler...");

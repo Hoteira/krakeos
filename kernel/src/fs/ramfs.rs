@@ -32,7 +32,8 @@ pub fn get_ram_basename(name: &str) -> &str {
 pub fn find_file(name: &str) -> Option<usize> {
     let basename = get_ram_basename(name);
     unsafe {
-        for (i, file_opt) in RAM_FS.files.iter().enumerate() {
+        let files = &*core::ptr::addr_of!(RAM_FS.files);
+        for (i, file_opt) in files.iter().enumerate() {
             if let Some(file) = file_opt {
                 if get_ram_basename(&file.name) == basename {
                     return Some(RAMFS_DESC_OFFSET + i);
@@ -53,7 +54,8 @@ pub fn create_file(name: &str) -> Option<usize> {
     abs_name.push_str(basename);
 
     unsafe {
-        for (i, file_opt) in RAM_FS.files.iter_mut().enumerate() {
+        let files = &mut *core::ptr::addr_of_mut!(RAM_FS.files);
+        for (i, file_opt) in files.iter_mut().enumerate() {
             if file_opt.is_none() {
                 *file_opt = Some(RamFile {
                     name: abs_name,

@@ -140,10 +140,12 @@ pub extern "C" fn trap_handler(sp: usize) -> usize {
 
     if is_interrupt {
         match code {
-            5 => {
+            5 => { // Timer interrupt
                 let next_tick = csr::read_time() + 10_000;
                 sbi::set_timer(next_tick);
-                
+                crate::drivers::virtio_input::poll();
+                crate::sys::compositor::maybe_compose();
+
                 return unsafe { scheduler::switch(sp) };
             }
             _ => {

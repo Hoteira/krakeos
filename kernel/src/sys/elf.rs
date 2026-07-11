@@ -1,4 +1,3 @@
-use alloc::vec::Vec;
 use crate::arch::paging::{map_page, PTE_R, PTE_W, PTE_X, PTE_U};
 use crate::arch::trap::TrapFrame;
 
@@ -101,11 +100,9 @@ pub fn load_elf_and_spawn(elf_data: &[u8]) {
         }
     }
     
-    unsafe { 
-        crate::csr::sfence_vma(); 
-        crate::csr::fence_i();
-    }
-    
+    crate::csr::sfence_vma();
+    crate::csr::fence_i();
+
     // Allocate User Stack
     let stack_size = 1024 * 1024; // 1MB user stack
     let layout = core::alloc::Layout::from_size_align(stack_size, 4096).unwrap();
@@ -120,8 +117,8 @@ pub fn load_elf_and_spawn(elf_data: &[u8]) {
         }
     }
     
-    unsafe { crate::csr::sfence_vma(); }
-    
+    crate::csr::sfence_vma();
+
     crate::println!("User stack mapped at {:#x}", v_stack_base);
     
     // Prepare kernel stack for the trap frame to return to U-mode
@@ -141,7 +138,7 @@ pub fn load_elf_and_spawn(elf_data: &[u8]) {
     
     // Add to scheduler
     unsafe {
-        for i in 0..8 {
+        for i in 0..crate::sys::scheduler::MAX_THREADS {
             if crate::sys::scheduler::SCHEDULER.threads[i].state == crate::sys::scheduler::ThreadState::Empty {
                 crate::sys::scheduler::SCHEDULER.threads[i].sp = trap_frame_ptr as usize;
                 crate::sys::scheduler::SCHEDULER.threads[i].state = crate::sys::scheduler::ThreadState::Ready;

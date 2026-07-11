@@ -3,14 +3,15 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
 use core::panic::PanicInfo;
 use linked_list_allocator::LockedHeap;
 
 #[global_allocator]
 static ALLOCATOR: LockedHeap = LockedHeap::empty();
 
-const HEAP_SIZE: usize = 48 * 1024 * 1024; // 48 MB heap
+// Each app eagerly gets a 32MB wasm memory (see run.bat RUSTFLAGS); 288MB
+// fits the shell + ~7 more apps with runner overhead.
+const HEAP_SIZE: usize = 288 * 1024 * 1024;
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
@@ -71,14 +72,6 @@ pub fn sys_spawn(entry: usize, arg: usize) {
     unsafe { core::arch::asm!("ecall", in("a7") 12, in("a0") entry, in("a1") arg); }
 }
 
-pub fn sys_wait_fs_event(fd: usize) -> usize {
-    let mut ret: usize;
-    unsafe {
-        core::arch::asm!("ecall", in("a7") 11, inout("a0") fd => ret);
-    }
-    ret
-}
-
 pub fn sys_sleep(ms: usize) {
     unsafe { core::arch::asm!("ecall", in("a7") 13, in("a0") ms); }
 }
@@ -89,27 +82,52 @@ pub fn sys_fstat(fd: usize) -> usize {
     ret
 }
 
+// Lazily opened fd for dev/system/time; the kernel always hands out the same
+// fd for it, so sharing one across threads is fine.
+static TIME_FD: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(usize::MAX);
+
+fn time_ns() -> u64 {
+    use core::sync::atomic::Ordering;
+    let mut fd = TIME_FD.load(Ordering::Relaxed);
+    if fd == usize::MAX {
+        fd = sys_open("dev/system/time", 0);
+        TIME_FD.store(fd, Ordering::Relaxed);
+    }
+    if fd == usize::MAX { return 0; }
+    let mut buf = [0u8; 8];
+    if sys_read(fd, 0, &mut buf) == 8 { u64::from_le_bytes(buf) } else { 0 }
+}
+
 fn run_wasm(path: &str) {
     let msg = b"wasm_runner: opening module...\n";
     sys_write(1, 0, msg);
-    
+
     let fd = sys_open(path, 0);
     if fd == usize::MAX {
         sys_write(1, 0, b"wasm_runner: failed to open module!\n");
         sys_exit(1);
     }
-    
-    let mut wasm_bytes = alloc::vec![0u8; 1024 * 1024 * 10]; 
+
+    let size = sys_fstat(fd);
+    if size == 0 || size == usize::MAX {
+        sys_write(1, 0, b"wasm_runner: module is empty!\n");
+        sys_exit(1);
+    }
+    let mut wasm_bytes = alloc::vec![0u8; size];
     let bytes_read = sys_read(fd, 0, &mut wasm_bytes);
     wasm_bytes.truncate(bytes_read);
-    
+
     if bytes_read == 0 {
         sys_write(1, 0, b"wasm_runner: read 0 bytes!\n");
         sys_exit(1);
     }
     
     use wasmi::*;
-    let engine = Engine::default();
+    // Lazy compilation: translate functions on first call instead of the
+    // whole module up front — big app-startup win under interpretation.
+    let mut config = Config::default();
+    config.compilation_mode(CompilationMode::Lazy);
+    let engine = Engine::new(&config);
     let module = match Module::new(&engine, &wasm_bytes[..]) {
         Ok(m) => m,
         Err(_) => {
@@ -135,16 +153,13 @@ fn run_wasm(path: &str) {
             let buf_ptr = u32::from_le_bytes([iovs_buf[0], iovs_buf[1], iovs_buf[2], iovs_buf[3]]) as usize;
             let buf_len = u32::from_le_bytes([iovs_buf[4], iovs_buf[5], iovs_buf[6], iovs_buf[7]]) as usize;
             
-            let mut data = alloc::vec![0u8; buf_len];
-            if memory.read(&caller, buf_ptr, &mut data).is_err() { return 21; }
-            
             let out_fd_idx = out_fd as usize;
             let offset = caller.data().fd_offsets.get(out_fd_idx).copied().unwrap_or(0);
             
-            // let msg = alloc::format!("wasm_runner: write to {} at offset {}\n", out_fd_idx, offset);
-            // sys_write(1, 0, msg.as_bytes());
-            
-            let bw = sys_write(out_fd_idx, offset, &data);
+            let mem_data = memory.data(&caller);
+            let Some(data_slice) = mem_data.get(buf_ptr .. buf_ptr + buf_len) else { return 21; };
+
+            let bw = sys_write(out_fd_idx, offset, data_slice);
             total_written += bw;
             
             if out_fd_idx < 2048 {
@@ -169,16 +184,17 @@ fn run_wasm(path: &str) {
             let buf_ptr = u32::from_le_bytes([iovs_buf[0], iovs_buf[1], iovs_buf[2], iovs_buf[3]]) as usize;
             let buf_len = u32::from_le_bytes([iovs_buf[4], iovs_buf[5], iovs_buf[6], iovs_buf[7]]) as usize;
             
-            let mut data = alloc::vec![0u8; buf_len];
-            
             let in_fd_idx = in_fd as usize;
             let offset = caller.data().fd_offsets.get(in_fd_idx).copied().unwrap_or(0);
             
-            let br = sys_read(in_fd_idx, offset, &mut data);
+            let br = {
+                let mem_data = memory.data_mut(&mut caller);
+                let Some(data_slice) = mem_data.get_mut(buf_ptr .. buf_ptr + buf_len) else { return 21; };
+                sys_read(in_fd_idx, offset, data_slice)
+            };
+            
             if br > 0 {
-                let _ = memory.write(&mut caller, buf_ptr, &data[..br]);
                 total_read += br;
-                
                 if in_fd_idx < 2048 {
                     caller.data_mut().fd_offsets[in_fd_idx] = offset + br;
                 }
@@ -207,10 +223,29 @@ fn run_wasm(path: &str) {
     });
     let _ = linker.define("wasi_snapshot_preview1", "fd_filestat_get", fd_filestat_get);
 
-    let fd_prestat_get = Func::wrap(&mut store, |mut _caller: Caller<'_, HostState>, _fd: i32, _buf_ptr: i32| -> i32 { 8 });
+    let fd_prestat_get = Func::wrap(&mut store, |mut caller: Caller<'_, HostState>, fd: i32, buf_ptr: i32| -> i32 { 
+        if fd == 3 {
+            let memory = caller.get_export("memory").unwrap().into_memory().unwrap();
+            let mut prestat = [0u8; 8];
+            prestat[0] = 0; // tag = dir
+            prestat[4] = 1; // name_len = 1 ("/")
+            let _ = memory.write(&mut caller, buf_ptr as usize, &prestat);
+            0 // SUCCESS
+        } else {
+            8 // EBADF
+        }
+    });
     let _ = linker.define("wasi_snapshot_preview1", "fd_prestat_get", fd_prestat_get);
 
-    let fd_prestat_dir_name = Func::wrap(&mut store, |mut _caller: Caller<'_, HostState>, _fd: i32, _path_ptr: i32, _path_len: i32| -> i32 { 8 });
+    let fd_prestat_dir_name = Func::wrap(&mut store, |mut caller: Caller<'_, HostState>, fd: i32, path_ptr: i32, path_len: i32| -> i32 { 
+        if fd == 3 && path_len > 0 {
+            let memory = caller.get_export("memory").unwrap().into_memory().unwrap();
+            let _ = memory.write(&mut caller, path_ptr as usize, b"/");
+            0
+        } else {
+            28 // EINVAL
+        }
+    });
     let _ = linker.define("wasi_snapshot_preview1", "fd_prestat_dir_name", fd_prestat_dir_name);
 
     let path_filestat_get = Func::wrap(&mut store, |mut _caller: Caller<'_, HostState>, _dirfd: i32, _flags: i32, _path_ptr: i32, _path_len: i32, _buf_ptr: i32| -> i32 { 8 });
@@ -251,7 +286,7 @@ fn run_wasm(path: &str) {
     let _ = linker.define("wasi_snapshot_preview1", "fd_close", fd_close);
     let clock_time_get = Func::wrap(&mut store, |mut caller: Caller<'_, HostState>, _id: i32, _precision: i64, time_ptr: i32| -> i32 {
         let memory = caller.get_export("memory").unwrap().into_memory().unwrap();
-        let time_bytes = (0u64).to_le_bytes();
+        let time_bytes = time_ns().to_le_bytes();
         let _ = memory.write(&mut caller, time_ptr as usize, &time_bytes);
         0
     });
@@ -303,6 +338,8 @@ fn run_wasm(path: &str) {
         if memory.read(&caller, path_ptr as usize, &mut path_buf).is_err() { return 21; }
         
         if let Ok(path_str) = core::str::from_utf8(&path_buf) {
+            let msg = alloc::format!("wasm_runner: path_open '{}'\n", path_str);
+            sys_write(1, 0, msg.as_bytes());
             let fd = sys_open(path_str, oflags as usize);
             if fd != usize::MAX {
                 let fd_bytes = (fd as u32).to_le_bytes();
@@ -317,37 +354,41 @@ fn run_wasm(path: &str) {
     });
     let _ = linker.define("wasi_snapshot_preview1", "path_open", path_open);
 
-    linker.define("krakeos", "fb_flush", Func::wrap(&mut store, |mut caller: Caller<'_, HostState>, ptr: u32, len: u32| -> u32 {
-        let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
-        let data = mem.data(&caller);
+    let poll_oneoff = Func::wrap(&mut store, |mut caller: Caller<'_, HostState>, in_ptr: i32, out_ptr: i32, nsubscriptions: i32, ret_events_ptr: i32| -> i32 {
+        if nsubscriptions == 0 { return 28; /* EINVAL */ }
         
-        let byte_len = (len as usize) * 4;
+        let memory = caller.get_export("memory").unwrap().into_memory().unwrap();
         
-        if (ptr as usize) + byte_len > data.len() {
-            return 1;
+        let mut sub_buf = alloc::vec![0u8; 48];
+        if memory.read(&caller, in_ptr as usize, &mut sub_buf).is_err() { return 21; }
+        
+        let sub_type = sub_buf[8];
+        if sub_type == 0 { // Clock
+            let timeout_ns = u64::from_le_bytes([
+                sub_buf[24], sub_buf[25], sub_buf[26], sub_buf[27],
+                sub_buf[28], sub_buf[29], sub_buf[30], sub_buf[31]
+            ]);
+            let timeout_ms = (timeout_ns / 1_000_000) as usize;
+            
+            sys_sleep(timeout_ms);
+            
+            // Write Event
+            let mut event_buf = alloc::vec![0u8; 32];
+            // userdata
+            event_buf[0..8].copy_from_slice(&sub_buf[0..8]);
+            // error = 0, type = 0
+            event_buf[8] = 0; event_buf[9] = 0; event_buf[10] = 0;
+            
+            let _ = memory.write(&mut caller, out_ptr as usize, &event_buf);
+            let _ = memory.write(&mut caller, ret_events_ptr as usize, &1u32.to_le_bytes());
+            
+            0
+        } else {
+            // Unsupported subscription type for now
+            58 // ENOTSUP
         }
-        
-        let host_ptr = &data[ptr as usize] as *const u8;
-        unsafe {
-            let mut ret: usize;
-            core::arch::asm!(
-                "ecall",
-                in("a7") 10,
-                in("a0") host_ptr,
-                in("a1") len,
-                lateout("a0") ret,
-            );
-            ret as u32
-        }
-    })).unwrap();
-
-    linker.define("krakeos", "wait_fs_event", Func::wrap(&mut store, |mut _caller: Caller<'_, HostState>, fd: u32| -> u32 {
-        sys_wait_fs_event(fd as usize) as u32
-    })).unwrap();
-
-    linker.define("krakeos", "sleep", Func::wrap(&mut store, |mut _caller: Caller<'_, HostState>, ms: u32| {
-        sys_sleep(ms as usize);
-    })).unwrap();
+    });
+    let _ = linker.define("wasi_snapshot_preview1", "poll_oneoff", poll_oneoff);
 
     let instance = match linker.instantiate_and_start(&mut store, &module) {
         Ok(inst) => inst,
@@ -369,11 +410,34 @@ fn run_wasm(path: &str) {
         }
     };
     
-    let _ = start_func.call(&mut store, &[], &mut []);
+    if let Err(e) = start_func.call(&mut store, &[], &mut []) {
+        let msg = alloc::format!("wasm_runner: app '{}' trapped: {:?}\n", path, e);
+        sys_write(1, 0, msg.as_bytes());
+    }
 }
 
-extern "C" fn wm_entry(_arg: usize) {
-    run_wasm("wm.wasm");
+fn spawn_listener(_arg: usize) {
+    let fd = sys_open("dev/system/spawn_queue", 0);
+    if fd == usize::MAX { return; }
+    let mut buf = [0u8; 256];
+    loop {
+        let bytes_read = sys_read(fd, 0, &mut buf);
+        if bytes_read > 0 {
+            if let Ok(path_str) = core::str::from_utf8(&buf[..bytes_read]) {
+                let path_box = alloc::boxed::Box::new(alloc::string::String::from(path_str));
+                let arg_ptr = alloc::boxed::Box::into_raw(path_box) as usize;
+                sys_spawn(app_runner as *const () as usize, arg_ptr);
+            }
+        } else {
+            sys_sleep(10);
+        }
+    }
+}
+
+fn app_runner(arg: usize) {
+    let path_ptr = arg as *mut alloc::string::String;
+    let path_box = unsafe { alloc::boxed::Box::from_raw(path_ptr) };
+    run_wasm(&path_box);
     sys_exit(0);
 }
 
@@ -385,10 +449,11 @@ pub extern "C" fn _start() -> ! {
         ALLOCATOR.lock().init(heap_start as *mut u8, HEAP_SIZE);
     }
     
-    sys_write(1, 0, b"wasm_runner: started in U-mode! Spawning WM thread...\n");
-    sys_spawn(wm_entry as usize, 0);
+    sys_write(1, 0, b"wasm_runner: started in U-mode! Starting shell.wasm...\n");
     
-    run_wasm("app.wasm");
+    sys_spawn(spawn_listener as *const () as usize, 0);
+    
+    run_wasm("/apps/shell.wasm");
     sys_exit(0);
     loop {}
 }

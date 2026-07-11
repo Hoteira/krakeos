@@ -1,5 +1,6 @@
-use std::fs::OpenOptions;
+use std::fs::{OpenOptions, self};
 use std::io::{Write, Seek, SeekFrom};
+use std::path::Path;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -28,7 +29,7 @@ impl Descriptor {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        println!("Usage: fatsquid_fmt <image> <format|add> [args...]");
+        println!("Usage: fatsquid_fmt <image> <format|add|pack> [args...]");
         return;
     }
 
@@ -169,5 +170,113 @@ fn main() {
         file.write_all(descriptors_bytes).unwrap();
         file.sync_all().unwrap();
         println!("Embedded {} ({} bytes in {} blocks) at index {}", squid_name, wasm_bytes.len(), block_idx, empty_idx);
+    } else if cmd == "pack" {
+        if args.len() < 4 {
+            println!("Usage: fatsquid_fmt <image> pack <host_dir>");
+            return;
+        }
+        let host_dir = &args[3];
+        
+        let mut file = OpenOptions::new().read(true).write(true).open(image_path).unwrap();
+        
+        // Wipe existing descriptors (re-init)
+        let mut descriptors = vec![Descriptor::empty(); 1024];
+        descriptors[0].filename[0] = b'/';
+        descriptors[0].is_dir = 1;
+        
+        let mut next_desc_idx = 1;
+        let mut highest_block = 4; // Blocks 0-4 reserved
+        let block_size = 1024 * 1024;
+        
+        fn pack_dir(
+            host_path: &Path, 
+            parent_desc_idx: usize, 
+            descriptors: &mut Vec<Descriptor>, 
+            next_desc_idx: &mut usize,
+            highest_block: &mut u16,
+            file: &mut std::fs::File,
+            p2_offset: u64,
+            block_size: u64
+        ) {
+            let entries = match fs::read_dir(host_path) {
+                Ok(e) => e,
+                Err(_) => return,
+            };
+            
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let path = entry.path();
+                    let name = entry.file_name().into_string().unwrap();
+                    let is_dir = path.is_dir();
+                    
+                    let desc_idx = *next_desc_idx;
+                    if desc_idx >= 1024 {
+                        println!("ERROR: Max descriptors reached!");
+                        return;
+                    }
+                    *next_desc_idx += 1;
+                    
+                    // Add this child to parent's block list
+                    let mut added = false;
+                    for b in descriptors[parent_desc_idx].blocks.iter_mut() {
+                        if *b == 0 {
+                            *b = desc_idx as u16;
+                            descriptors[parent_desc_idx].size += 1; // Size of a directory is the number of children
+                            added = true;
+                            break;
+                        }
+                    }
+                    if !added {
+                        println!("ERROR: Parent directory is full!");
+                        return;
+                    }
+                    
+                    let name_bytes = name.as_bytes();
+                    descriptors[desc_idx].filename[..name_bytes.len()].copy_from_slice(name_bytes);
+                    
+                    if is_dir {
+                        descriptors[desc_idx].is_dir = 1;
+                        pack_dir(&path, desc_idx, descriptors, next_desc_idx, highest_block, file, p2_offset, block_size);
+                    } else {
+                        descriptors[desc_idx].is_dir = 0;
+                        let wasm_bytes = std::fs::read(&path).unwrap();
+                        descriptors[desc_idx].size = wasm_bytes.len() as u32;
+                        
+                        let mut block_idx = 0;
+                        let mut bytes_written = 0;
+                        let start_block = *highest_block + 1;
+                        
+                        while bytes_written < wasm_bytes.len() {
+                            let chunk_size = std::cmp::min(block_size as usize, wasm_bytes.len() - bytes_written);
+                            let block_id = start_block + block_idx as u16;
+                            descriptors[desc_idx].blocks[block_idx] = block_id;
+                            *highest_block = std::cmp::max(*highest_block, block_id);
+                            
+                            file.seek(SeekFrom::Start(p2_offset + (block_id as u64) * block_size)).unwrap();
+                            file.write_all(&wasm_bytes[bytes_written..bytes_written + chunk_size]).unwrap();
+                            
+                            bytes_written += chunk_size;
+                            block_idx += 1;
+                        }
+                        println!("Packed file {} at index {} ({} blocks)", name, desc_idx, block_idx);
+                    }
+                }
+            }
+        }
+        
+        let root_path = Path::new(host_dir);
+        pack_dir(&root_path, 0, &mut descriptors, &mut next_desc_idx, &mut highest_block, &mut file, p2_offset, block_size as u64);
+        
+        // Write descriptors back
+        file.seek(SeekFrom::Start(p2_offset + 1024 * 1024)).unwrap();
+        let descriptors_bytes = unsafe {
+            std::slice::from_raw_parts(
+                descriptors.as_ptr() as *const u8,
+                descriptors.len() * std::mem::size_of::<Descriptor>(),
+            )
+        };
+        file.write_all(descriptors_bytes).unwrap();
+        file.sync_all().unwrap();
+        println!("Successfully packed {} into FatSquid image!", host_dir);
     }
 }

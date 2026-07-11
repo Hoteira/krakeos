@@ -1,0 +1,8 @@
+[package]
+name = "fontsubset"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+subsetter = "0.2"
+titanf = "3.0.0"

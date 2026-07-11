@@ -1,5 +1,9 @@
 [workspace]
 members = [
-    "kernel", "wasm_app", "wasm_runner", "fatsquid_fmt"
-, "window_manager"]
+    "kernel", "wasm_runner", "fatsquid_fmt", "inkui",
+    "apps/calc", "apps/shell", "apps/terminal", "apps/explorer", "apps/viewer", "apps/editor",
+    "tools/png2raw", "tools/fontsubset"]
 resolver = "2"
+
+[profile.release]
+panic = "abort"

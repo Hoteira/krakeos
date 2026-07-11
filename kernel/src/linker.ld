@@ -25,7 +25,7 @@ SECTIONS {
     }
 
     . = ALIGN(4K);
-    . += 16K;
+    . += 1M;
     __stack_top = .;
     __kernel_end = .;
 }

@@ -3,4 +3,4 @@ target = "riscv64gc-unknown-none-elf"
 
 [target.riscv64gc-unknown-none-elf]
 
-runner = "qemu-system-riscv64 -machine virt -bios default -drive file=fs.img,format=raw,if=none,id=hd0,cache=writethrough -device virtio-blk-device,drive=hd0 -device virtio-gpu-device -kernel"
+runner = "qemu-system-riscv64 -machine virt -bios default -drive file=fs.img,format=raw,if=none,id=hd0,cache=writethrough -device virtio-blk-device,drive=hd0 -device virtio-gpu-device -display gtk,zoom-to-fit=off -kernel"

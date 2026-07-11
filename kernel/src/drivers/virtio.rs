@@ -1,5 +1,3 @@
-use core::sync::atomic::{compiler_fence, Ordering};
-
 const VIRTIO_MAGIC: u32 = 0x74726976;
 const VIRTIO_DEV_BLOCK: u32 = 2;
 
@@ -12,35 +10,36 @@ const QUEUE_SIZE: usize = 16; // Keep it small and simple
 
 #[repr(C, align(16))]
 #[derive(Clone, Copy)]
-struct VirtqDesc {
-    addr: u64,
-    len: u32,
-    flags: u16,
-    next: u16,
+pub struct VirtqDesc {
+    pub addr: u64,
+    pub len: u32,
+    pub flags: u16,
+    pub next: u16,
 }
 
 #[repr(C, align(2))]
 #[derive(Clone, Copy)]
-struct VirtqAvail {
-    flags: u16,
-    idx: u16,
-    ring: [u16; QUEUE_SIZE],
-    used_event: u16,
+pub struct VirtqAvail {
+    pub flags: u16,
+    pub idx: u16,
+    pub ring: [u16; QUEUE_SIZE],
+    pub used_event: u16,
 }
 
-#[repr(C)]
+#[repr(C, packed)]
 #[derive(Clone, Copy)]
-struct VirtqUsedElem {
-    id: u32,
-    len: u32,
+pub struct VirtqUsedElem {
+    pub id: u32,
+    pub len: u32,
 }
 
 #[repr(C, align(4))]
-struct VirtqUsed {
-    flags: u16,
-    idx: u16,
-    ring: [VirtqUsedElem; QUEUE_SIZE],
-    avail_event: u16,
+#[derive(Clone, Copy)]
+pub struct VirtqUsed {
+    pub flags: u16,
+    pub idx: u16,
+    pub ring: [VirtqUsedElem; QUEUE_SIZE],
+    pub avail_event: u16,
 }
 
 #[repr(C)]
@@ -65,29 +64,31 @@ static mut VIRTQ_PTR: *mut VirtQueue = core::ptr::null_mut();
 static mut REQ: BlkReq = BlkReq { type_: 0, reserved: 0, sector: 0 };
 static mut BLK_STATUS: u8 = 0;
 
-static mut QUEUE_IDX: u16 = 0;
 static mut LAST_USED_IDX: u16 = 0;
 
 pub fn init() -> bool {
-    // Scan QEMU virtio-mmio addresses
     let mut base = 0x10001000;
-    let mut found = false;
     for _ in 0..8 {
         unsafe {
             let magic = core::ptr::read_volatile(base as *const u32);
             let dev_id = core::ptr::read_volatile((base + 0x008) as *const u32);
-            if magic == VIRTIO_MAGIC && dev_id == VIRTIO_DEV_BLOCK {
-                found = true;
-                VIRTIO_BASE = base;
-                break;
+            if magic == VIRTIO_MAGIC {
+                if dev_id == VIRTIO_DEV_BLOCK {
+                    VIRTIO_BASE = base;
+                    // We'll initialize block device further down
+                } else if dev_id == 18 { // VIRTIO_DEV_INPUT
+                    crate::drivers::virtio_input::init(base);
+                }
             }
         }
         base += 0x1000;
     }
 
-    if !found {
-        crate::println!("VirtIO Block device not found!");
-        return false;
+    unsafe {
+        if VIRTIO_BASE == 0 {
+            crate::println!("VirtIO Block device not found!");
+            return false;
+        }
     }
 
     unsafe {
@@ -151,7 +152,6 @@ pub fn block_op(sector: u64, buf: *mut u8, len: u32, write: bool) {
         let base = VIRTIO_BASE;
         if base == 0 { return; }
 
-        let head = 0;
         let p_req = 1;
         let p_buf = 2;
         let p_stat = 3;

@@ -1,6 +1,5 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 use core::alloc::Layout;
-use core::ptr;
 
 pub const PAGE_SIZE: usize = 4096;
 

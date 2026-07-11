@@ -26,6 +26,8 @@ impl Write for Uart {
     }
 }
 
+
+
 #[macro_export]
 macro_rules! print {
     ($($arg:tt)*) => ({

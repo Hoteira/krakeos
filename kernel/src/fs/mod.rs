@@ -1,6 +1,4 @@
 use crate::virtio;
-use alloc::vec::Vec;
-use alloc::string::String;
 
 pub mod ramfs;
 
@@ -59,10 +57,8 @@ pub fn mount() -> bool {
     let mut buf = [0u8; 512];
     
     // Read MBR
-    unsafe {
-        virtio::read_sector(0, buf.as_mut_ptr(), 1);
-    }
-    
+    virtio::read_sector(0, buf.as_mut_ptr(), 1);
+
     if buf[510] != 0x55 || buf[511] != 0xAA {
         crate::println!("FatSquid: Invalid MBR signature.");
         return false;
@@ -151,23 +147,66 @@ pub fn find_file(name: &str) -> Option<usize> {
     if ramfs::is_ram_file(name) {
         return ramfs::find_file(name);
     }
+    
     let descriptors = unsafe { &*core::ptr::addr_of!(FS.descriptors) };
-    for i in 0..MAX_DESCRIPTORS {
-        let desc = &descriptors[i];
-        if desc.filename[0] == 0 { continue; }
+    
+    // Root directory is always at index 0
+    let mut current_dir = 0;
+    
+    // Split the path by '/'
+    // If the path starts with '/', we strip it.
+    let path = if name.starts_with('/') { &name[1..] } else { name };
+    
+    let mut parts = path.split('/');
+    let mut current_part = parts.next();
+    
+    while let Some(part) = current_part {
+        if part.is_empty() {
+            current_part = parts.next();
+            continue;
+        }
         
-        let len = name.len().min(64);
-        let mut match_ = true;
-        for j in 0..len {
-            if desc.filename[j] != name.as_bytes()[j] {
-                match_ = false;
+        let desc = &descriptors[current_dir];
+        if desc.is_dir == 0 {
+            return None; // Cannot traverse into a non-directory
+        }
+        
+        let mut found_child = None;
+        
+        // A directory's `blocks` array contains the descriptor indices of its children.
+        for &child_idx in desc.blocks.iter() {
+            if child_idx == 0 { continue; } // Empty slot
+            let child_idx = child_idx as usize;
+            if child_idx >= MAX_DESCRIPTORS { continue; }
+            
+            let child = &descriptors[child_idx];
+            if child.filename[0] == 0 { continue; }
+            
+            let len = part.len().min(64);
+            let mut match_ = true;
+            for j in 0..len {
+                if child.filename[j] != part.as_bytes()[j] {
+                    match_ = false;
+                    break;
+                }
+            }
+            if match_ && (len == 64 || child.filename[len] == 0) {
+                found_child = Some(child_idx);
                 break;
             }
         }
-        if match_ && (len == 64 || desc.filename[len] == 0) {
-            return Some(i);
+        
+        if let Some(child) = found_child {
+            current_part = parts.next();
+            if current_part.is_none() {
+                return Some(child);
+            }
+            current_dir = child;
+        } else {
+            return None;
         }
     }
+    
     None
 }
 
@@ -265,17 +304,23 @@ pub fn read_file(desc_idx: usize, offset: usize, buf: &mut [u8]) -> usize {
         if block_id == 0 { break; } // Hole in file
         
         let chunk_size = (BLOCK_SIZE - offset_in_block).min(to_read - bytes_read);
-        
-        let sector = unsafe { P2_OFFSET } + (block_id as u64) * 2048 + (offset_in_block as u64 / 512);
-        let sector_offset = offset_in_block % 512;
-        let num_sectors = (chunk_size + sector_offset + 511) / 512;
-        
+
+        // One multi-sector DMA covering the whole chunk (mount() already does
+        // 1MB transfers), then a single copy out of IO_BUF. The device DMAs
+        // into IO_BUF because it needs a physical address; `buf` may be a
+        // non-identity-mapped user buffer.
+        let first_sector = offset_in_block / 512;
+        let end_sector = (offset_in_block + chunk_size + 511) / 512;
+        let sector = unsafe { P2_OFFSET } + (block_id as u64) * 2048 + first_sector as u64;
+        let start_in_io = offset_in_block - first_sector * 512;
+
         unsafe {
-            virtio::read_sector(sector, core::ptr::addr_of_mut!(IO_BUF) as *mut u8, num_sectors);
+            virtio::read_sector(sector, core::ptr::addr_of_mut!(IO_BUF) as *mut u8, end_sector - first_sector);
             let io_buf = &*core::ptr::addr_of!(IO_BUF);
-            buf[bytes_read..bytes_read + chunk_size].copy_from_slice(&io_buf[sector_offset..sector_offset + chunk_size]);
+            buf[bytes_read..bytes_read + chunk_size]
+                .copy_from_slice(&io_buf[start_in_io..start_in_io + chunk_size]);
         }
-        
+
         bytes_read += chunk_size;
     }
     
@@ -313,22 +358,28 @@ pub fn write_file(desc_idx: usize, offset: usize, buf: &[u8]) -> usize {
         }
         
         let chunk_size = (BLOCK_SIZE - offset_in_block).min(to_write - bytes_written);
-        
-        let sector = unsafe { P2_OFFSET } + (block_id as u64) * 2048 + (offset_in_block as u64 / 512);
-        let sector_offset = offset_in_block % 512;
-        let num_sectors = (chunk_size + sector_offset + 511) / 512;
-        
+
+        // Stage the whole chunk in IO_BUF and issue one multi-sector write.
+        // If the chunk doesn't cover the edge sectors completely, read the
+        // range first so the untouched bytes survive (read-modify-write).
+        let first_sector = offset_in_block / 512;
+        let end_sector = (offset_in_block + chunk_size + 511) / 512;
+        let sector_count = end_sector - first_sector;
+        let sector = unsafe { P2_OFFSET } + (block_id as u64) * 2048 + first_sector as u64;
+        let start_in_io = offset_in_block - first_sector * 512;
+
         unsafe {
-            // If partial sector write, read first
-            if sector_offset != 0 || chunk_size % 512 != 0 {
-                virtio::read_sector(sector, core::ptr::addr_of_mut!(IO_BUF) as *mut u8, num_sectors);
+            if start_in_io != 0 || start_in_io + chunk_size != sector_count * 512 {
+                virtio::read_sector(sector, core::ptr::addr_of_mut!(IO_BUF) as *mut u8, sector_count);
             }
-            
-            let io_buf_mut = &mut *core::ptr::addr_of_mut!(IO_BUF);
-            io_buf_mut[sector_offset..sector_offset + chunk_size].copy_from_slice(&buf[bytes_written..bytes_written + chunk_size]);
-            virtio::write_sector(sector, core::ptr::addr_of!(IO_BUF) as *const u8, num_sectors);
+
+            let io_buf = &mut *core::ptr::addr_of_mut!(IO_BUF);
+            io_buf[start_in_io..start_in_io + chunk_size]
+                .copy_from_slice(&buf[bytes_written..bytes_written + chunk_size]);
+
+            virtio::write_sector(sector, core::ptr::addr_of!(IO_BUF) as *const u8, sector_count);
         }
-        
+
         bytes_written += chunk_size;
     }
     
@@ -352,4 +403,37 @@ unsafe fn mark_desc_used(idx: usize) {
     let bit = idx % 64;
     let bitmap = core::ptr::addr_of_mut!(FS.desc_bitmap);
     (*bitmap)[word] |= 1 << bit;
+}
+
+pub fn list_fs() -> alloc::string::String {
+    use alloc::string::String;
+    let mut out = String::new();
+    
+    // List RAMFS
+    unsafe {
+        for i in 0..ramfs::MAX_RAM_FILES {
+            if let Some(ref file) = ramfs::RAM_FS.files[i] {
+                out.push_str(&alloc::format!("RAMFS: {} ({} bytes)\n", file.name, file.data.len()));
+            }
+        }
+    }
+    
+    // List FatSquid
+    unsafe {
+        let bitmap = &*core::ptr::addr_of!(FS.desc_bitmap);
+        for i in 0..MAX_DESCRIPTORS {
+            let word = i / 64;
+            let bit = i % 64;
+            if (bitmap[word] & (1 << bit)) != 0 {
+                let desc = &FS.descriptors[i];
+                let mut len = 0;
+                while len < 64 && desc.filename[len] != 0 { len += 1; }
+                if let Ok(name) = core::str::from_utf8(&desc.filename[..len]) {
+                    out.push_str(&alloc::format!("DISK: {} ({} bytes) [Dir: {}]\n", name, desc.size, desc.is_dir));
+                }
+            }
+        }
+    }
+    
+    out
 }
