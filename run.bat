@@ -3,9 +3,6 @@ echo ========================================================
 echo Building WASM Guest Apps...
 echo ========================================================
 echo "Building shell..."
-rem 32MB per app: the runner heap is 160MB and every app wasm memory is
-rem allocated eagerly, so bigger values stop additional apps from spawning.
-set RUSTFLAGS=-C link-arg=--initial-memory=33554432 -C link-arg=--max-memory=33554432
 cargo build -p shell --target wasm32-wasip1 --release
 echo "Building calc..."
 cargo build -p calc --target wasm32-wasip1 --release
@@ -43,12 +40,6 @@ copy /Y target\riscv64gc-unknown-none-elf\release\wasm_runner disk\bin\wasm_runn
 if not exist disk\img mkdir disk\img
 copy /Y ref\tree\sys\img\wallpaper2.png disk\img\wallpaper.png
 copy /Y ref\tree\sys\img\cursor1.png disk\img\cursor1.png
-
-echo Generating wallpaper.raw...
-cargo run -p png2raw --target x86_64-pc-windows-msvc -- disk/img/wallpaper.png disk/img/wallpaper.raw 1024 576
-
-echo Generating ASCII-subset UI font...
-cargo run -p fontsubset --target x86_64-pc-windows-msvc -- disk/fonts/CaskaydiaNerd.ttf disk/fonts/ui.ttf
 
 cargo run -p fatsquid_fmt --target x86_64-pc-windows-msvc -- fs.img pack disk
 echo ========================================================

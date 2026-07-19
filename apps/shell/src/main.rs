@@ -1,7 +1,7 @@
-use std::fs::File;
-use std::string::String;
 use std::format;
-use std::io::{Read, Write, Seek, SeekFrom};
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::string::String;
 
 const FB_WIDTH: u32 = 1024;
 const FB_HEIGHT: u32 = 576;
@@ -20,11 +20,15 @@ struct WindowState {
 fn draw_rect(fb: &mut [u32], x: u32, y: u32, w: u32, h: u32, color: u32) {
     // Clip once up front; the old per-pixel bounds checks and branches were
     // a large interpreted-instruction cost per frame.
-    if x >= FB_WIDTH || y >= FB_HEIGHT { return; }
+    if x >= FB_WIDTH || y >= FB_HEIGHT {
+        return;
+    }
     let x1 = (x + w).min(FB_WIDTH);
     let y1 = (y + h).min(FB_HEIGHT);
     let a = (color >> 24) & 0xFF;
-    if a == 0 || x1 <= x { return; }
+    if a == 0 || x1 <= x {
+        return;
+    }
 
     if a == 255 {
         // Opaque fast path: fill the first row, then replicate it with
@@ -57,25 +61,41 @@ fn draw_rect(fb: &mut [u32], x: u32, y: u32, w: u32, h: u32, color: u32) {
     }
 }
 
-fn draw_text(fb: &mut [u32], font: &mut inkui::Font, text: &str, start_x: u32, start_y: u32, scale: f32, fg_color: u32) {
+fn draw_text(
+    fb: &mut [u32],
+    font: &mut inkui::Font,
+    text: &str,
+    start_x: u32,
+    start_y: u32,
+    scale: f32,
+    fg_color: u32,
+) {
     // Rasterized on demand by titanf (cached), blended in inkui.
-    font.draw_text(fb, FB_WIDTH as usize, start_x as usize, start_y as usize, text, scale, fg_color & 0xFFFFFF);
+    font.draw_text(
+        fb,
+        FB_WIDTH as usize,
+        start_x as usize,
+        start_y as usize,
+        text,
+        scale,
+        fg_color & 0xFFFFFF,
+    );
 }
 
 fn load_png(path: &str) -> Option<(u32, u32, Vec<u32>)> {
     let mut file = File::options().read(true).open(path).ok()?;
     let mut data = Vec::new();
     file.read_to_end(&mut data).ok()?;
-    
+
     let decoder = png::Decoder::new(data.as_slice());
     let mut reader = decoder.read_info().ok()?;
     let mut buf = vec![0; reader.output_buffer_size()];
     let info = reader.next_frame(&mut buf).ok()?;
-    
+
     let width = info.width;
     let height = info.height;
     let mut pixels = vec![0u32; (width * height) as usize];
-    
+
     for i in 0..(width * height) as usize {
         let r = buf[i * 4];
         let g = buf[i * 4 + 1];
@@ -83,7 +103,7 @@ fn load_png(path: &str) -> Option<(u32, u32, Vec<u32>)> {
         let a = buf[i * 4 + 3];
         pixels[i] = ((a as u32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
     }
-    
+
     Some((width, height, pixels))
 }
 
@@ -110,7 +130,8 @@ fn draw_image(fb: &mut [u32], img: &(u32, u32, Vec<u32>), x: u32, y: u32) {
                     let out_r = (fg_r * a + bg_r * inv_a) / 255;
                     let out_g = (fg_g * a + bg_g * inv_a) / 255;
                     let out_b = (fg_b * a + bg_b * inv_a) / 255;
-                    fb[(sy * FB_WIDTH + sx) as usize] = 0xFF000000 | (out_r << 16) | (out_g << 8) | out_b;
+                    fb[(sy * FB_WIDTH + sx) as usize] =
+                        0xFF000000 | (out_r << 16) | (out_g << 8) | out_b;
                 }
             }
         }
@@ -127,7 +148,7 @@ fn main() {
             return;
         }
     };
-    
+
     let mut windows_meta = match File::options().read(true).open("/dev/system/windows") {
         Ok(f) => f,
         Err(e) => {
@@ -143,7 +164,7 @@ fn main() {
             return;
         }
     };
-    
+
     let mut time_file = match File::options().read(true).open("/dev/system/time") {
         Ok(f) => f,
         Err(e) => {
@@ -151,12 +172,10 @@ fn main() {
             return;
         }
     };
-    
-    // /fonts/ui.ttf is the ASCII-subset TTF (tools/fontsubset): titanf
-    // parses it in milliseconds instead of ~16s for the full Nerd font.
+
     let mut font_opt = inkui::Font::load_default();
     println!("shell: font loaded: {}", font_opt.is_some());
-    
+
     let cursor = load_png("/img/cursor1.png");
 
     // Hardware cursor: upload the image once and let the kernel move the
@@ -171,9 +190,8 @@ fn main() {
                     img[(y * 64 + x) as usize] = px[(y * cw + x) as usize];
                 }
             }
-            let bytes: &[u8] = unsafe {
-                std::slice::from_raw_parts(img.as_ptr() as *const u8, img.len() * 4)
-            };
+            let bytes: &[u8] =
+                unsafe { std::slice::from_raw_parts(img.as_ptr() as *const u8, img.len() * 4) };
             hw_cursor = cur_dev.write_all(bytes).is_ok();
         }
     }
@@ -184,43 +202,14 @@ fn main() {
     // frame would take seconds; per frame we just memcpy it into local_fb.
     let mut bg_fb = vec![0xFF003366u32; (FB_WIDTH * FB_HEIGHT) as usize];
 
-    // Fast path: /img/wallpaper.raw is pre-scaled to FB_WIDTH x FB_HEIGHT
-    // (u32 LE 0xAARRGGBB). Decoding a 1920x1080 PNG under the wasmi
-    // interpreter takes ~2 minutes; reading raw pixels is instant.
-    let mut have_wallpaper = false;
-    if let Ok(mut raw) = File::options().read(true).open("/img/wallpaper.raw") {
-        let bg_bytes: &mut [u8] = unsafe {
-            std::slice::from_raw_parts_mut(bg_fb.as_mut_ptr() as *mut u8, bg_fb.len() * 4)
-        };
-        let mut total = 0;
-        while total < bg_bytes.len() {
-            match raw.read(&mut bg_bytes[total..]) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => total += n,
-            }
-        }
-        have_wallpaper = total == bg_bytes.len();
-        println!("shell: wallpaper.raw loaded: {}", have_wallpaper);
-    }
-
-    if !have_wallpaper {
-        // Slow path: decode + stretch the PNG (freed right after)
-        if let Some((iw, ih, pixels)) = load_png("/img/wallpaper.png") {
-            for y in 0..FB_HEIGHT {
-                let sy = (y as u64 * ih as u64) / FB_HEIGHT as u64;
-                let row = (sy * iw as u64) as usize;
-                for x in 0..FB_WIDTH {
-                    let sx = ((x as u64 * iw as u64) / FB_WIDTH as u64) as usize;
-                    bg_fb[(y * FB_WIDTH + x) as usize] = 0xFF000000 | (pixels[row + sx] & 0xFFFFFF);
-                }
-            }
-            
-            // Save it to raw for next boot
-            if let Ok(mut raw) = File::options().write(true).create(true).open("/img/wallpaper.raw") {
-                let bg_bytes: &[u8] = unsafe {
-                    std::slice::from_raw_parts(bg_fb.as_ptr() as *const u8, bg_fb.len() * 4)
-                };
-                let _ = raw.write_all(bg_bytes);
+    // Slow path: decode + stretch the PNG (freed right after)
+    if let Some((iw, ih, pixels)) = load_png("/img/wallpaper.png") {
+        for y in 0..FB_HEIGHT {
+            let sy = (y as u64 * ih as u64) / FB_HEIGHT as u64;
+            let row = (sy * iw as u64) as usize;
+            for x in 0..FB_WIDTH {
+                let sx = ((x as u64 * iw as u64) / FB_WIDTH as u64) as usize;
+                bg_fb[(y * FB_WIDTH + x) as usize] = 0xFF000000 | (pixels[row + sx] & 0xFFFFFF);
             }
         }
     }
@@ -260,7 +249,14 @@ fn main() {
     loop {
         // 1. Read Window States
         let mut meta_buf = [0u8; 16 * 24];
-        let mut states: [WindowState; 16] = [WindowState { active: 0, x: 0, y: 0, width: 0, height: 0, z_order: 0 }; 16];
+        let mut states: [WindowState; 16] = [WindowState {
+            active: 0,
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+            z_order: 0,
+        }; 16];
         let _ = windows_meta.seek(SeekFrom::Start(0));
         if let Ok(bytes) = windows_meta.read(&mut meta_buf) {
             if bytes >= 16 * 24 {
@@ -268,7 +264,7 @@ fn main() {
                     std::ptr::copy_nonoverlapping(
                         meta_buf.as_ptr(),
                         states.as_mut_ptr() as *mut u8,
-                        16 * 24
+                        16 * 24,
                     );
                 }
             }
@@ -296,33 +292,38 @@ fn main() {
                 had_mouse_event = true;
                 let type_ = u16::from_le_bytes([event_buf[0], event_buf[1]]);
                 let code = u16::from_le_bytes([event_buf[2], event_buf[3]]);
-                let value = u32::from_le_bytes([event_buf[4], event_buf[5], event_buf[6], event_buf[7]]);
-                
-                if type_ == 3 { // EV_ABS
-                    if code == 0 { 
+                let value =
+                    u32::from_le_bytes([event_buf[4], event_buf[5], event_buf[6], event_buf[7]]);
+
+                if type_ == 3 {
+                    // EV_ABS
+                    if code == 0 {
                         cursor_x = (value * FB_WIDTH) / 32767;
-                        if cursor_x >= FB_WIDTH { cursor_x = FB_WIDTH - 1; }
-                    } else if code == 1 { 
+                        if cursor_x >= FB_WIDTH {
+                            cursor_x = FB_WIDTH - 1;
+                        }
+                    } else if code == 1 {
                         cursor_y = (value * FB_HEIGHT) / 32767;
-                        if cursor_y >= FB_HEIGHT { cursor_y = FB_HEIGHT - 1; }
+                        if cursor_y >= FB_HEIGHT {
+                            cursor_y = FB_HEIGHT - 1;
+                        }
                     }
                 } else if type_ == 1 && code == 0x110 {
                     mouse_btn_down = value == 1;
-                    
+
                     if mouse_btn_down {
                         let mut consumed = false;
 
                         // Check windows top-to-bottom: sort active ids by
                         // z descending (z values are unbounded now)
-                        let mut hit_order: Vec<usize> = (1..16)
-                            .filter(|&i| states[i].active == 1)
-                            .collect();
+                        let mut hit_order: Vec<usize> =
+                            (1..16).filter(|&i| states[i].active == 1).collect();
                         hit_order.sort_by(|&a, &b| states[b].z_order.cmp(&states[a].z_order));
 
                         for win_id in hit_order {
                             {
                                 let win = &mut states[win_id];
-                                
+
                                 let title_h = 24;
                                 if cursor_x >= win.x && cursor_x < win.x + win.width {
                                     if cursor_y >= win.y && cursor_y < win.y + title_h {
@@ -340,7 +341,9 @@ fn main() {
                                         }
                                         consumed = true;
                                         break;
-                                    } else if cursor_y >= win.y + title_h && cursor_y < win.y + title_h + win.height {
+                                    } else if cursor_y >= win.y + title_h
+                                        && cursor_y < win.y + title_h + win.height
+                                    {
                                         // Click inside window content
                                         bring_to_front(&mut states, win_id);
                                         states_changed = true;
@@ -350,7 +353,7 @@ fn main() {
                                 }
                             }
                         }
-                        
+
                         if !consumed {
                             // Check Desktop Icons
                             let calc_x = 10;
@@ -364,32 +367,46 @@ fn main() {
                             let edit_x = 10;
                             let edit_y = 290;
                             let icon_s = 50;
-                            
-                            if cursor_x >= calc_x && cursor_x <= calc_x + icon_s &&
-                               cursor_y >= calc_y && cursor_y <= calc_y + icon_s {
+
+                            if cursor_x >= calc_x
+                                && cursor_x <= calc_x + icon_s
+                                && cursor_y >= calc_y
+                                && cursor_y <= calc_y + icon_s
+                            {
                                 println!("shell: Clicked calc icon!");
                                 let _ = File::open("/spawn:/apps/calc.wasm");
-                            } else if cursor_x >= term_x && cursor_x <= term_x + icon_s &&
-                                      cursor_y >= term_y && cursor_y <= term_y + icon_s {
+                            } else if cursor_x >= term_x
+                                && cursor_x <= term_x + icon_s
+                                && cursor_y >= term_y
+                                && cursor_y <= term_y + icon_s
+                            {
                                 println!("shell: Clicked terminal icon!");
                                 let _ = File::open("/spawn:/apps/terminal.wasm");
-                            } else if cursor_x >= expl_x && cursor_x <= expl_x + icon_s &&
-                                      cursor_y >= expl_y && cursor_y <= expl_y + icon_s {
+                            } else if cursor_x >= expl_x
+                                && cursor_x <= expl_x + icon_s
+                                && cursor_y >= expl_y
+                                && cursor_y <= expl_y + icon_s
+                            {
                                 println!("shell: Clicked explorer icon!");
                                 let _ = File::open("/spawn:/apps/explorer.wasm");
-                            } else if cursor_x >= view_x && cursor_x <= view_x + icon_s &&
-                                      cursor_y >= view_y && cursor_y <= view_y + icon_s {
+                            } else if cursor_x >= view_x
+                                && cursor_x <= view_x + icon_s
+                                && cursor_y >= view_y
+                                && cursor_y <= view_y + icon_s
+                            {
                                 println!("shell: Clicked viewer icon!");
                                 let _ = File::open("/spawn:/apps/viewer.wasm");
-                            } else if cursor_x >= edit_x && cursor_x <= edit_x + icon_s &&
-                                      cursor_y >= edit_y && cursor_y <= edit_y + icon_s {
+                            } else if cursor_x >= edit_x
+                                && cursor_x <= edit_x + icon_s
+                                && cursor_y >= edit_y
+                                && cursor_y <= edit_y + icon_s
+                            {
                                 println!("shell: Clicked editor icon!");
                                 let _ = File::open("/spawn:/apps/editor.wasm");
                             }
-                            
+
                             // Check Taskbar Start Button
-                            if cursor_x <= 60 &&
-                               cursor_y >= taskbar_y && cursor_y <= FB_HEIGHT {
+                            if cursor_x <= 60 && cursor_y >= taskbar_y && cursor_y <= FB_HEIGHT {
                                 println!("shell: Start Menu Clicked!");
                             }
                         }
@@ -401,7 +418,7 @@ fn main() {
                 break;
             }
         }
-        
+
         if let Some(win_id) = dragged_win {
             if mouse_btn_down {
                 states[win_id].x = (cursor_x as i32 - drag_offset_x).max(0) as u32;
@@ -409,20 +426,20 @@ fn main() {
                 states_changed = true;
             }
         }
-        
+
         if states_changed {
             let mut write_buf = [0u8; 16 * 24];
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     states.as_ptr() as *const u8,
                     write_buf.as_mut_ptr(),
-                    16 * 24
+                    16 * 24,
                 );
             }
             let _ = windows_meta.seek(SeekFrom::Start(0));
             let _ = windows_meta.write_all(&write_buf);
         }
-        
+
         // Read the clock (cheap; a change forces one re-render per minute)
         let mut time_str = String::from("00:00");
         let _ = time_file.seek(SeekFrom::Start(0));
@@ -438,8 +455,7 @@ fn main() {
         // The kernel composites windows on top of our base layer, so the
         // shell only re-renders when its own content (clock) changes.
         // Without a hardware cursor we also redraw on mouse motion.
-        let need_render = time_str != last_time_str
-            || (!hw_cursor && had_mouse_event);
+        let need_render = time_str != last_time_str || (!hw_cursor && had_mouse_event);
 
         if !need_render {
             sleep_ms(10);
@@ -458,12 +474,36 @@ fn main() {
         draw_rect(&mut local_fb, 0, taskbar_y, 60, 40, 0xFF444444);
 
         if let Some(ref mut font) = font_opt {
-            draw_text(&mut local_fb, font, "Krake", 10, taskbar_y + 25, 16.0, 0xFFFFFF);
-            draw_text(&mut local_fb, font, &time_str, FB_WIDTH - 80, taskbar_y + 25, 16.0, 0xFFFFFF);
+            draw_text(
+                &mut local_fb,
+                font,
+                "Krake",
+                10,
+                taskbar_y + 25,
+                16.0,
+                0xFFFFFF,
+            );
+            draw_text(
+                &mut local_fb,
+                font,
+                &time_str,
+                FB_WIDTH - 80,
+                taskbar_y + 25,
+                16.0,
+                0xFFFFFF,
+            );
             let ms_str = format!("{} ms", frame_ms);
-            draw_text(&mut local_fb, font, &ms_str, FB_WIDTH - 150, taskbar_y + 25, 16.0, 0xFF88FF88);
+            draw_text(
+                &mut local_fb,
+                font,
+                &ms_str,
+                FB_WIDTH - 150,
+                taskbar_y + 25,
+                16.0,
+                0xFF88FF88,
+            );
         }
-        
+
         // 6. Draw Cursor (software fallback only; normally the kernel moves
         // the virtio-gpu hardware cursor)
         if !hw_cursor {
@@ -473,7 +513,7 @@ fn main() {
                 draw_rect(&mut local_fb, cursor_x, cursor_y, 8, 8, 0xFFFF0000);
             }
         }
-        
+
         // 7. Blit to FB
         let local_fb_bytes: &[u8] = unsafe {
             std::slice::from_raw_parts(local_fb.as_ptr() as *const u8, local_fb.len() * 4)

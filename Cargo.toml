@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "kernel", "wasm_runner", "fatsquid_fmt", "inkui",
+    "kernel", "wasm_runner", "fatsquid_fmt", "inkui", "wasmaot",
     "apps/calc", "apps/shell", "apps/terminal", "apps/explorer", "apps/viewer", "apps/editor",
     ]
 resolver = "2"

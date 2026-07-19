@@ -1,7 +1,5 @@
 //! Runtime font rasterization via titanf (same engine ref/inkui's stack
-//! used), with glyph caching and proper srcover blending.
-//!
-//! Apps load `/fonts/ui.ttf` — the ASCII subset produced by
+
 //! tools/fontsubset — which parses in milliseconds. The full Nerd font
 //! works too, it just takes ~16s to parse under the interpreter.
 
@@ -17,12 +15,14 @@ impl Font {
         let mut f = File::options().read(true).open(path).ok()?;
         let mut data = Vec::new();
         f.read_to_end(&mut data).ok()?;
-        titanf::TrueTypeFont::load_font(&data).ok().map(|inner| Font { inner })
+        titanf::TrueTypeFont::load_font(&data)
+            .ok()
+            .map(|inner| Font { inner })
     }
 
     /// The fast ASCII subset first, full font as fallback.
     pub fn load_default() -> Option<Font> {
-        Self::load("/fonts/ui.ttf").or_else(|| Self::load("/fonts/CaskaydiaNerd.ttf"))
+        Self::load("/fonts/CaskaydiaNerd.ttf")
     }
 
     pub fn line_height(&self, size: f32) -> usize {

@@ -614,7 +614,15 @@ name = "wasm_runner"
 version = "0.1.0"
 dependencies = [
  "linked_list_allocator",
+ "wasmaot",
  "wasmi",
+]
+
+[[package]]
+name = "wasmaot"
+version = "0.1.0"
+dependencies = [
+ "libm",
 ]
 
 [[package]]

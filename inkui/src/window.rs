@@ -174,11 +174,60 @@ impl Window {
         }
     }
 
-    /// One iteration of the standard event loop: keyboard focus traversal
-    /// (Tab), activation (Enter/Space on buttons), and text input.
+    /// Drain routed mouse events (kernel queue on the window fd). Each event
+    /// is 8 bytes: [x:u16][y:u16][button:u8][pressed:u8][_:u16], in
+    /// content-local coordinates.
+    fn poll_mouse(&mut self) -> Vec<(usize, usize, bool)> {
+        let mut out = Vec::new();
+        let mut buf = [0u8; 8];
+        while let Ok(8) = self.file.read(&mut buf) {
+            let x = u16::from_le_bytes([buf[0], buf[1]]) as usize;
+            let y = u16::from_le_bytes([buf[2], buf[3]]) as usize;
+            let pressed = buf[5] == 1;
+            out.push((x, y, pressed));
+        }
+        out
+    }
+
+    /// One iteration of the standard event loop: mouse clicks (focus + button
+    /// activation), keyboard focus traversal (Tab), activation (Enter/Space),
+    /// and text input.
     pub fn event_loop(&mut self) {
-        let events = self.poll_events();
         let mut any_redraw = false;
+
+        // Mouse: a press focuses the widget under the cursor and, if it's a
+        // button, fires its on_click handler.
+        for (mx, my, pressed) in self.poll_mouse() {
+            if !pressed {
+                continue;
+            }
+            let hit = self
+                .children
+                .iter()
+                .find_map(|c| c.find_widget_at(mx, my));
+            if let Some(id) = hit {
+                if self.focus != id {
+                    if self.focus != 0 {
+                        if let Some(w) = self.find_widget_by_id_mut(self.focus) {
+                            w.set_focused(false);
+                        }
+                    }
+                    self.focus = id;
+                    if let Some(w) = self.find_widget_by_id_mut(id) {
+                        w.set_focused(true);
+                    }
+                }
+                let handler = self
+                    .find_widget_by_id(id)
+                    .and_then(|w| w.get_event_handler());
+                if let Some(h) = handler {
+                    h(self, id);
+                }
+                any_redraw = true;
+            }
+        }
+
+        let events = self.poll_events();
 
         for event in events.iter() {
             if let Event::Keyboard(e) = event {

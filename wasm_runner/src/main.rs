@@ -3,6 +3,8 @@
 
 extern crate alloc;
 
+mod aot_host;
+
 use core::panic::PanicInfo;
 use linked_list_allocator::LockedHeap;
 
@@ -86,7 +88,7 @@ pub fn sys_fstat(fd: usize) -> usize {
 // fd for it, so sharing one across threads is fine.
 static TIME_FD: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(usize::MAX);
 
-fn time_ns() -> u64 {
+pub fn time_ns() -> u64 {
     use core::sync::atomic::Ordering;
     let mut fd = TIME_FD.load(Ordering::Relaxed);
     if fd == usize::MAX {
@@ -96,6 +98,55 @@ fn time_ns() -> u64 {
     if fd == usize::MAX { return 0; }
     let mut buf = [0u8; 8];
     if sys_read(fd, 0, &mut buf) == 8 { u64::from_le_bytes(buf) } else { 0 }
+}
+
+/// Run a validated module through the AOT engine. Returns `true` if the
+/// module ran (whether it exited cleanly or trapped); `false` if the AOT
+/// compiler can't handle it and the caller should fall back to wasmi.
+fn try_run_aot(wasm: &[u8]) -> bool {
+    use aot_host::{dispatch, resolve, AotHostState, TRAP_PROC_EXIT_BASE};
+    use wasmaot::aot::AotModule;
+
+    let mut module = match AotModule::instantiate(wasm, dispatch, 0) {
+        Ok(m) => m,
+        Err(e) => {
+            let msg = alloc::format!("wasm_runner: AOT cannot compile ({:?}), using wasmi\n", e);
+            sys_write(1, 0, msg.as_bytes());
+            return false;
+        }
+    };
+
+    // Build the import-index → WASI-function table, then hand the state to
+    // the dispatcher via the context's user_data slot.
+    let mut state = alloc::boxed::Box::new(AotHostState::new());
+    for (m, n) in module.func_imports() {
+        state.imports.push(resolve(m, n));
+    }
+    module.set_user_data(state.as_mut() as *mut AotHostState as usize);
+
+    let start = match module.find_export("_start") {
+        Some(a) => a,
+        None => {
+            sys_write(1, 0, b"wasm_runner: AOT: module has no _start\n");
+            return false;
+        }
+    };
+
+    sys_write(1, 0, b"wasm_runner: running via AOT engine\n");
+    match module.call_void(start) {
+        Ok(()) => {}
+        Err(code) if code >= TRAP_PROC_EXIT_BASE => {} // clean proc_exit
+        Err(code) => {
+            let msg = alloc::format!(
+                "wasm_runner: AOT trap: {} (code {})\n",
+                AotModule::trap_name(code),
+                code
+            );
+            sys_write(1, 0, msg.as_bytes());
+        }
+    }
+    drop(state);
+    true
 }
 
 fn run_wasm(path: &str) {
@@ -121,7 +172,13 @@ fn run_wasm(path: &str) {
         sys_write(1, 0, b"wasm_runner: read 0 bytes!\n");
         sys_exit(1);
     }
-    
+
+    // Try the native AOT engine first; fall back to the wasmi interpreter
+    // only for modules the compiler can't handle.
+    if try_run_aot(&wasm_bytes) {
+        return;
+    }
+
     use wasmi::*;
     // Lazy compilation: translate functions on first call instead of the
     // whole module up front — big app-startup win under interpretation.

@@ -58,6 +58,15 @@ pub fn push_event(type_: u16, code: u16, value: u32) {
                 }
             }
         }
+        // Route button events to the window under the cursor (content-area
+        // clicks reach apps; the shell still sees the raw event for its own
+        // chrome via the queue below).
+        if type_ == EV_KEY && (code == 0x110 || code == 0x111) {
+            unsafe {
+                let btn = if code == 0x110 { 0 } else { 1 };
+                crate::sys::compositor::route_mouse(HW_CURSOR_X, HW_CURSOR_Y, btn, value as u8);
+            }
+        }
         let mut state = INPUT_STATE.lock();
         if state.mouse_events.len() < 256 {
             state.mouse_events.push_back(InputEvent { type_, code, value });

@@ -154,6 +154,11 @@ pub fn dispatch(frame: &mut TrapFrame) -> Option<usize> {
                         buf[0..copy_len].copy_from_slice(&bytes[offset..offset+copy_len]);
                         copy_len
                     }
+                } else if fd >= crate::sys::compositor::COMPOSITOR_FD_BASE {
+                    // Reading a window fd returns routed mouse events for that
+                    // window (writing it draws pixels).
+                    let win_id = fd - crate::sys::compositor::COMPOSITOR_FD_BASE;
+                    crate::sys::compositor::read_window_mouse(win_id, buf)
                 } else if fd > 0 && fd < 100 {
                     crate::fs::read_file(fd, offset, buf)
                 } else if fd >= 1024 {
@@ -161,7 +166,7 @@ pub fn dispatch(frame: &mut TrapFrame) -> Option<usize> {
                 } else {
                     0
                 };
-                
+
                 frame.regs[10] = bytes_read;
             }
         }
@@ -198,6 +203,9 @@ pub fn dispatch(frame: &mut TrapFrame) -> Option<usize> {
                         if real_copy > 0 {
                             core::ptr::copy_nonoverlapping(buf.as_ptr(), base_ptr.add(offset), real_copy);
                             crate::sys::compositor::BASE_DIRTY = true;
+                            // A base write covers the whole screen (wallpaper +
+                            // icons + taskbar); damage everything.
+                            crate::sys::compositor::damage_all();
                         }
                         frame.regs[10] = real_copy;
                     }
@@ -209,6 +217,16 @@ pub fn dispatch(frame: &mut TrapFrame) -> Option<usize> {
                                 let mut state_bytes = [0u8; 24];
                                 state_bytes.copy_from_slice(&buf[i*24..(i+1)*24]);
                                 let state: [u32; 6] = core::mem::transmute(state_bytes);
+                                // Damage the window's OLD footprint before moving
+                                // it, so the area it vacated gets repainted.
+                                if comp.windows[i].active {
+                                    crate::sys::compositor::expand_damage(
+                                        comp.windows[i].x as usize,
+                                        comp.windows[i].y as usize,
+                                        comp.windows[i].width as usize,
+                                        comp.windows[i].height as usize + 24,
+                                    );
+                                }
                                 // shell can deactivate a window but not activate one
                                 if state[0] == 0 { comp.windows[i].active = false; }
                                 comp.windows[i].x = state[1];
@@ -224,6 +242,15 @@ pub fn dispatch(frame: &mut TrapFrame) -> Option<usize> {
                                 comp.windows[i].width = state[3];
                                 comp.windows[i].height = state[4];
                                 comp.windows[i].z_order = state[5] as usize;
+                                // Damage the NEW footprint too.
+                                if comp.windows[i].active {
+                                    crate::sys::compositor::expand_damage(
+                                        state[1] as usize,
+                                        state[2] as usize,
+                                        state[3] as usize,
+                                        state[4] as usize + 24,
+                                    );
+                                }
                             }
                             crate::sys::compositor::bump_gen();
                             frame.regs[10] = len;
