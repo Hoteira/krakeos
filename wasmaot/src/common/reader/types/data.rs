@@ -6,7 +6,7 @@ use core::fmt::{Debug, Formatter};
 pub struct DataSegment {
     pub init: Vec<u8>,
     pub mode: DataMode,
-    /// Byte offset of the `init` data within the original `.wasm` binary.
+    // Byte offset of the init data within the original .wasm binary.
     pub wasm_init_offset: usize,
 }
 

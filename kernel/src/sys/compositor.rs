@@ -12,10 +12,10 @@ pub struct Window {
     pub height: u32,
     pub z_order: usize,
     pub buffer: Vec<u32>,
-    /// Mouse events routed to this window (content-local coords), read by the
-    /// owning app through its window fd. Each entry is 8 bytes:
-    /// [x:u16][y:u16][button:u8][pressed:u8][reserved:u16].
+    // Content-local coords: [x:u16][y:u16][button:u8][pressed:u8][reserved:u16].
     pub mouse_events: VecDeque<[u8; 8]>,
+    // Only the owning thread may use the window fd; its windows close when it exits.
+    pub owner: usize,
 }
 
 pub struct Compositor {
@@ -31,6 +31,7 @@ const INIT_WINDOW: Window = Window {
     z_order: 0,
     buffer: Vec::new(),
     mouse_events: VecDeque::new(),
+    owner: 0,
 };
 
 pub static mut COMPOSITOR: Compositor = Compositor {
@@ -40,9 +41,7 @@ pub static mut COMPOSITOR: Compositor = Compositor {
               INIT_WINDOW, INIT_WINDOW, INIT_WINDOW, INIT_WINDOW],
 };
 
-// Bumped on every visible change (window create/close/move/draw). The kernel
-// compositor recomposes when it changes; the shell can also read it via the
-// window-state fd.
+// Bumped on every visible change; the compositor recomposes when it changes.
 pub static mut CONTENT_GEN: u32 = 0;
 
 pub fn bump_gen() {
@@ -52,12 +51,8 @@ pub fn bump_gen() {
     }
 }
 
-// ---- Kernel-side compositing ----
-//
-// The shell only renders the base layer (wallpaper, icons, taskbar) and
-// window *management*; windows + decorations are composed here in native
-// code. Compositing in the shell meant every window blit ran under the
-// wasmi interpreter (~30-100ms/frame); here the same work is ~1ms.
+// Windows and decorations are composed here in native code; the shell only
+// renders the base layer (wallpaper, icons, taskbar).
 
 const FBW: usize = crate::drivers::virtio_gpu::FB_WIDTH as usize;
 const FBH: usize = crate::drivers::virtio_gpu::FB_HEIGHT as usize;
@@ -66,20 +61,17 @@ const TASKBAR_H: usize = 40;
 const COL_TITLE: u32 = 0xFF444444;
 const COL_CLOSE: u32 = 0xFFFF3333;
 
-// Base layer written by the shell via /dev/gpu/fb
+// Base layer written by the shell via /dev/gpu/fb.
 pub static mut BASE: [u32; FBW * FBH] = [0xFF000000; FBW * FBH];
 pub static mut BASE_DIRTY: bool = false;
 
 static mut LAST_COMPOSED_GEN: u32 = u32::MAX;
 static mut LAST_COMPOSE_TIME: u64 = 0;
 
-// Accumulated damage rectangle [x0, y0, x1, y1) (exclusive high). compose()
-// only rebuilds + flushes this region, so a window drag costs the union of
-// its old and new footprints instead of the whole screen. `None` = clean.
+// Damage rectangle [x0, y0, x1, y1); compose() rebuilds and flushes only this. None = clean.
 static mut DAMAGE: Option<(usize, usize, usize, usize)> = None;
 
-/// Expand the damage rectangle to include the given pixel rect (clamped to
-/// the framebuffer). Call on any change to on-screen content.
+// Call on any change to on-screen content.
 pub fn expand_damage(x: usize, y: usize, w: usize, h: usize) {
     if w == 0 || h == 0 {
         return;
@@ -106,8 +98,7 @@ pub fn damage_all() {
     expand_damage(0, 0, FBW, FBH);
 }
 
-/// Called from the timer tick: recompose at most every ~16ms and only when
-/// something actually changed.
+// Called from the timer tick: recompose at most every 16ms, and only on change.
 pub fn maybe_compose() {
     unsafe {
         if !crate::drivers::virtio_gpu::is_ready() { return; }
@@ -127,8 +118,7 @@ pub fn maybe_compose() {
 
 fn compose() {
     unsafe {
-        // The damage rectangle bounds everything we rebuild + flush. If a
-        // recompose was triggered without explicit damage, be safe.
+        // No explicit damage: redraw everything to be safe.
         let (dx0, dy0, dx1, dy1) = match *core::ptr::addr_of!(DAMAGE) {
             Some(r) => r,
             None => (0, 0, FBW, FBH),
@@ -142,13 +132,12 @@ fn compose() {
         let base = core::ptr::addr_of!(BASE) as *const u32;
         let dw = dx1 - dx0;
 
-        // 1. Base layer, damage rows only.
         for y in dy0..dy1 {
             let off = y * FBW + dx0;
             core::ptr::copy_nonoverlapping(base.add(off), fb.add(off), dw);
         }
 
-        // 2. Windows, back to front (insertion sort by z_order — max 16).
+        // Windows back to front (insertion sort by z_order, at most 16).
         let comp = &*core::ptr::addr_of!(COMPOSITOR);
         let mut order = [0usize; MAX_WINDOWS];
         let mut n = 0;
@@ -172,7 +161,7 @@ fn compose() {
             draw_window(fb, &comp.windows[order[k]], dx0, dy0, dx1, dy1);
         }
 
-        // 3. Taskbar strip always on top (only if the damage reaches it).
+        // Taskbar strip always on top.
         let bar_y = FBH - TASKBAR_H;
         if dy1 > bar_y {
             let y0 = dy0.max(bar_y);
@@ -191,7 +180,7 @@ fn compose() {
     }
 }
 
-/// Draw a window, clipped to the damage rect [cx0,cy0,cx1,cy1).
+// Clipped to the damage rect [cx0,cy0,cx1,cy1).
 unsafe fn draw_window(
     fb: *mut u32,
     win: &Window,
@@ -207,7 +196,6 @@ unsafe fn draw_window(
         return;
     }
     let vis_w = w.min(FBW - x);
-    // Horizontal clip to damage.
     let px0 = x.max(cx0);
     let px1 = (x + vis_w).min(cx1);
     if px0 >= px1 {
@@ -215,7 +203,7 @@ unsafe fn draw_window(
     }
     let close_start = if vis_w > TITLE_H { vis_w - TITLE_H } else { 0 };
 
-    // Title bar + close button.
+    // Title bar and close button.
     for row in 0..TITLE_H {
         let sy = y + row;
         if sy >= FBH || sy < cy0 || sy >= cy1 {
@@ -227,7 +215,6 @@ unsafe fn draw_window(
         }
     }
 
-    // Content.
     let rows = (win.height as usize).min(win.buffer.len() / w.max(1));
     let src = win.buffer.as_ptr();
     for row in 0..rows {
@@ -250,8 +237,7 @@ pub fn create_window() -> Option<usize> {
             }
         }
         
-        // Slot 0 is reserved: the shell treats window 0 as its own (no title
-        // bar, clicks ignored), so apps must never be handed it.
+        // Slot 0 is reserved: the shell treats window 0 as its own.
         for i in 1..16 {
             if !comp.windows[i].active {
                 comp.windows[i].active = true;
@@ -260,8 +246,10 @@ pub fn create_window() -> Option<usize> {
                 comp.windows[i].width = 400;
                 comp.windows[i].height = 500;
                 comp.windows[i].z_order = max_z + 1;
+                comp.windows[i].buffer.clear();
                 comp.windows[i].buffer.resize((400 * 500) as usize, 0xFF000000);
                 comp.windows[i].mouse_events.clear();
+                comp.windows[i].owner = crate::sys::scheduler::current_tid();
                 let (wx, wy) = (comp.windows[i].x as usize, comp.windows[i].y as usize);
                 expand_damage(wx, wy, 400, 500 + TITLE_H);
                 bump_gen();
@@ -277,6 +265,7 @@ pub fn write_window(win_id: usize, data: &[u8]) -> usize {
     unsafe {
         let win = &mut (*core::ptr::addr_of_mut!(COMPOSITOR)).windows[win_id];
         if !win.active || data.len() < 16 { return 0; }
+        if win.owner != crate::sys::scheduler::current_tid() { return 0; }
         
         let mut buf = [0u8; 4];
         buf.copy_from_slice(&data[0..4]);
@@ -288,8 +277,7 @@ pub fn write_window(win_id: usize, data: &[u8]) -> usize {
         buf.copy_from_slice(&data[12..16]);
         let h = u32::from_le_bytes(buf);
 
-        // x == 0xFFFF_FFFF is a resize request: (w, h) become the new
-        // window dimensions (inkui apps use this to pick their size).
+        // x == 0xFFFF_FFFF is a resize request: (w, h) become the window size.
         if x == 0xFFFF_FFFF {
             let w = w.min(crate::drivers::virtio_gpu::FB_WIDTH);
             let h = h.min(crate::drivers::virtio_gpu::FB_HEIGHT);
@@ -301,7 +289,6 @@ pub fn write_window(win_id: usize, data: &[u8]) -> usize {
                 win.height = h;
                 win.buffer.clear();
                 win.buffer.resize(w as usize * h as usize, 0xFF000000);
-                // Damage both the old and new footprints.
                 expand_damage(wx, wy, old_w.max(w as usize), old_h.max(h as usize) + TITLE_H);
                 bump_gen();
             }
@@ -310,8 +297,7 @@ pub fn write_window(win_id: usize, data: &[u8]) -> usize {
 
         let pixels_data = &data[16..];
 
-        // Clip the destination rect against the window so a bad rect can
-        // never index past the window buffer.
+        // Clip so a bad rect can never index past the window buffer.
         if x >= win.width || y >= win.height || w == 0 || h == 0 {
             return data.len();
         }
@@ -329,7 +315,6 @@ pub fn write_window(win_id: usize, data: &[u8]) -> usize {
                 copy_w * 4,
             );
         }
-        // Damage the on-screen region this write touched (offset by title bar).
         let sx = win.x as usize + x as usize;
         let sy = win.y as usize + TITLE_H + y as usize;
         expand_damage(sx, sy, copy_w, copy_h);
@@ -338,10 +323,8 @@ pub fn write_window(win_id: usize, data: &[u8]) -> usize {
     }
 }
 
-/// Route a mouse button event to the top-most window whose content area
-/// (below the title bar) contains the cursor. Coordinates are screen pixels;
-/// the queued event uses window-content-local coordinates. The shell handles
-/// title bars and desktop chrome separately from its own mouse reads.
+// Queue a click for the top-most window whose content area contains the cursor.
+// Takes screen pixels; the event holds content-local coordinates.
 pub fn route_mouse(cursor_x: u32, cursor_y: u32, button: u8, pressed: u8) {
     unsafe {
         let comp = &mut *core::ptr::addr_of_mut!(COMPOSITOR);
@@ -379,19 +362,79 @@ pub fn route_mouse(cursor_x: u32, cursor_y: u32, button: u8, pressed: u8) {
     }
 }
 
-/// Pop one routed mouse event for a window (read through its window fd).
-/// Returns 8 on success, 0 if the queue is empty.
+// Returns 8 on success, 0 if the queue is empty.
 pub fn read_window_mouse(win_id: usize, buf: &mut [u8]) -> usize {
     if win_id >= MAX_WINDOWS || buf.len() < 8 {
         return 0;
     }
     unsafe {
         let w = &mut (*core::ptr::addr_of_mut!(COMPOSITOR)).windows[win_id];
+        if !w.active || w.owner != crate::sys::scheduler::current_tid() {
+            return 0;
+        }
         if let Some(ev) = w.mouse_events.pop_front() {
             buf[0..8].copy_from_slice(&ev);
             8
         } else {
             0
+        }
+    }
+}
+
+pub fn close_window(win: &mut Window) {
+    if !win.active {
+        return;
+    }
+    expand_damage(win.x as usize, win.y as usize, win.width as usize, win.height as usize + TITLE_H);
+    win.active = false;
+    win.buffer = Vec::new();
+    win.mouse_events = VecDeque::new();
+    bump_gen();
+}
+
+// SYS_CLOSE on a window fd. Only the owning thread can close its window.
+pub fn close_window_fd(win_id: usize) -> bool {
+    if win_id == 0 || win_id >= MAX_WINDOWS {
+        return false;
+    }
+    unsafe {
+        let win = &mut (*core::ptr::addr_of_mut!(COMPOSITOR)).windows[win_id];
+        if !win.active || win.owner != crate::sys::scheduler::current_tid() {
+            return false;
+        }
+        close_window(win);
+        true
+    }
+}
+
+pub fn destroy_windows_of(tid: usize) {
+    unsafe {
+        let comp = &mut *core::ptr::addr_of_mut!(COMPOSITOR);
+        for i in 1..MAX_WINDOWS {
+            if comp.windows[i].active && comp.windows[i].owner == tid {
+                close_window(&mut comp.windows[i]);
+            }
+        }
+    }
+}
+
+// If the focused window's app reads the keyboard, only it gets keys;
+// otherwise any reader does.
+pub fn has_keyboard_focus(tid: usize) -> bool {
+    unsafe {
+        let comp = &*core::ptr::addr_of!(COMPOSITOR);
+        let mut top: Option<(usize, usize)> = None; // (z_order, owner)
+        for i in 1..MAX_WINDOWS {
+            let w = &comp.windows[i];
+            if w.active && top.map_or(true, |(z, _)| w.z_order > z) {
+                top = Some((w.z_order, w.owner));
+            }
+        }
+        match top {
+            Some((_, owner)) if owner != tid => {
+                !crate::sys::scheduler::SCHEDULER.threads[owner].reads_keyboard
+            }
+            _ => true,
         }
     }
 }

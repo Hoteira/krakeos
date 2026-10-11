@@ -6,7 +6,7 @@ const VIRTIO_STATUS_DRIVER: u32 = 2;
 const VIRTIO_STATUS_DRIVER_OK: u32 = 4;
 const VIRTIO_STATUS_FEATURES_OK: u32 = 8;
 
-const QUEUE_SIZE: usize = 16; // Keep it small and simple
+const QUEUE_SIZE: usize = 16;
 
 #[repr(C, align(16))]
 #[derive(Clone, Copy)]
@@ -75,7 +75,6 @@ pub fn init() -> bool {
             if magic == VIRTIO_MAGIC {
                 if dev_id == VIRTIO_DEV_BLOCK {
                     VIRTIO_BASE = base;
-                    // We'll initialize block device further down
                 } else if dev_id == 18 { // VIRTIO_DEV_INPUT
                     crate::drivers::virtio_input::init(base);
                 }
@@ -96,18 +95,16 @@ pub fn init() -> bool {
         let version = core::ptr::read_volatile((base + 0x004) as *const u32);
         crate::println!("VirtIO Version: {}", version);
         
-        // Reset device
+        // Legacy MMIO: 0x070 Status, 0x010 DeviceFeatures, 0x020 DriverFeatures.
         core::ptr::write_volatile((base + 0x070) as *mut u32, 0);
         
-        // Acknowledge & Driver
         let mut status = VIRTIO_STATUS_ACKNOWLEDGE;
         core::ptr::write_volatile((base + 0x070) as *mut u32, status);
         status |= VIRTIO_STATUS_DRIVER;
         core::ptr::write_volatile((base + 0x070) as *mut u32, status);
         
-        // Features (Legacy)
         let features = core::ptr::read_volatile((base + 0x010) as *const u32);
-        core::ptr::write_volatile((base + 0x020) as *mut u32, features & !(1 << 5)); // Clear RO feature
+        core::ptr::write_volatile((base + 0x020) as *mut u32, features & !(1 << 5)); // Clear VIRTIO_BLK_F_RO
         
         status |= VIRTIO_STATUS_FEATURES_OK;
         core::ptr::write_volatile((base + 0x070) as *mut u32, status);
@@ -117,7 +114,6 @@ pub fn init() -> bool {
             return false;
         }
 
-        // Setup Queue 0
         core::ptr::write_volatile((base + 0x030) as *mut u32, 0); // QueueSel
         let max_size = core::ptr::read_volatile((base + 0x034) as *const u32);
         if max_size == 0 || max_size < QUEUE_SIZE as u32 {
@@ -137,7 +133,6 @@ pub fn init() -> bool {
         crate::println!("VIRTQ Addr: {:#x}, PFN: {:#x}", aligned_addr, pfn);
         core::ptr::write_volatile((base + 0x040) as *mut u32, pfn); // QueuePFN (Legacy)
 
-        // Driver OK
         status |= VIRTIO_STATUS_DRIVER_OK;
         core::ptr::write_volatile((base + 0x070) as *mut u32, status);
         
@@ -160,34 +155,29 @@ pub fn block_op(sector: u64, buf: *mut u8, len: u32, write: bool) {
         REQ.sector = sector;
         BLK_STATUS = 0;
 
-        // Descriptor 0: BlkReq (Device reads this)
+        // Chain: request header (device reads), data, status byte (device writes).
         (*VIRTQ_PTR).desc[p_req].addr = core::ptr::addr_of!(REQ) as u64;
         (*VIRTQ_PTR).desc[p_req].len = core::mem::size_of::<BlkReq>() as u32;
         (*VIRTQ_PTR).desc[p_req].flags = 1; // NEXT
         (*VIRTQ_PTR).desc[p_req].next = p_buf as u16;
 
-        // Descriptor 1: Buffer (Device reads or writes this)
         (*VIRTQ_PTR).desc[p_buf].addr = buf as u64;
         (*VIRTQ_PTR).desc[p_buf].len = len;
-        (*VIRTQ_PTR).desc[p_buf].flags = 1 | (if write { 0 } else { 2 }); // NEXT, (2 = DEVICE_WRITE for reads)
+        (*VIRTQ_PTR).desc[p_buf].flags = 1 | (if write { 0 } else { 2 }); // NEXT, plus WRITE for reads
         (*VIRTQ_PTR).desc[p_buf].next = p_stat as u16;
 
-        // Descriptor 2: Status (Device writes this)
         (*VIRTQ_PTR).desc[p_stat].addr = core::ptr::addr_of!(BLK_STATUS) as u64;
         (*VIRTQ_PTR).desc[p_stat].len = 1;
         (*VIRTQ_PTR).desc[p_stat].flags = 2; // WRITE
         (*VIRTQ_PTR).desc[p_stat].next = 0;
 
-        // Put in available ring
         (*VIRTQ_PTR).avail.ring[((*VIRTQ_PTR).avail.idx % QUEUE_SIZE as u16) as usize] = p_req as u16;
         core::arch::asm!("fence rw, rw");
         (*VIRTQ_PTR).avail.idx = (*VIRTQ_PTR).avail.idx.wrapping_add(1);
         core::arch::asm!("fence rw, rw");
 
-        // Notify device
         core::ptr::write_volatile((base + 0x050) as *mut u32, 0); // Notify Queue 0
 
-        // Wait for used ring to update
         while LAST_USED_IDX == core::ptr::read_volatile(core::ptr::addr_of!((*VIRTQ_PTR).used.idx)) {
             core::arch::asm!("nop");
             core::arch::asm!("fence r, rw");
@@ -198,7 +188,6 @@ pub fn block_op(sector: u64, buf: *mut u8, len: u32, write: bool) {
 }
 
 pub fn read_sector(sector: u64, buf: *mut u8, count: usize) {
-    // VirtIO block device operates in 512-byte sectors
     block_op(sector, buf, (count * 512) as u32, false);
 }
 

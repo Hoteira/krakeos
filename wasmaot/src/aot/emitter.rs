@@ -1,11 +1,5 @@
-//! RV64GC machine-code emitter — the RISC-V counterpart of the x86_64
-//! `X64Emitter` in ref/std/src/wasm/aot/emitter.rs. Same label/reloc design;
-//! only uncompressed 4-byte encodings are emitted.
-//!
-//! Label control flow always uses the far form (`auipc+jalr`, ±2GiB) because
-//! trap handlers live at the start of the module while functions can sit
-//! megabytes in. Conditional branches emit an inverted short branch over the
-//! far jump. T6 is reserved as the reloc scratch register.
+// RV64GC machine-code emitter with labels and relocs; only uncompressed 4-byte encodings.
+// Out-of-range label jumps use auipc+jalr through T6, which is reserved as the reloc scratch register.
 
 use alloc::vec::Vec;
 
@@ -83,7 +77,7 @@ pub enum FReg {
     Ft11 = 31,
 }
 
-/// Branch condition funct3 codes (branch taken when condition holds).
+// Branch condition funct3 codes (branch taken when condition holds).
 pub mod cond {
     pub const EQ: u8 = 0b000;
     pub const NE: u8 = 0b001;
@@ -98,16 +92,14 @@ pub mod cond {
 }
 
 pub enum RelocKind {
-    /// Unconditional jump / call (2 words). Resolves to a direct `jal`
-    /// (±1 MiB, TCG-chainable) or `auipc+jalr` when far.
+    // Jump or call (2 words): direct jal within 1 MiB (TCG-chainable), else auipc+jalr.
     Jump { link: u8 },
-    /// Conditional branch (3 words). Resolves to a direct `bcc` (±4 KiB) or
-    /// `inverted-bcc over auipc+jalr` when far.
+    // Conditional branch (3 words): direct bcc within 4 KiB, else inverted bcc over auipc+jalr.
     Cond { c: u8, rs1: u8, rs2: u8 },
 }
 
 pub struct Reloc {
-    /// Offset of the first placeholder word.
+    // Offset of the first placeholder word.
     pub pos: usize,
     pub label_id: usize,
     pub kind: RelocKind,
@@ -194,7 +186,7 @@ impl Rv64Emitter {
         self.emit_u32((imm20 << 12) | ((rd as u32) << 7) | opcode);
     }
 
-    /// J-type (jal). imm is a byte offset, must be even, ±1 MiB.
+    // J-type (jal). imm is a byte offset, must be even, within 1 MiB.
     fn enc_j_at(&mut self, at: usize, rd: u8, imm: i32) {
         let u = imm as u32;
         let word = (((u >> 20) & 1) << 31)
@@ -293,22 +285,22 @@ impl Rv64Emitter {
 
     pub fn ret(&mut self) { self.jalr(Reg::Zero, Reg::Ra, 0); }
 
-    /// Raw short conditional branch with a fixed byte offset.
+    // Raw short conditional branch with a fixed byte offset.
     pub fn bcc(&mut self, c: u8, rs1: Reg, rs2: Reg, off: i32) { self.enc_b(c as u32, rs1 as u8, rs2 as u8, off); }
 
     pub fn ebreak(&mut self) { self.emit_u32(0x0010_0073); }
 
-    /// csrrwi rd, csr, uimm5 (rd = old csr, csr = uimm)
+    // csrrwi rd, csr, uimm5 (rd = old csr, csr = uimm)
     pub fn csrrwi(&mut self, rd: Reg, csr: u32, uimm: u32) {
         self.emit_u32((csr << 20) | ((uimm & 0x1F) << 15) | (0b101 << 12) | ((rd as u32) << 7) | 0b1110011);
     }
 
-    /// csrrs rd, csr, rs1 (rd = csr, csr |= rs1; rs1=x0 is a pure read)
+    // csrrs rd, csr, rs1 (rd = csr, csr |= rs1; rs1=x0 is a pure read)
     pub fn csrrs(&mut self, rd: Reg, csr: u32, rs1: Reg) {
         self.emit_u32((csr << 20) | ((rs1 as u32) << 15) | (0b010 << 12) | ((rd as u32) << 7) | 0b1110011);
     }
 
-    // ── labels + relocs (far form: auipc+jalr via T6) ───────────────
+    // ── labels + relocs ─────────────────────────────────────────────
 
     pub fn new_label(&mut self) -> usize {
         let id = self.label_offsets.len();
@@ -320,7 +312,7 @@ impl Rv64Emitter {
         self.label_offsets[label_id] = Some(self.code.len());
     }
 
-    /// Unconditional jump to label (2 words reserved).
+    // Unconditional jump to label (2 words reserved).
     pub fn jmp_label(&mut self, label_id: usize) {
         let pos = self.code.len();
         self.emit_u32(Self::NOP);
@@ -328,7 +320,7 @@ impl Rv64Emitter {
         self.relocs.push(Reloc { pos, label_id, kind: RelocKind::Jump { link: Reg::Zero as u8 } });
     }
 
-    /// Call a label, link in RA (2 words reserved).
+    // Call a label, link in RA (2 words reserved).
     pub fn call_label(&mut self, label_id: usize) {
         let pos = self.code.len();
         self.emit_u32(Self::NOP);
@@ -336,7 +328,7 @@ impl Rv64Emitter {
         self.relocs.push(Reloc { pos, label_id, kind: RelocKind::Jump { link: Reg::Ra as u8 } });
     }
 
-    /// Branch to `label` when `rs1 <cond> rs2` holds (3 words reserved).
+    // Branch to label when rs1 <cond> rs2 holds (3 words reserved).
     pub fn bcc_label(&mut self, c: u8, rs1: Reg, rs2: Reg, label_id: usize) {
         let pos = self.code.len();
         self.emit_u32(Self::NOP);
@@ -352,12 +344,10 @@ impl Rv64Emitter {
     pub fn beqz_label(&mut self, rs: Reg, label_id: usize) { self.bcc_label(cond::EQ, rs, Reg::Zero, label_id); }
     pub fn bnez_label(&mut self, rs: Reg, label_id: usize) { self.bcc_label(cond::NE, rs, Reg::Zero, label_id); }
 
-    /// Call through a register.
     pub fn call_reg(&mut self, r: Reg) {
         self.jalr(Reg::Ra, r, 0);
     }
 
-    /// Jump through a register (no link).
     pub fn jmp_reg(&mut self, r: Reg) {
         self.jalr(Reg::Zero, r, 0);
     }
@@ -418,22 +408,22 @@ impl Rv64Emitter {
     pub fn negw(&mut self, rd: Reg, rs: Reg) { self.subw(rd, Reg::Zero, rs); }
     pub fn not(&mut self, rd: Reg, rs: Reg) { self.xori(rd, rs, -1); }
 
-    /// Sign-extend the low 32 bits of rs into rd.
+    // Sign-extend the low 32 bits of rs into rd.
     pub fn sext_w(&mut self, rd: Reg, rs: Reg) { self.addiw(rd, rs, 0); }
 
-    /// Zero-extend the low 32 bits of rs into rd.
+    // Zero-extend the low 32 bits of rs into rd.
     pub fn zext_w(&mut self, rd: Reg, rs: Reg) {
         self.slli(rd, rs, 32);
         self.srli(rd, rd, 32);
     }
 
-    /// rd = (rs != 0) ? 1 : 0
+    // rd = (rs != 0) ? 1 : 0
     pub fn snez(&mut self, rd: Reg, rs: Reg) { self.sltu(rd, Reg::Zero, rs); }
 
-    /// rd = (rs == 0) ? 1 : 0
+    // rd = (rs == 0) ? 1 : 0
     pub fn seqz(&mut self, rd: Reg, rs: Reg) { self.sltiu(rd, rs, 1); }
 
-    /// Materialize an arbitrary 64-bit constant.
+    // Materialize an arbitrary 64-bit constant.
     pub fn li(&mut self, rd: Reg, imm: i64) {
         if (-2048..=2047).contains(&imm) {
             self.addi(rd, Reg::Zero, imm as i32);
@@ -459,8 +449,7 @@ impl Rv64Emitter {
         }
     }
 
-    /// rd = rs + imm for any 64-bit imm (uses T6 when out of i12 range;
-    /// rs must not be T6 in that case).
+    // rd = rs + imm for any 64-bit imm; uses T6 when out of i12 range, so rs must not be T6.
     pub fn addi_any(&mut self, rd: Reg, rs: Reg, imm: i64) {
         if (-2048..=2047).contains(&imm) {
             if imm != 0 || rd != rs {
@@ -473,7 +462,7 @@ impl Rv64Emitter {
         }
     }
 
-    /// Load from base+off for any 64-bit off (uses T6 when needed).
+    // Load from base+off for any 64-bit off (uses T6 when needed).
     pub fn ld_any(&mut self, rd: Reg, base: Reg, off: i64) {
         if (-2048..=2047).contains(&off) {
             self.ld(rd, base, off as i32);
@@ -483,8 +472,7 @@ impl Rv64Emitter {
         }
     }
 
-    /// Store to base+off for any 64-bit off (uses T6 when needed;
-    /// src must not be T6).
+    // Store to base+off for any 64-bit off (uses T6 when needed, so src must not be T6).
     pub fn sd_any(&mut self, base: Reg, off: i64, src: Reg) {
         if (-2048..=2047).contains(&off) {
             self.sd(base, off as i32, src);
@@ -580,7 +568,7 @@ impl Rv64Emitter {
     pub fn fmv_d_x(&mut self, rd: FReg, rs1: Reg) { self.enc_fr(rd as u8, 0b000, rs1 as u8, 0b00000, 0b1111001); }
 }
 
-/// Rounding modes for fcvt.
+// Rounding modes for fcvt.
 pub mod rm {
     pub const RNE: u32 = 0b000; // nearest, ties even (wasm nearest)
     pub const RTZ: u32 = 0b001; // toward zero (wasm trunc)

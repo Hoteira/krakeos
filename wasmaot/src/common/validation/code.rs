@@ -149,7 +149,6 @@ fn read_instructions(
         let Ok(first_instr_byte) = wasm.read_u8() else {
             return Err(ValidationError::ExprMissingEnd);
         };
-        //crate::debugln!("{:#x} ", first_instr_byte);
         match first_instr_byte {
             NOP => {}
             BLOCK => {
@@ -877,7 +876,6 @@ fn read_instructions(
             }
             ATOMIC_PREFIX => {
                 let second = wasm.read_var_u32()?;
-                // crate::debugln!("Validating Atomic opcode {:#x} at PC {:#x}", second, wasm.pc);
                 match second {
                     0x03 => { // atomic.fence
                         wasm.read_u8()?; // Reserved byte

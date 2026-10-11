@@ -1,4 +1,4 @@
-// QEMU virt machine: goldfish-rtc MMIO (see hw/riscv/virt.c memmap, VIRT_RTC)
+// QEMU virt machine: goldfish-rtc MMIO (hw/riscv/virt.c, VIRT_RTC).
 pub const GOLDFISH_RTC_BASE: usize = 0x0010_1000;
 
 pub fn get_time_ns() -> u64 {

@@ -1,0 +1,6 @@
+# Editor settings, read when the editor starts.
+
+# spaces per Tab stop
+tab_width = 4
+# colors for .rs, .c, .js, .py, .toml and similar files
+syntax_highlighting = true

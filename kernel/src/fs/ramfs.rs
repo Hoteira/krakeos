@@ -7,7 +7,7 @@ pub const RAMFS_DESC_OFFSET: usize = 1024; // Indices >= 1024 are RAM files
 pub struct RamFile {
     pub name: String,
     pub data: Vec<u8>,
-    pub waiting_thread: Option<usize>, // Thread ID waiting for updates
+    pub waiting_thread: Option<usize>, // Thread waiting for updates
 }
 
 pub struct RamFS {
@@ -117,7 +117,6 @@ pub fn write_file(desc_idx: usize, offset: usize, buf: &[u8]) -> usize {
             }
             file.data[offset..end].copy_from_slice(buf);
             
-            // Capture waiting thread
             thread_to_wake = file.waiting_thread.take();
             buf.len()
         } else {
@@ -126,7 +125,6 @@ pub fn write_file(desc_idx: usize, offset: usize, buf: &[u8]) -> usize {
     };
     
     if let Some(tid) = thread_to_wake {
-        // Unblock the thread (mark it Ready)
         unsafe {
             if crate::sys::scheduler::SCHEDULER.threads[tid].state == crate::sys::scheduler::ThreadState::Waiting {
                 crate::sys::scheduler::SCHEDULER.threads[tid].state = crate::sys::scheduler::ThreadState::Ready;

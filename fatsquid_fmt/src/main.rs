@@ -1,5 +1,5 @@
 use std::fs::{OpenOptions, self};
-use std::io::{Write, Seek, SeekFrom};
+use std::io::{Read, Write, Seek, SeekFrom};
 use std::path::Path;
 
 #[repr(C)]
@@ -29,7 +29,7 @@ impl Descriptor {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        println!("Usage: fatsquid_fmt <image> <format|add|pack> [args...]");
+        println!("Usage: fatsquid_fmt <image> <format|add|pack|extract> [args...]");
         return;
     }
 
@@ -100,7 +100,6 @@ fn main() {
         
         let mut file = OpenOptions::new().read(true).write(true).open(image_path).unwrap();
         
-        // Read descriptors
         let mut descriptors = vec![Descriptor::empty(); 1024];
         file.seek(SeekFrom::Start(p2_offset + 1024 * 1024)).unwrap();
         let mut desc_bytes = vec![0u8; 1024 * std::mem::size_of::<Descriptor>()];
@@ -114,7 +113,6 @@ fn main() {
             );
         }
 
-        // Find empty descriptor and next free block
         let mut empty_idx = 0;
         let mut highest_block = 4; // Blocks 0-4 reserved
         for (i, desc) in descriptors.iter().enumerate() {
@@ -159,7 +157,6 @@ fn main() {
             block_idx += 1;
         }
         
-        // Write descriptors back
         file.seek(SeekFrom::Start(p2_offset + 1024 * 1024)).unwrap();
         let descriptors_bytes = unsafe {
             std::slice::from_raw_parts(
@@ -170,6 +167,99 @@ fn main() {
         file.write_all(descriptors_bytes).unwrap();
         file.sync_all().unwrap();
         println!("Embedded {} ({} bytes in {} blocks) at index {}", squid_name, wasm_bytes.len(), block_idx, empty_idx);
+    } else if cmd == "extract" {
+        // Copy a folder out of the image (e.g. settings the OS saved) so the
+        // next pack puts it back. The host folder is replaced.
+        if args.len() < 5 {
+            println!("Usage: fatsquid_fmt <image> extract <image_dir> <host_dir>");
+            return;
+        }
+        let Ok(mut file) = OpenOptions::new().read(true).open(image_path) else {
+            println!("No image to extract from.");
+            return;
+        };
+        let mut table = vec![0u8; 1024 * std::mem::size_of::<Descriptor>()];
+        if file.seek(SeekFrom::Start(p2_offset + 1024 * 1024)).is_err() || file.read_exact(&mut table).is_err() {
+            println!("Cannot read the descriptor table.");
+            return;
+        }
+        let descriptors: Vec<Descriptor> = (0..1024)
+            .map(|i| unsafe { std::ptr::read_unaligned(table.as_ptr().add(i * std::mem::size_of::<Descriptor>()) as *const Descriptor) })
+            .collect();
+        let name_of = |d: &Descriptor| {
+            let len = d.filename.iter().position(|&b| b == 0).unwrap_or(64);
+            String::from_utf8_lossy(&d.filename[..len]).into_owned()
+        };
+        let children = |idx: usize| -> Vec<usize> {
+            descriptors[idx].blocks.iter().map(|&b| b as usize).filter(|&c| c != 0 && c < 1024 && descriptors[c].filename[0] != 0).collect()
+        };
+        if descriptors[0].filename[0] != b'/' {
+            println!("Not a FatSquid image.");
+            return;
+        }
+        let mut idx = 0;
+        for part in args[3].split(['/', '\\']).filter(|p| !p.is_empty()) {
+            match children(idx).into_iter().find(|&c| name_of(&descriptors[c]) == part) {
+                Some(c) if descriptors[c].is_dir == 1 => idx = c,
+                _ => {
+                    println!("{} is not in the image; nothing to extract.", args[3]);
+                    return;
+                }
+            }
+        }
+
+        fn extract(
+            idx: usize,
+            to: &Path,
+            descriptors: &[Descriptor],
+            file: &mut std::fs::File,
+            p2_offset: u64,
+            children: &dyn Fn(usize) -> Vec<usize>,
+            name_of: &dyn Fn(&Descriptor) -> String,
+        ) -> std::io::Result<()> {
+            fs::create_dir_all(to)?;
+            for c in children(idx) {
+                let d = &descriptors[c];
+                let path = to.join(name_of(d));
+                if d.is_dir == 1 {
+                    extract(c, &path, descriptors, file, p2_offset, children, name_of)?;
+                    continue;
+                }
+                let block_size = 1024 * 1024usize;
+                let mut data = Vec::with_capacity(d.size as usize);
+                let mut left = d.size as usize;
+                for &b in d.blocks.iter() {
+                    if left == 0 || b == 0 {
+                        break;
+                    }
+                    let n = left.min(block_size);
+                    let mut chunk = vec![0u8; n];
+                    file.seek(SeekFrom::Start(p2_offset + b as u64 * block_size as u64))?;
+                    file.read_exact(&mut chunk)?;
+                    data.extend_from_slice(&chunk);
+                    left -= n;
+                }
+                fs::write(&path, &data)?;
+            }
+            Ok(())
+        }
+
+        let dest = Path::new(&args[4]);
+        let tmp = dest.with_extension("extracting");
+        let _ = fs::remove_dir_all(&tmp);
+        match extract(idx, &tmp, &descriptors, &mut file, p2_offset, &children, &name_of) {
+            Ok(()) => {
+                let _ = fs::remove_dir_all(dest);
+                match fs::rename(&tmp, dest) {
+                    Ok(()) => println!("Extracted {} to {}", args[3], dest.display()),
+                    Err(e) => println!("Cannot replace {}: {}", dest.display(), e),
+                }
+            }
+            Err(e) => {
+                let _ = fs::remove_dir_all(&tmp);
+                println!("Extract failed ({}); {} left as it was.", e, dest.display());
+            }
+        }
     } else if cmd == "pack" {
         if args.len() < 4 {
             println!("Usage: fatsquid_fmt <image> pack <host_dir>");
@@ -179,7 +269,7 @@ fn main() {
         
         let mut file = OpenOptions::new().read(true).write(true).open(image_path).unwrap();
         
-        // Wipe existing descriptors (re-init)
+        // pack rebuilds the descriptor table from scratch.
         let mut descriptors = vec![Descriptor::empty(); 1024];
         descriptors[0].filename[0] = b'/';
         descriptors[0].is_dir = 1;
@@ -209,6 +299,11 @@ fn main() {
                     let name = entry.file_name().into_string().unwrap();
                     let is_dir = path.is_dir();
                     
+                    // The kernel uses descriptor indices as file fds; these
+                    // would read as stdio, the WASI preopen or device fds.
+                    while *next_desc_idx <= 3 || (100..=127).contains(next_desc_idx) {
+                        *next_desc_idx += 1;
+                    }
                     let desc_idx = *next_desc_idx;
                     if desc_idx >= 1024 {
                         println!("ERROR: Max descriptors reached!");
@@ -216,12 +311,11 @@ fn main() {
                     }
                     *next_desc_idx += 1;
                     
-                    // Add this child to parent's block list
                     let mut added = false;
                     for b in descriptors[parent_desc_idx].blocks.iter_mut() {
                         if *b == 0 {
                             *b = desc_idx as u16;
-                            descriptors[parent_desc_idx].size += 1; // Size of a directory is the number of children
+                            descriptors[parent_desc_idx].size += 1; // a directory's size is its child count
                             added = true;
                             break;
                         }
@@ -267,7 +361,6 @@ fn main() {
         let root_path = Path::new(host_dir);
         pack_dir(&root_path, 0, &mut descriptors, &mut next_desc_idx, &mut highest_block, &mut file, p2_offset, block_size as u64);
         
-        // Write descriptors back
         file.seek(SeekFrom::Start(p2_offset + 1024 * 1024)).unwrap();
         let descriptors_bytes = unsafe {
             std::slice::from_raw_parts(

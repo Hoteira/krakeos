@@ -67,11 +67,11 @@ pub fn run_wasm() {
                             FDS[i].desc_idx = idx;
                             FDS[i].offset = 0;
                             if (oflags & 8) != 0 { // O_TRUNC
-                                // Not implemented trunc, but reset offset
+                                // Truncation not implemented
                             }
                             let fd_out = (i as u32).to_le_bytes();
                             let _ = memory.write(&mut caller, fd_out_ptr as usize, &fd_out);
-                            return 0; // SUCCESS
+                            return 0;
                         }
                     }
                 }
@@ -160,7 +160,6 @@ pub fn run_wasm() {
     );
     linker.define("wasi_snapshot_preview1", "fd_seek", fd_seek).unwrap();
     
-    // Also need to handle fd_write for files
     let fd_write = Func::wrap(
         &mut store,
         |mut caller: Caller<'_, HostState>, fd: i32, iovs_ptr: i32, iovs_len: i32, nwritten_ptr: i32| -> i32 {
@@ -224,14 +223,14 @@ pub fn run_wasm() {
 
     let clock_time_get = Func::wrap(&mut store, |mut caller: Caller<'_, HostState>, _id: i32, _precision: i64, time_ptr: i32| -> i32 {
         let memory = caller.get_export("memory").unwrap().into_memory().unwrap();
-        // Return 0 for now as we don't have a real RTC wired up to WASI yet
+        // No RTC wired to WASI yet, so the time is always 0.
         let time_bytes = (0u64).to_le_bytes();
         let _ = memory.write(&mut caller, time_ptr as usize, &time_bytes);
         0
     });
     linker.define("wasi_snapshot_preview1", "clock_time_get", clock_time_get).unwrap();
 
-    // WASI-libc requires __wasi_init_tp for thread-local storage initialization
+    // wasi-libc calls __wasi_init_tp to set up thread-local storage.
     let wasi_init_tp = Func::wrap(&mut store, |mut _caller: Caller<'_, HostState>| {});
     linker.define("env", "__wasi_init_tp", wasi_init_tp).unwrap();
 
@@ -254,6 +253,6 @@ pub fn run_wasm() {
 
     let _ = start_func.call(&mut store, &[], &mut []);
     
-    // Halt thread to avoid crash
+    // Park the thread; returning from here would crash.
     loop { core::hint::spin_loop(); }
 }

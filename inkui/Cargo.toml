@@ -6,3 +6,5 @@ edition = "2021"
 [dependencies]
 png = "0.17"
 titanf = "3.0.0"
+toml = { version = "0.8", default-features = false, features = ["parse", "display"] }
+serde = { version = "1", features = ["derive"] }

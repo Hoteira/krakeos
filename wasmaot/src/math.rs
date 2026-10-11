@@ -1,5 +1,4 @@
-//! Minimal no_std float helpers for common/value.rs (const-expr evaluation
-//! and the wacc global encoding — not the hot path). Backed by libm.
+// Minimal no_std float helpers backed by libm, used for const-expr evaluation (not the hot path).
 
 pub trait FloatMath {
     fn abs(self) -> Self;

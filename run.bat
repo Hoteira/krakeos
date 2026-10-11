@@ -20,6 +20,10 @@ echo "Building WASM Runner..."
 cargo build -p wasm_runner --target riscv64gc-unknown-none-elf --release
 
 echo "Rebuilding File System Image..."
+rem Keep what the OS saved (settings, history, your files) across rebuilds
+if exist fs.img cargo run -p fatsquid_fmt --target x86_64-pc-windows-msvc -- fs.img extract config disk\config
+if exist fs.img cargo run -p fatsquid_fmt --target x86_64-pc-windows-msvc -- fs.img extract home disk\home
+if not exist disk\home mkdir disk\home
 if exist fs.img del fs.img
 fsutil file createnew fs.img 1073741824
 
@@ -29,6 +33,8 @@ cargo run -p fatsquid_fmt --target x86_64-pc-windows-msvc -- fs.img format
 echo "Adding App and Runner to File System..."
 if not exist disk\apps mkdir disk\apps
 if not exist disk\bin mkdir disk\bin
+rem Python looks for this folder next to its library (in python313.zip)
+if not exist disk\apps\lib\python3.13\lib-dynload mkdir disk\apps\lib\python3.13\lib-dynload
 copy /Y target\wasm32-wasip1\release\shell.wasm disk\apps\shell.wasm
 copy /Y target\wasm32-wasip1\release\calc.wasm disk\apps\calc.wasm
 copy /Y target\wasm32-wasip1\release\terminal.wasm disk\apps\terminal.wasm
@@ -39,7 +45,6 @@ copy /Y target\riscv64gc-unknown-none-elf\release\wasm_runner disk\bin\wasm_runn
 
 if not exist disk\img mkdir disk\img
 copy /Y ref\tree\sys\img\wallpaper2.png disk\img\wallpaper.png
-copy /Y ref\tree\sys\img\cursor1.png disk\img\cursor1.png
 
 cargo run -p fatsquid_fmt --target x86_64-pc-windows-msvc -- fs.img pack disk
 echo ========================================================
@@ -49,7 +54,7 @@ echo.
 cargo build --manifest-path kernel/Cargo.toml --release --target riscv64gc-unknown-none-elf
 if %errorlevel% neq 0 exit /b %errorlevel%
 
-qemu-system-riscv64 -display gtk,zoom-to-fit=off -m 512M -machine virt -bios default -drive file=fs.img,format=raw,if=none,id=hd0,cache=writethrough -device virtio-blk-device,drive=hd0 -device virtio-gpu-device -device virtio-keyboard-device -device virtio-tablet-device -serial stdio -kernel target\riscv64gc-unknown-none-elf\release\kernel
+qemu-system-riscv64 -display gtk,zoom-to-fit=off,grab-on-hover=on -smp 4 -m 512M -machine virt -bios default -drive file=fs.img,format=raw,if=none,id=hd0,cache=writethrough -device virtio-blk-device,drive=hd0 -device virtio-gpu-device -device virtio-keyboard-device -device virtio-tablet-device -serial stdio -kernel target\riscv64gc-unknown-none-elf\release\kernel
 
 echo ========================================================
 echo OS Execution Finished.

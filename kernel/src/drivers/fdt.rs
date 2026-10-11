@@ -67,7 +67,7 @@ impl<'a> FdtParser<'a> {
                         end += 1;
                     }
                     let name = core::str::from_utf8(&self.dt_struct[offset..end]).unwrap_or("");
-                    offset = (end + 1 + 3) & !3; // align 4
+                    offset = (end + 1 + 3) & !3;
                     
                     if name.starts_with("memory@") {
                         in_memory_node = true;
@@ -88,7 +88,7 @@ impl<'a> FdtParser<'a> {
                         let prop_name = core::str::from_utf8(&self.dt_strings[nameoff..nameoff+name_end]).unwrap_or("");
                         
                         if prop_name == "reg" && len >= 16 {
-                            // Assuming #address-cells = 2 and #size-cells = 2 for RISC-V 64-bit
+                            // Assumes #address-cells = 2 and #size-cells = 2.
                             let addr = u64::from_be_bytes(self.dt_struct[offset..offset+8].try_into().unwrap());
                             let size = u64::from_be_bytes(self.dt_struct[offset+8..offset+16].try_into().unwrap());
                             return Some((addr as usize, size as usize));
@@ -97,7 +97,7 @@ impl<'a> FdtParser<'a> {
                     offset = (offset + len + 3) & !3;
                 }
                 FDT_END => break,
-                _ => {} // NOP
+                _ => {} // FDT_NOP
             }
         }
         None

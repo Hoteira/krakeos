@@ -1,7 +1,4 @@
-//! Software rendering primitives. Everything blends properly: a Color with
-//! a < 255 is srcover-composited instead of being written raw (the old apps
-//! wrote `alpha<<24 | rgb` straight into the buffer, which the opaque
-//! kernel compositor then displayed as-is).
+// Software rendering primitives. Colors with alpha below 255 are srcover-blended.
 
 pub mod primitives {
     use crate::font::Font;
@@ -24,7 +21,7 @@ pub mod primitives {
         0xFF000000 | (r << 16) | (g << 8) | b
     }
 
-    /// Filled rect with alpha blending; opaque fills use fast row fills.
+    // Filled rect with alpha blending; opaque fills use fast row fills.
     pub fn fill_rect(
         fb: &mut [u32],
         stride: usize,
@@ -67,8 +64,7 @@ pub mod primitives {
         Color::rgba(l(a.r, b.r), l(a.g, b.g), l(a.b, b.b), l(a.a, b.a))
     }
 
-    /// Row inset for a rounded corner: how many pixels to skip at `dy` rows
-    /// from the corner's circle center.
+    // Pixels to skip on a row dy rows from a rounded corner's circle center.
     fn corner_inset(radius: usize, dy: usize) -> usize {
         if dy >= radius {
             return 0;
@@ -79,8 +75,8 @@ pub mod primitives {
         (r - x) as usize
     }
 
-    /// Solid or gradient background with optional rounded corners + border.
-    /// Row-based so opaque solid fills stay fast.
+    // Solid or gradient background with optional rounded corners and border.
+    // Row-based so opaque solid fills stay fast.
     #[allow(clippy::too_many_arguments)]
     pub fn draw_background_style(
         fb: &mut [u32],
@@ -108,7 +104,6 @@ pub mod primitives {
             if py >= fb_h {
                 break;
             }
-            // Rounded-corner inset for this row
             let inset = if row < radius {
                 corner_inset(radius, row)
             } else if row >= h - radius {
@@ -131,7 +126,6 @@ pub mod primitives {
                     };
                     match g.direction {
                         GradientDirection::Horizontal => {
-                            // per-pixel horizontal gradient row
                             let row_base = py * stride;
                             let x1 = (rx + rw).min(stride);
                             for px in rx..x1 {
@@ -148,7 +142,6 @@ pub mod primitives {
             fill_rect(fb, stride, rx, py, rw, 1, color);
         }
 
-        // Simple border: top/bottom strips + left/right edges
         if border_size > 0 && border_color.a > 0 {
             fill_rect(fb, stride, x + radius, y, w.saturating_sub(radius * 2), border_size, border_color);
             fill_rect(fb, stride, x + radius, (y + h).saturating_sub(border_size), w.saturating_sub(radius * 2), border_size, border_color);
@@ -157,9 +150,8 @@ pub mod primitives {
         }
     }
 
-    /// Word-wrapped, scrollable text block. `baseline_y` is the baseline of
-    /// the first line; the block is clipped to `view_height` starting at
-    /// `clip_top`. Returns the full content height (for scrollbars).
+    // baseline_y is the first line's baseline; drawing is clipped to view_height
+    // rows from clip_top. Returns the full content height (for scrollbars).
     #[allow(clippy::too_many_arguments)]
     pub fn draw_text_formatted(
         fb: &mut [u32],
@@ -193,7 +185,6 @@ pub mod primitives {
             clip_top: usize, clip_bottom: usize,
         ) {
             let ly = baseline_y as i64 + (line_idx * line_h) as i64 - scroll_offset_y as i64;
-            // Clip whole lines outside the view
             if ly + (line_h as i64) < clip_top as i64 || ly - (line_h as i64) > clip_bottom as i64 {
                 return;
             }
@@ -227,7 +218,6 @@ pub mod primitives {
                     current_w = 0;
                 }
                 if word_w > max_width {
-                    // Hard-wrap a single overlong word
                     for c in word.chars() {
                         let cw = font.char_advance(c, size);
                         if current_w + cw > max_width && !current.is_empty() {

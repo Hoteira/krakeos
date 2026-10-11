@@ -35,7 +35,6 @@ pub unsafe fn map_page(
         let mut pte = (*table).entries[index];
 
         if (pte & PTE_V) == 0 {
-            // Allocate new page table
             let layout = Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap();
             let new_table = alloc::alloc::alloc_zeroed(layout) as *mut PageTable;
             
@@ -48,7 +47,6 @@ pub unsafe fn map_page(
         table = (next_ppn << 12) as *mut PageTable;
     }
 
-    // Level 0 (Leaf)
     let ppn = (paddr as u64) >> 12;
     (*table).entries[vpn0] = (ppn << 10) | flags | PTE_V | PTE_A | PTE_D;
 }
@@ -70,4 +68,23 @@ pub unsafe fn map_range(
         );
         offset += PAGE_SIZE;
     }
+}
+
+// Returns the physical page that was mapped. Page tables aren't freed.
+pub unsafe fn unmap_page(root: *mut PageTable, vaddr: usize) -> Option<usize> {
+    let vpns = [(vaddr >> 30) & 0x1FF, (vaddr >> 21) & 0x1FF, (vaddr >> 12) & 0x1FF];
+    let mut table = root;
+    for level in 0..2 {
+        let pte = (*table).entries[vpns[level]];
+        if (pte & PTE_V) == 0 {
+            return None;
+        }
+        table = (((pte >> 10) & ((1 << 44) - 1)) << 12) as *mut PageTable;
+    }
+    let pte = (*table).entries[vpns[2]];
+    if (pte & PTE_V) == 0 {
+        return None;
+    }
+    (*table).entries[vpns[2]] = 0;
+    Some((((pte >> 10) & ((1 << 44) - 1)) << 12) as usize)
 }

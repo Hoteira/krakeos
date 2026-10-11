@@ -1,0 +1,13 @@
+# KrakeOS system settings. Changes apply right away (keyboard: to apps
+# started after saving).
+
+[keyboard]
+# "it" (Italian QWERTY) or "us"
+layout = "it"
+
+[display]
+wallpaper = "/img/wallpaper.png"
+# text size in pixels, 0 = pick from the screen height
+font_size = 0
+# how much the glass behind apps hides the wallpaper, 0.0 to 1.0
+glass_opacity = 0.72

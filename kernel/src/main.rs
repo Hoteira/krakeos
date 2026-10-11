@@ -33,7 +33,8 @@ fn panic(info: &PanicInfo) -> ! {
 }
 
 #[no_mangle]
-pub extern "C" fn main(_hart_id: usize, dtb_ptr: usize) -> ! {
+pub extern "C" fn main(hart_id: usize, dtb_ptr: usize) -> ! {
+    arch::smp::BOOT_HART.store(hart_id, core::sync::atomic::Ordering::Relaxed);
     unsafe {
         core::arch::asm!("csrw stvec, {}", in(reg) trap::trap_vector as *const () as usize);
     }
@@ -46,6 +47,7 @@ pub extern "C" fn main(_hart_id: usize, dtb_ptr: usize) -> ! {
 
     let kernel_end_addr = core::ptr::addr_of!(__kernel_end) as usize;
 
+    let satp_val;
     unsafe {
         ALLOCATOR.lock().init(kernel_end_addr as *mut u8, mem_end - kernel_end_addr);
         
@@ -54,15 +56,14 @@ pub extern "C" fn main(_hart_id: usize, dtb_ptr: usize) -> ! {
         ROOT_PAGE_TABLE = root_table_ptr;
 
         paging::map_range(root_table_ptr, 0x10000000, 0x10000000, 4096, paging::PTE_R | paging::PTE_W);
-        // Map VirtIO MMIO Region (0x10001000 - 0x10008000)
+        // VirtIO MMIO region
         paging::map_range(root_table_ptr, 0x10001000, 0x10001000, 0x8000, paging::PTE_R | paging::PTE_W);
-        // Map Goldfish RTC (/dev/system/time reads it every frame)
         paging::map_range(root_table_ptr, crate::drivers::rtc::GOLDFISH_RTC_BASE, crate::drivers::rtc::GOLDFISH_RTC_BASE, 4096, paging::PTE_R | paging::PTE_W);
         
         let ram_size = mem_end - 0x80000000;
         paging::map_range(root_table_ptr, 0x80000000, 0x80000000, ram_size, paging::PTE_R | paging::PTE_W | paging::PTE_X);
 
-        let satp_val = (8u64 << 60) | ((root_table_ptr as u64) >> 12);
+        satp_val = (8u64 << 60) | ((root_table_ptr as u64) >> 12);
         csr::write_satp(satp_val);
         csr::sfence_vma();
     }
@@ -88,7 +89,6 @@ pub extern "C" fn main(_hart_id: usize, dtb_ptr: usize) -> ! {
     scheduler::Scheduler::init_main();
     println!("Loading /bin/wasm_runner.elf...");
     
-    // Load /bin/wasm_runner.elf from disk
     let desc_idx = match fs::find_file("/bin/wasm_runner.elf") {
         Some(idx) => idx,
         None => {
@@ -109,15 +109,6 @@ pub extern "C" fn main(_hart_id: usize, dtb_ptr: usize) -> ! {
     }
 
     println!("Starting Scheduler...");
-    
-    csr::enable_timer_interrupt();
-    csr::enable_global_interrupts();
-    
-    let next_tick = csr::read_time() + 10_000;
-    sbi::set_timer(next_tick);
-
-    loop {
-        // Idle loop
-        unsafe { core::arch::asm!("wfi"); }
-    }
+    arch::smp::start_others(satp_val);
+    arch::smp::run_idle()
 }

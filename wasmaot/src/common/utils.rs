@@ -1,4 +1,4 @@
-//! Debug helpers (stubbed in the KrakeOS port).
+// Debug helpers (stubbed in the KrakeOS port).
 
 #[cfg(debug_assertions)]
 pub fn print_beautiful_instruction_name_1_byte(_first_byte: u8, _pc: usize) {}

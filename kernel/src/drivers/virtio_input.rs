@@ -26,7 +26,7 @@ struct VirtQueueMem {
 struct VirtioInputDevice {
     base: usize,
     vq: *mut VirtQueueMem,
-    // Heap-allocated so the address handed to the device stays stable
+    // Heap-allocated so the address handed to the device stays stable.
     events: *mut VirtioInputEvent,
     last_used_idx: u16,
 }
@@ -38,10 +38,9 @@ pub fn init(base: usize) {
     unsafe {
         let version = core::ptr::read_volatile((base + 0x004) as *const u32);
         if version != 1 {
-            return; // Legacy devices only for now
+            return; // Legacy devices only
         }
         
-        // Reset device
         core::ptr::write_volatile((base + 0x070) as *mut u32, 0);
         
         let mut status = VIRTIO_STATUS_ACKNOWLEDGE;
@@ -49,7 +48,6 @@ pub fn init(base: usize) {
         status |= VIRTIO_STATUS_DRIVER;
         core::ptr::write_volatile((base + 0x070) as *mut u32, status);
         
-        // Features
         core::ptr::write_volatile((base + 0x020) as *mut u32, 0);
         status |= VIRTIO_STATUS_FEATURES_OK;
         core::ptr::write_volatile((base + 0x070) as *mut u32, status);
@@ -59,11 +57,10 @@ pub fn init(base: usize) {
             return;
         }
 
-        // Allocate memory for virtqueue
         let layout = core::alloc::Layout::new::<VirtQueueMem>();
         let mem = alloc::alloc::alloc_zeroed(layout) as *mut VirtQueueMem;
         
-        // Setup Queue 0 (eventq)
+        // Queue 0 is the eventq.
         core::ptr::write_volatile((base + 0x030) as *mut u32, 0); // QueueSel = 0
         let max_size = core::ptr::read_volatile((base + 0x034) as *const u32);
         if max_size < QUEUE_SIZE as u32 {
@@ -86,7 +83,6 @@ pub fn init(base: usize) {
             last_used_idx: 0,
         };
 
-        // Populate eventq with buffers
         for i in 0..QUEUE_SIZE {
             (*mem).desc[i].addr = events.add(i) as u64;
             (*mem).desc[i].len = 8;
@@ -101,7 +97,6 @@ pub fn init(base: usize) {
         status |= VIRTIO_STATUS_DRIVER_OK;
         core::ptr::write_volatile((base + 0x070) as *mut u32, status);
 
-        // Notify device that buffers are available
         core::ptr::write_volatile((base + 0x050) as *mut u32, 0); // QueueNotify = 0
         
         crate::println!("VirtIO Input initialized at {:#x}", base);
@@ -128,7 +123,6 @@ pub fn poll() {
                         crate::sys::input::push_event(ev.type_, ev.code, ev.value);
                     }
                     
-                    // Requeue buffer
                     let avail_idx = (*vq).avail.idx;
                     (*vq).avail.ring[(avail_idx % QUEUE_SIZE as u16) as usize] = desc_idx as u16;
                     compiler_fence(Ordering::SeqCst);
@@ -139,11 +133,6 @@ pub fn poll() {
                     dev.last_used_idx = dev.last_used_idx.wrapping_add(1);
                 }
             }
-        }
-
-        // One coalesced hardware-cursor move per poll, after draining events
-        if let Some((x, y)) = crate::sys::input::take_cursor_move() {
-            crate::drivers::virtio_gpu::move_cursor(x, y);
         }
     }
 }

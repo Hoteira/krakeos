@@ -1,0 +1,19 @@
+cd apps/
+ls
+cd apps/
+ls
+cd ..
+ls
+cd bin/
+ls
+cd apps/
+ls
+run python.wasm 
+cd apps/
+ls
+run python.wasm 
+print("Hello World")
+exit()
+run explorer
+python viewer.wasm 
+run viewer.wasm 

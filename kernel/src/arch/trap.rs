@@ -17,19 +17,24 @@ pub unsafe extern "C" fn trap_vector() {
         "1:",
         "addi sp, sp, -272",
         
-        "sd t0, 5*8(sp)", // Save t0 (x5) first
+        "sd t0, 5*8(sp)", // t0 first, it is the scratch register below
         
         "csrr t0, sscratch",
-        "csrw sscratch, zero", // Clear sscratch so nested traps know they came from S-mode
+        "csrw sscratch, zero", // Zero marks nested traps as coming from S-mode
         "bnez t0, 2f",
         "addi t0, sp, 272",
         "2:",
-        "sd t0, 2*8(sp)", // Save x2
+        "sd t0, 2*8(sp)",
         
         "sd x1, 1*8(sp)",
         "sd x3, 3*8(sp)",
         "sd x4, 4*8(sp)",
-        // 5 is saved above
+        // From U-mode, reload tp (hart id) from the word above the frame.
+        "csrr t0, sstatus",
+        "andi t0, t0, 0x100",
+        "bnez t0, 5f",
+        "ld tp, 272(sp)",
+        "5:",
         "sd x6, 6*8(sp)",
         "sd x7, 7*8(sp)",
         "sd x8, 8*8(sp)",
@@ -66,13 +71,15 @@ pub unsafe extern "C" fn trap_vector() {
         "call trap_handler",
         
         "mv sp, a0",
+        // Unlock only once off the old stack: another hart may resume that thread.
+        "call trap_unlock",
 
         "ld t0, 33*8(sp)",
         "csrw sstatus, t0",
         "ld t0, 32*8(sp)",
         "csrw sepc, t0",
 
-        "ld t0, 33*8(sp)", // Load sstatus again into t0 before testing SPP
+        "ld t0, 33*8(sp)",
         "andi t0, t0, 0x100", // SPP bit
         "bnez t0, 3f",
         "ld t1, 2*8(sp)",
@@ -82,7 +89,6 @@ pub unsafe extern "C" fn trap_vector() {
         "ld x1, 1*8(sp)",
         "ld x3, 3*8(sp)",
         "ld x4, 4*8(sp)",
-        // Skip 5
         "ld x6, 6*8(sp)",
         "ld x7, 7*8(sp)",
         "ld x8, 8*8(sp)",
@@ -127,8 +133,22 @@ pub unsafe extern "C" fn trap_vector() {
     );
 }
 
+// Free bytes above a user trap frame; the first word holds the hart running it.
+pub const FRAME_GAP: usize = 16;
+
 #[unsafe(no_mangle)]
 pub extern "C" fn trap_handler(sp: usize) -> usize {
+    crate::arch::smp::lock();
+    handle(sp)
+}
+
+// Called by trap_vector once it is on the stack it will return on.
+#[unsafe(no_mangle)]
+pub extern "C" fn trap_unlock() {
+    crate::arch::smp::unlock();
+}
+
+fn handle(sp: usize) -> usize {
     let scause: usize;
     unsafe {
         core::arch::asm!("csrr {}, scause", out(reg) scause);
@@ -143,8 +163,10 @@ pub extern "C" fn trap_handler(sp: usize) -> usize {
             5 => { // Timer interrupt
                 let next_tick = csr::read_time() + 10_000;
                 sbi::set_timer(next_tick);
-                crate::drivers::virtio_input::poll();
-                crate::sys::compositor::maybe_compose();
+                if crate::arch::smp::is_boot_hart() {
+                    crate::drivers::virtio_input::poll();
+                    crate::sys::desktop::tick();
+                }
 
                 return unsafe { scheduler::switch(sp) };
             }

@@ -49,14 +49,17 @@ struct VirtQueue {
     used: VirtqUsed,
 }
 
-// GPU Command Types
 const VIRTIO_GPU_CMD_RESOURCE_CREATE_2D: u32 = 0x0101;
 const VIRTIO_GPU_CMD_SET_SCANOUT: u32 = 0x0103;
 const VIRTIO_GPU_CMD_RESOURCE_FLUSH: u32 = 0x0104;
 const VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D: u32 = 0x0105;
 const VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING: u32 = 0x0106;
-const VIRTIO_GPU_CMD_UPDATE_CURSOR: u32 = 0x0300;
-const VIRTIO_GPU_CMD_MOVE_CURSOR: u32 = 0x0301;
+const VIRTIO_GPU_CMD_GET_DISPLAY_INFO: u32 = 0x0100;
+const VIRTIO_GPU_CMD_RESOURCE_UNREF: u32 = 0x0102;
+const VIRTIO_GPU_CMD_RESOURCE_DETACH_BACKING: u32 = 0x0107;
+const VIRTIO_GPU_RESP_OK_DISPLAY_INFO: u32 = 0x1101;
+// Config-space event bit: the host display changed size.
+const VIRTIO_GPU_EVENT_DISPLAY: u32 = 1;
 
 const VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM: u32 = 1;
 
@@ -127,50 +130,59 @@ struct VirtioGpuResourceFlush {
 }
 
 #[repr(C)]
-struct VirtioGpuCursorPos {
-    scanout_id: u32,
-    x: u32,
-    y: u32,
+struct VirtioGpuResourceUnref {
+    hdr: VirtioGpuCtrlHdr,
+    resource_id: u32,
     padding: u32,
 }
 
 #[repr(C)]
-struct VirtioGpuUpdateCursor {
+struct VirtioGpuDisplayOne {
+    r_x: u32,
+    r_y: u32,
+    r_width: u32,
+    r_height: u32,
+    enabled: u32,
+    flags: u32,
+}
+
+#[repr(C)]
+struct VirtioGpuRespDisplayInfo {
     hdr: VirtioGpuCtrlHdr,
-    pos: VirtioGpuCursorPos,
-    resource_id: u32,
-    hot_x: u32,
-    hot_y: u32,
-    padding: u32,
+    pmodes: [VirtioGpuDisplayOne; 16],
+}
+
+const fn hdr(type_: u32) -> VirtioGpuCtrlHdr {
+    VirtioGpuCtrlHdr { type_, flags: 0, fence_id: 0, ctx_id: 0, padding: 0 }
 }
 
 static mut VIRTIO_GPU_BASE: usize = 0;
 static mut VIRTQ_MEM: [u8; 16384] = [0; 16384];
 static mut VIRTQ_PTR: *mut VirtQueue = core::ptr::null_mut();
-
-pub const FB_WIDTH: u32 = 1024;
-pub const FB_HEIGHT: u32 = 576;
-// We align it to 4096 bytes so mapping it is easy
-#[repr(align(4096))]
-pub struct Framebuffer(pub [u32; (FB_WIDTH * FB_HEIGHT) as usize]);
-pub static mut FB_MEM: Framebuffer = Framebuffer([0xFF000000; (FB_WIDTH * FB_HEIGHT) as usize]); 
-
 static mut LAST_USED_IDX: u16 = 0;
 
-// --- Hardware cursor (cursorq = queue 1, resource id 2) ---
-pub const CURSOR_SIZE: u32 = 64;
-const CURSOR_RESOURCE_ID: u32 = 2;
+// Responses land here; GET_DISPLAY_INFO is the largest (408 bytes).
+#[repr(C, align(8))]
+struct RespBuf([u8; 512]);
+static mut RESP_BUF: RespBuf = RespBuf([0; 512]);
 
-#[repr(align(4096))]
-struct CursorBuf(#[allow(dead_code)] [u32; (CURSOR_SIZE * CURSOR_SIZE) as usize]); // accessed via addr_of (DMA)
-static mut CURSOR_MEM: CursorBuf = CursorBuf([0; (CURSOR_SIZE * CURSOR_SIZE) as usize]);
-static mut CURSOR_VQ_MEM: [u8; 16384] = [0; 16384];
-static mut CURSOR_VQ_PTR: *mut VirtQueue = core::ptr::null_mut();
-static mut CURSOR_LAST_USED: u16 = 0;
-static mut CURSOR_QUEUE_OK: bool = false; // cursorq initialized
-static mut CURSOR_RES_OK: bool = false;   // resource created + image uploaded
-static mut CURSOR_X: u32 = 0;
-static mut CURSOR_Y: u32 = 0;
+// Bigger host windows show the image unscaled (QEMU runs with zoom-to-fit off).
+pub const MAX_WIDTH: u32 = 2560;
+pub const MAX_HEIGHT: u32 = 1600;
+const DEFAULT_WIDTH: u32 = 1280;
+const DEFAULT_HEIGHT: u32 = 800;
+const MIN_WIDTH: u32 = 640;
+const MIN_HEIGHT: u32 = 400;
+
+// Backing is physically contiguous since the kernel heap is identity mapped.
+// The resource id alternates 1/3 so a resize creates the new one before dropping the old.
+static mut WIDTH: u32 = 0;
+static mut HEIGHT: u32 = 0;
+static mut FB_PTR: *mut u32 = core::ptr::null_mut();
+static mut FB_BYTES: usize = 0;
+static mut RESOURCE_ID: u32 = 0;
+// Bumped on every mode change, so readers of /dev/gpu/info can tell.
+static mut MODE_GEN: u32 = 0;
 
 pub fn init() -> bool {
     let mut base = 0x10001000;
@@ -218,27 +230,14 @@ pub fn init() -> bool {
         let pfn = (aligned_addr as u32) / 4096;
         core::ptr::write_volatile((base + 0x040) as *mut u32, pfn);
 
-        // Queue 1 (cursorq) for the hardware cursor
-        core::ptr::write_volatile((base + 0x030) as *mut u32, 1);
-        let cursor_max = core::ptr::read_volatile((base + 0x034) as *const u32);
-        if cursor_max >= QUEUE_SIZE as u32 {
-            let cmem = core::ptr::addr_of_mut!(CURSOR_VQ_MEM) as usize;
-            let caligned = (cmem + 4095) & !4095;
-            CURSOR_VQ_PTR = caligned as *mut VirtQueue;
-            core::ptr::write_bytes(CURSOR_VQ_PTR as *mut u8, 0, 4096);
-            core::ptr::write_volatile((base + 0x038) as *mut u32, QUEUE_SIZE as u32);
-            core::ptr::write_volatile((base + 0x03C) as *mut u32, 4096);
-            core::ptr::write_volatile((base + 0x040) as *mut u32, (caligned as u32) / 4096);
-            CURSOR_QUEUE_OK = true;
-        }
-
         status |= VIRTIO_STATUS_DRIVER_OK;
         core::ptr::write_volatile((base + 0x070) as *mut u32, status);
         
         crate::println!("VirtIO GPU initialized at 0x{:X}", base);
     }
     
-    setup_fb();
+    let (w, h) = display_size().unwrap_or((DEFAULT_WIDTH, DEFAULT_HEIGHT));
+    set_mode(w, h);
     true
 }
 
@@ -254,13 +253,11 @@ fn send_cmd<T>(cmd: &T, resp_size: u32) {
         (*VIRTQ_PTR).desc[p_req].flags = 1;
         (*VIRTQ_PTR).desc[p_req].next = p_resp as u16;
         
-        static mut RESP_BUF: [u8; 256] = [0; 256];
         (*VIRTQ_PTR).desc[p_resp].addr = core::ptr::addr_of_mut!(RESP_BUF) as u64;
         (*VIRTQ_PTR).desc[p_resp].len = resp_size;
         (*VIRTQ_PTR).desc[p_resp].flags = 2;
         (*VIRTQ_PTR).desc[p_resp].next = 0;
         (*VIRTQ_PTR).avail.ring[((*VIRTQ_PTR).avail.idx % QUEUE_SIZE as u16) as usize] = p_req as u16;
-        // crate::println!("virtio_gpu: send_cmd: VIRTQ_PTR = {:p}, idx = {}", VIRTQ_PTR, (*VIRTQ_PTR).avail.idx);
         core::arch::asm!("fence rw, rw");
         (*VIRTQ_PTR).avail.idx = (*VIRTQ_PTR).avail.idx.wrapping_add(1);
         core::arch::asm!("fence rw, rw");
@@ -275,196 +272,165 @@ fn send_cmd<T>(cmd: &T, resp_size: u32) {
     }
 }
 
-fn setup_fb() {
-    let res_create = VirtioGpuResourceCreate2d {
-        hdr: VirtioGpuCtrlHdr { type_: VIRTIO_GPU_CMD_RESOURCE_CREATE_2D, flags: 0, fence_id: 0, ctx_id: 0, padding: 0 },
-        resource_id: 1,
-        format: VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM,
-        width: FB_WIDTH,
-        height: FB_HEIGHT,
-    };
-    send_cmd(&res_create, 24);
-    
-    #[repr(C)]
-    struct AttachBackingCmd {
-        hdr: VirtioGpuResourceAttachBacking,
-        entry: VirtioGpuMemEntry,
-    }
-    
-    let attach = AttachBackingCmd {
-        hdr: VirtioGpuResourceAttachBacking {
-            hdr: VirtioGpuCtrlHdr { type_: VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING, flags: 0, fence_id: 0, ctx_id: 0, padding: 0 },
-            resource_id: 1,
-            nr_entries: 1,
-        },
-        entry: VirtioGpuMemEntry {
-            addr: core::ptr::addr_of!(FB_MEM) as u64,
-            length: (FB_WIDTH * FB_HEIGHT * 4) as u32,
-            padding: 0,
+// Scanout 0's preferred size (the QEMU window size).
+fn display_size() -> Option<(u32, u32)> {
+    let cmd = hdr(VIRTIO_GPU_CMD_GET_DISPLAY_INFO);
+    send_cmd(&cmd, core::mem::size_of::<VirtioGpuRespDisplayInfo>() as u32);
+    unsafe {
+        let resp = &*(core::ptr::addr_of!(RESP_BUF) as *const VirtioGpuRespDisplayInfo);
+        if resp.hdr.type_ != VIRTIO_GPU_RESP_OK_DISPLAY_INFO {
+            return None;
         }
-    };
-    send_cmd(&attach, 24);
-    
-    let scanout = VirtioGpuSetScanout {
-        hdr: VirtioGpuCtrlHdr { type_: VIRTIO_GPU_CMD_SET_SCANOUT, flags: 0, fence_id: 0, ctx_id: 0, padding: 0 },
-        r_x: 0,
-        r_y: 0,
-        r_width: FB_WIDTH,
-        r_height: FB_HEIGHT,
-        scanout_id: 0,
-        resource_id: 1,
-    };
-    send_cmd(&scanout, 24);
+        let m = &resp.pmodes[0];
+        if m.enabled == 0 || m.r_width == 0 || m.r_height == 0 {
+            return None;
+        }
+        Some((m.r_width, m.r_height))
+    }
+}
+
+// The old resource is released only after scanout 0 points at the new one.
+fn set_mode(w: u32, h: u32) {
+    let w = w.clamp(MIN_WIDTH, MAX_WIDTH) & !7;
+    let h = h.clamp(MIN_HEIGHT, MAX_HEIGHT) & !1;
+    unsafe {
+        if w == WIDTH && h == HEIGHT {
+            return;
+        }
+        let bytes = ((w * h * 4) as usize + 4095) & !4095;
+        let layout = core::alloc::Layout::from_size_align(bytes, 4096).unwrap();
+        let ptr = alloc::alloc::alloc_zeroed(layout) as *mut u32;
+        if ptr.is_null() {
+            crate::println!("virtio_gpu: no memory for a {}x{} framebuffer", w, h);
+            return;
+        }
+        for i in 0..(w * h) as usize {
+            *ptr.add(i) = 0xFF00_0000;
+        }
+
+        let old_id = RESOURCE_ID;
+        let new_id = if old_id == 1 { 3 } else { 1 };
+
+        let res_create = VirtioGpuResourceCreate2d {
+            hdr: hdr(VIRTIO_GPU_CMD_RESOURCE_CREATE_2D),
+            resource_id: new_id,
+            format: VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM,
+            width: w,
+            height: h,
+        };
+        send_cmd(&res_create, 24);
+
+        #[repr(C)]
+        struct AttachBackingCmd {
+            hdr: VirtioGpuResourceAttachBacking,
+            entry: VirtioGpuMemEntry,
+        }
+        let attach = AttachBackingCmd {
+            hdr: VirtioGpuResourceAttachBacking {
+                hdr: hdr(VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING),
+                resource_id: new_id,
+                nr_entries: 1,
+            },
+            entry: VirtioGpuMemEntry { addr: ptr as u64, length: w * h * 4, padding: 0 },
+        };
+        send_cmd(&attach, 24);
+
+        let scanout = VirtioGpuSetScanout {
+            hdr: hdr(VIRTIO_GPU_CMD_SET_SCANOUT),
+            r_x: 0,
+            r_y: 0,
+            r_width: w,
+            r_height: h,
+            scanout_id: 0,
+            resource_id: new_id,
+        };
+        send_cmd(&scanout, 24);
+
+        let old_ptr = FB_PTR;
+        let old_bytes = FB_BYTES;
+        WIDTH = w;
+        HEIGHT = h;
+        FB_PTR = ptr;
+        FB_BYTES = bytes;
+        RESOURCE_ID = new_id;
+        MODE_GEN = MODE_GEN.wrapping_add(1);
+
+        if old_id != 0 {
+            let detach = VirtioGpuResourceUnref { hdr: hdr(VIRTIO_GPU_CMD_RESOURCE_DETACH_BACKING), resource_id: old_id, padding: 0 };
+            send_cmd(&detach, 24);
+            let unref = VirtioGpuResourceUnref { hdr: hdr(VIRTIO_GPU_CMD_RESOURCE_UNREF), resource_id: old_id, padding: 0 };
+            send_cmd(&unref, 24);
+            alloc::alloc::dealloc(old_ptr as *mut u8, core::alloc::Layout::from_size_align(old_bytes, 4096).unwrap());
+        }
+        crate::println!("virtio_gpu: mode {}x{}", w, h);
+    }
+}
+
+// Returns true if the mode changed.
+pub fn poll_resize() -> bool {
+    unsafe {
+        if !is_ready() {
+            return false;
+        }
+        let base = VIRTIO_GPU_BASE;
+        let events = core::ptr::read_volatile((base + 0x100) as *const u32);
+        if events & VIRTIO_GPU_EVENT_DISPLAY == 0 {
+            return false;
+        }
+        core::ptr::write_volatile((base + 0x104) as *mut u32, VIRTIO_GPU_EVENT_DISPLAY);
+        // Ack the config-change interrupt too, or the line stays raised.
+        core::ptr::write_volatile((base + 0x064) as *mut u32, 2);
+        let gen = MODE_GEN;
+        if let Some((w, h)) = display_size() {
+            set_mode(w, h);
+        }
+        gen != MODE_GEN
+    }
 }
 
 pub fn flush_rect(x: u32, y: u32, w: u32, h: u32) {
-    let transfer = VirtioGpuTransferToHost2d {
-        hdr: VirtioGpuCtrlHdr { type_: VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D, flags: 0, fence_id: 0, ctx_id: 0, padding: 0 },
-        r_x: x,
-        r_y: y,
-        r_width: w,
-        r_height: h,
-        offset: ((y * FB_WIDTH + x) * 4) as u64,
-        resource_id: 1,
-        padding: 0,
-    };
-    send_cmd(&transfer, 24);
-    
-    let flush = VirtioGpuResourceFlush {
-        hdr: VirtioGpuCtrlHdr { type_: VIRTIO_GPU_CMD_RESOURCE_FLUSH, flags: 0, fence_id: 0, ctx_id: 0, padding: 0 },
-        r_x: x,
-        r_y: y,
-        r_width: w,
-        r_height: h,
-        resource_id: 1,
-        padding: 0,
-    };
-    send_cmd(&flush, 24);
-}
-
-pub fn get_fb_ptr() -> usize {
-    core::ptr::addr_of!(FB_MEM) as usize
-}
-
-// Cursorq commands have no response payload; the device just consumes the
-// buffer and pushes it to the used ring.
-fn send_cursor_cmd(cmd: &VirtioGpuUpdateCursor) {
     unsafe {
-        if !CURSOR_QUEUE_OK { return; }
-        let base = VIRTIO_GPU_BASE;
-
-        (*CURSOR_VQ_PTR).desc[0].addr = cmd as *const _ as u64;
-        (*CURSOR_VQ_PTR).desc[0].len = core::mem::size_of::<VirtioGpuUpdateCursor>() as u32;
-        (*CURSOR_VQ_PTR).desc[0].flags = 0;
-        (*CURSOR_VQ_PTR).desc[0].next = 0;
-
-        let avail_idx = (*CURSOR_VQ_PTR).avail.idx;
-        (*CURSOR_VQ_PTR).avail.ring[(avail_idx % QUEUE_SIZE as u16) as usize] = 0;
-        core::arch::asm!("fence rw, rw");
-        (*CURSOR_VQ_PTR).avail.idx = avail_idx.wrapping_add(1);
-        core::arch::asm!("fence rw, rw");
-
-        core::ptr::write_volatile((base + 0x050) as *mut u32, 1);
-
-        while CURSOR_LAST_USED == core::ptr::read_volatile(core::ptr::addr_of!((*CURSOR_VQ_PTR).used.idx)) {
-            core::arch::asm!("fence r, rw");
-        }
-        CURSOR_LAST_USED = CURSOR_LAST_USED.wrapping_add(1);
-    }
-}
-
-pub fn cursor_available() -> bool {
-    unsafe { CURSOR_QUEUE_OK }
-}
-
-pub fn is_ready() -> bool {
-    unsafe { VIRTIO_GPU_BASE != 0 && !VIRTQ_PTR.is_null() }
-}
-
-/// Upload a CURSOR_SIZE x CURSOR_SIZE BGRA image and show the hardware
-/// cursor. Returns the number of bytes consumed (0 if no cursorq).
-pub fn set_cursor_image(data: &[u8]) -> usize {
-    unsafe {
-        if !CURSOR_QUEUE_OK { return 0; }
-
-        let max = (CURSOR_SIZE * CURSOR_SIZE * 4) as usize;
-        let n = data.len().min(max);
-        core::ptr::copy_nonoverlapping(
-            data.as_ptr(),
-            core::ptr::addr_of_mut!(CURSOR_MEM) as *mut u8,
-            n,
-        );
-
-        if !CURSOR_RES_OK {
-            let res_create = VirtioGpuResourceCreate2d {
-                hdr: VirtioGpuCtrlHdr { type_: VIRTIO_GPU_CMD_RESOURCE_CREATE_2D, flags: 0, fence_id: 0, ctx_id: 0, padding: 0 },
-                resource_id: CURSOR_RESOURCE_ID,
-                format: VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM,
-                width: CURSOR_SIZE,
-                height: CURSOR_SIZE,
-            };
-            send_cmd(&res_create, 24);
-
-            #[repr(C)]
-            struct AttachBackingCmd {
-                hdr: VirtioGpuResourceAttachBacking,
-                entry: VirtioGpuMemEntry,
-            }
-            let attach = AttachBackingCmd {
-                hdr: VirtioGpuResourceAttachBacking {
-                    hdr: VirtioGpuCtrlHdr { type_: VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING, flags: 0, fence_id: 0, ctx_id: 0, padding: 0 },
-                    resource_id: CURSOR_RESOURCE_ID,
-                    nr_entries: 1,
-                },
-                entry: VirtioGpuMemEntry {
-                    addr: core::ptr::addr_of!(CURSOR_MEM) as u64,
-                    length: (CURSOR_SIZE * CURSOR_SIZE * 4) as u32,
-                    padding: 0,
-                },
-            };
-            send_cmd(&attach, 24);
-            CURSOR_RES_OK = true;
-        }
-
         let transfer = VirtioGpuTransferToHost2d {
-            hdr: VirtioGpuCtrlHdr { type_: VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D, flags: 0, fence_id: 0, ctx_id: 0, padding: 0 },
-            r_x: 0,
-            r_y: 0,
-            r_width: CURSOR_SIZE,
-            r_height: CURSOR_SIZE,
-            offset: 0,
-            resource_id: CURSOR_RESOURCE_ID,
+            hdr: hdr(VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D),
+            r_x: x,
+            r_y: y,
+            r_width: w,
+            r_height: h,
+            offset: ((y * WIDTH + x) * 4) as u64,
+            resource_id: RESOURCE_ID,
             padding: 0,
         };
         send_cmd(&transfer, 24);
-
-        let update = VirtioGpuUpdateCursor {
-            hdr: VirtioGpuCtrlHdr { type_: VIRTIO_GPU_CMD_UPDATE_CURSOR, flags: 0, fence_id: 0, ctx_id: 0, padding: 0 },
-            pos: VirtioGpuCursorPos { scanout_id: 0, x: CURSOR_X, y: CURSOR_Y, padding: 0 },
-            resource_id: CURSOR_RESOURCE_ID,
-            hot_x: 0,
-            hot_y: 0,
+        
+        let flush = VirtioGpuResourceFlush {
+            hdr: hdr(VIRTIO_GPU_CMD_RESOURCE_FLUSH),
+            r_x: x,
+            r_y: y,
+            r_width: w,
+            r_height: h,
+            resource_id: RESOURCE_ID,
             padding: 0,
         };
-        send_cursor_cmd(&update);
-        n
+        send_cmd(&flush, 24);
     }
 }
 
-/// Move the hardware cursor. Cheap enough to call from the timer tick.
-pub fn move_cursor(x: u32, y: u32) {
-    unsafe {
-        CURSOR_X = x;
-        CURSOR_Y = y;
-        if !CURSOR_RES_OK { return; }
-        let cmd = VirtioGpuUpdateCursor {
-            hdr: VirtioGpuCtrlHdr { type_: VIRTIO_GPU_CMD_MOVE_CURSOR, flags: 0, fence_id: 0, ctx_id: 0, padding: 0 },
-            pos: VirtioGpuCursorPos { scanout_id: 0, x, y, padding: 0 },
-            resource_id: CURSOR_RESOURCE_ID,
-            hot_x: 0,
-            hot_y: 0,
-            padding: 0,
-        };
-        send_cursor_cmd(&cmd);
-    }
+pub fn width() -> u32 {
+    unsafe { WIDTH }
+}
+
+pub fn height() -> u32 {
+    unsafe { HEIGHT }
+}
+
+pub fn mode_gen() -> u32 {
+    unsafe { MODE_GEN }
+}
+
+pub fn fb_ptr() -> *mut u32 {
+    unsafe { FB_PTR }
+}
+
+pub fn is_ready() -> bool {
+    unsafe { VIRTIO_GPU_BASE != 0 && !VIRTQ_PTR.is_null() && !FB_PTR.is_null() }
 }

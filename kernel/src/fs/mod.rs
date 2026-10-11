@@ -2,7 +2,7 @@ use crate::virtio;
 
 pub mod ramfs;
 
-pub const BLOCK_SIZE: usize = 1024 * 1024; // 1MB
+pub const BLOCK_SIZE: usize = 1024 * 1024;
 pub const MAX_DESCRIPTORS: usize = 1024;
 pub const MAX_BLOCKS: usize = 1024;
 
@@ -56,7 +56,6 @@ pub fn mount() -> bool {
     
     let mut buf = [0u8; 512];
     
-    // Read MBR
     virtio::read_sector(0, buf.as_mut_ptr(), 1);
 
     if buf[510] != 0x55 || buf[511] != 0xAA {
@@ -64,7 +63,7 @@ pub fn mount() -> bool {
         return false;
     }
     
-    // Read Partition 2
+    // Partition 2 entry: type at +4, start LBA at +8.
     let p2_type = buf[462 + 4];
     if p2_type != 0x83 {
         crate::println!("FatSquid: Partition 2 is not type 0x83.");
@@ -76,7 +75,7 @@ pub fn mount() -> bool {
         P2_OFFSET = lba_p2 as u64;
     }
     
-    // Read FatSquid Boot Sector (Block 0 of Partition 2)
+    // FatSquid boot sector is block 0 of partition 2.
     unsafe {
         virtio::read_sector(P2_OFFSET, buf.as_mut_ptr(), 1);
     }
@@ -89,7 +88,7 @@ pub fn mount() -> bool {
     
     let descriptors = unsafe { &mut *core::ptr::addr_of_mut!(FS.descriptors) };
 
-    // Read the Descriptor Table (Block 1 of Partition 2)
+    // Descriptor table is blocks 1 to 4 of partition 2.
     let desc_ptr = descriptors.as_mut_ptr() as *mut u8;
     
     for i in 0..4 {
@@ -101,21 +100,18 @@ pub fn mount() -> bool {
         }
     }
     
-    // Check if the root directory is valid
     let root = &descriptors[0];
     if root.filename[0] != b'/' {
         crate::println!("FatSquid format invalid (root directory not found).");
         return false;
     }
     
-    // Mark Block 0 (Boot) and Block 1-4 (Desc Table) as used
     unsafe {
         for i in 0..5 {
             mark_block_used(i);
         }
     }
 
-    // Populate bitmaps based on active descriptors
     for i in 0..MAX_DESCRIPTORS {
         let desc = &descriptors[i];
         if desc.filename[0] != 0 {
@@ -150,11 +146,9 @@ pub fn find_file(name: &str) -> Option<usize> {
     
     let descriptors = unsafe { &*core::ptr::addr_of!(FS.descriptors) };
     
-    // Root directory is always at index 0
+    // Root directory is always at index 0.
     let mut current_dir = 0;
     
-    // Split the path by '/'
-    // If the path starts with '/', we strip it.
     let path = if name.starts_with('/') { &name[1..] } else { name };
     
     let mut parts = path.split('/');
@@ -168,14 +162,14 @@ pub fn find_file(name: &str) -> Option<usize> {
         
         let desc = &descriptors[current_dir];
         if desc.is_dir == 0 {
-            return None; // Cannot traverse into a non-directory
+            return None;
         }
         
         let mut found_child = None;
         
-        // A directory's `blocks` array contains the descriptor indices of its children.
+        // A directory's blocks array holds its children's descriptor indices.
         for &child_idx in desc.blocks.iter() {
-            if child_idx == 0 { continue; } // Empty slot
+            if child_idx == 0 { continue; }
             let child_idx = child_idx as usize;
             if child_idx >= MAX_DESCRIPTORS { continue; }
             
@@ -231,9 +225,17 @@ fn alloc_block() -> Option<u16> {
     None
 }
 
+// Descriptor indices double as fds, so skip stdio, the WASI preopen and device fds (100..=127).
+pub fn reserved_fd(i: usize) -> bool {
+    i <= 3 || (100..=127).contains(&i)
+}
+
 fn alloc_desc() -> Option<usize> {
     let bitmap = unsafe { &mut *core::ptr::addr_of_mut!(FS.desc_bitmap) };
     for i in 0..MAX_DESCRIPTORS {
+        if reserved_fd(i) {
+            continue;
+        }
         let word = i / 64;
         let bit = i % 64;
         if (bitmap[word] & (1 << bit)) == 0 {
@@ -257,28 +259,217 @@ fn sync_desc(idx: usize) {
 pub fn truncate_file(desc_idx: usize, length: usize) {
     if desc_idx >= ramfs::RAMFS_DESC_OFFSET {
         ramfs::truncate_file(desc_idx, length);
+        return;
+    }
+    if desc_idx == 0 || desc_idx >= MAX_DESCRIPTORS {
+        return;
+    }
+    let descriptors = unsafe { &mut *core::ptr::addr_of_mut!(FS.descriptors) };
+    let desc = &mut descriptors[desc_idx];
+    if desc.is_dir == 0 && (length as u32) < desc.size {
+        // mount() only counts blocks within the size, so free the rest now.
+        let keep = (length + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        for b in desc.blocks[keep..].iter_mut() {
+            if *b != 0 {
+                free_block(*b as usize);
+                *b = 0;
+            }
+        }
+        desc.size = length as u32;
+        sync_desc(desc_idx);
     }
 }
 
+fn free_block(idx: usize) {
+    if idx < 5 || idx >= MAX_BLOCKS {
+        return;
+    }
+    let bitmap = unsafe { &mut *core::ptr::addr_of_mut!(FS.block_bitmap) };
+    bitmap[idx / 64] &= !(1 << (idx % 64));
+}
+
+fn free_desc(idx: usize) {
+    let bitmap = unsafe { &mut *core::ptr::addr_of_mut!(FS.desc_bitmap) };
+    bitmap[idx / 64] &= !(1 << (idx % 64));
+}
+
+// WASI errno values, returned as-is by the path operations below.
+pub const E_EXIST: usize = 20;
+pub const E_INVAL: usize = 28;
+pub const E_ISDIR: usize = 31;
+pub const E_NOENT: usize = 44;
+pub const E_NOSPC: usize = 51;
+pub const E_NOTDIR: usize = 54;
+pub const E_NOTEMPTY: usize = 55;
+pub const E_NOTSUP: usize = 58;
+
+fn trim_path(name: &str) -> &str {
+    name.trim_start_matches('/').trim_end_matches('/')
+}
+
+fn split_parent(name: &str) -> Result<(usize, &str), usize> {
+    let path = trim_path(name);
+    let (parent_path, base) = match path.rfind('/') {
+        Some(i) => (&path[..i], &path[i + 1..]),
+        None => ("", path),
+    };
+    if base.is_empty() || base.len() > 63 || base == "." || base == ".." {
+        return Err(E_INVAL);
+    }
+    let parent = if parent_path.is_empty() { 0 } else { find_file(parent_path).ok_or(E_NOENT)? };
+    let descriptors = unsafe { &*core::ptr::addr_of!(FS.descriptors) };
+    if parent >= MAX_DESCRIPTORS || descriptors[parent].is_dir == 0 {
+        return Err(E_NOTDIR);
+    }
+    Ok((parent, base))
+}
+
+fn link(parent: usize, child: usize) -> Result<(), usize> {
+    let descriptors = unsafe { &mut *core::ptr::addr_of_mut!(FS.descriptors) };
+    let dir = &mut descriptors[parent];
+    let slot = dir.blocks.iter().position(|&b| b == 0).ok_or(E_NOSPC)?;
+    dir.blocks[slot] = child as u16;
+    dir.size += 1; // a directory's size is its child count
+    sync_desc(parent);
+    Ok(())
+}
+
+fn unlink(parent: usize, child: usize) {
+    let descriptors = unsafe { &mut *core::ptr::addr_of_mut!(FS.descriptors) };
+    let dir = &mut descriptors[parent];
+    if let Some(slot) = dir.blocks.iter().position(|&b| b as usize == child) {
+        dir.blocks[slot] = 0;
+        dir.size = dir.size.saturating_sub(1);
+        sync_desc(parent);
+    }
+}
+
+fn set_name(desc: &mut Descriptor, base: &str) {
+    desc.filename = [0; 64];
+    desc.filename[..base.len()].copy_from_slice(base.as_bytes());
+}
+
+// For WASI path_filestat_get.
+pub fn stat(name: &str) -> Option<(usize, bool)> {
+    if trim_path(name).is_empty() {
+        return Some((0, true));
+    }
+    if ramfs::is_ram_file(name) {
+        let idx = ramfs::find_file(name)?;
+        return Some((ramfs::get_file_size(idx), false));
+    }
+    let idx = find_file(name)?;
+    let descriptors = unsafe { &*core::ptr::addr_of!(FS.descriptors) };
+    let d = &descriptors[idx];
+    Some((d.size as usize, d.is_dir != 0))
+}
+
+pub fn make_dir(name: &str) -> Result<usize, usize> {
+    if ramfs::is_ram_file(name) {
+        return Err(E_NOTSUP);
+    }
+    let (parent, base) = split_parent(name)?;
+    if find_file(name).is_some() {
+        return Err(E_EXIST);
+    }
+    let idx = alloc_desc().ok_or(E_NOSPC)?;
+    let descriptors = unsafe { &mut *core::ptr::addr_of_mut!(FS.descriptors) };
+    let desc = &mut descriptors[idx];
+    *desc = Descriptor::empty();
+    desc.is_dir = 1;
+    set_name(desc, base);
+    sync_desc(idx);
+    if let Err(e) = link(parent, idx) {
+        desc.filename = [0; 64];
+        sync_desc(idx);
+        free_desc(idx);
+        return Err(e);
+    }
+    Ok(idx)
+}
+
+pub fn remove(name: &str, dir: bool) -> Result<(), usize> {
+    if ramfs::is_ram_file(name) {
+        return Err(E_NOTSUP);
+    }
+    let (parent, _) = split_parent(name)?;
+    let idx = find_file(name).ok_or(E_NOENT)?;
+    let descriptors = unsafe { &mut *core::ptr::addr_of_mut!(FS.descriptors) };
+    let desc = &mut descriptors[idx];
+    if (desc.is_dir != 0) != dir {
+        return Err(if dir { E_NOTDIR } else { E_ISDIR });
+    }
+    if dir {
+        if desc.blocks.iter().any(|&b| b != 0) {
+            return Err(E_NOTEMPTY);
+        }
+    } else {
+        let used = (desc.size as usize + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        for (i, b) in desc.blocks.iter().enumerate() {
+            // Blocks past the size may belong to another file already.
+            if *b != 0 && i < used {
+                free_block(*b as usize);
+            }
+        }
+    }
+    unlink(parent, idx);
+    *desc = Descriptor::empty();
+    sync_desc(idx);
+    free_desc(idx);
+    Ok(())
+}
+
+// An existing file at the target is replaced; an existing directory is not.
+pub fn rename(from: &str, to: &str) -> Result<(), usize> {
+    if ramfs::is_ram_file(from) || ramfs::is_ram_file(to) {
+        return Err(E_NOTSUP);
+    }
+    let (from_parent, _) = split_parent(from)?;
+    let idx = find_file(from).ok_or(E_NOENT)?;
+    let (to_parent, base) = split_parent(to)?;
+    let (a, b) = (trim_path(from), trim_path(to));
+    if a == b {
+        return Ok(());
+    }
+    // A directory can't move inside itself.
+    if b.len() > a.len() && b.starts_with(a) && b.as_bytes()[a.len()] == b'/' {
+        return Err(E_INVAL);
+    }
+    if let Some(existing) = find_file(to) {
+        let descriptors = unsafe { &*core::ptr::addr_of!(FS.descriptors) };
+        if descriptors[existing].is_dir != 0 {
+            return Err(E_EXIST);
+        }
+        remove(to, false)?;
+    }
+    if from_parent != to_parent {
+        link(to_parent, idx)?;
+        unlink(from_parent, idx);
+    }
+    let descriptors = unsafe { &mut *core::ptr::addr_of_mut!(FS.descriptors) };
+    set_name(&mut descriptors[idx], base);
+    sync_desc(idx);
+    Ok(())
+}
+
+// The parent must exist; the descriptor stores only the last path component.
 pub fn create_file(name: &str) -> Option<usize> {
     if ramfs::is_ram_file(name) {
         return ramfs::create_file(name);
     }
     if find_file(name).is_some() { return None; }
-    
-    let desc_idx = alloc_desc()?;
+    let (parent, base) = split_parent(name).ok()?;
     let descriptors = unsafe { &mut *core::ptr::addr_of_mut!(FS.descriptors) };
+    if !descriptors[parent].blocks.iter().any(|&b| b == 0) {
+        return None;
+    }
+
+    let desc_idx = alloc_desc()?;
     let desc = &mut descriptors[desc_idx];
-    
-    desc.size = 0;
-    desc.is_dir = 0;
-    for i in 0..1024 { desc.blocks[i] = 0; }
-    
-    for i in 0..64 { desc.filename[i] = 0; }
-    let len = name.len().min(64);
-    desc.filename[..len].copy_from_slice(&name.as_bytes()[..len]);
-    
+    *desc = Descriptor::empty();
+    set_name(desc, base);
     sync_desc(desc_idx);
+    link(parent, desc_idx).ok()?;
     Some(desc_idx)
 }
 
@@ -305,10 +496,7 @@ pub fn read_file(desc_idx: usize, offset: usize, buf: &mut [u8]) -> usize {
         
         let chunk_size = (BLOCK_SIZE - offset_in_block).min(to_read - bytes_read);
 
-        // One multi-sector DMA covering the whole chunk (mount() already does
-        // 1MB transfers), then a single copy out of IO_BUF. The device DMAs
-        // into IO_BUF because it needs a physical address; `buf` may be a
-        // non-identity-mapped user buffer.
+        // DMA into IO_BUF, since buf may be a non-identity-mapped user buffer.
         let first_sector = offset_in_block / 512;
         let end_sector = (offset_in_block + chunk_size + 511) / 512;
         let sector = unsafe { P2_OFFSET } + (block_id as u64) * 2048 + first_sector as u64;
@@ -359,9 +547,7 @@ pub fn write_file(desc_idx: usize, offset: usize, buf: &[u8]) -> usize {
         
         let chunk_size = (BLOCK_SIZE - offset_in_block).min(to_write - bytes_written);
 
-        // Stage the whole chunk in IO_BUF and issue one multi-sector write.
-        // If the chunk doesn't cover the edge sectors completely, read the
-        // range first so the untouched bytes survive (read-modify-write).
+        // Read-modify-write when the chunk doesn't fully cover its edge sectors.
         let first_sector = offset_in_block / 512;
         let end_sector = (offset_in_block + chunk_size + 511) / 512;
         let sector_count = end_sector - first_sector;
@@ -409,7 +595,6 @@ pub fn list_fs() -> alloc::string::String {
     use alloc::string::String;
     let mut out = String::new();
     
-    // List RAMFS
     unsafe {
         for i in 0..ramfs::MAX_RAM_FILES {
             if let Some(ref file) = ramfs::RAM_FS.files[i] {
@@ -418,7 +603,6 @@ pub fn list_fs() -> alloc::string::String {
         }
     }
     
-    // List FatSquid
     unsafe {
         let bitmap = &*core::ptr::addr_of!(FS.desc_bitmap);
         for i in 0..MAX_DESCRIPTORS {
@@ -436,4 +620,40 @@ pub fn list_fs() -> alloc::string::String {
     }
     
     out
+}
+
+// Writes [next_cookie: u32][size: u32][desc: u32][is_dir: u8][name_len: u8][name...].
+// Returns its length, 0 at the end, or None if not a directory or buf is too small.
+pub fn read_dir_entry(dir_idx: usize, cookie: usize, buf: &mut [u8]) -> Option<usize> {
+    if dir_idx >= MAX_DESCRIPTORS {
+        return None;
+    }
+    let descriptors = unsafe { &*core::ptr::addr_of!(FS.descriptors) };
+    let dir = &descriptors[dir_idx];
+    if dir.is_dir == 0 {
+        return None;
+    }
+    for slot in cookie..dir.blocks.len() {
+        let child_idx = dir.blocks[slot] as usize;
+        if child_idx == 0 || child_idx >= MAX_DESCRIPTORS {
+            continue;
+        }
+        let child = &descriptors[child_idx];
+        let name_len = child.filename.iter().position(|&b| b == 0).unwrap_or(64);
+        if name_len == 0 {
+            continue;
+        }
+        let total = 14 + name_len;
+        if buf.len() < total {
+            return None;
+        }
+        buf[0..4].copy_from_slice(&((slot + 1) as u32).to_le_bytes());
+        buf[4..8].copy_from_slice(&child.size.to_le_bytes());
+        buf[8..12].copy_from_slice(&(child_idx as u32).to_le_bytes());
+        buf[12] = (child.is_dir != 0) as u8;
+        buf[13] = name_len as u8;
+        buf[14..total].copy_from_slice(&child.filename[..name_len]);
+        return Some(total);
+    }
+    Some(0)
 }

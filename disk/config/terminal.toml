@@ -1,0 +1,9 @@
+# Terminal settings, read when a terminal starts or comes back into view.
+
+# text in the first prompt pill
+prompt_name = "krake"
+# where new terminals start
+start_dir = "/"
+# keep command history in /config/history.txt across reboots
+save_history = true
+history_size = 500

@@ -6,11 +6,8 @@ use crate::widget::{Widget, WidgetId};
 use std::fs::File;
 use std::io::{Read, Write};
 
-/// A top-level window backed by the KrakeOS window device.
-///
-/// Presenting = writing `[x:u32][y:u32][w:u32][h:u32]` + BGRA pixels to
-/// `/dev/gpu/window`; the kernel compositor picks it up on its next tick.
-/// A header with `x == 0xFFFF_FFFF` is a resize request (w,h = new size).
+// A top-level window on /dev/gpu/window. Present writes a [x][y][w][h] u32
+// header then BGRA pixels; x == 0xFFFF_FFFF is a resize request to w, h.
 pub struct Window {
     file: File,
     keyboard: Option<File>,
@@ -29,7 +26,7 @@ pub struct Window {
 }
 
 impl Window {
-    /// Opens a window. Size is clamped to the screen (1024x552 usable).
+    // Opens a window. Size is clamped to the screen (1024x552 usable).
     pub fn new(title: &str, width: usize, height: usize) -> Option<Self> {
         let file = File::options().read(true).write(true).open("/dev/gpu/window").ok()?;
         let keyboard = File::options().read(true).open("/dev/input/keyboard").ok();
@@ -54,7 +51,7 @@ impl Window {
         Some(win)
     }
 
-    /// Ask the kernel to resize this window's buffer.
+    // Ask the kernel to resize this window's buffer.
     fn request_size(&mut self, w: usize, h: usize) {
         let mut header = Vec::with_capacity(16);
         header.extend_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
@@ -77,7 +74,7 @@ impl Window {
         self.dirty = true;
     }
 
-    /// Layout + paint the widget tree and present it.
+    // Layout and paint the widget tree, then present it.
     pub fn draw(&mut self) {
         let n = self.width * self.height;
         if self.buffer.len() != n {
@@ -97,7 +94,7 @@ impl Window {
         self.dirty = false;
     }
 
-    /// Send the buffer to the kernel compositor.
+    // Send the buffer to the kernel compositor.
     fn present(&mut self) {
         let mut data = Vec::with_capacity(16 + self.buffer.len() * 4);
         data.extend_from_slice(&0u32.to_le_bytes());
@@ -122,7 +119,7 @@ impl Window {
         }
     }
 
-    /// Drain pending keyboard events (kernel queue, 8 bytes per event).
+    // Drain pending keyboard events (kernel queue, 8 bytes per event).
     pub fn poll_events(&mut self) -> Vec<Event> {
         let mut out = Vec::new();
         let Some(kb) = self.keyboard.as_mut() else { return out };
@@ -174,9 +171,8 @@ impl Window {
         }
     }
 
-    /// Drain routed mouse events (kernel queue on the window fd). Each event
-    /// is 8 bytes: [x:u16][y:u16][button:u8][pressed:u8][_:u16], in
-    /// content-local coordinates.
+    // Drain mouse events from the window fd, 8 bytes each:
+    // [x:u16][y:u16][button:u8][pressed:u8][_:u16], content-local coordinates.
     fn poll_mouse(&mut self) -> Vec<(usize, usize, bool)> {
         let mut out = Vec::new();
         let mut buf = [0u8; 8];
@@ -189,14 +185,12 @@ impl Window {
         out
     }
 
-    /// One iteration of the standard event loop: mouse clicks (focus + button
-    /// activation), keyboard focus traversal (Tab), activation (Enter/Space),
-    /// and text input.
+    // One pass of the event loop: clicks, Tab focus traversal, Enter/Space
+    // activation and text input.
     pub fn event_loop(&mut self) {
         let mut any_redraw = false;
 
-        // Mouse: a press focuses the widget under the cursor and, if it's a
-        // button, fires its on_click handler.
+        // A press focuses the widget under the cursor and runs its handler.
         for (mx, my, pressed) in self.poll_mouse() {
             if !pressed {
                 continue;

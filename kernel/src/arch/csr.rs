@@ -10,16 +10,14 @@ pub fn read_time() -> u64 {
 
 pub fn enable_timer_interrupt() {
     unsafe {
-        // sie (Supervisor Interrupt Enable)
-        // Bit 5 is STIE (Supervisor Timer Interrupt Enable)
+        // sie bit 5: STIE
         asm!("csrs sie, {}", in(reg) 1 << 5);
     }
 }
 
 pub fn enable_global_interrupts() {
     unsafe {
-        // sstatus (Supervisor Status)
-        // Bit 1 is SIE (Supervisor Interrupt Enable)
+        // sstatus bit 1: SIE
         asm!("csrs sstatus, {}", in(reg) 1 << 1);
     }
 }
@@ -30,7 +28,15 @@ pub fn write_satp(val: u64) {
     }
 }
 
+// All harts share the page table, so flush remotely once SMP is up.
 pub fn sfence_vma() {
+    sfence_vma_local();
+    if crate::arch::smp::SMP.load(core::sync::atomic::Ordering::Relaxed) {
+        crate::arch::sbi::remote_sfence_vma_all();
+    }
+}
+
+pub fn sfence_vma_local() {
     unsafe {
         asm!("sfence.vma zero, zero");
     }

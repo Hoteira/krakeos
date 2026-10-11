@@ -1,24 +1,17 @@
-//! WASM → RISC-V AOT compiler for KrakeOS, repurposed from the x86_64
-//! compiler in ref/std/src/wasm/aot. Scope: core wasm modules + WASI
-//! preview 1 only — no component model, no preview 2.
-//!
-//! - `common/` is the arch-neutral reader/validator layer, ported nearly
-//!   verbatim from ref.
-//! - `aot/` is the RISC-V backend: Rv64Emitter (new), compiler (ported
-//!   per-instruction from the x86 version with a simplified ABI), runtime.
+// WASM to RISC-V AOT compiler for KrakeOS: core wasm modules plus WASI preview 1 only.
+// common/ is the arch-neutral reader and validator, aot/ is the RISC-V backend.
 
 #![no_std]
 
 extern crate alloc;
 
-/// Debug logging stub (the ref tree routed this to its kernel log). Enable
-/// by swapping the body for a UART write if needed.
+// Debug logging stub; swap the body for a UART write to enable.
 #[macro_export]
 macro_rules! debugln {
     ($($arg:tt)*) => {{ let _ = format_args!($($arg)*); }};
 }
 
-/// Trace logging stub (ref routed this to its kernel log).
+// Trace logging stub.
 #[macro_export]
 macro_rules! trace {
     ($($arg:tt)*) => {{ let _ = format_args!($($arg)*); }};
