@@ -17,3 +17,26 @@ exit()
 run explorer
 python viewer.wasm 
 run viewer.wasm 
+help
+calc
+ls
+cd config/
+ls
+cat system.toml 
+cat terminal.toml 
+cat editor.toml 
+cls
+ls
+cd ..
+l
+ls
+cd all
+cd apps/
+ls
+run python.wasm 
+ python
+calc
+bench
+run bench.wasm
+ls
+run explorer.wasm 
