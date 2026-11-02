@@ -77,12 +77,6 @@ impl Rect {
         (Rect { h: self.h - n, ..*self }, Rect { y: self.bottom() - n, h: n, ..*self })
     }
 
-    // Take n columns off the left: (left, rest).
-    pub fn take_left(&self, n: usize) -> (Rect, Rect) {
-        let n = n.min(self.w);
-        (Rect { w: n, ..*self }, Rect { x: self.x + n, w: self.w - n, ..*self })
-    }
-
     // Split top to bottom.
     pub fn split_v(&self, parts: &[Constraint]) -> Vec<Rect> {
         sizes(self.h, parts)

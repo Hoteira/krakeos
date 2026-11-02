@@ -24,9 +24,6 @@ pub mod ctx_off {
     pub const TABLE_LEN: i32 = 64;
     pub const FUNC_ADDRS: i32 = 72;
     pub const FUNC_TYPE_IDS: i32 = 80;
-    pub const USER_DATA: i32 = 88;
-    // Max bytes memory.grow may reach (checked by aot_memory_grow).
-    pub const MEM_CAP: i32 = 96;
     // extern "C" fn(ctx, delta_pages) -> old_pages | u64::MAX
     pub const GROW_FN: i32 = 104;
 }

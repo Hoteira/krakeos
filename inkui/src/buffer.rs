@@ -124,15 +124,6 @@ impl Buffer {
         }
     }
 
-    // Change a cell's colors but keep its character.
-    pub fn paint(&mut self, x: usize, y: usize, style: Style) {
-        if let Some(c) = self.get_mut(x, y) {
-            c.fg = style.fg;
-            c.bg = style.bg;
-            c.attrs = style.attrs;
-        }
-    }
-
     // Write s at (x, y), at most max_w cells. Returns the x after it.
     pub fn text(&mut self, x: usize, y: usize, s: &str, max_w: usize, style: Style) -> usize {
         let mut cx = x;

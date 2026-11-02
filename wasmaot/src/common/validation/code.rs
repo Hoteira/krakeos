@@ -4,11 +4,10 @@ use alloc::{
 };
 use crate::common::error::ValidationError;
 use crate::common::indices::{
-    DataIdx, ElemIdx, FuncIdx, GlobalIdx, LabelIdx, LocalIdx, MemIdx, TableIdx, TypeIdx,
+    FuncIdx, GlobalIdx, LabelIdx, LocalIdx, MemIdx, TableIdx, TypeIdx,
 };
-use crate::common::reader::section_header::{SectionHeader, SectionTy};
+use crate::common::reader::section_header::SectionHeader;
 use crate::common::reader::span::Span;
-use crate::common::reader::types::element::ElemType;
 use crate::common::reader::types::global::Global;
 use crate::common::reader::types::memarg::MemArg;
 use crate::common::reader::types::{BlockType, FuncType, MemType, NumType, TableType, ValType, RefType};
@@ -17,7 +16,7 @@ use crate::common::sidetable::{Sidetable, SidetableEntry};
 use crate::common::validation::validation_stack::{LabelInfo, ValidationStack};
 use core::iter;
 
-pub fn validate_code_section(
+pub(crate) fn validate_code_section(
     wasm: &mut WasmReader,
     _section_header: SectionHeader,
     fn_types: &[FuncType],
@@ -25,9 +24,7 @@ pub fn validate_code_section(
     num_imported_funcs: usize,
     globals: &[Global],
     memories: &[MemType],
-    data_count: &Option<u32>,
     tables: &[TableType],
-    elements: &[ElemType],
     validation_context_refs: &BTreeSet<FuncIdx>,
     sidetable: &mut Sidetable,
 ) -> Result<Vec<(Span, usize)>, ValidationError> {
@@ -55,9 +52,7 @@ pub fn validate_code_section(
             fn_types,
             type_idx_of_fn,
             memories,
-            data_count,
             tables,
-            elements,
             validation_context_refs,
         )?;
         if previous_pc + func_size as usize != wasm.pc {
@@ -139,9 +134,7 @@ fn read_instructions(
     fn_types: &[FuncType],
     type_idx_of_fn: &[usize],
     memories: &[MemType],
-    data_count: &Option<u32>,
     tables: &[TableType],
-    elements: &[ElemType],
     validation_context_refs: &BTreeSet<FuncIdx>,
 ) -> Result<(), ValidationError> {
     use crate::common::reader::types::opcode::*;

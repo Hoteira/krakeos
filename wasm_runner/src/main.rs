@@ -219,7 +219,7 @@ const WASI_ENOTDIR: u32 = 54;
 // (out.len() when more entries may follow) or a WASI errno.
 pub fn wasi_readdir(fd: usize, mut cookie: u64, out: &mut [u8]) -> Result<usize, u32> {
     let mut used = 0;
-    let mut rec = [0u8; 80];
+    let mut rec = [0u8; 14 + 255];
     loop {
         let r = sys_readdir(fd, cookie as usize, &mut rec);
         if r == usize::MAX {
@@ -235,7 +235,7 @@ pub fn wasi_readdir(fd: usize, mut cookie: u64, out: &mut [u8]) -> Result<usize,
 
         // dirent: d_next u64, d_ino u64, d_namlen u32, d_type u8, 3 pad, name.
         // d_ino must be nonzero or wasi-libc stats every entry to get one.
-        let mut ent = [0u8; 24 + 64];
+        let mut ent = [0u8; 24 + 255];
         ent[0..8].copy_from_slice(&next.to_le_bytes());
         ent[8..16].copy_from_slice(&ino.to_le_bytes());
         ent[16..20].copy_from_slice(&(name_len as u32).to_le_bytes());

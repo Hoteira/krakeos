@@ -16,16 +16,15 @@ RUN for app in shell calc terminal explorer viewer editor; do \
     done \
  && cargo build -p wasm_runner --target riscv64gc-unknown-none-elf --release
 
-# Disk image, with fatsquid_fmt built for the machine running the build
+# Disk image, with krake_fmt built for the machine running the build
 RUN host=$(rustc -vV | sed -n 's/^host: //p') \
- && cargo build -p fatsquid_fmt --target $host --release \
- && fmt=target/$host/release/fatsquid_fmt \
+ && cargo build -p krake_fmt --target $host --release \
+ && fmt=target/$host/release/krake_fmt \
  && mkdir -p disk/apps disk/bin disk/home disk/apps/lib/python3.13/lib-dynload \
  && for app in shell calc terminal explorer viewer editor; do \
         cp target/wasm32-wasip1/release/$app.wasm disk/apps/; \
     done \
  && cp target/riscv64gc-unknown-none-elf/release/wasm_runner disk/bin/wasm_runner.elf \
- && truncate -s 1G fs.img \
  && $fmt fs.img format \
  && $fmt fs.img pack disk
 

@@ -361,14 +361,6 @@ impl AotModule {
         self.ctx.user_data = ud;
     }
 
-    // Direct pointer into linear memory for host access to guest buffers.
-    pub fn memory_ptr(&self) -> *mut u8 {
-        self.ctx.mem_base
-    }
-    pub fn memory_len(&self) -> usize {
-        self.ctx.mem_size as usize
-    }
-
     pub fn ctx_ptr(&mut self) -> *mut AotContext {
         &mut self.ctx as *mut AotContext
     }
@@ -378,9 +370,7 @@ impl AotModule {
         self.ctx.trap_code = 0;
         let entry: EntryFn = unsafe { core::mem::transmute(self.entry_ptr) };
         let ctx_ptr = &mut self.ctx as *mut AotContext;
-        unsafe {
-            entry(ctx_ptr, self.op_stack_top, func_addr, self.native_stack_top);
-        }
+        entry(ctx_ptr, self.op_stack_top, func_addr, self.native_stack_top);
         if self.ctx.trap_code == 0 {
             Ok(())
         } else {

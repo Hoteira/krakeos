@@ -32,12 +32,6 @@ impl ElemType {
     pub fn ty(&self) -> RefType {
         self.init.ty()
     }
-    pub fn to_ref_type(&self) -> RefType {
-        match self.init {
-            ElemItems::Exprs(rref, _) => rref,
-            ElemItems::RefFuncs(_) => RefType::FuncRef,
-        }
-    }
     pub fn read_from_wasm(
         wasm: &mut WasmReader,
         functions: &[usize],

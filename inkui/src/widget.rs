@@ -1,4 +1,4 @@
-// Widgets: blocks, paragraphs, lists, line input, text editor, gauges, key hints.
+// Widgets: blocks, paragraphs, lists, line input, text editor, key hints.
 
 use crate::buffer::{Buffer, Line};
 use crate::event::{Key, KeyEvent};
@@ -806,42 +806,6 @@ impl TextArea {
     }
 }
 
-// A horizontal bar filled to ratio with eighth-cell precision.
-pub fn gauge(buf: &mut Buffer, area: Rect, ratio: f32, fill: Color, label: &str) {
-    if area.w == 0 || area.h == 0 {
-        return;
-    }
-    let track = with_alpha(p::SURFACE0, 0xC0);
-    let eighths = (ratio.clamp(0.0, 1.0) * (area.w * 8) as f32).round() as usize;
-    const PART: [char; 8] = [' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉'];
-    for x in 0..area.w {
-        let n = eighths.saturating_sub(x * 8).min(8);
-        let (ch, st) = match n {
-            8 => (' ', Style::new().bg(fill)),
-            0 => (' ', Style::new().bg(track)),
-            n => (PART[n], Style::new().fg(fill).bg(track)),
-        };
-        for y in area.y..area.bottom() {
-            buf.set(area.x + x, y, ch, st);
-        }
-    }
-    let lw = label.chars().count();
-    if lw > 0 && lw <= area.w {
-        let lx = area.x + (area.w - lw) / 2;
-        let ly = area.y + area.h / 2;
-        for (i, ch) in label.chars().enumerate() {
-            let x = lx + i;
-            let filled = (x - area.x) * 8 < eighths;
-            let st = if filled {
-                Style::new().fg(p::CRUST).bg(fill).bold()
-            } else {
-                Style::new().fg(p::TEXT).bg(track).bold()
-            };
-            buf.set(x, ly, ch, st);
-        }
-    }
-}
-
 // A row of key hints: each key drawn as a colored cap, then its label.
 pub fn hints(buf: &mut Buffer, area: Rect, items: &[(&str, &str)]) {
     let mut x = area.x;
@@ -881,13 +845,3 @@ pub fn human_size(n: u64) -> String {
     }
 }
 
-// A centered popup box: clears the area under it and draws a block.
-pub fn popup(buf: &mut Buffer, outer: Rect, w: usize, h: usize, title: &str) -> Rect {
-    let r = outer.center(w, h);
-    buf.fill(r, ' ', Style::new().bg(with_alpha(p::MANTLE, 0xF0)));
-    Block::new()
-        .title(Line::styled(title, Style::new().fg(p::ACCENT).bold()))
-        .gradient(p::ACCENT, p::ACCENT2)
-        .bg(with_alpha(p::MANTLE, 0xF0))
-        .render(buf, r)
-}

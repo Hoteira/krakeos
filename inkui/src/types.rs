@@ -6,10 +6,6 @@ pub type Color = u32;
 // The desktop's translucent default background.
 pub const GLASS: Color = 0;
 
-pub const fn rgb(r: u8, g: u8, b: u8) -> Color {
-    0xFF00_0000 | (r as u32) << 16 | (g as u32) << 8 | b as u32
-}
-
 pub const fn with_alpha(c: Color, a: u8) -> Color {
     (c & 0x00FF_FFFF) | (a as u32) << 24
 }
@@ -94,10 +90,5 @@ impl Style {
     pub const fn underline(mut self) -> Style {
         self.attrs |= UNDERLINE;
         self
-    }
-    // Swap foreground and background (an opaque one if the bg is glass).
-    pub const fn reversed(self) -> Style {
-        let bg = if self.bg >> 24 == 0 { palette::BASE } else { self.bg };
-        Style { fg: bg, bg: self.fg, attrs: self.attrs }
     }
 }

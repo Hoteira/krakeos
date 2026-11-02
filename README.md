@@ -28,8 +28,8 @@
 - VirtIO block, GPU, keyboard and tablet, a Goldfish real-time clock and the 16550 UART.
 
 **File system**
-- FatSquid, a custom file system with directories, rename, delete and truncation.
-- fatsquid_fmt, a host tool that formats, packs and extracts disk images, so settings and user files survive a rebuild.
+- FAT32 through the fatfs crate, with long file names, a cached allocation table and write-through sectors, so the disk image opens on Windows and Linux too.
+- krake_fmt, a host tool that formats, packs and extracts disk images, so settings and user files survive a rebuild.
 
 **WebAssembly runtime**
 - Every app is a WebAssembly module. wasm_runner loads it in user mode.

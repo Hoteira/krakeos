@@ -124,16 +124,6 @@ pub fn dispatch(frame: &mut TrapFrame) -> Option<usize> {
                     let copy_len = len.min(bytes.len());
                     buf[..copy_len].copy_from_slice(&bytes[..copy_len]);
                     copy_len
-                } else if fd == 108 {
-                    let fs_str = crate::fs::list_fs();
-                    let bytes = fs_str.as_bytes();
-                    if offset >= bytes.len() {
-                        0
-                    } else {
-                        let copy_len = core::cmp::min(len, bytes.len() - offset);
-                        buf[0..copy_len].copy_from_slice(&bytes[offset..offset+copy_len]);
-                        copy_len
-                    }
                 } else if fd == PROCS_FD {
                     let list = crate::sys::scheduler::Scheduler::list();
                     let bytes = list.as_bytes();
@@ -165,8 +155,6 @@ pub fn dispatch(frame: &mut TrapFrame) -> Option<usize> {
                     }
                 } else if fd > 0 && fd < crate::fs::MAX_DESCRIPTORS {
                     crate::fs::read_file(fd, offset, buf)
-                } else if fd >= 1024 {
-                    crate::fs::ramfs::read_file(fd, offset, buf)
                 } else {
                     0
                 };
@@ -212,13 +200,10 @@ pub fn dispatch(frame: &mut TrapFrame) -> Option<usize> {
                     } else {
                         frame.regs[10] = 0;
                     }
+                } else if fd > 0 && fd < crate::fs::MAX_DESCRIPTORS {
+                    frame.regs[10] = crate::fs::write_file(fd, offset, buf);
                 } else {
-                    let bw = if fd >= 1024 {
-                        crate::fs::ramfs::write_file(fd, offset, buf)
-                    } else {
-                        crate::fs::write_file(fd, offset, buf)
-                    };
-                    frame.regs[10] = bw;
+                    frame.regs[10] = 0;
                 }
             }
         }
@@ -252,8 +237,6 @@ pub fn dispatch(frame: &mut TrapFrame) -> Option<usize> {
                         frame.regs[10] = GPU_FONT_FD;
                     } else if path == "dev/gpu/info" {
                         frame.regs[10] = GPU_INFO_FD;
-                    } else if path == "dev/system/fs" {
-                        frame.regs[10] = 108;
                     } else if path == "dev/clipboard" {
                         if (flags & 8) != 0 {
                             CLIPBOARD.lock().clear();
@@ -268,19 +251,18 @@ pub fn dispatch(frame: &mut TrapFrame) -> Option<usize> {
                     } else if let Some(filename) = path.strip_prefix("spawn:/") {
                         SPAWN_QUEUE.lock().push_back(String::from(filename));
                         frame.regs[10] = 103; // Dummy success fd
-                    } else if let Some(desc_idx) = crate::fs::find_file(path) {
-                        if (flags & 8) != 0 {
-                            crate::fs::truncate_file(desc_idx, 0);
-                        }
-                        frame.regs[10] = desc_idx;
-                    } else if (flags & 1) != 0 {
-                        if let Some(desc_idx) = crate::fs::create_file(path) {
-                            frame.regs[10] = desc_idx;
-                        } else {
-                            frame.regs[10] = usize::MAX;
-                        }
                     } else {
-                        frame.regs[10] = usize::MAX;
+                        let found = crate::fs::find_file(path);
+                        if let (Some(idx), true) = (found, (flags & 8) != 0) {
+                            crate::fs::truncate_file(idx, 0);
+                        }
+                        let idx = found.or_else(|| if (flags & 1) != 0 { crate::fs::create_file(path) } else { None });
+                        if let Some(idx) = idx {
+                            if idx < crate::fs::MAX_DESCRIPTORS {
+                                crate::fs::retain(idx, crate::sys::scheduler::current_tid());
+                            }
+                        }
+                        frame.regs[10] = idx.unwrap_or(usize::MAX);
                     }
                 } else {
                     frame.regs[10] = usize::MAX;
@@ -358,7 +340,7 @@ pub fn dispatch(frame: &mut TrapFrame) -> Option<usize> {
                 CLIPBOARD.lock().len()
             } else if crate::sys::pipe::is_pipe_fd(fd) {
                 crate::sys::pipe::status(fd)
-            } else if fd > 0 && fd < crate::fs::MAX_DESCRIPTORS || fd >= crate::fs::ramfs::RAMFS_DESC_OFFSET && fd < crate::sys::desktop::TTY_FD_BASE {
+            } else if fd > 0 && fd < crate::fs::MAX_DESCRIPTORS {
                 crate::fs::get_file_size(fd)
             } else {
                 0
@@ -376,7 +358,7 @@ pub fn dispatch(frame: &mut TrapFrame) -> Option<usize> {
                 (_, None) => crate::fs::E_INVAL,
                 (FSOP_UNLINK, Some(p)) => err(crate::fs::remove(p, false)),
                 (FSOP_RMDIR, Some(p)) => err(crate::fs::remove(p, true)),
-                (FSOP_MKDIR, Some(p)) => err(crate::fs::make_dir(p).map(|_| ())),
+                (FSOP_MKDIR, Some(p)) => err(crate::fs::make_dir(p)),
                 (FSOP_RENAME, Some(p)) => match path(a3, a4) {
                     Some(to) => err(crate::fs::rename(p, to)),
                     None => crate::fs::E_INVAL,
@@ -389,9 +371,12 @@ pub fn dispatch(frame: &mut TrapFrame) -> Option<usize> {
             };
         }
         SYS_CLOSE => {
-            // File and device fds have nothing to release; a tty fd closes the desktop.
+            // A tty fd closes the desktop; device fds have nothing to release.
             let fd = a0;
-            frame.regs[10] = if crate::sys::pipe::is_pipe_fd(fd) {
+            frame.regs[10] = if fd > 0 && fd < crate::fs::MAX_DESCRIPTORS {
+                crate::fs::release(fd, crate::sys::scheduler::current_tid());
+                0
+            } else if crate::sys::pipe::is_pipe_fd(fd) {
                 crate::sys::pipe::close(fd);
                 0
             } else if fd >= crate::sys::desktop::TTY_FD_BASE {

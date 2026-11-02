@@ -1,5 +1,4 @@
 use crate::math::FloatMath;
-use crate::common::reader::types::{NumType, ValType};
 use crate::common::reader::types::RefType;
 use core::fmt::{Debug, Display};
 use core::ops::{Add, Div, Mul, Sub};
@@ -129,12 +128,6 @@ impl F32 {
     }
     pub fn as_u64(&self) -> u64 {
         self.0 as u64
-    }
-    pub fn as_f64(&self) -> F64 {
-        F64(self.0 as f64)
-    }
-    pub fn reinterpret_as_i32(&self) -> i32 {
-        self.0.to_bits() as i32
     }
     pub fn to_bits(&self) -> u32 {
         self.0.to_bits()
@@ -266,12 +259,6 @@ impl F64 {
     pub fn as_u64(&self) -> u64 {
         self.0 as u64
     }
-    pub fn as_f32(&self) -> F32 {
-        F32(self.0 as f32)
-    }
-    pub fn reinterpret_as_i64(&self) -> i64 {
-        self.0.to_bits() as i64
-    }
     pub fn to_bits(&self) -> u64 {
         self.0.to_bits()
     }
@@ -318,52 +305,7 @@ impl Ref {
 pub struct ExternAddr(pub usize);
 
 impl Value {
-    pub fn default_from_ty(ty: ValType) -> Self {
-        match ty {
-            ValType::NumType(NumType::I32) => Self::I32(0),
-            ValType::NumType(NumType::I64) => Self::I64(0),
-            ValType::NumType(NumType::F32) => Self::F32(F32(0.0)),
-            ValType::NumType(NumType::F64) => Self::F64(F64(0.0_f64)),
-            ValType::RefType(ref_type) => Self::Ref(Ref::Null(ref_type)),
-            ValType::VecType => Self::V128([0; 16]),
-        }
-    }
-    pub fn to_u128(&self) -> u128 {
-        match self {
-            Value::I32(x) => *x as u128,
-            Value::I64(x) => *x as u128,
-            Value::F32(x) => x.to_bits() as u128,
-            Value::F64(x) => x.to_bits() as u128,
-            Value::V128(x) => u128::from_le_bytes(*x),
-            Value::Ref(Ref::Func(addr)) => *addr as u128,
-            Value::Ref(_) => 0,
-        }
-    }
 
-    pub fn from_u128(val: u128, ty: ValType) -> Self {
-        match ty {
-            ValType::NumType(NumType::I32) => Value::I32(val as u32),
-            ValType::NumType(NumType::I64) => Value::I64(val as u64),
-            ValType::NumType(NumType::F32) => Value::F32(F32::from_bits(val as u32)),
-            ValType::NumType(NumType::F64) => Value::F64(F64::from_bits(val as u64)),
-            ValType::VecType => Value::V128(val.to_le_bytes()),
-            ValType::RefType(crate::common::reader::types::RefType::FuncRef) => Value::Ref(Ref::Func(val as usize)),
-            _ => Value::I32(0),
-        }
-    }
-
-    pub fn to_ty(&self) -> ValType {
-        match self {
-            Value::I32(_) => ValType::NumType(NumType::I32),
-            Value::I64(_) => ValType::NumType(NumType::I64),
-            Value::F32(_) => ValType::NumType(NumType::F32),
-            Value::F64(_) => ValType::NumType(NumType::F64),
-            Value::Ref(Ref::Null(ref_type)) => ValType::RefType(*ref_type),
-            Value::Ref(Ref::Func(_)) => ValType::RefType(crate::common::reader::types::RefType::FuncRef),
-            Value::Ref(Ref::Extern(_)) => ValType::RefType(crate::common::reader::types::RefType::ExternRef),
-            Value::V128(_) => ValType::VecType,
-        }
-    }
 }
 
 #[derive(Debug, PartialEq, Eq)]

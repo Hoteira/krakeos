@@ -19,14 +19,6 @@ impl<'a> WasmReader<'a> {
         }
     }
 
-    pub fn move_start_to(&mut self, span: Span) -> Result<(), ValidationError> {
-        if span.from + span.len > self.full_wasm_binary.len() {
-            return Err(ValidationError::Eof);
-        }
-        self.pc = span.from;
-        Ok(())
-    }
-
     pub fn remaining_bytes(&self) -> &[u8] {
         &self.full_wasm_binary[self.pc..]
     }
@@ -47,34 +39,11 @@ impl<'a> WasmReader<'a> {
         Ok(bytes.try_into().expect("the slice length to be exactly N"))
     }
 
-    pub fn strip_bytes_dynamic(&mut self, len: usize) -> Result<&'a [u8], ValidationError> {
-        if len > self.full_wasm_binary.len() - self.pc {
-            return Err(ValidationError::Eof);
-        }
-        let bytes = &self.full_wasm_binary[self.pc..(self.pc + len)];
-        self.pc += len;
-        Ok(bytes)
-    }
-
     pub fn peek_u8(&self) -> Result<u8, ValidationError> {
         self.full_wasm_binary
             .get(self.pc)
             .copied()
             .ok_or(ValidationError::Eof)
-    }
-
-    pub fn measure_num_read_bytes<T>(
-        &mut self,
-        f: impl FnOnce(&mut WasmReader) -> Result<T, ValidationError>,
-    ) -> Result<(T, usize), ValidationError> {
-        let before = self.pc;
-        let ret = f(self)?;
-        debug_assert!(
-            self.pc >= before,
-            "pc was advanced backwards towards the start"
-        );
-        let num_read_bytes = self.pc - before;
-        Ok((ret, num_read_bytes))
     }
 
     pub fn skip(&mut self, num_bytes: usize) -> Result<(), ValidationError> {

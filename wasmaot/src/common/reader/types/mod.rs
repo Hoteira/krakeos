@@ -195,9 +195,6 @@ pub struct Limits {
 }
 
 impl Limits {
-    pub const MAX_MEM_PAGES: u32 = 1 << 16;
-    pub const MAX_MEM_BYTES: u32 = u32::MAX;
-    pub const MEM_PAGE_SIZE: u32 = 1 << 16;
 }
 
 impl ImportSubTypeRelation for Limits {

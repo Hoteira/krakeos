@@ -6,3 +6,4 @@ edition = "2021"
 [dependencies]
 linked_list_allocator = "0.10.6"
 spin = "0.9.8"
+fatfs = { git = "https://github.com/rafalh/rust-fatfs", rev = "38b3a7950bf0e765e34286d1dfe76c519ee347e2", default-features = false, features = ["alloc", "lfn"] }

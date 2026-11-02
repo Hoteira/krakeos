@@ -127,7 +127,7 @@ pub fn validate(wasm: &[u8]) -> Result<ValidationInfo<'_>, ValidationError> {
 
     let mut header = None;
     read_next_header(&mut wasm_reader, &mut header)?;
-    let mut skip_section = |wasm: &mut WasmReader, section_header: &mut Option<SectionHeader>| {
+    let skip_section = |wasm: &mut WasmReader, section_header: &mut Option<SectionHeader>| {
         handle_section(wasm, section_header, SectionTy::Custom, |wasm, h| {
             let _name = wasm.read_name()?;
             let remaining_bytes = h
@@ -281,9 +281,7 @@ pub fn validate(wasm: &[u8]) -> Result<ValidationInfo<'_>, ValidationError> {
             num_imported_funcs,
             &all_globals,
             &all_memories,
-            &data_count,
             &all_tables,
-            &elements,
             &validation_context_refs,
             &mut sidetable,
         )

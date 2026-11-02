@@ -137,6 +137,7 @@ impl Scheduler {
             crate::sys::desktop::destroy_of(tid);
             crate::sys::appmem::release_all_of(tid);
             crate::sys::pipe::thread_exited(tid);
+            crate::fs::thread_exited(tid);
             SCHEDULER.threads[tid].state = ThreadState::Dead;
             let h = hart();
             if FPU_OWNER[h] == Some(tid) {

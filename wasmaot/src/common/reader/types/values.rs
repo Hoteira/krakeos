@@ -244,24 +244,6 @@ impl WasmReader<'_> {
         core::str::from_utf8(utf8_str).map_err(ValidationError::MalformedUtf8)
     }
 
-    pub fn read_component_name(&mut self) -> Result<alloc::string::String, ValidationError> {
-        use alloc::string::ToString;
-        use alloc::format;
-        let tag = self.read_u8()?;
-        match tag {
-            0x00 | 0x01 => Ok(self.read_name()?.to_string()),
-            0x02 => {
-                let s1 = self.read_name()?.to_string();
-                let s2 = self.read_name()?.to_string();
-                Ok(format!("{}:{}", s1, s2))
-            }
-            _ => {
-                crate::debugln!("Invalid component name tag: {:#x} at pc {:#x}", tag, self.pc - 1);
-                Err(ValidationError::Component(tag))
-            }
-        }
-    }
-
     pub fn read_vec_enumerated<T, F>(
         &mut self,
         mut read_element: F,

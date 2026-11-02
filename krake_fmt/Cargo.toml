@@ -1,0 +1,8 @@
+[package]
+name = "krake_fmt"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fatfs = { git = "https://github.com/rafalh/rust-fatfs", rev = "38b3a7950bf0e765e34286d1dfe76c519ee347e2" }
+fscommon = "0.1.1"

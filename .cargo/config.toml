@@ -2,5 +2,5 @@
 target = "riscv64gc-unknown-none-elf"
 
 [target.riscv64gc-unknown-none-elf]
-
-runner = "qemu-system-riscv64 -machine virt -bios default -drive file=fs.img,format=raw,if=none,id=hd0,cache=writethrough -device virtio-blk-device,drive=hd0 -device virtio-gpu-device -display gtk,zoom-to-fit=off -kernel"
+# Used by cargo run -p kernel --release, with fs.img built by run.bat.
+runner = "qemu-system-riscv64 -machine virt -bios default -smp 4 -m 512M -drive file=fs.img,format=raw,if=none,id=hd0,cache=writethrough -device virtio-blk-device,drive=hd0 -device virtio-gpu-device -device virtio-keyboard-device -device virtio-tablet-device -serial stdio -kernel"

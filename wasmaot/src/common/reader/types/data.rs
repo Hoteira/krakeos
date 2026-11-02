@@ -1,4 +1,4 @@
-use alloc::{format, vec::Vec};
+use alloc::vec::Vec;
 use crate::common::{indices::MemIdx, reader::span::Span};
 use core::fmt::{Debug, Formatter};
 

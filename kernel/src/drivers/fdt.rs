@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use core::slice;
 
 const FDT_MAGIC: u32 = 0xd00dfeed;
@@ -22,7 +21,6 @@ struct FdtHeader {
 }
 
 pub struct FdtParser<'a> {
-    data: &'a [u8],
     dt_struct: &'a [u8],
     dt_strings: &'a [u8],
 }
@@ -46,7 +44,6 @@ impl<'a> FdtParser<'a> {
         let dt_strings = &data[off_dt_strings..off_dt_strings + size_dt_strings];
 
         Some(Self {
-            data,
             dt_struct,
             dt_strings,
         })
