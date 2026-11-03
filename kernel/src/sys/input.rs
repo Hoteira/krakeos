@@ -1,5 +1,5 @@
 // Keyboard routing: Win shortcuts go to the desktop manager, other keys to the visible app.
-// Fn and Right Ctrl act as Win, for remote sessions where the host swallows Win.
+// Right Ctrl acts as Win, for remote sessions where the host swallows Win.
 
 pub const EV_KEY: u16 = 1;
 
@@ -19,8 +19,7 @@ const KEY_LEFTALT: u16 = 56;
 const KEY_RIGHTALT: u16 = 100;
 const KEY_LEFTMETA: u16 = 125;
 const KEY_RIGHTMETA: u16 = 126;
-// Fn, for keyboards that report it.
-const KEY_FN: u16 = 0x1d0;
+
 const KEY_CAPSLOCK: u16 = 58;
 const KEY_ENTER: u16 = 28;
 const KEY_Q: u16 = 16;
@@ -42,7 +41,7 @@ fn spawn_terminal() {
 }
 
 pub fn push_event(type_: u16, code: u16, value: u32) {
-    if type_ != EV_KEY || (code >= 0x100 && code != KEY_FN) {
+    if type_ != EV_KEY || (code >= 0x100) {
         return; // pointer motion, buttons, sync
     }
     let down = value != 0;
@@ -51,9 +50,10 @@ pub fn push_event(type_: u16, code: u16, value: u32) {
         KEY_LEFTCTRL => MOD_CTRL,
         KEY_LEFTALT => MOD_ALT,
         KEY_RIGHTALT => MOD_ALTGR,
-        KEY_LEFTMETA | KEY_RIGHTMETA | KEY_FN | KEY_RIGHTCTRL => MOD_SUPER,
+        KEY_LEFTMETA | KEY_RIGHTMETA | KEY_RIGHTCTRL => MOD_SUPER,
         _ => 0,
     };
+
     unsafe {
         if bit == MOD_SUPER {
             if value == 1 {

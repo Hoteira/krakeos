@@ -10,8 +10,7 @@ use crate::drivers::virtio_gpu as gpu;
 pub const TTY_FD_BASE: usize = 0x5000_0000;
 const MAX_DESKTOPS: usize = 12;
 
-// ch: codepoint in the low 21 bits plus attribute bits. Colors are 0xAARRGGBB;
-// bg alpha 0 means the translucent default (glass), other alphas blend over it.
+// ch: codepoint in the low 21 bits plus attribute bits. Colors are 0xAARRGGBB
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq)]
 pub struct Cell {
@@ -24,9 +23,13 @@ pub const CELL_BYTES: usize = 12;
 pub const ATTR_BOLD: u32 = 1 << 24;
 pub const ATTR_UNDERLINE: u32 = 1 << 25;
 const CP_MASK: u32 = 0x1F_FFFF;
-const BLANK: Cell = Cell { ch: b' ' as u32, fg: 0xFFCD_D6F4, bg: 0 };
+const BLANK: Cell = Cell {
+    ch: b' ' as u32,
+    fg: 0xFFCD_D6F4,
+    bg: 0,
+};
 
-// Events read from a tty fd: 16 bytes, [kind u32][a i32][b i32][c u32].
+// Events read from a tty fd: 16 bytes, [kind u32][a i32][b i32][c u32]
 pub const EV_RESIZE: u32 = 1; // a = cols, b = rows
 pub const EV_KEY: u32 = 5; // a = key code, b = 0 up / 1 down / 2 repeat, c = mods
 pub const EV_FOCUS: u32 = 6; // a = 1 gained, 0 lost
@@ -52,10 +55,10 @@ struct Desktop {
     cols: usize,
     rows: usize,
     cells: Vec<Cell>,
-    // Panel image (panel_w * panel_h): frame, glass and drawn cells.
+    // Panel image (panel_w * panel_h): frame, glass and drawn cells
     pix: Vec<u32>,
     events: VecDeque<[u32; 4]>,
-    // Win+Q sent and no key since; a second Win+Q kills the app.
+    // Win+Q sent and no key since; a second Win+Q kills the app
     quit_sent: bool,
 }
 
@@ -73,7 +76,11 @@ impl Atlas {
     fn index(&self, cp: u32) -> Option<usize> {
         if cp < 128 {
             let i = self.ascii[cp as usize];
-            return if i == u16::MAX { None } else { Some(i as usize) };
+            return if i == u16::MAX {
+                None
+            } else {
+                Some(i as usize)
+            };
         }
         self.codepoints.binary_search(&cp).ok()
     }
@@ -94,9 +101,9 @@ impl Atlas {
 struct Manager {
     desktops: Vec<Desktop>,
     next_id: usize,
-    // Visible position: 0 = home, p = desktops[p - 1].
+    // Visible position: 0 = home, p = desktops[p - 1]
     current: usize,
-    // Camera x along the strip of desktops (position p sits at p * width).
+    // Camera x along the strip of desktops (position p sits at p * width)
     cam: i64,
     anim_from: i64,
     anim_start: u64,
@@ -107,7 +114,7 @@ struct Manager {
     glass: Vec<u32>,
     home: Vec<u32>,
     atlas: Option<Atlas>,
-    // Background or atlas changed: redraw every panel before composing.
+    // Background or atlas changed: redraw every panel before composing
     restyle: bool,
     damage: Option<(usize, usize, usize, usize)>,
     last_frame: u64,
@@ -141,7 +148,7 @@ fn div255(v: u32) -> u32 {
     (v + 1 + (v >> 8)) >> 8
 }
 
-// Mix b over a with weight t (0..=255).
+// Mix b over a with weight t (0..=255)
 #[inline]
 fn mix(a: u32, b: u32, t: u32) -> u32 {
     if t == 0 {
@@ -170,15 +177,27 @@ fn isqrt(n: u64) -> u64 {
     x
 }
 
-// Coverage (0..=256) of pixel (px, py) by a w x h rounded rect, sampled at the pixel center.
+// Coverage (0..=256) of pixel (px, py) by a w x h rounded rect, sampled at the pixel center
 fn rr_coverage(px: usize, py: usize, w: usize, h: usize, r: usize) -> u32 {
     if px >= w || py >= h {
         return 0;
     }
     let (r16, cx, cy) = ((r * 16) as i64, (px * 16 + 8) as i64, (py * 16 + 8) as i64);
     let (w16, h16) = ((w * 16) as i64, (h * 16) as i64);
-    let dx = if cx < r16 { r16 - cx } else if cx > w16 - r16 { cx - (w16 - r16) } else { 0 };
-    let dy = if cy < r16 { r16 - cy } else if cy > h16 - r16 { cy - (h16 - r16) } else { 0 };
+    let dx = if cx < r16 {
+        r16 - cx
+    } else if cx > w16 - r16 {
+        cx - (w16 - r16)
+    } else {
+        0
+    };
+    let dy = if cy < r16 {
+        r16 - cy
+    } else if cy > h16 - r16 {
+        cy - (h16 - r16)
+    } else {
+        0
+    };
     if dx == 0 || dy == 0 {
         return 256;
     }
@@ -188,7 +207,10 @@ fn rr_coverage(px: usize, py: usize, w: usize, h: usize, r: usize) -> u32 {
 
 impl Manager {
     fn panel(&self) -> (usize, usize) {
-        (self.w.saturating_sub(2 * GAP), self.h.saturating_sub(2 * GAP))
+        (
+            self.w.saturating_sub(2 * GAP),
+            self.h.saturating_sub(2 * GAP),
+        )
     }
 
     fn cell_size(&self) -> (usize, usize) {
@@ -202,21 +224,33 @@ impl Manager {
         let (pw, ph) = self.panel();
         let (cw, ch) = self.cell_size();
         let inset = 2 * (BORDER + PAD);
-        ((pw.saturating_sub(inset) / cw).max(1), (ph.saturating_sub(inset) / ch).max(1))
+        (
+            (pw.saturating_sub(inset) / cw).max(1),
+            (ph.saturating_sub(inset) / ch).max(1),
+        )
     }
 
     fn grid_origin(&self, cols: usize, rows: usize) -> (usize, usize) {
         let (pw, ph) = self.panel();
         let (cw, ch) = self.cell_size();
-        ((pw.saturating_sub(cols * cw)) / 2, (ph.saturating_sub(rows * ch)) / 2)
+        (
+            (pw.saturating_sub(cols * cw)) / 2,
+            (ph.saturating_sub(rows * ch)) / 2,
+        )
     }
 
     fn glass_at(&self, x: usize, y: usize) -> u32 {
-        self.glass.get(y * self.w + x).copied().unwrap_or(GLASS_FALLBACK)
+        self.glass
+            .get(y * self.w + x)
+            .copied()
+            .unwrap_or(GLASS_FALLBACK)
     }
 
     fn wall_at(&self, x: usize, y: usize) -> u32 {
-        self.wallpaper.get(y * self.w + x).copied().unwrap_or(0xFF11_111B)
+        self.wallpaper
+            .get(y * self.w + x)
+            .copied()
+            .unwrap_or(0xFF11_111B)
     }
 
     fn find(&self, id: usize) -> Option<usize> {
@@ -224,7 +258,7 @@ impl Manager {
     }
 }
 
-// Rounded corners showing the wallpaper, a gradient border and glass inside.
+// Rounded corners showing the wallpaper, a gradient border and glass inside
 fn draw_frame(m: &Manager, pix: &mut [u32]) {
     let (pw, ph) = m.panel();
     if pix.len() < pw * ph {
@@ -242,7 +276,13 @@ fn draw_frame(m: &Manager, pix: &mut [u32]) {
             }
             let outer = rr_coverage(x, y, pw, ph, RADIUS);
             let inner = if x >= BORDER && y >= BORDER {
-                rr_coverage(x - BORDER, y - BORDER, pw - 2 * BORDER, ph - 2 * BORDER, RADIUS - BORDER)
+                rr_coverage(
+                    x - BORDER,
+                    y - BORDER,
+                    pw - 2 * BORDER,
+                    ph - 2 * BORDER,
+                    RADIUS - BORDER,
+                )
             } else {
                 0
             };
@@ -265,13 +305,17 @@ fn draw_cell(m: &Manager, d: &mut Desktop, col: usize, row: usize) {
     let glyph = if cp == b' ' as u32 || cp == 0 {
         None
     } else {
-        m.atlas.as_ref().and_then(|a| a.glyph(cp, c.ch & ATTR_BOLD != 0))
+        m.atlas
+            .as_ref()
+            .and_then(|a| a.glyph(cp, c.ch & ATTR_BOLD != 0))
     };
     let bg_a = c.bg >> 24;
     let underline = c.ch & ATTR_UNDERLINE != 0;
     for y in 0..chh {
         let row_off = (py0 + y) * pw + px0;
-        let Some(dst) = d.pix.get_mut(row_off..row_off + cw) else { return };
+        let Some(dst) = d.pix.get_mut(row_off..row_off + cw) else {
+            return;
+        };
         for x in 0..cw {
             let base = if bg_a == 255 {
                 c.bg
@@ -311,7 +355,9 @@ fn draw_text(m: &Manager, buf: &mut [u32], x0: usize, y0: usize, text: &str, fg:
         if ch == ' ' {
             continue;
         }
-        let Some(gl) = atlas.glyph(ch as u32, bold) else { continue };
+        let Some(gl) = atlas.glyph(ch as u32, bold) else {
+            continue;
+        };
         for y in 0..chh {
             for x in 0..cw {
                 let (sx, sy) = (x0 + i * cw + x, y0 + y);
@@ -358,7 +404,15 @@ fn redraw_home(m: &mut Manager) {
             }
         }
         draw_text(m, &mut home, tx, ty, key, 0xFF1E_1E2E, true);
-        draw_text(m, &mut home, tx + key.len() * cw, ty, rest, 0xFFCD_D6F4, false);
+        draw_text(
+            m,
+            &mut home,
+            tx + key.len() * cw,
+            ty,
+            rest,
+            0xFFCD_D6F4,
+            false,
+        );
     }
     m.home = home;
 }
@@ -406,33 +460,40 @@ fn damage_all(m: &mut Manager) {
 // Positions past the last desktop show the wallpaper.
 unsafe fn copy_row(m: &Manager, p: usize, y: usize, x: usize, len: usize, dst: *mut u32) {
     let w = m.w;
-    let wall = m.wallpaper.as_ptr().add(y * w);
-    if p == 0 {
-        let src = if m.home.len() == w * m.h { m.home.as_ptr().add(y * w) } else { wall };
-        core::ptr::copy_nonoverlapping(src.add(x), dst, len);
-        return;
-    }
-    let (pw, ph) = m.panel();
-    let d = match m.desktops.get(p - 1) {
-        Some(d) if y >= GAP && y < GAP + ph && d.pix.len() == pw * ph => d,
-        _ => {
-            core::ptr::copy_nonoverlapping(wall.add(x), dst, len);
+    let wall = unsafe { m.wallpaper.as_ptr().add(y * w) };
+
+    unsafe {
+        if p == 0 {
+            let src = if m.home.len() == w * m.h {
+                m.home.as_ptr().add(y * w)
+            } else {
+                wall
+            };
+            core::ptr::copy_nonoverlapping(src.add(x), dst, len);
             return;
         }
-    };
-    let prow = d.pix.as_ptr().add((y - GAP) * pw);
-    let end = x + len;
-    let mut cx = x;
-    while cx < end {
-        let (seg_end, src) = if cx < GAP {
-            (GAP.min(end), wall.add(cx))
-        } else if cx < GAP + pw {
-            ((GAP + pw).min(end), prow.add(cx - GAP))
-        } else {
-            (end, wall.add(cx))
+        let (pw, ph) = m.panel();
+        let d = match m.desktops.get(p - 1) {
+            Some(d) if y >= GAP && y < GAP + ph && d.pix.len() == pw * ph => d,
+            _ => {
+                core::ptr::copy_nonoverlapping(wall.add(x), dst, len);
+                return;
+            }
         };
-        core::ptr::copy_nonoverlapping(src, dst.add(cx - x), seg_end - cx);
-        cx = seg_end;
+        let prow = d.pix.as_ptr().add((y - GAP) * pw);
+        let end = x + len;
+        let mut cx = x;
+        while cx < end {
+            let (seg_end, src) = if cx < GAP {
+                (GAP.min(end), wall.add(cx))
+            } else if cx < GAP + pw {
+                ((GAP + pw).min(end), prow.add(cx - GAP))
+            } else {
+                (end, wall.add(cx))
+            };
+            core::ptr::copy_nonoverlapping(src, dst.add(cx - x), seg_end - cx);
+            cx = seg_end;
+        }
     }
 }
 
@@ -441,7 +502,12 @@ fn dots_rect(m: &Manager) -> (usize, usize, usize, usize) {
     let n = m.desktops.len() + 1;
     let w = n * 12 + 8;
     let h = 6;
-    (m.w.saturating_sub(w) / 2, m.h.saturating_sub(GAP / 2 + h / 2 + 0), w, h)
+    (
+        m.w.saturating_sub(w) / 2,
+        m.h.saturating_sub(GAP / 2 + h / 2 + 0),
+        w,
+        h,
+    )
 }
 
 unsafe fn draw_dots(m: &Manager, fb: *mut u32) {
@@ -451,13 +517,19 @@ unsafe fn draw_dots(m: &Manager, fb: *mut u32) {
     let (x0, y0, _, h) = dots_rect(m);
     let mut x = x0;
     for p in 0..=m.desktops.len() {
-        let (dw, col) = if p == m.current { (14, DOT_ON) } else { (6, DOT_OFF) };
+        let (dw, col) = if p == m.current {
+            (14, DOT_ON)
+        } else {
+            (6, DOT_OFF)
+        };
         for y in 0..h {
             for i in 0..dw {
                 let cov = rr_coverage(i, y, dw, h, h / 2);
                 if cov > 0 && x + i < m.w && y0 + y < m.h {
-                    let px = fb.add((y0 + y) * m.w + x + i);
-                    *px = mix(*px, col, (cov * 255) >> 8);
+                    unsafe {
+                        let px = fb.add((y0 + y) * m.w + x + i);
+                        *px = mix(*px, col, (cov * 255) >> 8);
+                    }
                 }
             }
         }
@@ -503,7 +575,9 @@ pub fn tick() {
 }
 
 fn compose(m: &mut Manager) {
-    let Some((mut x0, mut y0, mut x1, mut y1)) = m.damage.take() else { return };
+    let Some((mut x0, mut y0, mut x1, mut y1)) = m.damage.take() else {
+        return;
+    };
     let (w, h) = (gpu::width() as usize, gpu::height() as usize);
     if w != m.w || h != m.h || m.wallpaper.len() != w * h {
         return;
@@ -611,7 +685,7 @@ fn remove_at(m: &mut Manager, i: usize) {
         }
         damage_all(m);
     } else if p == m.current {
-        // Glide over to the left neighbour.
+        // Glide over to the left neighbour
         m.current = p - 1;
         if m.current >= 1 {
             push_event(&mut m.desktops[m.current - 1], [EV_FOCUS, 1, 0, 0]);
@@ -624,7 +698,7 @@ fn remove_at(m: &mut Manager, i: usize) {
     }
 }
 
-// Win+Q: close the visible app's desktop and stop the app.
+// Win+Q: close the visible app's desktop and stop the app
 pub fn close_current() {
     let m = dm();
     if m.current == 0 {
@@ -632,7 +706,7 @@ pub fn close_current() {
     }
     let d = &mut m.desktops[m.current - 1];
     if !d.quit_sent {
-        // Ask nicely first; the app closes its desktop when it exits.
+        // Ask nicely first; the app closes its desktop when it exits
         d.quit_sent = true;
         push_event(d, [EV_QUIT, 0, 0, 0]);
         return;
@@ -699,29 +773,35 @@ fn owned(fd: usize) -> Option<usize> {
     Some(i)
 }
 
-// Records: [x, y, w, h] (u32, in cells) then w*h 12-byte cells, repeated.
+// Records: [x, y, w, h] (u32, in cells) then w*h 12-byte cells, repeated
 pub fn write_tty(fd: usize, data: &[u8]) -> usize {
     let Some(i) = owned(fd) else { return 0 };
     let m = dm();
-    let mut d = core::mem::replace(&mut m.desktops[i], Desktop {
-        id: 0,
-        owner: 0,
-        cols: 0,
-        rows: 0,
-        cells: Vec::new(),
-        pix: Vec::new(),
-        events: VecDeque::new(),
-        quit_sent: false,
-    });
+    let mut d = core::mem::replace(
+        &mut m.desktops[i],
+        Desktop {
+            id: 0,
+            owner: 0,
+            cols: 0,
+            rows: 0,
+            cells: Vec::new(),
+            pix: Vec::new(),
+            events: VecDeque::new(),
+            quit_sent: false,
+        },
+    );
     let visible = !m.animating && m.current == i + 1;
     let (cw, chh) = m.cell_size();
     let (ox, oy) = m.grid_origin(d.cols, d.rows);
-    let rd = |o: usize| u32::from_le_bytes([data[o], data[o + 1], data[o + 2], data[o + 3]]) as usize;
+    let rd =
+        |o: usize| u32::from_le_bytes([data[o], data[o + 1], data[o + 2], data[o + 3]]) as usize;
     let mut off = 0;
     while off + 16 <= data.len() {
         let (x, y, w, h) = (rd(off), rd(off + 4), rd(off + 8), rd(off + 12));
         off += 16;
-        let Some(bytes) = w.checked_mul(h).and_then(|n| n.checked_mul(CELL_BYTES)) else { break };
+        let Some(bytes) = w.checked_mul(h).and_then(|n| n.checked_mul(CELL_BYTES)) else {
+            break;
+        };
         if off + bytes > data.len() {
             break;
         }
@@ -733,7 +813,11 @@ pub fn write_tty(fd: usize, data: &[u8]) -> usize {
                     continue;
                 }
                 let o = off + (r * w + c) * CELL_BYTES;
-                let cell = Cell { ch: rd(o) as u32, fg: rd(o + 4) as u32, bg: rd(o + 8) as u32 };
+                let cell = Cell {
+                    ch: rd(o) as u32,
+                    fg: rd(o + 4) as u32,
+                    bg: rd(o + 8) as u32,
+                };
                 let slot = &mut d.cells[row * d.cols + col];
                 if *slot == cell {
                     continue;
@@ -747,7 +831,13 @@ pub fn write_tty(fd: usize, data: &[u8]) -> usize {
             }
         }
         if visible && c0 < c1 {
-            expand_damage(m, GAP + ox + c0 * cw, GAP + oy + r0 * chh, (c1 - c0) * cw, (r1 - r0) * chh);
+            expand_damage(
+                m,
+                GAP + ox + c0 * cw,
+                GAP + oy + r0 * chh,
+                (c1 - c0) * cw,
+                (r1 - r0) * chh,
+            );
         }
         off += bytes;
     }
@@ -760,7 +850,9 @@ pub fn read_tty(fd: usize, buf: &mut [u8]) -> usize {
     let d = &mut dm().desktops[i];
     let mut n = 0;
     while n + 16 <= buf.len() {
-        let Some(ev) = d.events.pop_front() else { break };
+        let Some(ev) = d.events.pop_front() else {
+            break;
+        };
         for k in 0..4 {
             buf[n + k * 4..n + k * 4 + 4].copy_from_slice(&ev[k].to_le_bytes());
         }
@@ -782,22 +874,34 @@ pub fn destroy_of(tid: usize) {
     }
 }
 
-// /dev/gpu/info: [width, height, mode gen, cell w, cell h, cols, rows].
+// /dev/gpu/info: [width, height, mode gen, cell w, cell h, cols, rows]
 pub fn info() -> [u32; 7] {
     let m = dm();
     let (cw, ch) = m.cell_size();
     let (cols, rows) = m.grid();
-    [gpu::width(), gpu::height(), gpu::mode_gen(), cw as u32, ch as u32, cols as u32, rows as u32]
+    [
+        gpu::width(),
+        gpu::height(),
+        gpu::mode_gen(),
+        cw as u32,
+        ch as u32,
+        cols as u32,
+        rows as u32,
+    ]
 }
 
-// Screen-sized BGRA at byte offset.
+// Screen-sized BGRA at byte offset
 pub fn write_layer(glass: bool, offset: usize, data: &[u8]) -> usize {
     let m = dm();
     if m.w == 0 {
         on_mode_change();
     }
     let n = m.w * m.h;
-    let layer = if glass { &mut m.glass } else { &mut m.wallpaper };
+    let layer = if glass {
+        &mut m.glass
+    } else {
+        &mut m.wallpaper
+    };
     if layer.len() != n {
         *layer = vec![if glass { GLASS_FALLBACK } else { 0xFF11_111B }; n];
     }
@@ -807,19 +911,24 @@ pub fn write_layer(glass: bool, offset: usize, data: &[u8]) -> usize {
     }
     let len = data.len().min(bytes - offset);
     unsafe {
-        core::ptr::copy_nonoverlapping(data.as_ptr(), (layer.as_mut_ptr() as *mut u8).add(offset), len);
+        core::ptr::copy_nonoverlapping(
+            data.as_ptr(),
+            (layer.as_mut_ptr() as *mut u8).add(offset),
+            len,
+        );
     }
     m.restyle = true;
     len
 }
 
 // "KFNT", cell_w, cell_h, count, styles (u32 each), count sorted codepoints,
-// then styles * count alpha bitmaps of cell_w * cell_h bytes.
+// then styles * count alpha bitmaps of cell_w * cell_h bytes
 pub fn write_font(data: &[u8]) -> usize {
     if data.len() < 20 || &data[0..4] != b"KFNT" {
         return 0;
     }
-    let rd = |o: usize| u32::from_le_bytes([data[o], data[o + 1], data[o + 2], data[o + 3]]) as usize;
+    let rd =
+        |o: usize| u32::from_le_bytes([data[o], data[o + 1], data[o + 2], data[o + 3]]) as usize;
     let (cw, chh, count, styles) = (rd(4), rd(8), rd(12), rd(16));
     if cw == 0 || chh == 0 || cw > 64 || chh > 128 || styles == 0 || styles > 2 {
         return 0;

@@ -1,5 +1,5 @@
-// WASM to RV64GC AOT compiler. s1 ctx, s2 mem base, s3 locals base, s4 wasm operand stack (grows down), s5 mem size.
-// The operand stack (8 bytes/slot) is its own region, continuous across calls: callees use args and leave results in place.
+// WASM to RV64GC AOT compiler. s1 ctx, s2 mem base, s3 locals base, s4 wasm operand stack (grows down), s5 mem size
+// The operand stack (8 bytes/slot) is its own region, continuous across calls: callees use args and leave results in place
 
 use alloc::vec::Vec;
 
@@ -11,7 +11,7 @@ use crate::common::reader::types::{BlockType, FuncType, ValType};
 use crate::common::reader::{WasmReadable, WasmReader};
 use crate::common::validation::ValidationInfo;
 
-// Context field offsets; must match AotContext in runtime.rs.
+// Context field offsets; must match AotContext in runtime.rs
 pub mod ctx_off {
     pub const MEM_BASE: i32 = 0;
     pub const MEM_SIZE: i32 = 8;
@@ -28,7 +28,7 @@ pub mod ctx_off {
     pub const GROW_FN: i32 = 104;
 }
 
-// Trap cause codes written to ctx.trap_code.
+// Trap cause codes written to ctx.trap_code
 pub mod trap {
     pub const NONE: u32 = 0;
     pub const GENERIC: u32 = 1;
@@ -39,12 +39,12 @@ pub mod trap {
     pub const UNREACHABLE: u32 = 6;
     pub const STACK_OVERFLOW: u32 = 7;
     pub const UNIMPLEMENTED: u32 = 8;
-    // Codes >= 100 are set by the host dispatcher itself (e.g. proc_exit).
+    // Codes >= 100 are set by the host dispatcher itself (e.g. proc_exit)
 }
 
 pub struct ControlBlock {
     pub kind: ControlBlockKind,
-    // Operand-stack depth at block entry, excluding block params.
+    // Operand-stack depth at block entry, excluding block params
     pub stack_depth_before: usize,
     pub param_count: usize,
     pub result_count: usize,
@@ -61,56 +61,90 @@ pub enum ControlBlockKind {
     Func,
 }
 
-// Where a cached operand-stack value currently lives (virtual stack).
+// Where a cached operand-stack value currently lives (virtual stack)
 #[derive(Clone, Copy)]
 pub enum VLoc {
     Gp(Reg),
     Fp(FReg),
 }
 
-// Where a wasm local lives for the function being compiled.
+// Where a wasm local lives for the function being compiled
 #[derive(Clone, Copy, PartialEq)]
 pub enum LocalLoc {
-    // Its 8-byte slot in the frame's locals area (s3 + idx*8).
+    // Its 8-byte slot in the frame's locals area (s3 + idx*8)
     Mem,
     Gp(Reg),
     Fp(FReg),
 }
 
-// Callee-saved registers handed out to locals, most-used local first.
+// Callee-saved registers handed out to locals, most-used local first
 const LOCAL_GP_REGS: [Reg; 7] = [
-    Reg::S6, Reg::S7, Reg::S8, Reg::S9, Reg::S10, Reg::S11, Reg::S0,
+    Reg::S6,
+    Reg::S7,
+    Reg::S8,
+    Reg::S9,
+    Reg::S10,
+    Reg::S11,
+    Reg::S0,
 ];
 
 const LOCAL_FP_REGS: [FReg; 12] = [
-    FReg::Fs0, FReg::Fs1, FReg::Fs2, FReg::Fs3, FReg::Fs4, FReg::Fs5,
-    FReg::Fs6, FReg::Fs7, FReg::Fs8, FReg::Fs9, FReg::Fs10, FReg::Fs11,
+    FReg::Fs0,
+    FReg::Fs1,
+    FReg::Fs2,
+    FReg::Fs3,
+    FReg::Fs4,
+    FReg::Fs5,
+    FReg::Fs6,
+    FReg::Fs7,
+    FReg::Fs8,
+    FReg::Fs9,
+    FReg::Fs10,
+    FReg::Fs11,
 ];
 
-// Entry stub frame: ra, s1-s5, caller sp, then the local registers.
+// Entry stub frame: ra, s1-s5, caller sp, then the local registers
 const ENTRY_GP_SAVE: i32 = 56;
 const ENTRY_FP_SAVE: i32 = ENTRY_GP_SAVE + 8 * LOCAL_GP_REGS.len() as i32;
 const ENTRY_FRAME: i32 = (ENTRY_FP_SAVE + 8 * LOCAL_FP_REGS.len() as i32 + 15) & !15;
 
-// Value cache registers; t0-t2 are slow-path scratch, t6 is the emitter reloc scratch.
+// Value cache registers; t0-t2 are slow-path scratch, t6 is the emitter reloc scratch
 const GP_POOL: [Reg; 9] = [
-    Reg::A2, Reg::A3, Reg::A4, Reg::A5, Reg::A6, Reg::A7,
-    Reg::T3, Reg::T4, Reg::T5,
+    Reg::A2,
+    Reg::A3,
+    Reg::A4,
+    Reg::A5,
+    Reg::A6,
+    Reg::A7,
+    Reg::T3,
+    Reg::T4,
+    Reg::T5,
 ];
 
 const FP_POOL: [FReg; 14] = [
-    FReg::Fa0, FReg::Fa1, FReg::Fa2, FReg::Fa3, FReg::Fa4, FReg::Fa5,
-    FReg::Fa6, FReg::Fa7, FReg::Ft2, FReg::Ft3, FReg::Ft4, FReg::Ft5,
-    FReg::Ft6, FReg::Ft7,
+    FReg::Fa0,
+    FReg::Fa1,
+    FReg::Fa2,
+    FReg::Fa3,
+    FReg::Fa4,
+    FReg::Fa5,
+    FReg::Fa6,
+    FReg::Fa7,
+    FReg::Ft2,
+    FReg::Ft3,
+    FReg::Ft4,
+    FReg::Ft5,
+    FReg::Ft6,
+    FReg::Ft7,
 ];
 
 pub struct AotArtifact {
     pub code: Vec<u8>,
-    // Code offset of every function (imports = their host-call thunks).
+    // Code offset of every function (imports = their host-call thunks)
     pub func_offsets: Vec<usize>,
-    // Code offset of the entry stub (see compile_module for its signature).
+    // Code offset of the entry stub (see compile_module for its signature)
     pub entry_offset: usize,
-    // Canonical (structurally deduped) type id per function index.
+    // Canonical (structurally deduped) type id per function index
     pub func_canon_type_ids: Vec<u32>,
 }
 
@@ -128,7 +162,7 @@ pub struct AotCompiler<'a> {
     trap_unreachable: usize,
     trap_stack_overflow: usize,
     trap_unimplemented: usize,
-    // Trap path for host-signalled traps (trap_code already set by host).
+    // Trap path for host-signalled traps (trap_code already set by host)
     trap_from_host: usize,
     exit_restore: usize,
     // shared helpers
@@ -157,7 +191,7 @@ impl<'a> AotCompiler<'a> {
         }
 
         // Canonicalize type indices so call_indirect type checks succeed for
-        // structurally equal but distinct type entries.
+        // structurally equal but distinct type entries
         let mut canon_type_ids: Vec<u32> = Vec::with_capacity(validation_info.types.len());
         for (i, ty) in validation_info.types.iter().enumerate() {
             let mut canon = i as u32;
@@ -213,9 +247,9 @@ impl<'a> AotCompiler<'a> {
         let imported = self.validation_info.imports_length.imported_functions;
         let total = imported + self.validation_info.functions.len();
 
-        // ── entry stub ──────────────────────────────────────────────
+        // entry stub
         // extern "C" fn(ctx: a0, wsp: a1, func: a2, native_stack_top: a3) -> new wsp (a0)
-        // Runs on its own native stack (a3); the caller's sp is saved in the frame. Traps longjmp here via ctx.saved_sp.
+        // Runs on its own native stack (a3); the caller's sp is saved in the frame. Traps longjmp here via ctx.saved_sp
         let entry_offset = self.emitter.code.len();
         {
             let e = &mut self.emitter;
@@ -229,8 +263,8 @@ impl<'a> AotCompiler<'a> {
             e.sd(Reg::Sp, 32, Reg::S4);
             e.sd(Reg::Sp, 40, Reg::S5);
             e.sd(Reg::Sp, 48, Reg::T0); // caller sp
-            // Registers that hold locals: a trap unwinds straight here,
-            // skipping the epilogues that would restore them.
+                                        // Registers that hold locals: a trap unwinds straight here,
+                                        // skipping the epilogues that would restore them
             for (k, &r) in LOCAL_GP_REGS.iter().enumerate() {
                 e.sd(Reg::Sp, ENTRY_GP_SAVE + 8 * k as i32, r);
             }
@@ -267,7 +301,7 @@ impl<'a> AotCompiler<'a> {
             e.ret();
         }
 
-        // ── trap stubs (set code, longjmp to entry frame) ───────────
+        // trap stubs (set code, longjmp to entry frame)
         let traps = [
             (self.trap_oob, trap::OOB),
             (self.trap_div_zero, trap::DIV_ZERO),
@@ -284,7 +318,7 @@ impl<'a> AotCompiler<'a> {
             let tfh = self.trap_from_host;
             self.emitter.jmp_label(tfh);
         }
-        // host already set trap_code; just unwind
+        // host already set trap_code, just unwind
         {
             let tfh = self.trap_from_host;
             self.emitter.bind_label(tfh);
@@ -293,12 +327,12 @@ impl<'a> AotCompiler<'a> {
             self.emitter.jmp_label(er);
         }
 
-        // ── shared helpers ──────────────────────────────────────────
+        // shared helpers
         self.emit_helper_popcnt();
         self.emit_helper_memmove();
         self.emit_helper_memset();
 
-        // ── import thunks ───────────────────────────────────────────
+        // import thunks
         let mut func_offsets = Vec::with_capacity(total);
         for i in 0..imported {
             self.emitter.bind_label(self.func_labels[i]);
@@ -329,7 +363,7 @@ impl<'a> AotCompiler<'a> {
             }
         }
 
-        // ── local functions ─────────────────────────────────────────
+        //local fns
         for i in 0..self.validation_info.functions.len() {
             let func_idx = imported + i;
             self.emitter.bind_label(self.func_labels[func_idx]);
@@ -353,7 +387,7 @@ impl<'a> AotCompiler<'a> {
         }
     }
 
-    // ── shared emitted subroutines ──────────────────────────────────
+    // shared emitted subroutines
 
     // popcnt64: t0 -> t0 (clobbers t1, t2).
     fn emit_helper_popcnt(&mut self) {
@@ -379,7 +413,7 @@ impl<'a> AotCompiler<'a> {
         e.ret();
     }
 
-    // memmove: t0 = dst abs, t1 = src abs, t2 = len (clobbers a0).
+    // memmove: t0 = dst abs, t1 = src abs, t2 = len (clobbers a0)
     fn emit_helper_memmove(&mut self) {
         let l = self.helper_memmove;
         self.emitter.bind_label(l);
@@ -455,7 +489,7 @@ impl<'a> AotCompiler<'a> {
         self.emitter.ret();
     }
 
-    // ── function body ───────────────────────────────────────────────
+    // fn body
 
     fn block_counts(&self, bt: &BlockType) -> (usize, usize) {
         match bt {
@@ -587,16 +621,16 @@ impl<'a> AotCompiler<'a> {
         });
 
         reader.pc = span.from;
-        let _ = crate::common::validation::code::read_declared_locals(&mut reader)
-            .unwrap_validated();
+        let _ =
+            crate::common::validation::code::read_declared_locals(&mut reader).unwrap_validated();
 
         while !self.control_stack.is_empty() {
             let instr = Instruction::read(&mut reader).unwrap_validated();
             self.compile_instruction(instr, &mut reader);
         }
-        // The Func block's End bound end_label, flushed the cache and left stack_depth = result_count.
+        // The Func block's End bound end_label, flushed the cache and left stack_depth = result_count
 
-        // Epilogue: results are already on the wasm stack where the caller expects them.
+        // Epilogue: results are already on the wasm stack where the caller expects them
         {
             let e = &mut self.emitter;
             e.addi_any(Reg::Sp, Reg::Sp, locals_area as i64);
@@ -613,14 +647,18 @@ impl<'a> AotCompiler<'a> {
         }
     }
 
-    // Loop-weighted use count of every local (get/set/tee), used to pick which locals get registers.
-    fn count_local_uses(&self, span: crate::common::reader::span::Span, total_locals: usize) -> Vec<u32> {
+    // Loop-weighted use count of every local (get/set/tee), used to pick which locals get registers
+    fn count_local_uses(
+        &self,
+        span: crate::common::reader::span::Span,
+        total_locals: usize,
+    ) -> Vec<u32> {
         let mut uses = alloc::vec![0u32; total_locals];
         let mut reader = WasmReader::new(self.validation_info.wasm);
         reader.pc = span.from;
-        let _ = crate::common::validation::code::read_declared_locals(&mut reader)
-            .unwrap_validated();
-        // Open blocks (true = loop); the function body itself is the first.
+        let _ =
+            crate::common::validation::code::read_declared_locals(&mut reader).unwrap_validated();
+        // Open blocks (true = loop); the function body itself is the first
         let mut blocks: Vec<bool> = alloc::vec![false];
         let mut loop_depth = 0u32;
         while !blocks.is_empty() {
@@ -648,7 +686,7 @@ impl<'a> AotCompiler<'a> {
         uses
     }
 
-    // Consume the immediates compile_fc reads for 0xFC-prefixed ops; must stay in sync with it.
+    // Consume the immediates compile_fc reads for 0xFC-prefixed ops; must stay in sync with it
     fn skip_fc_immediates(sub: u32, reader: &mut WasmReader) {
         match sub {
             0x0A => {
@@ -679,7 +717,7 @@ impl<'a> AotCompiler<'a> {
         }
     }
 
-    // ── wasm operand stack helpers (slow path) ──────────────────────
+    // wasm operand stack helpers (slow path)
 
     fn push_gp(&mut self, r: Reg) {
         self.emitter.addi(Reg::S4, Reg::S4, -8);
@@ -706,7 +744,7 @@ impl<'a> AotCompiler<'a> {
         self.emitter.addi(Reg::S4, Reg::S4, 8);
     }
 
-    // ── virtual stack (register cache) ──────────────────────────────
+    // virtual stack (register cache
 
     fn local_is_gp(&self, idx: usize) -> bool {
         use crate::common::reader::types::NumType;
@@ -725,15 +763,19 @@ impl<'a> AotCompiler<'a> {
     }
 
     fn gp_in_vstack(&self, r: Reg) -> bool {
-        self.vstack.iter().any(|v| matches!(v, VLoc::Gp(x) if *x == r))
+        self.vstack
+            .iter()
+            .any(|v| matches!(v, VLoc::Gp(x) if *x == r))
     }
 
     fn fp_in_vstack(&self, f: FReg) -> bool {
-        self.vstack.iter().any(|v| matches!(v, VLoc::Fp(x) if *x == f))
+        self.vstack
+            .iter()
+            .any(|v| matches!(v, VLoc::Fp(x) if *x == f))
     }
 
     // Spill the deepest cached value. Correct because cached values are always shallower than
-    // everything in memory and spills go deepest-first.
+    // everything in memory and spills go deepest-first
     fn spill_deepest(&mut self) {
         let v = self.vstack.remove(0);
         match v {
@@ -764,7 +806,7 @@ impl<'a> AotCompiler<'a> {
         }
     }
 
-    // Spill the whole register cache to memory (deepest first).
+    // Spill the whole register cache to memory (deepest first)
     fn flush_cache(&mut self) {
         while !self.vstack.is_empty() {
             self.spill_deepest();
@@ -900,13 +942,14 @@ impl<'a> AotCompiler<'a> {
         self.stack_depth = self.stack_depth.saturating_sub(1);
     }
 
-    // ── memory access (slow path only) ──────────────────────────────
+    // memory access (slow path only)
 
-    // Pop the address, bounds-check addr + offset + size <= mem_size, leave the absolute address in T0.
+    // Pop the address, bounds-check addr + offset + size <= mem_size, leave the absolute address in T0
     fn emit_addr_check(&mut self, memarg: &MemArg, size: u32) {
         self.pop_gp_to(Reg::T0);
         self.emitter.zext_w(Reg::T0, Reg::T0);
-        self.emitter.addi_any(Reg::T0, Reg::T0, memarg.offset as i64);
+        self.emitter
+            .addi_any(Reg::T0, Reg::T0, memarg.offset as i64);
         self.emitter.addi_any(Reg::T1, Reg::T0, size as i64);
         let oob = self.trap_oob;
         self.emitter.bcc_label(cond::LTU, Reg::S5, Reg::T1, oob);
@@ -935,19 +978,20 @@ impl<'a> AotCompiler<'a> {
         store(&mut self.emitter); // stores T2 to 0(T0)
     }
 
-    // ── memory access (register cache) ──────────────────────────────
+    // memory access (register cache)
 
-    // Bounds-check addr + offset + size <= mem_size for the address in a; absolute address in T0.
+    // Bounds-check addr + offset + size <= mem_size for the address in a; absolute address in T0
     fn v_addr(&mut self, a: Reg, memarg: &MemArg, size: u32) {
         self.emitter.zext_w(Reg::T0, a);
-        self.emitter.addi_any(Reg::T0, Reg::T0, memarg.offset as i64);
+        self.emitter
+            .addi_any(Reg::T0, Reg::T0, memarg.offset as i64);
         self.emitter.addi_any(Reg::T1, Reg::T0, size as i64);
         let oob = self.trap_oob;
         self.emitter.bcc_label(cond::LTU, Reg::S5, Reg::T1, oob);
         self.emitter.add(Reg::T0, Reg::S2, Reg::T0);
     }
 
-    // Integer load: address popped, result pushed (reusing its register).
+    // Integer load: address popped, result pushed (reusing its register)
     fn v_load<F>(&mut self, memarg: MemArg, size: u32, load: F)
     where
         F: FnOnce(&mut Rv64Emitter, Reg), // loads 0(T0) into the register
@@ -970,7 +1014,7 @@ impl<'a> AotCompiler<'a> {
         self.vstack.push(VLoc::Fp(f));
     }
 
-    // Integer store: value on top, address below it.
+    // Integer store: value on top, address below it
     fn v_store<F>(&mut self, memarg: MemArg, size: u32, store: F)
     where
         F: FnOnce(&mut Rv64Emitter, Reg), // stores the register to 0(T0)
@@ -983,7 +1027,11 @@ impl<'a> AotCompiler<'a> {
     }
 
     fn v_store_fp(&mut self, memarg: MemArg, is64: bool) {
-        let f = if is64 { self.vpop_fp64(&[]) } else { self.vpop_fp32(&[]) };
+        let f = if is64 {
+            self.vpop_fp64(&[])
+        } else {
+            self.vpop_fp32(&[])
+        };
         let a = self.vpop_gp(&[]);
         self.v_addr(a, &memarg, if is64 { 8 } else { 4 });
         if is64 {
@@ -994,7 +1042,7 @@ impl<'a> AotCompiler<'a> {
         self.stack_depth = self.stack_depth.saturating_sub(2);
     }
 
-    // select can run in registers when the condition and both operands are cached and of the same kind.
+    // select can run in registers when the condition and both operands are cached and of the same kind
     fn select_cached(&self) -> bool {
         let n = self.vstack.len();
         n >= 3
@@ -1022,14 +1070,18 @@ impl<'a> AotCompiler<'a> {
         }
     }
 
-    // ── float→int conversions ───────────────────────────────────────
+    // float→int conversions
 
-    // fcvt with NV-flag check: traps on NaN or out-of-range input.
+    // fcvt with NV-flag check: traps on NaN or out-of-range input
     fn emit_trunc_trap<F>(&mut self, is_f64: bool, cvt: F)
     where
         F: FnOnce(&mut Rv64Emitter, Reg, FReg),
     {
-        let f = if is_f64 { self.vpop_fp64(&[]) } else { self.vpop_fp32(&[]) };
+        let f = if is_f64 {
+            self.vpop_fp64(&[])
+        } else {
+            self.vpop_fp32(&[])
+        };
         self.flush_cache();
         self.emitter.csrrwi(Reg::Zero, 0x001, 0); // clear fflags
         cvt(&mut self.emitter, Reg::T0, f);
@@ -1040,13 +1092,17 @@ impl<'a> AotCompiler<'a> {
         self.push_gp(Reg::T0);
     }
 
-    // Saturating fcvt: NaN gives 0, out-of-range saturates (RISC-V native).
+    // Saturating fcvt: NaN gives 0, out-of-range saturates (RISC-V native)
     fn emit_trunc_sat<G, F>(&mut self, is_f64: bool, feq: G, cvt: F)
     where
         G: FnOnce(&mut Rv64Emitter, Reg, FReg, FReg),
         F: FnOnce(&mut Rv64Emitter, Reg, FReg),
     {
-        let f = if is_f64 { self.vpop_fp64(&[]) } else { self.vpop_fp32(&[]) };
+        let f = if is_f64 {
+            self.vpop_fp64(&[])
+        } else {
+            self.vpop_fp32(&[])
+        };
         self.flush_cache();
         feq(&mut self.emitter, Reg::T1, f, f); // 0 when NaN
         cvt(&mut self.emitter, Reg::T0, f);
@@ -1056,9 +1112,13 @@ impl<'a> AotCompiler<'a> {
     }
 
     // floor/ceil/trunc/nearest via int round-trip. NaN and |x| >= 2^precision (already integral)
-    // pass through unchanged; fsgnj preserves signed zero.
+    // pass through unchanged; fsgnj preserves signed zero
     fn emit_fround(&mut self, is_f64: bool, round_mode: u32) {
-        let x = if is_f64 { self.vpop_fp64(&[]) } else { self.vpop_fp32(&[]) };
+        let x = if is_f64 {
+            self.vpop_fp64(&[])
+        } else {
+            self.vpop_fp32(&[])
+        };
         self.flush_cache();
         {
             let e = &mut self.emitter;
@@ -1092,7 +1152,7 @@ impl<'a> AotCompiler<'a> {
         self.vstack.push(VLoc::Fp(x));
     }
 
-    // ── rotates / bit counting / division ───────────────────────────
+    //rotates / bit counting / division
 
     fn emit_rot(&mut self, is64: bool, left: bool) {
         let b = self.vpop_gp(&[]);
@@ -1104,12 +1164,20 @@ impl<'a> AotCompiler<'a> {
         e.sub(Reg::T1, Reg::T1, Reg::T0);
         e.andi(Reg::T1, Reg::T1, bits - 1);
         if is64 {
-            let (shl_amt, shr_amt) = if left { (Reg::T0, Reg::T1) } else { (Reg::T1, Reg::T0) };
+            let (shl_amt, shr_amt) = if left {
+                (Reg::T0, Reg::T1)
+            } else {
+                (Reg::T1, Reg::T0)
+            };
             e.sll(Reg::T2, a, shl_amt);
             e.srl(a, a, shr_amt);
             e.or(a, a, Reg::T2);
         } else {
-            let (shl_amt, shr_amt) = if left { (Reg::T0, Reg::T1) } else { (Reg::T1, Reg::T0) };
+            let (shl_amt, shr_amt) = if left {
+                (Reg::T0, Reg::T1)
+            } else {
+                (Reg::T1, Reg::T0)
+            };
             e.zext_w(a, a);
             e.sllw(Reg::T2, a, shl_amt);
             e.srlw(a, a, shr_amt);
@@ -1222,7 +1290,7 @@ impl<'a> AotCompiler<'a> {
         self.stack_depth = self.stack_depth.saturating_sub(1);
     }
 
-    // ── branches ────────────────────────────────────────────────────
+    // branches
 
     fn emit_unwind(&mut self, target_idx: usize) {
         let cb = &self.control_stack[target_idx];
@@ -1254,18 +1322,18 @@ impl<'a> AotCompiler<'a> {
         (target_idx, cb.start_label.unwrap_or(cb.end_label))
     }
 
-    // Reload memory base/size after any call (memory.grow safety).
+    // Reload memory base/size after any call (memory.grow safety)
     fn emit_post_call_reload(&mut self) {
         self.emitter.ld(Reg::S2, Reg::S1, ctx_off::MEM_BASE);
         self.emitter.ld(Reg::S5, Reg::S1, ctx_off::MEM_SIZE);
     }
 
-    // ── main instruction dispatch ───────────────────────────────────
+    // main instruction dispatch
 
     fn compile_instruction(&mut self, instr: Instruction, reader: &mut WasmReader) {
         use crate::common::reader::types::NumType;
 
-        // Fast path: register-cached ops. Everything else flushes first.
+        // Fast path: register-cached ops. Everything else flushes first
         match &instr {
             Instruction::I32Const(v) => {
                 let v = *v;
@@ -1339,7 +1407,7 @@ impl<'a> AotCompiler<'a> {
                 let f = self.vpush_fp();
                 if let LocalLoc::Fp(l) = self.local_locs[*idx] {
                     // Bit-exact copy (sign injection never touches NaN
-                    // payloads or the f32 NaN-box).
+                    // payloads or the f32 NaN-box)
                     self.emitter.fsgnj_d(f, l, l);
                 } else {
                     self.emitter.addi_any(Reg::T0, Reg::S3, off);
@@ -1390,20 +1458,62 @@ impl<'a> AotCompiler<'a> {
                 return;
             }
             // integer ALU (i32 canonical form = sign-extended)
-            Instruction::I32Add => { self.v_binop_gp(|e, a, b| e.addw(a, a, b)); return; }
-            Instruction::I32Sub => { self.v_binop_gp(|e, a, b| e.subw(a, a, b)); return; }
-            Instruction::I32Mul => { self.v_binop_gp(|e, a, b| e.mulw(a, a, b)); return; }
-            Instruction::I32And => { self.v_binop_gp(|e, a, b| e.and(a, a, b)); return; }
-            Instruction::I32Or => { self.v_binop_gp(|e, a, b| e.or(a, a, b)); return; }
-            Instruction::I32Xor => { self.v_binop_gp(|e, a, b| e.xor(a, a, b)); return; }
-            Instruction::I64Add => { self.v_binop_gp(|e, a, b| e.add(a, a, b)); return; }
-            Instruction::I64Sub => { self.v_binop_gp(|e, a, b| e.sub(a, a, b)); return; }
-            Instruction::I64Mul => { self.v_binop_gp(|e, a, b| e.mul(a, a, b)); return; }
-            Instruction::I64And => { self.v_binop_gp(|e, a, b| e.and(a, a, b)); return; }
-            Instruction::I64Or => { self.v_binop_gp(|e, a, b| e.or(a, a, b)); return; }
-            Instruction::I64Xor => { self.v_binop_gp(|e, a, b| e.xor(a, a, b)); return; }
-            Instruction::I32Shl => { self.v_binop_gp(|e, a, b| e.sllw(a, a, b)); return; }
-            Instruction::I32ShrS => { self.v_binop_gp(|e, a, b| e.sraw(a, a, b)); return; }
+            Instruction::I32Add => {
+                self.v_binop_gp(|e, a, b| e.addw(a, a, b));
+                return;
+            }
+            Instruction::I32Sub => {
+                self.v_binop_gp(|e, a, b| e.subw(a, a, b));
+                return;
+            }
+            Instruction::I32Mul => {
+                self.v_binop_gp(|e, a, b| e.mulw(a, a, b));
+                return;
+            }
+            Instruction::I32And => {
+                self.v_binop_gp(|e, a, b| e.and(a, a, b));
+                return;
+            }
+            Instruction::I32Or => {
+                self.v_binop_gp(|e, a, b| e.or(a, a, b));
+                return;
+            }
+            Instruction::I32Xor => {
+                self.v_binop_gp(|e, a, b| e.xor(a, a, b));
+                return;
+            }
+            Instruction::I64Add => {
+                self.v_binop_gp(|e, a, b| e.add(a, a, b));
+                return;
+            }
+            Instruction::I64Sub => {
+                self.v_binop_gp(|e, a, b| e.sub(a, a, b));
+                return;
+            }
+            Instruction::I64Mul => {
+                self.v_binop_gp(|e, a, b| e.mul(a, a, b));
+                return;
+            }
+            Instruction::I64And => {
+                self.v_binop_gp(|e, a, b| e.and(a, a, b));
+                return;
+            }
+            Instruction::I64Or => {
+                self.v_binop_gp(|e, a, b| e.or(a, a, b));
+                return;
+            }
+            Instruction::I64Xor => {
+                self.v_binop_gp(|e, a, b| e.xor(a, a, b));
+                return;
+            }
+            Instruction::I32Shl => {
+                self.v_binop_gp(|e, a, b| e.sllw(a, a, b));
+                return;
+            }
+            Instruction::I32ShrS => {
+                self.v_binop_gp(|e, a, b| e.sraw(a, a, b));
+                return;
+            }
             Instruction::I32ShrU => {
                 self.v_binop_gp(|e, a, b| {
                     e.zext_w(Reg::T0, a);
@@ -1411,24 +1521,51 @@ impl<'a> AotCompiler<'a> {
                 });
                 return;
             }
-            Instruction::I64Shl => { self.v_binop_gp(|e, a, b| e.sll(a, a, b)); return; }
-            Instruction::I64ShrS => { self.v_binop_gp(|e, a, b| e.sra(a, a, b)); return; }
-            Instruction::I64ShrU => { self.v_binop_gp(|e, a, b| e.srl(a, a, b)); return; }
-            Instruction::I32Rotl => { self.emit_rot(false, true); return; }
-            Instruction::I32Rotr => { self.emit_rot(false, false); return; }
-            Instruction::I64Rotl => { self.emit_rot(true, true); return; }
-            Instruction::I64Rotr => { self.emit_rot(true, false); return; }
+            Instruction::I64Shl => {
+                self.v_binop_gp(|e, a, b| e.sll(a, a, b));
+                return;
+            }
+            Instruction::I64ShrS => {
+                self.v_binop_gp(|e, a, b| e.sra(a, a, b));
+                return;
+            }
+            Instruction::I64ShrU => {
+                self.v_binop_gp(|e, a, b| e.srl(a, a, b));
+                return;
+            }
+            Instruction::I32Rotl => {
+                self.emit_rot(false, true);
+                return;
+            }
+            Instruction::I32Rotr => {
+                self.emit_rot(false, false);
+                return;
+            }
+            Instruction::I64Rotl => {
+                self.emit_rot(true, true);
+                return;
+            }
+            Instruction::I64Rotr => {
+                self.emit_rot(true, false);
+                return;
+            }
             // comparisons (canonical sign-extension makes 32/64 share code)
             Instruction::I32Eqz | Instruction::I64Eqz => {
                 self.v_unop_gp(|e, a| e.seqz(a, a));
                 return;
             }
             Instruction::I32Eq | Instruction::I64Eq => {
-                self.v_binop_gp(|e, a, b| { e.xor(a, a, b); e.seqz(a, a); });
+                self.v_binop_gp(|e, a, b| {
+                    e.xor(a, a, b);
+                    e.seqz(a, a);
+                });
                 return;
             }
             Instruction::I32Ne | Instruction::I64Ne => {
-                self.v_binop_gp(|e, a, b| { e.xor(a, a, b); e.snez(a, a); });
+                self.v_binop_gp(|e, a, b| {
+                    e.xor(a, a, b);
+                    e.snez(a, a);
+                });
                 return;
             }
             Instruction::I32LtS | Instruction::I64LtS => {
@@ -1448,70 +1585,208 @@ impl<'a> AotCompiler<'a> {
                 return;
             }
             Instruction::I32LeS | Instruction::I64LeS => {
-                self.v_binop_gp(|e, a, b| { e.slt(a, b, a); e.seqz(a, a); });
+                self.v_binop_gp(|e, a, b| {
+                    e.slt(a, b, a);
+                    e.seqz(a, a);
+                });
                 return;
             }
             Instruction::I32LeU | Instruction::I64LeU => {
-                self.v_binop_gp(|e, a, b| { e.sltu(a, b, a); e.seqz(a, a); });
+                self.v_binop_gp(|e, a, b| {
+                    e.sltu(a, b, a);
+                    e.seqz(a, a);
+                });
                 return;
             }
             Instruction::I32GeS | Instruction::I64GeS => {
-                self.v_binop_gp(|e, a, b| { e.slt(a, a, b); e.seqz(a, a); });
+                self.v_binop_gp(|e, a, b| {
+                    e.slt(a, a, b);
+                    e.seqz(a, a);
+                });
                 return;
             }
             Instruction::I32GeU | Instruction::I64GeU => {
-                self.v_binop_gp(|e, a, b| { e.sltu(a, a, b); e.seqz(a, a); });
+                self.v_binop_gp(|e, a, b| {
+                    e.sltu(a, a, b);
+                    e.seqz(a, a);
+                });
                 return;
             }
             // float arithmetic
-            Instruction::F32Add => { self.v_binop_fp32(|e, a, b| e.fadd_s(a, a, b)); return; }
-            Instruction::F32Sub => { self.v_binop_fp32(|e, a, b| e.fsub_s(a, a, b)); return; }
-            Instruction::F32Mul => { self.v_binop_fp32(|e, a, b| e.fmul_s(a, a, b)); return; }
-            Instruction::F32Div => { self.v_binop_fp32(|e, a, b| e.fdiv_s(a, a, b)); return; }
-            Instruction::F64Add => { self.v_binop_fp64(|e, a, b| e.fadd_d(a, a, b)); return; }
-            Instruction::F64Sub => { self.v_binop_fp64(|e, a, b| e.fsub_d(a, a, b)); return; }
-            Instruction::F64Mul => { self.v_binop_fp64(|e, a, b| e.fmul_d(a, a, b)); return; }
-            Instruction::F64Div => { self.v_binop_fp64(|e, a, b| e.fdiv_d(a, a, b)); return; }
-            Instruction::F32Min => { self.v_binop_fp32(|e, a, b| e.fmin_s(a, a, b)); return; }
-            Instruction::F32Max => { self.v_binop_fp32(|e, a, b| e.fmax_s(a, a, b)); return; }
-            Instruction::F64Min => { self.v_binop_fp64(|e, a, b| e.fmin_d(a, a, b)); return; }
-            Instruction::F64Max => { self.v_binop_fp64(|e, a, b| e.fmax_d(a, a, b)); return; }
-            Instruction::F32Abs => { self.v_unop_fp32(|e, a| e.fabs_s(a, a)); return; }
-            Instruction::F32Neg => { self.v_unop_fp32(|e, a| e.fneg_s(a, a)); return; }
-            Instruction::F32Sqrt => { self.v_unop_fp32(|e, a| e.fsqrt_s(a, a)); return; }
-            Instruction::F64Abs => { self.v_unop_fp64(|e, a| e.fabs_d(a, a)); return; }
-            Instruction::F64Neg => { self.v_unop_fp64(|e, a| e.fneg_d(a, a)); return; }
-            Instruction::F64Sqrt => { self.v_unop_fp64(|e, a| e.fsqrt_d(a, a)); return; }
-            Instruction::F32Copysign => { self.v_binop_fp32(|e, a, b| e.fsgnj_s(a, a, b)); return; }
-            Instruction::F64Copysign => { self.v_binop_fp64(|e, a, b| e.fsgnj_d(a, a, b)); return; }
+            Instruction::F32Add => {
+                self.v_binop_fp32(|e, a, b| e.fadd_s(a, a, b));
+                return;
+            }
+            Instruction::F32Sub => {
+                self.v_binop_fp32(|e, a, b| e.fsub_s(a, a, b));
+                return;
+            }
+            Instruction::F32Mul => {
+                self.v_binop_fp32(|e, a, b| e.fmul_s(a, a, b));
+                return;
+            }
+            Instruction::F32Div => {
+                self.v_binop_fp32(|e, a, b| e.fdiv_s(a, a, b));
+                return;
+            }
+            Instruction::F64Add => {
+                self.v_binop_fp64(|e, a, b| e.fadd_d(a, a, b));
+                return;
+            }
+            Instruction::F64Sub => {
+                self.v_binop_fp64(|e, a, b| e.fsub_d(a, a, b));
+                return;
+            }
+            Instruction::F64Mul => {
+                self.v_binop_fp64(|e, a, b| e.fmul_d(a, a, b));
+                return;
+            }
+            Instruction::F64Div => {
+                self.v_binop_fp64(|e, a, b| e.fdiv_d(a, a, b));
+                return;
+            }
+            Instruction::F32Min => {
+                self.v_binop_fp32(|e, a, b| e.fmin_s(a, a, b));
+                return;
+            }
+            Instruction::F32Max => {
+                self.v_binop_fp32(|e, a, b| e.fmax_s(a, a, b));
+                return;
+            }
+            Instruction::F64Min => {
+                self.v_binop_fp64(|e, a, b| e.fmin_d(a, a, b));
+                return;
+            }
+            Instruction::F64Max => {
+                self.v_binop_fp64(|e, a, b| e.fmax_d(a, a, b));
+                return;
+            }
+            Instruction::F32Abs => {
+                self.v_unop_fp32(|e, a| e.fabs_s(a, a));
+                return;
+            }
+            Instruction::F32Neg => {
+                self.v_unop_fp32(|e, a| e.fneg_s(a, a));
+                return;
+            }
+            Instruction::F32Sqrt => {
+                self.v_unop_fp32(|e, a| e.fsqrt_s(a, a));
+                return;
+            }
+            Instruction::F64Abs => {
+                self.v_unop_fp64(|e, a| e.fabs_d(a, a));
+                return;
+            }
+            Instruction::F64Neg => {
+                self.v_unop_fp64(|e, a| e.fneg_d(a, a));
+                return;
+            }
+            Instruction::F64Sqrt => {
+                self.v_unop_fp64(|e, a| e.fsqrt_d(a, a));
+                return;
+            }
+            Instruction::F32Copysign => {
+                self.v_binop_fp32(|e, a, b| e.fsgnj_s(a, a, b));
+                return;
+            }
+            Instruction::F64Copysign => {
+                self.v_binop_fp64(|e, a, b| e.fsgnj_d(a, a, b));
+                return;
+            }
             // float comparisons (quiet on NaN, matching wasm)
-            Instruction::F32Eq => { self.v_relop_fp32(|e, d, a, b| e.feq_s(d, a, b)); return; }
-            Instruction::F32Ne => { self.v_relop_fp32(|e, d, a, b| { e.feq_s(d, a, b); e.seqz(d, d); }); return; }
-            Instruction::F32Lt => { self.v_relop_fp32(|e, d, a, b| e.flt_s(d, a, b)); return; }
-            Instruction::F32Gt => { self.v_relop_fp32(|e, d, a, b| e.flt_s(d, b, a)); return; }
-            Instruction::F32Le => { self.v_relop_fp32(|e, d, a, b| e.fle_s(d, a, b)); return; }
-            Instruction::F32Ge => { self.v_relop_fp32(|e, d, a, b| e.fle_s(d, b, a)); return; }
-            Instruction::F64Eq => { self.v_relop_fp64(|e, d, a, b| e.feq_d(d, a, b)); return; }
-            Instruction::F64Ne => { self.v_relop_fp64(|e, d, a, b| { e.feq_d(d, a, b); e.seqz(d, d); }); return; }
-            Instruction::F64Lt => { self.v_relop_fp64(|e, d, a, b| e.flt_d(d, a, b)); return; }
-            Instruction::F64Gt => { self.v_relop_fp64(|e, d, a, b| e.flt_d(d, b, a)); return; }
-            Instruction::F64Le => { self.v_relop_fp64(|e, d, a, b| e.fle_d(d, a, b)); return; }
-            Instruction::F64Ge => { self.v_relop_fp64(|e, d, a, b| e.fle_d(d, b, a)); return; }
+            Instruction::F32Eq => {
+                self.v_relop_fp32(|e, d, a, b| e.feq_s(d, a, b));
+                return;
+            }
+            Instruction::F32Ne => {
+                self.v_relop_fp32(|e, d, a, b| {
+                    e.feq_s(d, a, b);
+                    e.seqz(d, d);
+                });
+                return;
+            }
+            Instruction::F32Lt => {
+                self.v_relop_fp32(|e, d, a, b| e.flt_s(d, a, b));
+                return;
+            }
+            Instruction::F32Gt => {
+                self.v_relop_fp32(|e, d, a, b| e.flt_s(d, b, a));
+                return;
+            }
+            Instruction::F32Le => {
+                self.v_relop_fp32(|e, d, a, b| e.fle_s(d, a, b));
+                return;
+            }
+            Instruction::F32Ge => {
+                self.v_relop_fp32(|e, d, a, b| e.fle_s(d, b, a));
+                return;
+            }
+            Instruction::F64Eq => {
+                self.v_relop_fp64(|e, d, a, b| e.feq_d(d, a, b));
+                return;
+            }
+            Instruction::F64Ne => {
+                self.v_relop_fp64(|e, d, a, b| {
+                    e.feq_d(d, a, b);
+                    e.seqz(d, d);
+                });
+                return;
+            }
+            Instruction::F64Lt => {
+                self.v_relop_fp64(|e, d, a, b| e.flt_d(d, a, b));
+                return;
+            }
+            Instruction::F64Gt => {
+                self.v_relop_fp64(|e, d, a, b| e.flt_d(d, b, a));
+                return;
+            }
+            Instruction::F64Le => {
+                self.v_relop_fp64(|e, d, a, b| e.fle_d(d, a, b));
+                return;
+            }
+            Instruction::F64Ge => {
+                self.v_relop_fp64(|e, d, a, b| e.fle_d(d, b, a));
+                return;
+            }
             // register-to-register conversions
-            Instruction::I32WrapI64 => { self.v_unop_gp(|e, a| e.sext_w(a, a)); return; }
-            Instruction::I64ExtendI32S => { self.v_unop_gp(|e, a| e.sext_w(a, a)); return; }
-            Instruction::I64ExtendI32U => { self.v_unop_gp(|e, a| e.zext_w(a, a)); return; }
+            Instruction::I32WrapI64 => {
+                self.v_unop_gp(|e, a| e.sext_w(a, a));
+                return;
+            }
+            Instruction::I64ExtendI32S => {
+                self.v_unop_gp(|e, a| e.sext_w(a, a));
+                return;
+            }
+            Instruction::I64ExtendI32U => {
+                self.v_unop_gp(|e, a| e.zext_w(a, a));
+                return;
+            }
             Instruction::I32Extend8S | Instruction::I64Extend8S => {
-                self.v_unop_gp(|e, a| { e.slli(a, a, 56); e.srai(a, a, 56); });
+                self.v_unop_gp(|e, a| {
+                    e.slli(a, a, 56);
+                    e.srai(a, a, 56);
+                });
                 return;
             }
             Instruction::I32Extend16S | Instruction::I64Extend16S => {
-                self.v_unop_gp(|e, a| { e.slli(a, a, 48); e.srai(a, a, 48); });
+                self.v_unop_gp(|e, a| {
+                    e.slli(a, a, 48);
+                    e.srai(a, a, 48);
+                });
                 return;
             }
-            Instruction::I64Extend32S => { self.v_unop_gp(|e, a| e.sext_w(a, a)); return; }
-            Instruction::F32DemoteF64 => { self.v_unop_fp64(|e, a| e.fcvt_s_d(a, a)); return; }
-            Instruction::F64PromoteF32 => { self.v_unop_fp32(|e, a| e.fcvt_d_s(a, a)); return; }
+            Instruction::I64Extend32S => {
+                self.v_unop_gp(|e, a| e.sext_w(a, a));
+                return;
+            }
+            Instruction::F32DemoteF64 => {
+                self.v_unop_fp64(|e, a| e.fcvt_s_d(a, a));
+                return;
+            }
+            Instruction::F64PromoteF32 => {
+                self.v_unop_fp32(|e, a| e.fcvt_d_s(a, a));
+                return;
+            }
             Instruction::F32ConvertI32S => {
                 let a = self.vpop_gp(&[]);
                 let f = self.alloc_fp(&[]);
@@ -1596,52 +1871,187 @@ impl<'a> AotCompiler<'a> {
                 self.vstack.push(VLoc::Fp(f));
                 return;
             }
-            Instruction::F32Ceil => { self.emit_fround(false, rm::RUP); return; }
-            Instruction::F32Floor => { self.emit_fround(false, rm::RDN); return; }
-            Instruction::F32Trunc => { self.emit_fround(false, rm::RTZ); return; }
-            Instruction::F32Nearest => { self.emit_fround(false, rm::RNE); return; }
-            Instruction::F64Ceil => { self.emit_fround(true, rm::RUP); return; }
-            Instruction::F64Floor => { self.emit_fround(true, rm::RDN); return; }
-            Instruction::F64Trunc => { self.emit_fround(true, rm::RTZ); return; }
-            Instruction::F64Nearest => { self.emit_fround(true, rm::RNE); return; }
-            Instruction::I32Clz => { self.emit_clz(false); return; }
-            Instruction::I64Clz => { self.emit_clz(true); return; }
-            Instruction::I32Ctz => { self.emit_ctz(false); return; }
-            Instruction::I64Ctz => { self.emit_ctz(true); return; }
-            Instruction::I32Popcnt => { self.emit_popcnt(false); return; }
-            Instruction::I64Popcnt => { self.emit_popcnt(true); return; }
-            Instruction::I32DivS => { self.emit_div(false, true, false); return; }
-            Instruction::I32DivU => { self.emit_div(false, false, false); return; }
-            Instruction::I32RemS => { self.emit_div(false, true, true); return; }
-            Instruction::I32RemU => { self.emit_div(false, false, true); return; }
-            Instruction::I64DivS => { self.emit_div(true, true, false); return; }
-            Instruction::I64DivU => { self.emit_div(true, false, false); return; }
-            Instruction::I64RemS => { self.emit_div(true, true, true); return; }
-            Instruction::I64RemU => { self.emit_div(true, false, true); return; }
-            Instruction::I32TruncF32S => { self.emit_trunc_trap(false, |e, d, f| e.fcvt_w_s(d, f, rm::RTZ)); return; }
-            Instruction::I32TruncF32U => { self.emit_trunc_trap(false, |e, d, f| e.fcvt_wu_s(d, f, rm::RTZ)); return; }
-            Instruction::I32TruncF64S => { self.emit_trunc_trap(true, |e, d, f| e.fcvt_w_d(d, f, rm::RTZ)); return; }
-            Instruction::I32TruncF64U => { self.emit_trunc_trap(true, |e, d, f| e.fcvt_wu_d(d, f, rm::RTZ)); return; }
-            Instruction::I64TruncF32S => { self.emit_trunc_trap(false, |e, d, f| e.fcvt_l_s(d, f, rm::RTZ)); return; }
-            Instruction::I64TruncF32U => { self.emit_trunc_trap(false, |e, d, f| e.fcvt_lu_s(d, f, rm::RTZ)); return; }
-            Instruction::I64TruncF64S => { self.emit_trunc_trap(true, |e, d, f| e.fcvt_l_d(d, f, rm::RTZ)); return; }
-            Instruction::I64TruncF64U => { self.emit_trunc_trap(true, |e, d, f| e.fcvt_lu_d(d, f, rm::RTZ)); return; }
+            Instruction::F32Ceil => {
+                self.emit_fround(false, rm::RUP);
+                return;
+            }
+            Instruction::F32Floor => {
+                self.emit_fround(false, rm::RDN);
+                return;
+            }
+            Instruction::F32Trunc => {
+                self.emit_fround(false, rm::RTZ);
+                return;
+            }
+            Instruction::F32Nearest => {
+                self.emit_fround(false, rm::RNE);
+                return;
+            }
+            Instruction::F64Ceil => {
+                self.emit_fround(true, rm::RUP);
+                return;
+            }
+            Instruction::F64Floor => {
+                self.emit_fround(true, rm::RDN);
+                return;
+            }
+            Instruction::F64Trunc => {
+                self.emit_fround(true, rm::RTZ);
+                return;
+            }
+            Instruction::F64Nearest => {
+                self.emit_fround(true, rm::RNE);
+                return;
+            }
+            Instruction::I32Clz => {
+                self.emit_clz(false);
+                return;
+            }
+            Instruction::I64Clz => {
+                self.emit_clz(true);
+                return;
+            }
+            Instruction::I32Ctz => {
+                self.emit_ctz(false);
+                return;
+            }
+            Instruction::I64Ctz => {
+                self.emit_ctz(true);
+                return;
+            }
+            Instruction::I32Popcnt => {
+                self.emit_popcnt(false);
+                return;
+            }
+            Instruction::I64Popcnt => {
+                self.emit_popcnt(true);
+                return;
+            }
+            Instruction::I32DivS => {
+                self.emit_div(false, true, false);
+                return;
+            }
+            Instruction::I32DivU => {
+                self.emit_div(false, false, false);
+                return;
+            }
+            Instruction::I32RemS => {
+                self.emit_div(false, true, true);
+                return;
+            }
+            Instruction::I32RemU => {
+                self.emit_div(false, false, true);
+                return;
+            }
+            Instruction::I64DivS => {
+                self.emit_div(true, true, false);
+                return;
+            }
+            Instruction::I64DivU => {
+                self.emit_div(true, false, false);
+                return;
+            }
+            Instruction::I64RemS => {
+                self.emit_div(true, true, true);
+                return;
+            }
+            Instruction::I64RemU => {
+                self.emit_div(true, false, true);
+                return;
+            }
+            Instruction::I32TruncF32S => {
+                self.emit_trunc_trap(false, |e, d, f| e.fcvt_w_s(d, f, rm::RTZ));
+                return;
+            }
+            Instruction::I32TruncF32U => {
+                self.emit_trunc_trap(false, |e, d, f| e.fcvt_wu_s(d, f, rm::RTZ));
+                return;
+            }
+            Instruction::I32TruncF64S => {
+                self.emit_trunc_trap(true, |e, d, f| e.fcvt_w_d(d, f, rm::RTZ));
+                return;
+            }
+            Instruction::I32TruncF64U => {
+                self.emit_trunc_trap(true, |e, d, f| e.fcvt_wu_d(d, f, rm::RTZ));
+                return;
+            }
+            Instruction::I64TruncF32S => {
+                self.emit_trunc_trap(false, |e, d, f| e.fcvt_l_s(d, f, rm::RTZ));
+                return;
+            }
+            Instruction::I64TruncF32U => {
+                self.emit_trunc_trap(false, |e, d, f| e.fcvt_lu_s(d, f, rm::RTZ));
+                return;
+            }
+            Instruction::I64TruncF64S => {
+                self.emit_trunc_trap(true, |e, d, f| e.fcvt_l_d(d, f, rm::RTZ));
+                return;
+            }
+            Instruction::I64TruncF64U => {
+                self.emit_trunc_trap(true, |e, d, f| e.fcvt_lu_d(d, f, rm::RTZ));
+                return;
+            }
             // memory (canonical i32 form: lw/lb/lh sign-extend)
-            Instruction::I32Load(m) | Instruction::I64Load32S(m) => { self.v_load(*m, 4, |e, r| e.lw(r, Reg::T0, 0)); return; }
-            Instruction::I64Load(m) => { self.v_load(*m, 8, |e, r| e.ld(r, Reg::T0, 0)); return; }
-            Instruction::I32Load8S(m) | Instruction::I64Load8S(m) => { self.v_load(*m, 1, |e, r| e.lb(r, Reg::T0, 0)); return; }
-            Instruction::I32Load8U(m) | Instruction::I64Load8U(m) => { self.v_load(*m, 1, |e, r| e.lbu(r, Reg::T0, 0)); return; }
-            Instruction::I32Load16S(m) | Instruction::I64Load16S(m) => { self.v_load(*m, 2, |e, r| e.lh(r, Reg::T0, 0)); return; }
-            Instruction::I32Load16U(m) | Instruction::I64Load16U(m) => { self.v_load(*m, 2, |e, r| e.lhu(r, Reg::T0, 0)); return; }
-            Instruction::I64Load32U(m) => { self.v_load(*m, 4, |e, r| e.lwu(r, Reg::T0, 0)); return; }
-            Instruction::F32Load(m) => { self.v_load_fp(*m, false); return; }
-            Instruction::F64Load(m) => { self.v_load_fp(*m, true); return; }
-            Instruction::I32Store(m) | Instruction::I64Store32(m) => { self.v_store(*m, 4, |e, r| e.sw(Reg::T0, 0, r)); return; }
-            Instruction::I64Store(m) => { self.v_store(*m, 8, |e, r| e.sd(Reg::T0, 0, r)); return; }
-            Instruction::I32Store8(m) | Instruction::I64Store8(m) => { self.v_store(*m, 1, |e, r| e.sb(Reg::T0, 0, r)); return; }
-            Instruction::I32Store16(m) | Instruction::I64Store16(m) => { self.v_store(*m, 2, |e, r| e.sh(Reg::T0, 0, r)); return; }
-            Instruction::F32Store(m) => { self.v_store_fp(*m, false); return; }
-            Instruction::F64Store(m) => { self.v_store_fp(*m, true); return; }
+            Instruction::I32Load(m) | Instruction::I64Load32S(m) => {
+                self.v_load(*m, 4, |e, r| e.lw(r, Reg::T0, 0));
+                return;
+            }
+            Instruction::I64Load(m) => {
+                self.v_load(*m, 8, |e, r| e.ld(r, Reg::T0, 0));
+                return;
+            }
+            Instruction::I32Load8S(m) | Instruction::I64Load8S(m) => {
+                self.v_load(*m, 1, |e, r| e.lb(r, Reg::T0, 0));
+                return;
+            }
+            Instruction::I32Load8U(m) | Instruction::I64Load8U(m) => {
+                self.v_load(*m, 1, |e, r| e.lbu(r, Reg::T0, 0));
+                return;
+            }
+            Instruction::I32Load16S(m) | Instruction::I64Load16S(m) => {
+                self.v_load(*m, 2, |e, r| e.lh(r, Reg::T0, 0));
+                return;
+            }
+            Instruction::I32Load16U(m) | Instruction::I64Load16U(m) => {
+                self.v_load(*m, 2, |e, r| e.lhu(r, Reg::T0, 0));
+                return;
+            }
+            Instruction::I64Load32U(m) => {
+                self.v_load(*m, 4, |e, r| e.lwu(r, Reg::T0, 0));
+                return;
+            }
+            Instruction::F32Load(m) => {
+                self.v_load_fp(*m, false);
+                return;
+            }
+            Instruction::F64Load(m) => {
+                self.v_load_fp(*m, true);
+                return;
+            }
+            Instruction::I32Store(m) | Instruction::I64Store32(m) => {
+                self.v_store(*m, 4, |e, r| e.sw(Reg::T0, 0, r));
+                return;
+            }
+            Instruction::I64Store(m) => {
+                self.v_store(*m, 8, |e, r| e.sd(Reg::T0, 0, r));
+                return;
+            }
+            Instruction::I32Store8(m) | Instruction::I64Store8(m) => {
+                self.v_store(*m, 1, |e, r| e.sb(Reg::T0, 0, r));
+                return;
+            }
+            Instruction::I32Store16(m) | Instruction::I64Store16(m) => {
+                self.v_store(*m, 2, |e, r| e.sh(Reg::T0, 0, r));
+                return;
+            }
+            Instruction::F32Store(m) => {
+                self.v_store_fp(*m, false);
+                return;
+            }
+            Instruction::F64Store(m) => {
+                self.v_store_fp(*m, true);
+                return;
+            }
             Instruction::GlobalGet(idx) if self.global_is_fp(*idx).is_some() => {
                 let off = (*idx as i64) * 8;
                 if self.global_is_fp(*idx) == Some(true) {
@@ -1649,7 +2059,7 @@ impl<'a> AotCompiler<'a> {
                     self.emitter.ld(Reg::T1, Reg::S1, ctx_off::GLOBALS_PTR);
                     self.emitter.addi_any(Reg::T1, Reg::T1, off);
                     // flw NaN-boxes; an f32 slot's upper half isn't boxed
-                    // when it came from the initializer.
+                    // when it came from the initializer
                     if self.global_is_f32(*idx) {
                         self.emitter.flw(f, Reg::T1, 0);
                     } else {
@@ -1691,10 +2101,13 @@ impl<'a> AotCompiler<'a> {
             }
             Instruction::Select if self.select_cached() => {
                 let n = self.vstack.len();
-                let c = match self.vstack[n - 1] { VLoc::Gp(c) => c, VLoc::Fp(_) => unreachable!() };
+                let c = match self.vstack[n - 1] {
+                    VLoc::Gp(c) => c,
+                    VLoc::Fp(_) => unreachable!(),
+                };
                 let b = self.vstack[n - 2];
                 self.vstack.truncate(n - 2); // a stays on top as the result
-                // c != 0 keeps a; otherwise a = b.
+                                             // c != 0 keeps a; otherwise a = b.
                 self.emitter.bcc(cond::NE, c, Reg::Zero, 8);
                 match (self.vstack[n - 3], b) {
                     (VLoc::Gp(a), VLoc::Gp(b)) => self.emitter.mv(a, b),
@@ -1705,7 +2118,7 @@ impl<'a> AotCompiler<'a> {
                 return;
             }
             // Branch conditions stay in their register; only the rest of
-            // the cache is flushed before the branch.
+            // the cache is flushed before the branch
             Instruction::BrIf(label_idx) => {
                 let label_idx = *label_idx;
                 let c = self.vpop_gp(&[]);
@@ -1743,7 +2156,7 @@ impl<'a> AotCompiler<'a> {
             }
         }
 
-        // ── slow path: cache is flushed, canonical memory-stack state ──
+        // slow path: cache is flushed, canonical memory-stack state
         match instr {
             Instruction::Nop => {}
             Instruction::Unreachable => {
@@ -1805,21 +2218,25 @@ impl<'a> AotCompiler<'a> {
                 self.emitter.sd_any(Reg::T1, (idx as i64) * 8, Reg::T0);
                 self.stack_depth = self.stack_depth.saturating_sub(1);
             }
+
             Instruction::RefNull(_) => {
                 self.push_gp(Reg::Zero);
                 self.stack_depth += 1;
             }
+
             Instruction::RefIsNull => {
                 self.pop_gp_to(Reg::T0);
                 self.emitter.seqz(Reg::T0, Reg::T0);
                 self.push_gp(Reg::T0);
             }
+
             Instruction::RefFunc(idx) => {
                 // table representation: func_idx + 1 (0 = null)
                 self.emitter.li(Reg::T0, idx as i64 + 1);
                 self.push_gp(Reg::T0);
                 self.stack_depth += 1;
             }
+
             Instruction::TableGet(_t) => {
                 self.pop_gp_to(Reg::T0);
                 self.emitter.ld(Reg::T1, Reg::S1, ctx_off::TABLE_PTR);
@@ -1828,6 +2245,7 @@ impl<'a> AotCompiler<'a> {
                 self.emitter.ld(Reg::T0, Reg::T0, 0);
                 self.push_gp(Reg::T0);
             }
+
             Instruction::TableSet(_t) => {
                 self.pop_gp_to(Reg::T2);
                 self.pop_gp_to(Reg::T0);
@@ -1838,7 +2256,7 @@ impl<'a> AotCompiler<'a> {
                 self.stack_depth = self.stack_depth.saturating_sub(2);
             }
 
-            // ── memory ──────────────────────────────────────────────
+            // memory
             Instruction::I32Load(m) => self.emit_load(m, 4, |e| e.lw(Reg::T1, Reg::T0, 0)),
             Instruction::I64Load(m) => self.emit_load(m, 8, |e| e.ld(Reg::T1, Reg::T0, 0)),
             Instruction::I32Load8S(m) | Instruction::I64Load8S(m) => {
@@ -1883,6 +2301,7 @@ impl<'a> AotCompiler<'a> {
                 self.emit_addr_check(&m, 4);
                 self.emitter.fsw(Reg::T0, 0, FReg::Ft0);
             }
+
             Instruction::F64Store(m) => {
                 self.emitter.fld(FReg::Ft0, Reg::S4, 0);
                 self.emitter.addi(Reg::S4, Reg::S4, 8);
@@ -1890,14 +2309,16 @@ impl<'a> AotCompiler<'a> {
                 self.emit_addr_check(&m, 8);
                 self.emitter.fsd(Reg::T0, 0, FReg::Ft0);
             }
+
             Instruction::MemorySize => {
                 self.emitter.srli(Reg::T0, Reg::S5, 16);
                 self.push_gp(Reg::T0);
                 self.stack_depth += 1;
             }
+
             Instruction::MemoryGrow => {
-                // The runtime grows memory in place (s2 stays valid) and returns the old page count or -1.
-                // The cache is already flushed and s-registers survive the call.
+                // The runtime grows memory in place (s2 stays valid) and returns the old page count or -1
+                // The cache is already flushed and s-registers survive the call
                 self.pop_gp_to(Reg::A1); // n (pages)
                 self.emitter.zext_w(Reg::A1, Reg::A1);
                 self.emitter.mv(Reg::A0, Reg::S1);
@@ -1907,7 +2328,7 @@ impl<'a> AotCompiler<'a> {
                 self.push_gp(Reg::A0);
             }
 
-            // ── calls ───────────────────────────────────────────────
+            // calls
             Instruction::Call(idx) => {
                 let type_idx = self.validation_info.functions_types[idx];
                 let ft = &self.validation_info.types[type_idx];
@@ -1919,7 +2340,8 @@ impl<'a> AotCompiler<'a> {
                 self.emit_post_call_reload();
 
                 self.stack_depth = (self.stack_depth as isize + result_count as isize
-                    - param_count as isize).max(0) as usize;
+                    - param_count as isize)
+                    .max(0) as usize;
             }
             Instruction::CallIndirect(type_idx, _table_idx) => {
                 let ft = &self.validation_info.types[type_idx as usize];
@@ -1938,7 +2360,7 @@ impl<'a> AotCompiler<'a> {
                 self.emitter.ld(Reg::T0, Reg::T0, 0);
                 self.emitter.beqz_label(Reg::T0, ti);
                 self.emitter.addi(Reg::T0, Reg::T0, -1); // func_idx
-                // type check
+                                                         // type check
                 self.emitter.ld(Reg::T1, Reg::S1, ctx_off::FUNC_TYPE_IDS);
                 self.emitter.slli(Reg::T2, Reg::T0, 2);
                 self.emitter.add(Reg::T1, Reg::T1, Reg::T2);
@@ -1954,10 +2376,11 @@ impl<'a> AotCompiler<'a> {
                 self.emit_post_call_reload();
 
                 self.stack_depth = (self.stack_depth as isize - 1 + result_count as isize
-                    - param_count as isize).max(0) as usize;
+                    - param_count as isize)
+                    .max(0) as usize;
             }
 
-            // ── control flow ────────────────────────────────────────
+            // control flow
             Instruction::Block(bt) => {
                 let (pc, rc) = self.block_counts(&bt);
                 let end_label = self.emitter.new_label();
@@ -1971,6 +2394,7 @@ impl<'a> AotCompiler<'a> {
                     start_label: None,
                 });
             }
+
             Instruction::Loop(bt) => {
                 let (pc, rc) = self.block_counts(&bt);
                 let start_label = self.emitter.new_label();
@@ -1986,6 +2410,7 @@ impl<'a> AotCompiler<'a> {
                     start_label: Some(start_label),
                 });
             }
+
             Instruction::If(bt) => {
                 let (pc, rc) = self.block_counts(&bt);
                 self.pop_gp_to(Reg::T0);
@@ -2003,6 +2428,7 @@ impl<'a> AotCompiler<'a> {
                     start_label: None,
                 });
             }
+
             Instruction::Else => {
                 let cb = self.control_stack.last_mut().expect("control underflow");
                 let end_label = cb.end_label;
@@ -2013,6 +2439,7 @@ impl<'a> AotCompiler<'a> {
                     self.stack_depth = sd;
                 }
             }
+
             Instruction::End => {
                 let cb = self.control_stack.pop().expect("control underflow");
                 if let Some(else_label) = cb.else_label {
@@ -2021,11 +2448,13 @@ impl<'a> AotCompiler<'a> {
                 self.emitter.bind_label(cb.end_label);
                 self.stack_depth = cb.stack_depth_before + cb.result_count;
             }
+
             Instruction::Br(label_idx) => {
                 let (target_idx, target_label) = self.branch_target(label_idx);
                 self.emit_unwind(target_idx);
                 self.emitter.jmp_label(target_label);
             }
+
             Instruction::BrIf(label_idx) => {
                 self.pop_gp_to(Reg::T0);
                 self.stack_depth = self.stack_depth.saturating_sub(1);
@@ -2036,6 +2465,7 @@ impl<'a> AotCompiler<'a> {
                 self.emitter.jmp_label(target_label);
                 self.emitter.bind_label(skip);
             }
+
             Instruction::BrTable(targets, default) => {
                 self.pop_gp_to(Reg::T2);
                 self.stack_depth = self.stack_depth.saturating_sub(1);
@@ -2053,6 +2483,7 @@ impl<'a> AotCompiler<'a> {
                 self.emit_unwind(default_idx);
                 self.emitter.jmp_label(default_label);
             }
+
             Instruction::Return => {
                 self.emit_unwind(0);
                 let end = self.control_stack[0].end_label;
@@ -2064,10 +2495,12 @@ impl<'a> AotCompiler<'a> {
                 let t = self.trap_unimplemented;
                 self.emitter.jmp_label(t);
             }
+
             Instruction::Atomic(_sub) => {
                 let t = self.trap_unimplemented;
                 self.emitter.jmp_label(t);
             }
+
             other => {
                 crate::debugln!("AOT: unimplemented instruction {:?}", other);
                 let t = self.trap_unimplemented;
@@ -2079,14 +2512,46 @@ impl<'a> AotCompiler<'a> {
     fn compile_fc(&mut self, sub: u32, reader: &mut WasmReader) {
         match sub {
             // saturating truncations (RISC-V fcvt saturates; NaN forced to 0)
-            0x00 => self.emit_trunc_sat(false, |e, d, a, b| e.feq_s(d, a, b), |e, d, f| e.fcvt_w_s(d, f, rm::RTZ)),
-            0x01 => self.emit_trunc_sat(false, |e, d, a, b| e.feq_s(d, a, b), |e, d, f| e.fcvt_wu_s(d, f, rm::RTZ)),
-            0x02 => self.emit_trunc_sat(true, |e, d, a, b| e.feq_d(d, a, b), |e, d, f| e.fcvt_w_d(d, f, rm::RTZ)),
-            0x03 => self.emit_trunc_sat(true, |e, d, a, b| e.feq_d(d, a, b), |e, d, f| e.fcvt_wu_d(d, f, rm::RTZ)),
-            0x04 => self.emit_trunc_sat(false, |e, d, a, b| e.feq_s(d, a, b), |e, d, f| e.fcvt_l_s(d, f, rm::RTZ)),
-            0x05 => self.emit_trunc_sat(false, |e, d, a, b| e.feq_s(d, a, b), |e, d, f| e.fcvt_lu_s(d, f, rm::RTZ)),
-            0x06 => self.emit_trunc_sat(true, |e, d, a, b| e.feq_d(d, a, b), |e, d, f| e.fcvt_l_d(d, f, rm::RTZ)),
-            0x07 => self.emit_trunc_sat(true, |e, d, a, b| e.feq_d(d, a, b), |e, d, f| e.fcvt_lu_d(d, f, rm::RTZ)),
+            0x00 => self.emit_trunc_sat(
+                false,
+                |e, d, a, b| e.feq_s(d, a, b),
+                |e, d, f| e.fcvt_w_s(d, f, rm::RTZ),
+            ),
+            0x01 => self.emit_trunc_sat(
+                false,
+                |e, d, a, b| e.feq_s(d, a, b),
+                |e, d, f| e.fcvt_wu_s(d, f, rm::RTZ),
+            ),
+            0x02 => self.emit_trunc_sat(
+                true,
+                |e, d, a, b| e.feq_d(d, a, b),
+                |e, d, f| e.fcvt_w_d(d, f, rm::RTZ),
+            ),
+            0x03 => self.emit_trunc_sat(
+                true,
+                |e, d, a, b| e.feq_d(d, a, b),
+                |e, d, f| e.fcvt_wu_d(d, f, rm::RTZ),
+            ),
+            0x04 => self.emit_trunc_sat(
+                false,
+                |e, d, a, b| e.feq_s(d, a, b),
+                |e, d, f| e.fcvt_l_s(d, f, rm::RTZ),
+            ),
+            0x05 => self.emit_trunc_sat(
+                false,
+                |e, d, a, b| e.feq_s(d, a, b),
+                |e, d, f| e.fcvt_lu_s(d, f, rm::RTZ),
+            ),
+            0x06 => self.emit_trunc_sat(
+                true,
+                |e, d, a, b| e.feq_d(d, a, b),
+                |e, d, f| e.fcvt_l_d(d, f, rm::RTZ),
+            ),
+            0x07 => self.emit_trunc_sat(
+                true,
+                |e, d, a, b| e.feq_d(d, a, b),
+                |e, d, f| e.fcvt_lu_d(d, f, rm::RTZ),
+            ),
             0x0A => {
                 // memory.copy
                 let _ = reader.read_u8();

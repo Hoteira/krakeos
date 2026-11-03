@@ -9,10 +9,10 @@ use fatfs::{Read, Seek, SeekFrom, Write};
 
 pub mod disk;
 
-// Handles are 1..1024; device fds sit at 100..=127 and above 1024.
+// Handles are 1..1024; device fds sit at 100..=127 and above 1024
 pub const MAX_DESCRIPTORS: usize = 1024;
 
-// WASI errno values, returned as-is by the path operations below.
+// WASI errno values, returned by the path operations below
 pub const E_EXIST: usize = 20;
 pub const E_INVAL: usize = 28;
 pub const E_IO: usize = 29;
@@ -28,7 +28,7 @@ type File = fatfs::File<'static, disk::Disk, Clock, fatfs::LossyOemCpConverter>;
 type Dir = fatfs::Dir<'static, disk::Disk, Clock, fatfs::LossyOemCpConverter>;
 type Entry = fatfs::DirEntry<'static, disk::Disk, Clock, fatfs::LossyOemCpConverter>;
 
-// File times from the RTC (UTC).
+// File times from the RTC (UTC)
 #[derive(Debug)]
 pub struct Clock;
 
@@ -40,7 +40,7 @@ impl fatfs::TimeProvider for Clock {
     fn get_current_date_time(&self) -> fatfs::DateTime {
         let secs = crate::rtc::get_time_ns() / 1_000_000_000;
         let (days, rem) = ((secs / 86400) as i64, secs % 86400);
-        // Civil date from days since 1970 (Howard Hinnant's algorithm).
+        // Civil date from days since 1970 (Hinnant algorithm)
         let z = days + 719_468;
         let era = z.div_euclid(146_097);
         let doe = z - era * 146_097;
@@ -50,20 +50,25 @@ impl fatfs::TimeProvider for Clock {
         let day = (doy - (153 * mp + 2) / 5 + 1) as u16;
         let month = if mp < 10 { mp + 3 } else { mp - 9 } as u16;
         let year = (yoe + era * 400 + (month <= 2) as i64).clamp(1980, 2107) as u16;
-        let time = fatfs::Time::new((rem / 3600) as u16, (rem / 60 % 60) as u16, (rem % 60) as u16, 0);
+        let time = fatfs::Time::new(
+            (rem / 3600) as u16,
+            (rem / 60 % 60) as u16,
+            (rem % 60) as u16,
+            0,
+        );
         fatfs::DateTime::new(fatfs::Date::new(year, month, day), time)
     }
 }
 
 struct Node {
-    // Relative to the root, without leading or trailing '/'. Empty is the root.
+    // Relative to the root, without leading or trailing '/'. Empty is the root
     path: String,
     is_dir: bool,
-    // Kept here because asking fatfs walks the whole cluster chain.
+    // Kept here because asking fatfs walks the whole cluster chain
     size: usize,
-    // Opened on first use and dropped (which flushes it) before a rename or remove.
+    // Opened on first use and dropped (which flushes it) before a rename or remove
     file: Option<File>,
-    // Threads holding the handle open, once per open.
+    // Threads holding the handle open, once per open
     owners: Vec<usize>,
 }
 
@@ -85,31 +90,46 @@ fn root() -> Option<Dir> {
 pub fn mount() -> bool {
     crate::println!("Mounting FAT32...");
     let mut mbr = [0u8; 512];
+
     crate::virtio::read_sector(0, mbr.as_mut_ptr(), 1);
     if mbr[510] != 0x55 || mbr[511] != 0xAA {
         crate::println!("fs: no MBR on the disk.");
         return false;
     }
-    // First FAT32 partition (type 0x0B or 0x0C).
-    let Some(entry) = (0..4).map(|i| &mbr[446 + i * 16..462 + i * 16]).find(|e| e[4] == 0x0B || e[4] == 0x0C) else {
+
+    // First FAT32 partition (type 0x0B or 0x0C)
+    let Some(entry) = (0..4)
+        .map(|i| &mbr[446 + i * 16..462 + i * 16])
+        .find(|e| e[4] == 0x0B || e[4] == 0x0C)
+    else {
         crate::println!("fs: no FAT32 partition. Rebuild fs.img with krake_fmt.");
         return false;
     };
+
     let start = u32::from_le_bytes([entry[8], entry[9], entry[10], entry[11]]) as u64;
     let sectors = u32::from_le_bytes([entry[12], entry[13], entry[14], entry[15]]) as u64;
-    let opts = fatfs::FsOptions::new().time_provider(Clock).update_accessed_date(false);
+    let opts = fatfs::FsOptions::new()
+        .time_provider(Clock)
+        .update_accessed_date(false);
     match fatfs::FileSystem::new(disk::Disk::new(start, sectors), opts) {
         Ok(fs) => unsafe {
             FS = Some(alloc::boxed::Box::leak(alloc::boxed::Box::new(fs)));
             let nodes = nodes();
             nodes.resize_with(MAX_DESCRIPTORS, || None);
-            nodes[0] = Some(Node { path: String::new(), is_dir: true, size: 0, file: None, owners: Vec::new() });
+            nodes[0] = Some(Node {
+                path: String::new(),
+                is_dir: true,
+                size: 0,
+                file: None,
+                owners: Vec::new(),
+            });
         },
         Err(e) => {
             crate::println!("fs: mount failed: {:?}", e);
             return false;
         }
     }
+
     crate::println!("FAT32 mounted from sector {}.", start);
     true
 }
@@ -120,7 +140,9 @@ fn errno<E>(e: fatfs::Error<E>) -> usize {
         fatfs::Error::AlreadyExists => E_EXIST,
         fatfs::Error::DirectoryIsNotEmpty => E_NOTEMPTY,
         fatfs::Error::NotEnoughSpace => E_NOSPC,
-        fatfs::Error::InvalidInput | fatfs::Error::InvalidFileNameLength | fatfs::Error::UnsupportedFileNameCharacter => E_INVAL,
+        fatfs::Error::InvalidInput
+        | fatfs::Error::InvalidFileNameLength
+        | fatfs::Error::UnsupportedFileNameCharacter => E_INVAL,
         _ => E_IO,
     }
 }
@@ -130,12 +152,14 @@ fn trim_path(name: &str) -> &str {
 }
 
 fn same_path(a: &str, b: &str) -> bool {
-    // FAT names are case-insensitive.
+    // FAT names are case insensitive
     a.eq_ignore_ascii_case(b)
 }
 
 fn under(path: &str, dir: &str) -> bool {
-    path.len() > dir.len() && same_path(&path[..dir.len()], dir) && path.as_bytes()[dir.len()] == b'/'
+    path.len() > dir.len()
+        && same_path(&path[..dir.len()], dir)
+        && path.as_bytes()[dir.len()] == b'/'
 }
 
 fn split(path: &str) -> (&str, &str) {
@@ -148,11 +172,17 @@ fn split(path: &str) -> (&str, &str) {
 fn entry(path: &str) -> Option<Entry> {
     let (parent, base) = split(path);
     let root = root()?;
-    let dir = if parent.is_empty() { root } else { root.open_dir(parent).ok()? };
-    dir.iter().filter_map(|e| e.ok()).find(|e| e.file_name().eq_ignore_ascii_case(base))
+    let dir = if parent.is_empty() {
+        root
+    } else {
+        root.open_dir(parent).ok()?
+    };
+    dir.iter()
+        .filter_map(|e| e.ok())
+        .find(|e| e.file_name().eq_ignore_ascii_case(base))
 }
 
-// Checks a new entry's name and that its parent is a directory.
+// Checks a new entry's name and that its parent is a dir
 fn check_new(path: &str) -> Result<(), usize> {
     let (parent, base) = split(path);
     if base.is_empty() || base.len() > 255 || base == "." || base == ".." {
@@ -171,10 +201,21 @@ fn check_new(path: &str) -> Result<(), usize> {
 fn alloc_node(path: &str, is_dir: bool, size: usize, file: Option<File>) -> Option<usize> {
     let nodes = nodes();
     let free = (1..MAX_DESCRIPTORS).filter(|&i| !reserved_fd(i));
-    let slot = free.clone().find(|&i| nodes[i].is_none())
-        // Table full: reuse a node nobody holds open (e.g. one the kernel read itself).
-        .or_else(|| free.clone().find(|&i| nodes[i].as_ref().is_some_and(|n| n.owners.is_empty())))?;
-    nodes[slot] = Some(Node { path: String::from(path), is_dir, size, file, owners: Vec::new() });
+    let slot = free
+        .clone()
+        .find(|&i| nodes[i].is_none())
+        // Table full: reuse a free node
+        .or_else(|| {
+            free.clone()
+                .find(|&i| nodes[i].as_ref().is_some_and(|n| n.owners.is_empty()))
+        })?;
+    nodes[slot] = Some(Node {
+        path: String::from(path),
+        is_dir,
+        size,
+        file,
+        owners: Vec::new(),
+    });
     Some(slot)
 }
 
@@ -182,7 +223,7 @@ fn node(idx: usize) -> Option<&'static mut Node> {
     nodes().get_mut(idx)?.as_mut()
 }
 
-// The node's open file, reopened by path if it was dropped.
+// The node's open file, reopened by path if it was dropped
 fn node_file(idx: usize) -> Option<&'static mut File> {
     let n = node(idx)?;
     if n.is_dir {
@@ -194,7 +235,7 @@ fn node_file(idx: usize) -> Option<&'static mut File> {
     n.file.as_mut()
 }
 
-// Handles skip stdio, the WASI preopen and the device fds (100..=127).
+// Handles skip stdio, the WASI preopen and the device fds (100..=127)
 pub fn reserved_fd(i: usize) -> bool {
     i <= 3 || (100..=127).contains(&i)
 }
@@ -204,7 +245,10 @@ pub fn find_file(name: &str) -> Option<usize> {
     if path.is_empty() {
         return Some(0);
     }
-    if let Some(i) = nodes().iter().position(|n| n.as_ref().is_some_and(|n| same_path(&n.path, path))) {
+    if let Some(i) = nodes()
+        .iter()
+        .position(|n| n.as_ref().is_some_and(|n| same_path(&n.path, path)))
+    {
         return Some(i);
     }
     let e = entry(path)?;
@@ -222,7 +266,7 @@ pub fn create_file(name: &str) -> Option<usize> {
     alloc_node(path, false, 0, Some(file))
 }
 
-// Called for each successful open by a thread, and undone by close or its exit.
+// Called for each successful open by a thread, and undone by close or its exit
 pub fn retain(idx: usize, tid: usize) {
     if let Some(n) = node(idx) {
         n.owners.push(tid);
@@ -266,11 +310,11 @@ pub fn truncate_file(idx: usize, length: usize) {
 pub fn read_file(idx: usize, offset: usize, buf: &mut [u8]) -> usize {
     let size = get_file_size(idx);
     let Some(f) = node_file(idx) else { return 0 };
-    // Sequential reads skip the seek, which would walk the cluster chain from the start.
+    // Sequential reads skip the seek to not walk the cluster chain from the start
     if offset >= size || f.seek(SeekFrom::Start(offset as u64)).is_err() {
         return 0;
     }
-    // fatfs stops at cluster ends, so keep going until buf is full or the file ends.
+    // fatfs stops at cluster ends, so keep going until buf is full or the file ends
     let mut done = 0;
     while done < buf.len() {
         match f.read(&mut buf[done..]) {
@@ -284,7 +328,7 @@ pub fn read_file(idx: usize, offset: usize, buf: &mut [u8]) -> usize {
 pub fn write_file(idx: usize, offset: usize, buf: &[u8]) -> usize {
     let mut size = get_file_size(idx);
     let Some(f) = node_file(idx) else { return 0 };
-    // Writing past the end fills the gap with zeros.
+    // Writing past the end fills the gap with zeros
     if size < offset && f.seek(SeekFrom::Start(size as u64)).is_err() {
         return 0;
     }
@@ -305,21 +349,24 @@ pub fn write_file(idx: usize, offset: usize, buf: &[u8]) -> usize {
             Ok(n) => done += n,
         }
     }
-    // Writes the new size to the directory entry.
+    // Writes the new size to the directory entry
     let _ = f.flush();
     let n = node(idx).unwrap();
     n.size = n.size.max(offset + done);
     done
 }
 
-// For WASI path_filestat_get.
+// For WASI path_filestat_get
 pub fn stat(name: &str) -> Option<(usize, bool)> {
     let path = trim_path(name);
     if path.is_empty() {
         return Some((0, true));
     }
-    // An open file's size may not be in its directory entry yet.
-    if let Some(i) = nodes().iter().position(|n| n.as_ref().is_some_and(|n| !n.is_dir && same_path(&n.path, path))) {
+    // An open file's size may not be in its directory entry yet
+    if let Some(i) = nodes().iter().position(|n| {
+        n.as_ref()
+            .is_some_and(|n| !n.is_dir && same_path(&n.path, path))
+    }) {
         return Some((get_file_size(i), false));
     }
     let e = entry(path)?;
@@ -332,10 +379,14 @@ pub fn make_dir(name: &str) -> Result<(), usize> {
     if entry(path).is_some() {
         return Err(E_EXIST);
     }
-    root().ok_or(E_IO)?.create_dir(path).map(|_| ()).map_err(errno)
+    root()
+        .ok_or(E_IO)?
+        .create_dir(path)
+        .map(|_| ())
+        .map_err(errno)
 }
 
-// Drops open files at or under path, flushing them, so fatfs can move or delete the entries.
+// Drops open files, flushing them, so fatfs can move or delete the entries
 fn close_under(path: &str) {
     for n in nodes().iter_mut().flatten() {
         if same_path(&n.path, path) || under(&n.path, path) {
@@ -355,7 +406,7 @@ pub fn remove(name: &str, dir: bool) -> Result<(), usize> {
     }
     close_under(path);
     root().ok_or(E_IO)?.remove(path).map_err(errno)?;
-    // Handles still open on it now read as empty.
+    // Handles still open on it now read as empty
     for n in nodes().iter_mut().flatten() {
         if same_path(&n.path, path) {
             n.path = String::from("\0removed");
@@ -364,7 +415,7 @@ pub fn remove(name: &str, dir: bool) -> Result<(), usize> {
     Ok(())
 }
 
-// An existing file at the target is replaced; an existing directory is not.
+// An existing file at the target is replaced; an existing directory is not
 pub fn rename(from: &str, to: &str) -> Result<(), usize> {
     let (a, b) = (trim_path(from), trim_path(to));
     if a.is_empty() {
@@ -375,11 +426,11 @@ pub fn rename(from: &str, to: &str) -> Result<(), usize> {
     if a == b {
         return Ok(());
     }
-    // A directory can't move inside itself.
+    // A directory can't move inside itself
     if under(b, a) {
         return Err(E_INVAL);
     }
-    // A case-only rename is the same entry, so there is nothing to replace.
+    // A case-only rename is the same entry, so there is nothing to replace
     if !same_path(a, b) {
         if let Some(existing) = entry(b) {
             if existing.is_dir() {
@@ -401,29 +452,39 @@ pub fn rename(from: &str, to: &str) -> Result<(), usize> {
     Ok(())
 }
 
-// A stable nonzero inode number for readdir, so listing doesn't use up handles.
+// A stable nonzero inode number for readdir, so listing doesn't use up handles
 fn ino(dir: &str, name: &str) -> u32 {
     let mut h: u32 = 2_166_136_261;
-    for b in dir.bytes().chain(core::iter::once(b'/')).chain(name.bytes()) {
+    for b in dir
+        .bytes()
+        .chain(core::iter::once(b'/'))
+        .chain(name.bytes())
+    {
         h = (h ^ b.to_ascii_lowercase() as u32).wrapping_mul(16_777_619);
     }
     h.max(1)
 }
 
-// Writes [next_cookie: u32][size: u32][ino: u32][is_dir: u8][name_len: u8][name...].
-// Returns its length, 0 at the end, or None if not a directory or buf is too small.
+// Writes [next_cookie: u32][size: u32][ino: u32][is_dir: u8][name_len: u8][name...]
+// Returns its length, 0 at the end, or None if not a directory or buf is too small
 pub fn read_dir_entry(idx: usize, cookie: usize, buf: &mut [u8]) -> Option<usize> {
     let n = node(idx)?;
     if !n.is_dir {
         return None;
     }
     let root = root()?;
-    let dir = if n.path.is_empty() { root } else { root.open_dir(&n.path).ok()? };
+    let dir = if n.path.is_empty() {
+        root
+    } else {
+        root.open_dir(&n.path).ok()?
+    };
     let entries = dir.iter().filter_map(|e| e.ok()).filter(|e| {
         let name = e.file_name();
         name != "." && name != ".."
     });
-    let Some(e) = entries.skip(cookie).next() else { return Some(0) };
+    let Some(e) = entries.skip(cookie).next() else {
+        return Some(0);
+    };
     let name = e.file_name();
     let name_len = name.len().min(255);
     let total = 14 + name_len;
@@ -439,4 +500,3 @@ pub fn read_dir_entry(idx: usize, cookie: usize, buf: &mut [u8]) -> Option<usize
     buf[14..total].copy_from_slice(&name.as_bytes()[..name_len]);
     Some(total)
 }
-

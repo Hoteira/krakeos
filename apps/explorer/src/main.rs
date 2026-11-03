@@ -1,4 +1,4 @@
-// Ranger-style file explorer: parent, current and preview columns.
+// Ranger-style file explorer: parent, current and preview columns
 
 use std::fs::File;
 use std::io::Read;
@@ -36,9 +36,9 @@ struct Explorer {
     parent_state: ListState,
     preview: Preview,
     preview_for: String,
-    // The question on the status line, if any, and its answer so far.
+    // The question on the status line, if any, and its answer so far
     asking: Option<(Ask, Input)>,
-    // A path cut with x: pasting moves it while the clipboard still holds it.
+    // A path cut with x: pasting moves it while the clipboard still holds it
     cut: Option<String>,
     msg: Option<(String, bool)>,
     focused: bool,
@@ -65,9 +65,11 @@ impl Explorer {
         e
     }
 
-    // Enters dir and selects select if given. False if dir can't be read.
+    // Enters dir and selects select if given. False if dir can't be read
     fn cd(&mut self, dir: &str, select: Option<&str>) -> bool {
-        let Ok(entries) = icons::list_dir(dir) else { return false };
+        let Ok(entries) = icons::list_dir(dir) else {
+            return false;
+        };
         self.cwd = dir.to_string();
         self.entries = entries;
         self.state = ListState::default();
@@ -115,12 +117,19 @@ impl Explorer {
         if let Ok(f) = File::open(&path) {
             let _ = f.take(PREVIEW_BYTES).read_to_end(&mut data);
         }
-        let label = |k: &str, v: String| Line::new().push(format!("{:<8}", k), Style::new().fg(p::BLUE).bold()).push(v, Style::new());
+        let label = |k: &str, v: String| {
+            Line::new()
+                .push(format!("{:<8}", k), Style::new().fg(p::BLUE).bold())
+                .push(v, Style::new())
+        };
         if data.starts_with(b"\x89PNG") && data.len() >= 24 {
             let w = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
             let h = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
             self.preview = Preview::Info(vec![
-                Line::styled(format!("{} PNG image", icons::PICTURE), Style::new().fg(p::MAUVE).bold()),
+                Line::styled(
+                    format!("{} PNG image", icons::PICTURE),
+                    Style::new().fg(p::MAUVE).bold(),
+                ),
                 Line::new(),
                 label("size", format!("{} x {}", w, h)),
                 label("file", widget::human_size(e.size)),
@@ -129,26 +138,42 @@ impl Explorer {
             ]);
         } else if data.starts_with(b"\0asm") {
             self.preview = Preview::Info(vec![
-                Line::styled(format!("{} wasm app", icons::CUBE), Style::new().fg(p::GREEN).bold()),
+                Line::styled(
+                    format!("{} wasm app", icons::CUBE),
+                    Style::new().fg(p::GREEN).bold(),
+                ),
                 Line::new(),
                 label("file", widget::human_size(e.size)),
                 Line::new(),
-                Line::styled("Enter runs it on a new desktop", Style::new().fg(p::OVERLAY1)),
+                Line::styled(
+                    "Enter runs it on a new desktop",
+                    Style::new().fg(p::OVERLAY1),
+                ),
             ]);
         } else if data.iter().take(512).any(|&b| b == 0) {
             self.preview = Preview::Info(vec![
-                Line::styled(format!("{} binary file", icons::FILE), Style::new().fg(p::SUBTEXT1).bold()),
+                Line::styled(
+                    format!("{} binary file", icons::FILE),
+                    Style::new().fg(p::SUBTEXT1).bold(),
+                ),
                 Line::new(),
                 label("file", widget::human_size(e.size)),
             ]);
         } else {
             let text = String::from_utf8_lossy(&data);
-            self.preview = Preview::Text(text.lines().take(200).map(|l| l.replace('\t', "    ")).collect());
+            self.preview = Preview::Text(
+                text.lines()
+                    .take(200)
+                    .map(|l| l.replace('\t', "    "))
+                    .collect(),
+            );
         }
     }
 
     fn open(&mut self) {
-        let Some(e) = self.selected().cloned() else { return };
+        let Some(e) = self.selected().cloned() else {
+            return;
+        };
         let path = icons::resolve(&self.cwd, &e.name);
         if e.is_dir {
             self.cd(&path, None);
@@ -161,7 +186,13 @@ impl Explorer {
 
     fn launch(&mut self, app: &str, args: &[&str]) {
         if inkui::spawn(app, args) {
-            self.msg = Some((format!("{} opened on a new desktop (Win + \u{2190} comes back)", icons::ROCKET), false));
+            self.msg = Some((
+                format!(
+                    "{} opened on a new desktop (Win + \u{2190} comes back)",
+                    icons::ROCKET
+                ),
+                false,
+            ));
         } else {
             self.msg = Some((format!("could not start {}", app), true));
         }
@@ -202,7 +233,11 @@ impl Explorer {
             }
             Ask::NewFolder => {
                 let r = std::fs::create_dir(&path);
-                self.report(r, format!("created folder {}", name), &format!("create {}", name))
+                self.report(
+                    r,
+                    format!("created folder {}", name),
+                    &format!("create {}", name),
+                )
             }
             Ask::Rename(old) => {
                 let from = icons::resolve(&self.cwd, old);
@@ -211,7 +246,11 @@ impl Explorer {
                 } else {
                     std::fs::rename(&from, &path)
                 };
-                self.report(r, format!("renamed to {}", name), &format!("rename {}", old))
+                self.report(
+                    r,
+                    format!("renamed to {}", name),
+                    &format!("rename {}", old),
+                )
             }
             Ask::Delete(_) => false,
         };
@@ -230,19 +269,27 @@ impl Explorer {
 
     // Puts the selected path on the clipboard; cut makes the next paste move it.
     fn copy(&mut self, cut: bool) {
-        let Some(path) = self.selected_path() else { return };
+        let Some(path) = self.selected_path() else {
+            return;
+        };
         inkui::clipboard::set(&path);
         let name = icons::file_name(&path).to_string();
         self.cut = if cut { Some(path) } else { None };
         let verb = if cut { "cut" } else { "copied" };
-        self.msg = Some((format!("{} {} {} (p pastes it)", icons::CHECK, verb, name), false));
+        self.msg = Some((
+            format!("{} {} {} (p pastes it)", icons::CHECK, verb, name),
+            false,
+        ));
     }
 
     // Pastes the path on the clipboard into this folder.
     fn paste(&mut self) {
         let src = inkui::clipboard::get().trim().to_string();
         if !src.starts_with('/') || !files::exists(&src) {
-            self.msg = Some(("the clipboard has no file to paste (y copies one)".into(), true));
+            self.msg = Some((
+                "the clipboard has no file to paste (y copies one)".into(),
+                true,
+            ));
             return;
         }
         let name = icons::file_name(&src).to_string();
@@ -263,7 +310,11 @@ impl Explorer {
             (files::copy(&src, &dst), dst)
         };
         let verb = if moving { "moved" } else { "pasted" };
-        if self.report(r, format!("{} {}", verb, icons::file_name(&dst)), &format!("paste {}", name)) {
+        if self.report(
+            r,
+            format!("{} {}", verb, icons::file_name(&dst)),
+            &format!("paste {}", name),
+        ) {
             if moving {
                 self.cut = None;
                 inkui::clipboard::set(&dst);
@@ -320,7 +371,10 @@ impl Explorer {
             Key::Right | Key::Enter | Key::Char('l') => self.open(),
             Key::Left | Key::Backspace | Key::Char('h') => self.up(),
             Key::Char('e') => {
-                if let Some(path) = self.selected_path().filter(|_| !self.selected().unwrap().is_dir) {
+                if let Some(path) = self
+                    .selected_path()
+                    .filter(|_| !self.selected().unwrap().is_dir)
+                {
                     self.launch("/apps/editor.wasm", &[&path]);
                 }
             }
@@ -359,10 +413,20 @@ impl Explorer {
 
 fn entry_line(e: &Entry, with_size: bool, width: usize) -> Line {
     let (icon, color) = icons::file_icon(&e.name, e.is_dir);
-    let name_style = if e.is_dir { Style::new().fg(color).bold() } else { Style::new().fg(p::TEXT) };
-    let mut l = Line::new().push(format!("{} ", icon), Style::new().fg(color)).push(e.name.clone(), name_style);
+    let name_style = if e.is_dir {
+        Style::new().fg(color).bold()
+    } else {
+        Style::new().fg(p::TEXT)
+    };
+    let mut l = Line::new()
+        .push(format!("{} ", icon), Style::new().fg(color))
+        .push(e.name.clone(), name_style);
     if with_size {
-        let size = if e.is_dir { String::new() } else { widget::human_size(e.size) };
+        let size = if e.is_dir {
+            String::new()
+        } else {
+            widget::human_size(e.size)
+        };
         let used = e.name.chars().count() + 2;
         let pad = width.saturating_sub(used + size.len() + 1);
         l.add(" ".repeat(pad), Style::new());
@@ -378,32 +442,87 @@ impl App for Explorer {
         let (header, rest) = area.take_top(1);
         let (body, footer) = rest.take_bottom(2);
 
-        let mut x = widget::pill(buf, header.x + 1, header.y, &format!("{} files", icons::FOLDER_OPEN), p::CRUST, p::BLUE) + 1;
+        let mut x = widget::pill(
+            buf,
+            header.x + 1,
+            header.y,
+            &format!("{} files", icons::FOLDER_OPEN),
+            p::CRUST,
+            p::BLUE,
+        ) + 1;
         let crumbs: Vec<&str> = self.cwd.split('/').filter(|s| !s.is_empty()).collect();
         x = buf.text(x, header.y, " / ", 3, Style::new().fg(p::OVERLAY1));
         for (i, c) in crumbs.iter().enumerate() {
             let last = i + 1 == crumbs.len();
-            let st = if last { Style::new().fg(p::BLUE).bold() } else { Style::new().fg(p::SUBTEXT0) };
+            let st = if last {
+                Style::new().fg(p::BLUE).bold()
+            } else {
+                Style::new().fg(p::SUBTEXT0)
+            };
             x = buf.text(x, header.y, c, header.right().saturating_sub(x), st);
             if !last {
                 x = buf.text(x, header.y, " \u{f054} ", 3, Style::new().fg(p::SURFACE2));
             }
         }
 
-        let cols = body.split_h(&[Constraint::Pct(20), Constraint::Pct(40), Constraint::Fill(1)]);
+        let cols = body.split_h(&[
+            Constraint::Pct(20),
+            Constraint::Pct(40),
+            Constraint::Fill(1),
+        ]);
 
-        let inner = Block::new().focused(false).padding(0, 0).render(buf, cols[0]);
-        let items: Vec<Line> = self.parent.iter().map(|e| entry_line(e, false, inner.w)).collect();
-        List::new(&items).focused(false).symbol(" ").render(buf, inner, &mut self.parent_state);
+        let inner = Block::new()
+            .focused(false)
+            .padding(0, 0)
+            .render(buf, cols[0]);
+        let items: Vec<Line> = self
+            .parent
+            .iter()
+            .map(|e| entry_line(e, false, inner.w))
+            .collect();
+        List::new(&items)
+            .focused(false)
+            .symbol(" ")
+            .render(buf, inner, &mut self.parent_state);
 
-        let title = Line::styled(format!(" {}", if self.cwd == "/" { "/" } else { icons::file_name(&self.cwd) }), Style::new().fg(p::BLUE).bold());
-        let count = Line::styled(format!("{} items", self.entries.len()), Style::new().fg(p::OVERLAY1));
-        let inner = Block::new().title(title).footer(count).focused(self.focused).padding(0, 0).render(buf, cols[1]);
-        let items: Vec<Line> = self.entries.iter().map(|e| entry_line(e, true, inner.w.saturating_sub(2))).collect();
+        let title = Line::styled(
+            format!(
+                " {}",
+                if self.cwd == "/" {
+                    "/"
+                } else {
+                    icons::file_name(&self.cwd)
+                }
+            ),
+            Style::new().fg(p::BLUE).bold(),
+        );
+        let count = Line::styled(
+            format!("{} items", self.entries.len()),
+            Style::new().fg(p::OVERLAY1),
+        );
+        let inner = Block::new()
+            .title(title)
+            .footer(count)
+            .focused(self.focused)
+            .padding(0, 0)
+            .render(buf, cols[1]);
+        let items: Vec<Line> = self
+            .entries
+            .iter()
+            .map(|e| entry_line(e, true, inner.w.saturating_sub(2)))
+            .collect();
         if items.is_empty() {
-            buf.text(inner.x + 2, inner.y, "empty", inner.w, Style::new().fg(p::OVERLAY0));
+            buf.text(
+                inner.x + 2,
+                inner.y,
+                "empty",
+                inner.w,
+                Style::new().fg(p::OVERLAY0),
+            );
         }
-        List::new(&items).focused(self.focused).render(buf, inner, &mut self.state);
+        List::new(&items)
+            .focused(self.focused)
+            .render(buf, inner, &mut self.state);
 
         let ptitle = self.selected().map(|e| e.name.clone()).unwrap_or_default();
         let inner = Block::new()
@@ -414,7 +533,13 @@ impl App for Explorer {
             Preview::Empty => {}
             Preview::Dir(entries) => {
                 if entries.is_empty() {
-                    buf.text(inner.x, inner.y, "empty folder", inner.w, Style::new().fg(p::OVERLAY0));
+                    buf.text(
+                        inner.x,
+                        inner.y,
+                        "empty folder",
+                        inner.w,
+                        Style::new().fg(p::OVERLAY0),
+                    );
                 }
                 for (i, e) in entries.iter().take(inner.h).enumerate() {
                     buf.line(inner.x, inner.y + i, &entry_line(e, true, inner.w), inner.w);
@@ -422,7 +547,13 @@ impl App for Explorer {
             }
             Preview::Text(lines) => {
                 for (i, l) in lines.iter().take(inner.h).enumerate() {
-                    buf.text(inner.x, inner.y + i, l, inner.w, Style::new().fg(p::SUBTEXT1));
+                    buf.text(
+                        inner.x,
+                        inner.y + i,
+                        l,
+                        inner.w,
+                        Style::new().fg(p::SUBTEXT1),
+                    );
                 }
             }
             Preview::Info(lines) => {
@@ -443,24 +574,61 @@ impl App for Explorer {
                 Ask::Rename(old) => format!("Rename {} to: ", old),
                 Ask::Delete(name) => format!("Delete {}? (y / n) ", name),
             };
-            let x = buf.text(status.x, status.y, &label, status.w, Style::new().fg(p::YELLOW).bg(bg).bold());
+            let x = buf.text(
+                status.x,
+                status.y,
+                &label,
+                status.w,
+                Style::new().fg(p::YELLOW).bg(bg).bold(),
+            );
             if !matches!(ask, Ask::Delete(_)) {
-                input.render(buf, Rect::new(x, status.y, status.right().saturating_sub(x), 1), Style::new().bg(bg), true, "name");
+                input.render(
+                    buf,
+                    Rect::new(x, status.y, status.right().saturating_sub(x), 1),
+                    Style::new().bg(bg),
+                    true,
+                    "name",
+                );
             }
         } else if let Some((m, is_err)) = &self.msg {
-            buf.text(status.x, status.y, m, status.w, Style::new().fg(if *is_err { p::RED } else { p::GREEN }));
+            buf.text(
+                status.x,
+                status.y,
+                m,
+                status.w,
+                Style::new().fg(if *is_err { p::RED } else { p::GREEN }),
+            );
         } else if let Some(e) = self.selected() {
-            let what = if e.is_dir { "folder".to_string() } else { widget::human_size(e.size) };
+            let what = if e.is_dir {
+                "folder".to_string()
+            } else {
+                widget::human_size(e.size)
+            };
             let l = Line::new()
-                .push(format!("{} ", self.state.selected + 1), Style::new().fg(p::LAVENDER))
-                .push(format!("of {}  ", self.entries.len()), Style::new().fg(p::OVERLAY1))
+                .push(
+                    format!("{} ", self.state.selected + 1),
+                    Style::new().fg(p::LAVENDER),
+                )
+                .push(
+                    format!("of {}  ", self.entries.len()),
+                    Style::new().fg(p::OVERLAY1),
+                )
                 .push(what, Style::new().fg(p::SUBTEXT0));
             buf.line(status.x, status.y, &l, status.w);
         }
         widget::hints(
             buf,
             hint_row.inset(1, 0),
-            &[("\u{2192}", "open"), ("e", "edit"), ("n / N", "new file / folder"), ("R", "rename"), ("d", "delete"), ("y / x / p", "copy / cut / paste"), ("t", "terminal"), ("q", "quit")],
+            &[
+                ("\u{2192}", "open"),
+                ("e", "edit"),
+                ("n / N", "new file / folder"),
+                ("R", "rename"),
+                ("d", "delete"),
+                ("y / x / p", "copy / cut / paste"),
+                ("t", "terminal"),
+                ("q", "quit"),
+            ],
         );
     }
 
@@ -482,6 +650,9 @@ impl App for Explorer {
 }
 
 fn main() {
-    let dir = inkui::args().into_iter().next().unwrap_or_else(|| "/".to_string());
+    let dir = inkui::args()
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| "/".to_string());
     inkui::run(Explorer::new(&dir));
 }

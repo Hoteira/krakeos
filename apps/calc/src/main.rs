@@ -1,5 +1,5 @@
 // Keyboard calculator with big digits and a history.
-// Supports + - * / % ^, parentheses, common functions, pi, e and ans (the last result).
+// Supports + - * / % ^, parentheses, common functions, pi, e and ans (last result).
 
 use std::time::Instant;
 
@@ -23,10 +23,12 @@ impl<'a> Parser<'a> {
             self.i += 1;
         }
     }
+
     fn peek(&mut self) -> Option<u8> {
         self.ws();
         self.s.get(self.i).copied()
     }
+
     fn expr(&mut self) -> Result<f64, String> {
         let mut v = self.term()?;
         while let Some(c) = self.peek() {
@@ -44,6 +46,7 @@ impl<'a> Parser<'a> {
         }
         Ok(v)
     }
+
     fn term(&mut self) -> Result<f64, String> {
         let mut v = self.unary()?;
         while let Some(c) = self.peek() {
@@ -52,6 +55,7 @@ impl<'a> Parser<'a> {
                     self.i += 1;
                     v *= self.unary()?;
                 }
+
                 b'/' => {
                     self.i += 1;
                     let d = self.unary()?;
@@ -60,6 +64,7 @@ impl<'a> Parser<'a> {
                     }
                     v /= d;
                 }
+
                 b'%' => {
                     self.i += 1;
                     let d = self.unary()?;
@@ -68,11 +73,13 @@ impl<'a> Parser<'a> {
                     }
                     v %= d;
                 }
+
                 _ => break,
             }
         }
         Ok(v)
     }
+
     fn unary(&mut self) -> Result<f64, String> {
         match self.peek() {
             Some(b'-') => {
@@ -86,15 +93,17 @@ impl<'a> Parser<'a> {
             _ => self.power(),
         }
     }
+
     fn power(&mut self) -> Result<f64, String> {
         let base = self.atom()?;
         if self.peek() == Some(b'^') {
             self.i += 1;
-            let exp = self.unary()?; // right associative
+            let exp = self.unary()?; // right assoc
             return Ok(base.powf(exp));
         }
         Ok(base)
     }
+
     fn atom(&mut self) -> Result<f64, String> {
         match self.peek() {
             Some(b'(') => {
@@ -108,7 +117,9 @@ impl<'a> Parser<'a> {
             }
             Some(c) if c.is_ascii_digit() || c == b'.' => {
                 let start = self.i;
-                while self.i < self.s.len() && (self.s[self.i].is_ascii_digit() || self.s[self.i] == b'.') {
+                while self.i < self.s.len()
+                    && (self.s[self.i].is_ascii_digit() || self.s[self.i] == b'.')
+                {
                     self.i += 1;
                 }
                 let t = std::str::from_utf8(&self.s[start..self.i]).unwrap();
@@ -119,7 +130,9 @@ impl<'a> Parser<'a> {
                 while self.i < self.s.len() && self.s[self.i].is_ascii_alphanumeric() {
                     self.i += 1;
                 }
-                let name = std::str::from_utf8(&self.s[start..self.i]).unwrap().to_ascii_lowercase();
+                let name = std::str::from_utf8(&self.s[start..self.i])
+                    .unwrap()
+                    .to_ascii_lowercase();
                 match name.as_str() {
                     "pi" => return Ok(std::f64::consts::PI),
                     "e" => return Ok(std::f64::consts::E),
@@ -154,7 +167,11 @@ impl<'a> Parser<'a> {
 }
 
 fn eval(s: &str, ans: f64) -> Result<f64, String> {
-    let mut p = Parser { s: s.as_bytes(), i: 0, ans };
+    let mut p = Parser {
+        s: s.as_bytes(),
+        i: 0,
+        ans,
+    };
     let v = p.expr()?;
     if p.peek().is_some() {
         return Err(format!("unexpected '{}'", p.s[p.i] as char));
@@ -171,7 +188,11 @@ fn fmt(v: f64) -> String {
     }
     let s = format!("{:.10}", v);
     let s = s.trim_end_matches('0').trim_end_matches('.').to_string();
-    if s.len() > 18 { format!("{:.6e}", v) } else { s }
+    if s.len() > 18 {
+        format!("{:.6e}", v)
+    } else {
+        s
+    }
 }
 
 // 3x5 glyphs as rows of 3 bits.
@@ -204,12 +225,18 @@ fn big_text(buf: &mut Buffer, right: usize, y: usize, max_w: usize, text: &str) 
     }
     let x0 = right - w;
     for (gi, g) in glyphs.iter().enumerate() {
-        let t = if glyphs.len() > 1 { (gi * 255 / (glyphs.len() - 1)) as u8 } else { 0 };
+        let t = if glyphs.len() > 1 {
+            (gi * 255 / (glyphs.len() - 1)) as u8
+        } else {
+            0
+        };
         let color = mix(p::SAPPHIRE, p::MAUVE, t);
         for col in 0..3 {
             for row in 0..3 {
                 let top = g.get(row * 2).map_or(false, |r| r >> (2 - col) & 1 == 1);
-                let bot = g.get(row * 2 + 1).map_or(false, |r| r >> (2 - col) & 1 == 1);
+                let bot = g
+                    .get(row * 2 + 1)
+                    .map_or(false, |r| r >> (2 - col) & 1 == 1);
                 let ch = match (top, bot) {
                     (true, true) => '\u{2588}',
                     (true, false) => '\u{2580}',
@@ -342,34 +369,83 @@ impl App for Calc {
         let area = buf.area;
         let (header, rest) = area.take_top(1);
         let (body, hint_row) = rest.take_bottom(1);
-        widget::pill(buf, header.x + 1, header.y, &format!("{} calc", icons::CALCULATOR), p::CRUST, p::PEACH);
+        widget::pill(
+            buf,
+            header.x + 1,
+            header.y,
+            &format!("{} calc", icons::CALCULATOR),
+            p::CRUST,
+            p::PEACH,
+        );
 
         let cols = body.split_h(&[Constraint::Fill(3), Constraint::Fill(2)]);
         let left = cols[0].split_v(&[Constraint::Len(9), Constraint::Fill(1)]);
 
-        let disp = Block::new().focused(self.focused).padding(2, 0).render(buf, left[0]);
-        let preview = if self.input.text.trim().is_empty() { None } else { eval(&self.input.text, self.ans).ok() };
-        let shown = preview.or(self.result).map(fmt).unwrap_or_else(|| "0".into());
+        let disp = Block::new()
+            .focused(self.focused)
+            .padding(2, 0)
+            .render(buf, left[0]);
+        let preview = if self.input.text.trim().is_empty() {
+            None
+        } else {
+            eval(&self.input.text, self.ans).ok()
+        };
+        let shown = preview
+            .or(self.result)
+            .map(fmt)
+            .unwrap_or_else(|| "0".into());
         let iw = disp.w.min(self.input.len() + 1);
         let irect = Rect::new(disp.right() - iw, disp.y, iw, 1);
-        self.input.render(buf, irect, Style::new().fg(p::SUBTEXT1), self.focused, "");
+        self.input
+            .render(buf, irect, Style::new().fg(p::SUBTEXT1), self.focused, "");
         if self.input.text.is_empty() {
-            buf.text(disp.x, disp.y, "type an expression", disp.w, Style::new().fg(p::OVERLAY0));
+            buf.text(
+                disp.x,
+                disp.y,
+                "type an expression",
+                disp.w,
+                Style::new().fg(p::OVERLAY0),
+            );
         }
         let big_y = disp.y + 2;
         if !big_text(buf, disp.right(), big_y, disp.w, &shown) {
             let w = shown.chars().count().min(disp.w);
-            buf.text(disp.right() - w, big_y + 1, &shown, w, Style::new().fg(p::SAPPHIRE).bold());
+            buf.text(
+                disp.right() - w,
+                big_y + 1,
+                &shown,
+                w,
+                Style::new().fg(p::SAPPHIRE).bold(),
+            );
         }
         if preview.is_some() && self.input.text.trim() != shown {
-            buf.text(disp.x, big_y + 1, "= preview", disp.w, Style::new().fg(p::OVERLAY0));
+            buf.text(
+                disp.x,
+                big_y + 1,
+                "= preview",
+                disp.w,
+                Style::new().fg(p::OVERLAY0),
+            );
         }
         if let Some(e) = &self.error {
-            buf.text(disp.x, disp.bottom() - 1, &format!("{} {}", icons::WARNING, e), disp.w, Style::new().fg(p::RED));
+            buf.text(
+                disp.x,
+                disp.bottom() - 1,
+                &format!("{} {}", icons::WARNING, e),
+                disp.w,
+                Style::new().fg(p::RED),
+            );
         }
 
-        let lit = self.pressed.as_ref().filter(|(_, t)| t.elapsed().as_millis() < 180).map(|(k, _)| k.clone());
-        let pad = Block::new().focused(false).padding(1, 0).render(buf, left[1]);
+        let lit = self
+            .pressed
+            .as_ref()
+            .filter(|(_, t)| t.elapsed().as_millis() < 180)
+            .map(|(k, _)| k.clone());
+        let pad = Block::new()
+            .focused(false)
+            .padding(1, 0)
+            .render(buf, left[1]);
         let kw = (pad.w / 5).max(3);
         let kh = (pad.h / 4).max(1);
         for (r, row) in PAD.iter().enumerate() {
@@ -380,19 +456,46 @@ impl App for Calc {
                     continue;
                 }
                 let is_op = !key.chars().all(|ch| ch.is_ascii_digit() || ch == '.');
-                let base: Color = if *key == "=" { p::GREEN } else if is_op { p::MAUVE } else { p::SURFACE1 };
+                let base: Color = if *key == "=" {
+                    p::GREEN
+                } else if is_op {
+                    p::MAUVE
+                } else {
+                    p::SURFACE1
+                };
                 let on = lit.as_deref() == Some(*key);
-                let bg = if on { p::YELLOW } else if is_op || *key == "=" { with_alpha(base, 0x50) } else { with_alpha(base, 0xA0) };
+                let bg = if on {
+                    p::YELLOW
+                } else if is_op || *key == "=" {
+                    with_alpha(base, 0x50)
+                } else {
+                    with_alpha(base, 0xA0)
+                };
                 let gap = if kh >= 3 { 1 } else { 0 };
                 let cell = Rect::new(x, y, kw.saturating_sub(1), kh - gap);
                 buf.fill(cell, ' ', Style::new().bg(bg));
-                let fg = if on { p::CRUST } else if is_op || *key == "=" { base } else { p::TEXT };
-                buf.text(x + cell.w / 2, y + kh / 2, key, 1, Style::new().fg(fg).bg(bg).bold());
+                let fg = if on {
+                    p::CRUST
+                } else if is_op || *key == "=" {
+                    base
+                } else {
+                    p::TEXT
+                };
+                buf.text(
+                    x + cell.w / 2,
+                    y + kh / 2,
+                    key,
+                    1,
+                    Style::new().fg(fg).bg(bg).bold(),
+                );
             }
         }
 
         let inner = Block::new()
-            .title(Line::styled(format!("{} history", icons::HISTORY), Style::new().fg(p::LAVENDER)))
+            .title(Line::styled(
+                format!("{} history", icons::HISTORY),
+                Style::new().fg(p::LAVENDER),
+            ))
             .focused(false)
             .render(buf, cols[1]);
         let items: Vec<Line> = self
@@ -401,7 +504,9 @@ impl App for Calc {
             .map(|(e, r)| {
                 let room = inner.w.saturating_sub(r.chars().count() + 4);
                 let e: String = e.chars().take(room).collect();
-                let pad = inner.w.saturating_sub(e.chars().count() + r.chars().count() + 4);
+                let pad = inner
+                    .w
+                    .saturating_sub(e.chars().count() + r.chars().count() + 4);
                 Line::new()
                     .push(e, Style::new().fg(p::SUBTEXT0))
                     .push(" ".repeat(pad), Style::new())
@@ -410,14 +515,29 @@ impl App for Calc {
             })
             .collect();
         if items.is_empty() {
-            buf.text(inner.x, inner.y, "nothing yet", inner.w, Style::new().fg(p::OVERLAY0));
+            buf.text(
+                inner.x,
+                inner.y,
+                "nothing yet",
+                inner.w,
+                Style::new().fg(p::OVERLAY0),
+            );
         }
-        List::new(&items).focused(self.browsing).render(buf, inner, &mut self.hist);
+        List::new(&items)
+            .focused(self.browsing)
+            .render(buf, inner, &mut self.hist);
 
         widget::hints(
             buf,
             hint_row.inset(1, 0),
-            &[("Enter", "calculate"), ("\u{2191}\u{2193}", "history"), ("Esc", "clear"), ("Ctrl + C", "copy"), ("Ctrl + V", "paste"), ("Ctrl + Q", "quit")],
+            &[
+                ("Enter", "calculate"),
+                ("\u{2191}\u{2193}", "history"),
+                ("Esc", "clear"),
+                ("Ctrl + C", "copy"),
+                ("Ctrl + V", "paste"),
+                ("Ctrl + Q", "quit"),
+            ],
         );
     }
 
@@ -439,7 +559,11 @@ impl App for Calc {
     }
 
     fn tick_ms(&self) -> u64 {
-        if self.pressed.is_some() { 60 } else { 0 }
+        if self.pressed.is_some() {
+            60
+        } else {
+            0
+        }
     }
 }
 

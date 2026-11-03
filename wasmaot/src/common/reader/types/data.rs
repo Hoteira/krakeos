@@ -1,12 +1,12 @@
-use alloc::vec::Vec;
 use crate::common::{indices::MemIdx, reader::span::Span};
+use alloc::vec::Vec;
 use core::fmt::{Debug, Formatter};
 
 #[derive(Clone)]
 pub struct DataSegment {
     pub init: Vec<u8>,
     pub mode: DataMode,
-    // Byte offset of the init data within the original .wasm binary.
+    // Byte offset of the init data within the original .wasm binary
     pub wasm_init_offset: usize,
 }
 
@@ -35,11 +35,10 @@ impl Debug for DataMode {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         match self {
             DataMode::Passive => f.debug_struct("Passive").finish(),
-            DataMode::Active(active_data_mode) => {
-                f.debug_struct("Active")
-                    .field("offset", &active_data_mode.offset)
-                    .finish()
-            }
+            DataMode::Active(active_data_mode) => f
+                .debug_struct("Active")
+                .field("offset", &active_data_mode.offset)
+                .finish(),
         }
     }
 }

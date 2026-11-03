@@ -29,23 +29,30 @@ impl fatfs::IoError for DiskError {
 }
 
 pub struct Disk {
-    // Partition start and length, in sectors.
+    // Partition start and length, in sectors
     start: u64,
     sectors: u64,
     pos: u64,
-    // Sectors below this are cached; set once the boot sector is known.
+    // Sectors below this are cached; set once the boot sector is known
     meta_end: u64,
     meta: Vec<Option<[u8; SECTOR]>>,
-    // Direct-mapped by sector number; u64::MAX marks an empty slot.
+    // Direct-mapped by sector number; u64::MAX marks an empty slot
     small: Vec<(u64, [u8; SECTOR])>,
 }
 
 impl Disk {
     pub fn new(start: u64, sectors: u64) -> Self {
-        let mut d = Disk { start, sectors, pos: 0, meta_end: 0, meta: Vec::new(), small: vec![(u64::MAX, [0; SECTOR]); SMALL_SLOTS as usize] };
+        let mut d = Disk {
+            start,
+            sectors,
+            pos: 0,
+            meta_end: 0,
+            meta: Vec::new(),
+            small: vec![(u64::MAX, [0; SECTOR]); SMALL_SLOTS as usize],
+        };
         let mut boot = [0u8; SECTOR];
         d.raw_read(0, 1, &mut boot);
-        // BPB: reserved sectors, FAT count, and FAT size (FAT32 field, else FAT16 one).
+        // BPB: reserved sectors, FAT count, and FAT size (FAT32 field, else FAT16)
         let reserved = u16::from_le_bytes([boot[14], boot[15]]) as u64;
         let fats = boot[16] as u64;
         let mut fat_size = u16::from_le_bytes([boot[22], boot[23]]) as u64;

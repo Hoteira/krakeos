@@ -1,5 +1,5 @@
-// Terminal: the place apps are started from.
-// Settings live in /config/terminal.toml, history in /config/history.txt.
+// Terminal: the place apps are started from
+// Settings live in /config/terminal.toml, history in /config/history.txt
 
 use std::fs::File;
 use std::io::{Read, Write};
@@ -46,7 +46,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("exit", "close this terminal"),
 ];
 
-// Short names for apps.
+// Short names for apps
 const ALIASES: &[(&str, &str)] = &[
     ("edit", "editor"),
     ("nano", "editor"),
@@ -57,19 +57,19 @@ const ALIASES: &[(&str, &str)] = &[
 
 const HISTORY_FILE: &str = "/config/history.txt";
 
-// Apps that print and read text instead of opening a desktop; they run here.
+// Apps that print and read text instead of opening a desktop; they run here
 const CONSOLE_APPS: &[&str] = &["python"];
 
 // A console app running in this terminal.
 struct Child {
     pipe: inkui::app::Pipe,
-    // Output after the last newline (for Python, its >>> prompt).
+    // Output after the last newline (for Python, its >>> prompt)
     partial: String,
-    // Bytes of a UTF-8 character split across reads.
+    // Bytes of a UTF-8 character split across reads
     pending: Vec<u8>,
-    // Inside an ANSI escape sequence, which is dropped.
+    // Inside an ANSI escape sequence, which is dropped
     escape: bool,
-    // Name shown while it starts up (Python takes a few seconds).
+    // Name shown while it starts up (Python takes a few seconds)
     name: String,
     started: bool,
 }
@@ -77,7 +77,7 @@ struct Child {
 #[derive(Deserialize)]
 #[serde(default)]
 struct Config {
-    // Text in the first prompt pill.
+    // Text in the first prompt pill
     prompt_name: String,
     start_dir: String,
     save_history: bool,
@@ -86,7 +86,12 @@ struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Config { prompt_name: "krake".into(), start_dir: "/".into(), save_history: true, history_size: 500 }
+        Config {
+            prompt_name: "krake".into(),
+            start_dir: "/".into(),
+            save_history: true,
+            history_size: 500,
+        }
     }
 }
 
@@ -109,7 +114,7 @@ tab_width = 4
 syntax_highlighting = true
 "#;
 
-// Config files the config command knows, with their default text.
+// Config files the config command knows, with their default text
 const CONFIGS: &[(&str, &str)] = &[
     ("system", inkui::config::SYSTEM_DEFAULT),
     ("terminal", CONFIG_DEFAULT),
@@ -133,11 +138,11 @@ struct Terminal {
     hist_pos: Option<usize>,
     draft: String,
     cwd: String,
-    // Rows scrolled up from the bottom.
+    // Rows scrolled up from the bottom
     scroll: usize,
-    // Rows the output area had at the last draw (for paging).
+    // Rows the output area had at the last draw (for paging)
     page: usize,
-    // Text columns at the last draw (for ls columns and wrapping).
+    // Text columns at the last draw (for ls columns and wrapping)
     page_cols: usize,
     last_ok: bool,
     focused: bool,
@@ -176,7 +181,11 @@ impl Terminal {
             return;
         }
         if let Ok(text) = std::fs::read_to_string(HISTORY_FILE) {
-            self.history = text.lines().filter(|l| !l.trim().is_empty()).map(String::from).collect();
+            self.history = text
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(String::from)
+                .collect();
             let keep = self.cfg.history_size.max(1);
             if self.history.len() > keep {
                 self.history.drain(..self.history.len() - keep);
@@ -203,7 +212,7 @@ impl Terminal {
         }
     }
 
-    // A blank row so the next prompt doesn't sit right under the last one.
+    // A blank row so the next prompt doesn't sit right under the last one
     fn gap(&mut self) {
         if self.out.last().map_or(false, |l| l.width() > 0) {
             self.print(Line::new());
@@ -211,7 +220,11 @@ impl Terminal {
     }
 
     fn fail(&mut self, msg: impl Into<String>) {
-        self.print(Line::new().push(format!("{} ", icons::CROSS), err()).push(msg.into(), err()));
+        self.print(
+            Line::new()
+                .push(format!("{} ", icons::CROSS), err())
+                .push(msg.into(), err()),
+        );
         self.last_ok = false;
     }
 
@@ -222,7 +235,12 @@ impl Terminal {
                 .push("OS", Style::new().fg(p::BLUE).bold())
                 .push("  terminal", dim()),
         );
-        self.print(Line::new().push("  type ", dim()).push("help", Style::new().fg(p::YELLOW)).push(" for commands, or an app name to start it", dim()));
+        self.print(
+            Line::new()
+                .push("  type ", dim())
+                .push("help", Style::new().fg(p::YELLOW))
+                .push(" for commands, or an app name to start it", dim()),
+        );
         self.print(Line::new());
     }
 
@@ -233,13 +251,23 @@ impl Terminal {
             }
             return Line::new().push(c.partial.clone(), Style::new().fg(p::SUBTEXT0));
         }
-        let home = if self.cwd == "/" { "/".to_string() } else { self.cwd.clone() };
+        let home = if self.cwd == "/" {
+            "/".to_string()
+        } else {
+            self.cwd.clone()
+        };
         let arrow = if self.last_ok { p::GREEN } else { p::RED };
         Line::new()
             .push("\u{e0b6}", Style::new().fg(p::MAUVE))
-            .push(format!("{} {} ", icons::TERMINAL, self.cfg.prompt_name), Style::new().fg(p::CRUST).bg(p::MAUVE).bold())
+            .push(
+                format!("{} {} ", icons::TERMINAL, self.cfg.prompt_name),
+                Style::new().fg(p::CRUST).bg(p::MAUVE).bold(),
+            )
             .push("\u{e0b0}", Style::new().fg(p::MAUVE).bg(p::BLUE))
-            .push(format!(" {} {} ", icons::FOLDER_OPEN, home), Style::new().fg(p::CRUST).bg(p::BLUE).bold())
+            .push(
+                format!(" {} {} ", icons::FOLDER_OPEN, home),
+                Style::new().fg(p::CRUST).bg(p::BLUE).bold(),
+            )
             .push("\u{e0b0}", Style::new().fg(p::BLUE))
             .push(" \u{276f} ", Style::new().fg(arrow).bold())
     }
@@ -250,7 +278,10 @@ impl Terminal {
         if line.is_empty() {
             return;
         }
-        let (cmd, rest) = line.split_once(' ').map(|(a, b)| (a, b.trim())).unwrap_or((line, ""));
+        let (cmd, rest) = line
+            .split_once(' ')
+            .map(|(a, b)| (a, b.trim()))
+            .unwrap_or((line, ""));
         let args: Vec<&str> = rest.split_whitespace().collect();
         match cmd {
             "help" => self.help(),
@@ -275,7 +306,11 @@ impl Terminal {
             "colors" => self.colors(),
             "history" => {
                 for (i, h) in self.history.clone().iter().enumerate() {
-                    self.print(Line::new().push(format!("{:>4}  ", i + 1), dim()).push(h.clone(), Style::new()));
+                    self.print(
+                        Line::new()
+                            .push(format!("{:>4}  ", i + 1), dim())
+                            .push(h.clone(), Style::new()),
+                    );
                 }
             }
             "run" => {
@@ -292,14 +327,31 @@ impl Terminal {
     fn help(&mut self) {
         self.print(Line::styled("commands", Style::new().fg(p::MAUVE).bold()));
         for (c, d) in COMMANDS {
-            self.print(Line::new().push(format!("  {:<22}", c), Style::new().fg(p::YELLOW)).push(*d, Style::new().fg(p::SUBTEXT0)));
+            self.print(
+                Line::new()
+                    .push(format!("  {:<22}", c), Style::new().fg(p::YELLOW))
+                    .push(*d, Style::new().fg(p::SUBTEXT0)),
+            );
         }
         self.print(Line::styled("apps", Style::new().fg(p::MAUVE).bold()));
         let apps = self.apps().join("  ");
-        self.print(Line::new().push("  ", Style::new()).push(apps, Style::new().fg(p::GREEN)));
+        self.print(
+            Line::new()
+                .push("  ", Style::new())
+                .push(apps, Style::new().fg(p::GREEN)),
+        );
         self.print(Line::styled("desktops", Style::new().fg(p::MAUVE).bold()));
-        for (k, d) in [("Win", "new terminal"), ("Win + \u{2190}/\u{2192}", "switch desktop"), ("Win + \u{2191}/\u{2193}", "scroll"), ("Win + Q", "close the app on screen")] {
-            self.print(Line::new().push(format!("  {:<22}", k), Style::new().fg(p::SKY)).push(d, Style::new().fg(p::SUBTEXT0)));
+        for (k, d) in [
+            ("Win", "new terminal"),
+            ("Win + \u{2190}/\u{2192}", "switch desktop"),
+            ("Win + \u{2191}/\u{2193}", "scroll"),
+            ("Win + Q", "close the app on screen"),
+        ] {
+            self.print(
+                Line::new()
+                    .push(format!("  {:<22}", k), Style::new().fg(p::SKY))
+                    .push(d, Style::new().fg(p::SUBTEXT0)),
+            );
         }
     }
 
@@ -316,7 +368,11 @@ impl Terminal {
 
     fn ls(&mut self, args: &[&str], long_default: bool) {
         let long = long_default || args.contains(&"-l");
-        let target = args.iter().find(|a| !a.starts_with('-')).copied().unwrap_or(".");
+        let target = args
+            .iter()
+            .find(|a| !a.starts_with('-'))
+            .copied()
+            .unwrap_or(".");
         let path = resolve(&self.cwd, target);
         let entries = match icons::list_dir(&path) {
             Ok(e) => e,
@@ -328,20 +384,37 @@ impl Terminal {
         }
         let item = |e: &icons::Entry| {
             let (icon, color) = icons::file_icon(&e.name, e.is_dir);
-            let st = if e.is_dir { Style::new().fg(color).bold() } else { Style::new().fg(color) };
+            let st = if e.is_dir {
+                Style::new().fg(color).bold()
+            } else {
+                Style::new().fg(color)
+            };
             (format!("{} {}", icon, e.name), st)
         };
         if long {
             for e in &entries {
                 let (text, st) = item(e);
-                let size = if e.is_dir { "-".to_string() } else { widget::human_size(e.size) };
-                self.print(Line::new().push(format!("{:>8}  ", size), Style::new().fg(p::SUBTEXT0)).push(text, st));
+                let size = if e.is_dir {
+                    "-".to_string()
+                } else {
+                    widget::human_size(e.size)
+                };
+                self.print(
+                    Line::new()
+                        .push(format!("{:>8}  ", size), Style::new().fg(p::SUBTEXT0))
+                        .push(text, st),
+                );
             }
             return;
         }
         // Columns, filled down first like ls.
         let width = self.cols();
-        let colw = entries.iter().map(|e| e.name.chars().count() + 4).max().unwrap_or(8).min(width.max(8));
+        let colw = entries
+            .iter()
+            .map(|e| e.name.chars().count() + 4)
+            .max()
+            .unwrap_or(8)
+            .min(width.max(8));
         let ncols = (width / colw).max(1);
         let nrows = (entries.len() + ncols - 1) / ncols;
         for r in 0..nrows {
@@ -385,7 +458,11 @@ impl Terminal {
             Err(_) => return self.fail(format!("cat: {}: no such file", arg)),
         }
         if data.iter().take(512).any(|&b| b == 0) {
-            return self.fail(format!("cat: {}: binary file ({})", arg, widget::human_size(data.len() as u64)));
+            return self.fail(format!(
+                "cat: {}: binary file ({})",
+                arg,
+                widget::human_size(data.len() as u64)
+            ));
         }
         for l in String::from_utf8_lossy(&data).lines() {
             self.print(l.replace('\t', "    "));
@@ -402,7 +479,13 @@ impl Terminal {
                 return self.fail("echo: missing file name after >");
             }
             let path = resolve(&self.cwd, file);
-            let mut f = match File::options().write(true).create(true).append(append).truncate(!append).open(&path) {
+            let mut f = match File::options()
+                .write(true)
+                .create(true)
+                .append(append)
+                .truncate(!append)
+                .open(&path)
+            {
                 Ok(f) => f,
                 Err(_) => return self.fail(format!("echo: cannot write {}", file)),
             };
@@ -417,12 +500,17 @@ impl Terminal {
             return self.fail("usage: touch <file>");
         }
         let path = resolve(&self.cwd, arg);
-        if File::options().write(true).create(true).open(&path).is_err() {
+        if File::options()
+            .write(true)
+            .create(true)
+            .open(&path)
+            .is_err()
+        {
             self.fail(format!("touch: cannot create {}", arg));
         }
     }
 
-    // Splits args into flags (like -r, -rf) and paths.
+    // Splits args into flags (like -r, -rf) and paths
     fn flags<'a>(args: &[&'a str]) -> (String, Vec<&'a str>) {
         let mut flags = String::new();
         let mut paths = Vec::new();
@@ -442,7 +530,11 @@ impl Terminal {
         }
         for name in paths {
             let path = resolve(&self.cwd, name);
-            let r = if flags.contains('p') { std::fs::create_dir_all(&path) } else { std::fs::create_dir(&path) };
+            let r = if flags.contains('p') {
+                std::fs::create_dir_all(&path)
+            } else {
+                std::fs::create_dir(&path)
+            };
             if let Err(e) = r {
                 self.fail(format!("mkdir: {}: {}", name, files::why(&e)));
             }
@@ -470,7 +562,9 @@ impl Terminal {
                 std::fs::remove_file(&path)
             };
             match r {
-                Ok(()) if self.cwd == path || self.cwd.starts_with(&format!("{}/", path)) => self.cwd = icons::parent(&path),
+                Ok(()) if self.cwd == path || self.cwd.starts_with(&format!("{}/", path)) => {
+                    self.cwd = icons::parent(&path)
+                }
                 Ok(()) => {}
                 Err(e) => self.fail(format!("rm: {}: {}", name, files::why(&e))),
             }
@@ -500,7 +594,9 @@ impl Terminal {
 
     fn mv(&mut self, args: &[&str]) {
         let (_, paths) = Self::flags(args);
-        let [from, to] = paths[..] else { return self.fail("usage: mv <from> <to>") };
+        let [from, to] = paths[..] else {
+            return self.fail("usage: mv <from> <to>");
+        };
         let src = resolve(&self.cwd, from);
         let dst = self.target(&src, to);
         if let Err(e) = std::fs::rename(&src, &dst) {
@@ -510,7 +606,9 @@ impl Terminal {
 
     fn cp(&mut self, args: &[&str]) {
         let (flags, paths) = Self::flags(args);
-        let [from, to] = paths[..] else { return self.fail("usage: cp [-r] <from> <to>") };
+        let [from, to] = paths[..] else {
+            return self.fail("usage: cp [-r] <from> <to>");
+        };
         let src = resolve(&self.cwd, from);
         if files::is_dir(&src) && !flags.contains('r') {
             return self.fail(format!("cp: {}: is a folder (use cp -r)", from));
@@ -538,7 +636,14 @@ impl Terminal {
         match std::fs::read(resolve(&self.cwd, arg)) {
             Ok(data) if data.len() <= 1 << 20 => {
                 inkui::clipboard::set(&String::from_utf8_lossy(&data));
-                self.print(Line::styled(format!("{} copied {} to the clipboard", icons::CHECK, widget::human_size(data.len() as u64)), ok()));
+                self.print(Line::styled(
+                    format!(
+                        "{} copied {} to the clipboard",
+                        icons::CHECK,
+                        widget::human_size(data.len() as u64)
+                    ),
+                    ok(),
+                ));
             }
             Ok(_) => self.fail(format!("clip: {}: too big (1 MB max)", arg)),
             Err(e) => self.fail(format!("clip: {}: {}", arg, files::why(&e))),
@@ -546,10 +651,18 @@ impl Terminal {
     }
 
     fn config(&mut self, arg: &str) {
-        let name = if arg.is_empty() { "system" } else { arg.trim_end_matches(".toml") };
+        let name = if arg.is_empty() {
+            "system"
+        } else {
+            arg.trim_end_matches(".toml")
+        };
         let Some((_, default)) = CONFIGS.iter().find(|(n, _)| *n == name) else {
             let names: Vec<&str> = CONFIGS.iter().map(|(n, _)| *n).collect();
-            return self.fail(format!("config: unknown settings '{}' (try {})", name, names.join(", ")));
+            return self.fail(format!(
+                "config: unknown settings '{}' (try {})",
+                name,
+                names.join(", ")
+            ));
         };
         let path = inkui::config::ensure(name, default);
         self.launch("/apps/editor.wasm", &[&path]);
@@ -570,9 +683,13 @@ impl Terminal {
         self.launch(app, &[&path]);
     }
 
-    // Starts an app name, alias or .wasm path; file arguments resolve against the cwd.
+    // Starts an app name, alias or .wasm path; file arguments resolve against the cwd
     fn start(&mut self, name: &str, args: &[&str]) {
-        let app = ALIASES.iter().find(|(a, _)| *a == name).map(|(_, b)| *b).unwrap_or(name);
+        let app = ALIASES
+            .iter()
+            .find(|(a, _)| *a == name)
+            .map(|(_, b)| *b)
+            .unwrap_or(name);
         let path = if app.ends_with(".wasm") {
             let p = resolve(&self.cwd, app);
             File::open(&p).ok().map(|_| p)
@@ -584,17 +701,25 @@ impl Terminal {
         };
         let resolved: Vec<String> = args
             .iter()
-            .map(|a| if a.starts_with('-') { a.to_string() } else { resolve(&self.cwd, a) })
+            .map(|a| {
+                if a.starts_with('-') {
+                    a.to_string()
+                } else {
+                    resolve(&self.cwd, a)
+                }
+            })
             .collect();
         let refs: Vec<&str> = resolved.iter().map(|s| s.as_str()).collect();
-        let stem = icons::file_name(&path).trim_end_matches(".wasm").to_string();
+        let stem = icons::file_name(&path)
+            .trim_end_matches(".wasm")
+            .to_string();
         if CONSOLE_APPS.contains(&stem.as_str()) {
             return self.run_console(&path, &refs);
         }
         self.launch(&path, &refs);
     }
 
-    // Runs a console app here: output to the scrollback, input line to its stdin.
+    // Runs a console app here: output to the scrollback, input line to its stdin
     fn run_console(&mut self, path: &str, args: &[&str]) {
         let Some(pipe) = inkui::app::Pipe::open() else {
             return self.fail("could not open a pipe for the app");
@@ -603,12 +728,21 @@ impl Terminal {
             return self.fail(format!("could not start {}", path));
         }
         let name = icons::file_name(path).trim_end_matches(".wasm").to_string();
-        self.child = Some(Child { pipe, partial: String::new(), pending: Vec::new(), escape: false, name, started: false });
+        self.child = Some(Child {
+            pipe,
+            partial: String::new(),
+            pending: Vec::new(),
+            escape: false,
+            name,
+            started: false,
+        });
     }
 
-    // Moves the console app's new output into the scrollback; true if anything changed.
+    // Moves the console app's new output into the scrollback; true if anything changed
     fn pump_child(&mut self) -> bool {
-        let Some(c) = &mut self.child else { return false };
+        let Some(c) = &mut self.child else {
+            return false;
+        };
         let mut bytes = std::mem::take(&mut c.pending);
         bytes.extend(c.pipe.read());
         if bytes.is_empty() {
@@ -646,7 +780,7 @@ impl Terminal {
         true
     }
 
-    // The console app exited (or was stopped): back to the shell prompt.
+    // The console app exited (or was stopped): back to the shell prompt
     fn end_child(&mut self) {
         if let Some(c) = self.child.take() {
             if !c.partial.is_empty() {
@@ -662,7 +796,10 @@ impl Terminal {
                 Line::new()
                     .push(format!("{} ", icons::ROCKET), Style::new().fg(p::PEACH))
                     .push("started ", dim())
-                    .push(icons::file_name(path).trim_end_matches(".wasm").to_string(), Style::new().fg(p::GREEN).bold())
+                    .push(
+                        icons::file_name(path).trim_end_matches(".wasm").to_string(),
+                        Style::new().fg(p::GREEN).bold(),
+                    )
                     .push(" on a new desktop  ", dim())
                     .push("Win + \u{2190}", Style::new().fg(p::SKY))
                     .push(" comes back here", dim()),
@@ -693,18 +830,37 @@ impl Terminal {
             return self.fail("usage: kill <tid>  (see ps)");
         };
         if inkui::app::kill(tid) {
-            self.print(Line::new().push(format!("{} ", icons::CHECK), ok()).push(format!("stopped {}", tid), Style::new()));
+            self.print(
+                Line::new()
+                    .push(format!("{} ", icons::CHECK), ok())
+                    .push(format!("stopped {}", tid), Style::new()),
+            );
         } else {
-            self.fail(format!("kill: {}: no such app (system threads can't be stopped)", tid));
+            self.fail(format!(
+                "kill: {}: no such app (system threads can't be stopped)",
+                tid
+            ));
         }
     }
 
     fn fetch(&mut self) {
         let procs = inkui::app::processes();
         let apps = procs.lines().filter(|l| l.contains(".wasm")).count();
-        let free = procs.lines().find(|l| l.starts_with("free")).unwrap_or("").replace("free RAM: ", "");
-        let cpus = procs.lines().find(|l| l.starts_with("cpus")).unwrap_or("cpus: 1").replace("cpus: ", "");
-        let cores = if cpus == "1" { "1 core".to_string() } else { format!("{} cores", cpus) };
+        let free = procs
+            .lines()
+            .find(|l| l.starts_with("free"))
+            .unwrap_or("")
+            .replace("free RAM: ", "");
+        let cpus = procs
+            .lines()
+            .find(|l| l.starts_with("cpus"))
+            .unwrap_or("cpus: 1")
+            .replace("cpus: ", "");
+        let cores = if cpus == "1" {
+            "1 core".to_string()
+        } else {
+            format!("{} cores", cpus)
+        };
         let (h, m, _) = inkui::app::clock();
         let logo = [
             "  \u{2584}\u{2588}\u{2588}\u{2588}\u{2584}  ",
@@ -722,7 +878,9 @@ impl Terminal {
         ];
         let colors = [p::MAUVE, p::PINK, p::RED, p::PEACH, p::YELLOW];
         for i in 0..logo.len() {
-            let mut l = Line::new().push(logo[i], Style::new().fg(colors[i]).bold()).push("  ", Style::new());
+            let mut l = Line::new()
+                .push(logo[i], Style::new().fg(colors[i]).bold())
+                .push("  ", Style::new());
             let (k, v) = &info[i];
             l.add(format!("{:<8}", k), Style::new().fg(p::BLUE).bold());
             l.add(v.clone(), Style::new());
@@ -733,7 +891,18 @@ impl Terminal {
 
     fn colors(&mut self) {
         let mut l = Line::new().push("  ", Style::new());
-        for c in [p::RED, p::PEACH, p::YELLOW, p::GREEN, p::TEAL, p::SKY, p::BLUE, p::MAUVE, p::PINK, p::FLAMINGO] {
+        for c in [
+            p::RED,
+            p::PEACH,
+            p::YELLOW,
+            p::GREEN,
+            p::TEAL,
+            p::SKY,
+            p::BLUE,
+            p::MAUVE,
+            p::PINK,
+            p::FLAMINGO,
+        ] {
             l.add("\u{2588}\u{2588}\u{2588}", Style::new().fg(c));
         }
         self.print(l);
@@ -744,7 +913,10 @@ impl Terminal {
         let word_start = text.rfind(' ').map(|i| i + 1).unwrap_or(0);
         let word = &text[word_start..];
         let candidates: Vec<String> = if word_start == 0 {
-            let mut c: Vec<String> = COMMANDS.iter().map(|(c, _)| c.split(' ').next().unwrap().to_string()).collect();
+            let mut c: Vec<String> = COMMANDS
+                .iter()
+                .map(|(c, _)| c.split(' ').next().unwrap().to_string())
+                .collect();
             c.extend(self.apps());
             c.extend(ALIASES.iter().map(|(a, _)| a.to_string()));
             c.sort();
@@ -766,23 +938,35 @@ impl Terminal {
         if candidates.is_empty() {
             return;
         }
-        let common = candidates.iter().skip(1).fold(candidates[0].clone(), |acc, c| {
-            acc.chars().zip(c.chars()).take_while(|(a, b)| a == b).map(|(a, _)| a).collect()
-        });
+        let common = candidates
+            .iter()
+            .skip(1)
+            .fold(candidates[0].clone(), |acc, c| {
+                acc.chars()
+                    .zip(c.chars())
+                    .take_while(|(a, b)| a == b)
+                    .map(|(a, _)| a)
+                    .collect()
+            });
         let mut new = text[..word_start].to_string() + &common;
         if candidates.len() == 1 && !common.ends_with('/') {
             new.push(' ');
         }
         if candidates.len() > 1 && common.len() == word.len() {
-            // Nothing more to add: show the options.
+            // Nothing more to add: show the options
             let mut l = Line::new();
             for c in &candidates {
                 let name = c.rsplit('/').find(|s| !s.is_empty()).unwrap_or(c);
-                let st = if c.ends_with('/') { Style::new().fg(p::BLUE).bold() } else { Style::new().fg(p::SUBTEXT1) };
+                let st = if c.ends_with('/') {
+                    Style::new().fg(p::BLUE).bold()
+                } else {
+                    Style::new().fg(p::SUBTEXT1)
+                };
                 l.add(format!("{}  ", name), st);
             }
             self.print(self.prompt().push(text.clone(), Style::new()));
-            self.out.extend(widget::wrap_line(&l, self.page_cols.max(10)));
+            self.out
+                .extend(widget::wrap_line(&l, self.page_cols.max(10)));
             self.gap();
         }
         self.input.set(&new);
@@ -792,7 +976,9 @@ impl Terminal {
         let line = std::mem::take(&mut self.input.text);
         self.input.clear();
         if let Some(c) = &mut self.child {
-            let echo = Line::new().push(std::mem::take(&mut c.partial), Style::new().fg(p::SUBTEXT0)).push(line.clone(), Style::new());
+            let echo = Line::new()
+                .push(std::mem::take(&mut c.partial), Style::new().fg(p::SUBTEXT0))
+                .push(line.clone(), Style::new());
             c.pipe.write(format!("{}\n", line).as_bytes());
             self.print(echo);
             if !line.trim().is_empty() && self.history.last().map(|h| h != &line).unwrap_or(true) {
@@ -836,7 +1022,10 @@ impl Terminal {
             }
             Key::Char('c') if k.ctrl() && self.child.is_some() => {
                 // Closing the pipe stops the app.
-                let echo = self.prompt().push(self.input.text.clone(), Style::new()).push("^C", dim());
+                let echo = self
+                    .prompt()
+                    .push(self.input.text.clone(), Style::new())
+                    .push("^C", dim());
                 if let Some(c) = &mut self.child {
                     c.partial.clear();
                 }
@@ -854,12 +1043,18 @@ impl Terminal {
             Key::Tab if self.child.is_some() => {
                 // Python indentation
                 for _ in 0..4 {
-                    self.input.handle(&KeyEvent { key: Key::Char(' '), mods: 0 });
+                    self.input.handle(&KeyEvent {
+                        key: Key::Char(' '),
+                        mods: 0,
+                    });
                 }
                 return;
             }
             Key::Char('c') if k.ctrl() => {
-                let echo = self.prompt().push(self.input.text.clone(), Style::new()).push("^C", dim());
+                let echo = self
+                    .prompt()
+                    .push(self.input.text.clone(), Style::new())
+                    .push("^C", dim());
                 self.print(echo);
                 self.gap();
                 self.input.clear();
@@ -929,11 +1124,31 @@ impl App for Terminal {
         let (header, body) = body.take_top(1);
         let body = body.inset(1, 0);
 
-        widget::pill(buf, header.x + 1, header.y, &format!("{} terminal", icons::TERMINAL), p::CRUST, if self.focused { p::MAUVE } else { p::SURFACE2 });
-        buf.text(header.x + 15, header.y, &self.cwd, header.w.saturating_sub(30), Style::new().fg(p::OVERLAY1));
+        widget::pill(
+            buf,
+            header.x + 1,
+            header.y,
+            &format!("{} terminal", icons::TERMINAL),
+            p::CRUST,
+            if self.focused { p::MAUVE } else { p::SURFACE2 },
+        );
+        buf.text(
+            header.x + 15,
+            header.y,
+            &self.cwd,
+            header.w.saturating_sub(30),
+            Style::new().fg(p::OVERLAY1),
+        );
         let (h, m, _) = inkui::app::clock();
         let clock = format!("{} {:02}:{:02}", icons::CLOCK, h, m);
-        widget::pill(buf, header.right().saturating_sub(10), header.y, &clock, p::CRUST, p::BLUE);
+        widget::pill(
+            buf,
+            header.right().saturating_sub(10),
+            header.y,
+            &clock,
+            p::CRUST,
+            p::BLUE,
+        );
 
         let mut rows: Vec<Line> = Vec::new();
         for l in &self.out {
@@ -954,19 +1169,37 @@ impl App for Terminal {
             let y = body.y + prompt_row - first;
             buf.line(body.x, y, &prompt, body.w);
             let input_area = Rect::new(body.x + pw, y, body.w.saturating_sub(pw), 1);
-            self.input.render(buf, input_area, Style::new(), self.focused, "");
+            self.input
+                .render(buf, input_area, Style::new(), self.focused, "");
         }
         if self.scroll > 0 {
             let tag = format!(" \u{2191} {} more ", self.scroll);
             let w = tag.chars().count();
-            buf.text(body.right().saturating_sub(w), body.y, &tag, w, Style::new().fg(p::CRUST).bg(p::YELLOW));
+            buf.text(
+                body.right().saturating_sub(w),
+                body.y,
+                &tag,
+                w,
+                Style::new().fg(p::CRUST).bg(p::YELLOW),
+            );
         }
 
         buf.fill(footer, ' ', Style::new().bg(with_alpha(p::CRUST, 0x60)));
         let hints: &[(&str, &str)] = if self.child.is_some() {
-            &[("Enter", "send line"), ("Ctrl + C", "stop"), ("Ctrl + D", "end input"), ("Win + \u{2191}\u{2193}", "scroll")]
+            &[
+                ("Enter", "send line"),
+                ("Ctrl + C", "stop"),
+                ("Ctrl + D", "end input"),
+                ("Win + \u{2191}\u{2193}", "scroll"),
+            ]
         } else {
-            &[("Win", "terminal"), ("Win + \u{2190}\u{2192}", "desktops"), ("Win + Q", "close"), ("Tab", "complete"), ("Win + \u{2191}\u{2193}", "scroll")]
+            &[
+                ("Win", "terminal"),
+                ("Win + \u{2190}\u{2192}", "desktops"),
+                ("Win + Q", "close"),
+                ("Tab", "complete"),
+                ("Win + \u{2191}\u{2193}", "scroll"),
+            ]
         };
         widget::hints(buf, footer.inset(1, 0), hints);
     }
@@ -977,7 +1210,7 @@ impl App for Terminal {
             Event::Focus(f) => {
                 self.focused = *f;
                 if *f {
-                    // Pick up edits made with config terminal.
+                    // Pick up edits made with config terminal
                     self.cfg = inkui::config::load("terminal");
                 }
             }
@@ -1003,13 +1236,17 @@ impl App for Terminal {
     }
 
     fn tick_ms(&self) -> u64 {
-        if self.child.is_some() { 30 } else { 15_000 }
+        if self.child.is_some() {
+            30
+        } else {
+            15_000
+        }
     }
 }
 
 fn main() {
     let mut t = Terminal::new();
-    // terminal <dir> starts there (the explorer's "terminal here").
+    // terminal <dir> starts there (the explorer's "terminal here")
     if let Some(dir) = inkui::args().first() {
         t.cd(dir);
     }

@@ -1,11 +1,11 @@
-// The shell: paints the wallpaper and builds the text font.
-// Uploads /dev/gpu/font, fb and glass on boot, on resize and when /config/system.toml changes.
+// The shell: paints the wallpaper and builds the text font
+// Uploads /dev/gpu/font, fb and glass on boot, on resize and when /config/system.toml changes
 
 use std::fs::File;
 use std::io::{Read, Write};
 use std::time::Duration;
 
-// Glass tint: Catppuccin base over the blurred wallpaper.
+// Glass tint: Catppuccin base over the blurred wallpaper
 const TINT: [f32; 3] = [30.0, 30.0, 46.0];
 
 fn read_info() -> Option<[u32; 7]> {
@@ -23,7 +23,7 @@ fn read_info() -> Option<[u32; 7]> {
 }
 
 fn upload(path: &str, data: &[u8]) {
-    // A fresh fd each time so the write starts at offset 0.
+    // A fresh fd each time so the write starts at offset 0
     if let Ok(mut f) = File::options().write(true).open(path) {
         let _ = f.write_all(data);
     }
@@ -74,7 +74,7 @@ fn load_png(path: &str) -> Option<Img> {
     Some(Img { w, h, px })
 }
 
-// Bilinear scale to cover w x h, cropping the overflow.
+// Bilinear scale to cover w x h, cropping the overflow
 fn cover(img: &Img, w: usize, h: usize) -> Img {
     let s = (w as f32 / img.w as f32).max(h as f32 / img.h as f32);
     let ox = (img.w as f32 * s - w as f32) / 2.0;
@@ -160,7 +160,7 @@ fn to_bgra(img: &Img) -> Vec<u32> {
         .collect()
 }
 
-// Glass layer: blur a quarter-size copy (cheap and very soft), scale it back up and tint it.
+// Glass layer: blur a quarter-size copy (cheap and very soft), scale it back up and tint it
 fn glass(wall: &Img, opacity: f32) -> Vec<u32> {
     let (sw, sh) = ((wall.w / 4).max(1), (wall.h / 4).max(1));
     let mut small = cover(wall, sw, sh);
@@ -176,7 +176,7 @@ fn glass(wall: &Img, opacity: f32) -> Vec<u32> {
     to_bgra(&big)
 }
 
-// A gradient for when there's no wallpaper file.
+// A gradient for when there's no wallpaper file
 fn fallback_wallpaper(w: usize, h: usize) -> Img {
     let mut px = Vec::with_capacity(w * h);
     for y in 0..h {
@@ -227,7 +227,10 @@ fn main() {
                     None => fallback_wallpaper(w, h),
                 };
                 upload("/dev/gpu/fb", &pixels_bytes(&to_bgra(&wall)));
-                upload("/dev/gpu/glass", &pixels_bytes(&glass(&wall, cfg.glass_opacity.clamp(0.0, 1.0))));
+                upload(
+                    "/dev/gpu/glass",
+                    &pixels_bytes(&glass(&wall, cfg.glass_opacity.clamp(0.0, 1.0))),
+                );
             }
         }
         std::thread::sleep(Duration::from_millis(500));

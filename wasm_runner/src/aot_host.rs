@@ -1,13 +1,16 @@
 // WASI preview 1 host bridge for the AOT engine: every import thunk calls
-// dispatch, which takes args from the wasm operand stack (mirrors main.rs).
+// dispatch, which takes args from the wasm operand stack (mirrors main.rs)
 
 use alloc::vec::Vec;
 use wasmaot::aot::AotContext;
 
-use crate::{sys_close, sys_fsop, sys_fstat, sys_kill, sys_open, sys_read, sys_write, time_ns, wasi_filestat, wasi_readdir, KILLED_STATUS};
+use crate::{
+    sys_close, sys_fsop, sys_fstat, sys_kill, sys_open, sys_read, sys_write, time_ns,
+    wasi_filestat, wasi_readdir, KILLED_STATUS,
+};
 use crate::{FSOP_MKDIR, FSOP_RENAME, FSOP_RMDIR, FSOP_STAT, FSOP_UNLINK};
 
-// The subset of WASI p1 (plus a couple of env shims) our apps import.
+// The subset of WASI p1 (plus a couple of env shims) our apps import
 #[derive(Clone, Copy, PartialEq)]
 pub enum WasiFn {
     FdWrite,
@@ -37,9 +40,9 @@ pub enum WasiFn {
     FdPread,
     FdPwrite,
     PathReadlink,
-    // Calls that only need to succeed (sync, advice, flags, timestamps).
+    // Calls that only need to succeed (sync, advice, flags, timestamps)
     Ok(u8),
-    // Calls KrakeOS can't do (links, sockets); fail with NOTSUP.
+    // Calls KrakeOS can't do (links, sockets); fail with NOTSUP
     NotSup(u8),
     KrakeKill,
     Noop, // __wasi_init_tp, __wasm_call_dtors
@@ -94,7 +97,7 @@ pub fn resolve(module: &str, name: &str) -> WasiFn {
     }
 }
 
-// Runner-side state the dispatcher reaches via ctx.user_data.
+// Runner-side state the dispatcher reaches via ctx.user_data
 pub struct AotHostState {
     pub imports: Vec<WasiFn>,
     pub fd_offsets: [usize; MAX_TRACKED_FD],
@@ -106,12 +109,17 @@ pub struct AotHostState {
 }
 
 // Environment every app sees. The terminal is no ANSI terminal, so ask
-// programs (Python) for plain output and the basic line-mode prompt.
-const ENV: &[&str] = &["HOME=/home", "TERM=dumb", "PYTHON_COLORS=0", "PYTHON_BASIC_REPL=1"];
+// programs (Python) for plain output and the basic line-mode prompt
+const ENV: &[&str] = &[
+    "HOME=/home",
+    "TERM=dumb",
+    "PYTHON_COLORS=0",
+    "PYTHON_BASIC_REPL=1",
+];
 
 pub const MAX_TRACKED_FD: usize = 4096;
 
-// Trap code (>= 100) meaning "the guest called proc_exit"; carries the code.
+// Trap code (>= 100) meaning "the guest called proc_exit"; carries the code
 pub const TRAP_PROC_EXIT_BASE: u32 = 100;
 
 impl AotHostState {
@@ -127,7 +135,7 @@ impl AotHostState {
     }
 }
 
-// Bounds-checked view of guest linear memory.
+// Bounds-checked view of guest linear memory
 struct Mem {
     base: *mut u8,
     len: usize,
@@ -207,7 +215,7 @@ impl AotHostState {
         }
     }
 
-    // xorshift64 seeded from the clock; enough for hash seeds and random.
+    // xorshift64 seeded from the clock; enough for hash seeds and random
     fn next_random(&mut self) -> u64 {
         let mut x = self.rng;
         x ^= x << 13;
@@ -229,7 +237,7 @@ fn wasi_exists(path: &str) -> bool {
     sys_fsop(FSOP_STAT, path, "") != usize::MAX
 }
 
-// The host_dispatch callback wired into every AOT module.
+// The host_dispatch callback wired into every AOT module
 pub extern "C" fn dispatch(ctx: *mut AotContext, import_idx: u64, wsp: *mut u64) -> u64 {
     let ctxr = unsafe { &mut *ctx };
     if ctxr.user_data == 0 {
@@ -265,8 +273,7 @@ pub extern "C" fn dispatch(ctx: *mut AotContext, import_idx: u64, wsp: *mut u64)
                 let mut total = 0usize;
                 for i in 0..iovs_len {
                     let iov = iovs_ptr + i * 8;
-                    let (Some(buf_ptr), Some(buf_len)) =
-                        (mem.read_u32(iov), mem.read_u32(iov + 4))
+                    let (Some(buf_ptr), Some(buf_len)) = (mem.read_u32(iov), mem.read_u32(iov + 4))
                     else {
                         set_ret(wsp, n, ERRNO_FAULT);
                         return 0;
@@ -296,8 +303,7 @@ pub extern "C" fn dispatch(ctx: *mut AotContext, import_idx: u64, wsp: *mut u64)
                 let mut total = 0usize;
                 for i in 0..iovs_len {
                     let iov = iovs_ptr + i * 8;
-                    let (Some(buf_ptr), Some(buf_len)) =
-                        (mem.read_u32(iov), mem.read_u32(iov + 4))
+                    let (Some(buf_ptr), Some(buf_len)) = (mem.read_u32(iov), mem.read_u32(iov + 4))
                     else {
                         set_ret(wsp, n, ERRNO_FAULT);
                         return 0;
@@ -343,8 +349,8 @@ pub extern "C" fn dispatch(ctx: *mut AotContext, import_idx: u64, wsp: *mut u64)
                 }
                 let cur = state.fd_offsets[fd] as i64;
                 let new = match whence {
-                    0 => offset,                       // SET
-                    1 => cur + offset,                 // CUR
+                    0 => offset,                        // SET
+                    1 => cur + offset,                  // CUR
                     _ => sys_fstat(fd) as i64 + offset, // END
                 };
                 state.fd_offsets[fd] = new.max(0) as usize;
@@ -403,7 +409,8 @@ pub extern "C" fn dispatch(ctx: *mut AotContext, import_idx: u64, wsp: *mut u64)
                 let mut total = 0usize;
                 for i in 0..iovs_len {
                     let iov = iovs_ptr + i * 8;
-                    let (Some(buf_ptr), Some(buf_len)) = (mem.read_u32(iov), mem.read_u32(iov + 4)) else {
+                    let (Some(buf_ptr), Some(buf_len)) = (mem.read_u32(iov), mem.read_u32(iov + 4))
+                    else {
                         set_ret(wsp, n, ERRNO_FAULT);
                         return 0;
                     };
@@ -411,7 +418,11 @@ pub extern "C" fn dispatch(ctx: *mut AotContext, import_idx: u64, wsp: *mut u64)
                         set_ret(wsp, n, ERRNO_FAULT);
                         return 0;
                     };
-                    let r = if f == WasiFn::FdPread { sys_read(fd, offset, data) } else { sys_write(fd, offset, data) };
+                    let r = if f == WasiFn::FdPread {
+                        sys_read(fd, offset, data)
+                    } else {
+                        sys_write(fd, offset, data)
+                    };
                     if r == usize::MAX || r == crate::WOULD_BLOCK {
                         break;
                     }
@@ -543,7 +554,15 @@ pub extern "C" fn dispatch(ctx: *mut AotContext, import_idx: u64, wsp: *mut u64)
                     let is_dir = root || (is_dir != usize::MAX && is_dir >> 32 & 1 != 0);
                     const O_DIRECTORY: usize = 2;
                     if oflags & O_DIRECTORY != 0 && !is_dir {
-                        set_ret(wsp, n, if wasi_exists(path) { ERRNO_NOTDIR } else { ERRNO_NOENT });
+                        set_ret(
+                            wsp,
+                            n,
+                            if wasi_exists(path) {
+                                ERRNO_NOTDIR
+                            } else {
+                                ERRNO_NOENT
+                            },
+                        );
                         return 0;
                     }
                     let fd = sys_open(path, oflags);
@@ -591,7 +610,11 @@ pub extern "C" fn dispatch(ctx: *mut AotContext, import_idx: u64, wsp: *mut u64)
                 let n = 2;
                 let count_ptr = arg(wsp, n, 0) as usize;
                 let size_ptr = arg(wsp, n, 1) as usize;
-                let list = if f == WasiFn::ArgsSizesGet { &state.args } else { &state.env };
+                let list = if f == WasiFn::ArgsSizesGet {
+                    &state.args
+                } else {
+                    &state.env
+                };
                 mem.write_u32(count_ptr, list.offsets.len() as u32);
                 mem.write_u32(size_ptr, list.blob.len() as u32);
                 set_ret(wsp, n, ERRNO_OK);
@@ -601,7 +624,11 @@ pub extern "C" fn dispatch(ctx: *mut AotContext, import_idx: u64, wsp: *mut u64)
                 let n = 2;
                 let argv_ptr = arg(wsp, n, 0) as u32 as usize;
                 let buf_ptr = arg(wsp, n, 1) as u32 as usize;
-                let list = if f == WasiFn::ArgsGet { &state.args } else { &state.env };
+                let list = if f == WasiFn::ArgsGet {
+                    &state.args
+                } else {
+                    &state.env
+                };
                 let blob = &list.blob;
                 let mut ok = match mem.slice(buf_ptr, blob.len()) {
                     Some(dst) => {
@@ -639,8 +666,14 @@ pub extern "C" fn dispatch(ctx: *mut AotContext, import_idx: u64, wsp: *mut u64)
                 let sub_type = sub_copy[8];
                 if sub_type == 0 {
                     let mut timeout_ns = u64::from_le_bytes([
-                        sub_copy[24], sub_copy[25], sub_copy[26], sub_copy[27],
-                        sub_copy[28], sub_copy[29], sub_copy[30], sub_copy[31],
+                        sub_copy[24],
+                        sub_copy[25],
+                        sub_copy[26],
+                        sub_copy[27],
+                        sub_copy[28],
+                        sub_copy[29],
+                        sub_copy[30],
+                        sub_copy[31],
                     ]);
                     // SUBSCRIPTION_CLOCK_ABSTIME: a deadline on the clock
                     // clock_time_get reports (Python's time.sleep uses it).
@@ -686,7 +719,11 @@ pub extern "C" fn dispatch(ctx: *mut AotContext, import_idx: u64, wsp: *mut u64)
             WasiFn::KrakeKill => {
                 let n = 1;
                 let tid = arg(wsp, n, 0) as u32 as usize;
-                let r = if sys_kill(tid) == usize::MAX { u32::MAX } else { 0 };
+                let r = if sys_kill(tid) == usize::MAX {
+                    u32::MAX
+                } else {
+                    0
+                };
                 set_ret(wsp, n, r);
             }
 
@@ -702,7 +739,9 @@ pub extern "C" fn dispatch(ctx: *mut AotContext, import_idx: u64, wsp: *mut u64)
 
 fn guest_str(mem: &Mem, ptr: usize, len: usize) -> Option<alloc::string::String> {
     let b = mem.slice(ptr, len)?;
-    core::str::from_utf8(b).ok().map(alloc::string::String::from)
+    core::str::from_utf8(b)
+        .ok()
+        .map(alloc::string::String::from)
 }
 
 #[inline]

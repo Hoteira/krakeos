@@ -1,5 +1,5 @@
-// Nano-style text editor with light syntax highlighting.
-// Settings are in /config/editor.toml.
+// Nano-style text editor with light syntax highlighting
+// Settings are in /config/editor.toml
 
 use std::fs::File;
 use std::io::{Read, Write};
@@ -7,7 +7,7 @@ use std::io::{Read, Write};
 use inkui::buffer::{Buffer, Line};
 use inkui::event::{Event, Key, KeyEvent};
 use inkui::icons;
-use inkui::types::{palette as p, with_alpha, Style};
+use inkui::types::{Style, palette as p, with_alpha};
 use inkui::widget::{self, Block, Input, InputResult, TextArea};
 use inkui::{App, Control};
 use serde::Deserialize;
@@ -21,7 +21,10 @@ struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Config { tab_width: 4, syntax_highlighting: true }
+        Config {
+            tab_width: 4,
+            syntax_highlighting: true,
+        }
     }
 }
 
@@ -50,29 +53,33 @@ struct Editor {
 #[derive(Clone, Copy, PartialEq)]
 enum Lang {
     Plain,
-    // Comment prefix and keyword list.
+    // Comment prefix and keyword list
     Code(&'static str, &'static [&'static str]),
 }
 
 const RUST_KW: &[&str] = &[
-    "as", "break", "const", "continue", "crate", "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in",
-    "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "self", "Self", "static", "struct", "super",
-    "trait", "true", "type", "unsafe", "use", "where", "while", "async", "await", "dyn",
+    "as", "break", "const", "continue", "crate", "else", "enum", "extern", "false", "fn", "for",
+    "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return",
+    "self", "Self", "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where",
+    "while", "async", "await", "dyn",
 ];
 const C_KW: &[&str] = &[
-    "if", "else", "for", "while", "do", "return", "switch", "case", "break", "continue", "struct", "typedef", "static",
-    "const", "void", "int", "char", "unsigned", "long", "float", "double", "sizeof", "enum", "function", "var", "let",
-    "true", "false", "null", "class", "new", "import", "export", "from",
+    "if", "else", "for", "while", "do", "return", "switch", "case", "break", "continue", "struct",
+    "typedef", "static", "const", "void", "int", "char", "unsigned", "long", "float", "double",
+    "sizeof", "enum", "function", "var", "let", "true", "false", "null", "class", "new", "import",
+    "export", "from",
 ];
 const PY_KW: &[&str] = &[
-    "def", "class", "if", "elif", "else", "for", "while", "return", "import", "from", "as", "in", "not", "and", "or",
-    "True", "False", "None", "with", "try", "except", "lambda", "pass", "break", "continue", "yield",
+    "def", "class", "if", "elif", "else", "for", "while", "return", "import", "from", "as", "in",
+    "not", "and", "or", "True", "False", "None", "with", "try", "except", "lambda", "pass",
+    "break", "continue", "yield",
 ];
 
 fn lang_for(path: &str, cfg: &Config) -> Lang {
     if !cfg.syntax_highlighting {
         return Lang::Plain;
     }
+
     match path.rsplit_once('.').map(|(_, e)| e) {
         Some("rs") => Lang::Code("//", RUST_KW),
         Some("c" | "h" | "js" | "ts" | "cpp" | "java") => Lang::Code("//", C_KW),
@@ -81,7 +88,7 @@ fn lang_for(path: &str, cfg: &Config) -> Lang {
     }
 }
 
-// Per-character styles for one line of code.
+// Per-character styles for one line of code
 fn highlight(line: &str, comment: &str, keywords: &[&str]) -> Vec<Style> {
     let chars: Vec<char> = line.chars().collect();
     let mut out = vec![Style::new(); chars.len()];
@@ -111,8 +118,11 @@ fn highlight(line: &str, comment: &str, keywords: &[&str]) -> Vec<Style> {
             i = end;
             continue;
         }
-        if c.is_ascii_digit() && (i == 0 || !chars[i - 1].is_alphanumeric() && chars[i - 1] != '_') {
-            while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '.' || chars[i] == '_') {
+        if c.is_ascii_digit() && (i == 0 || !chars[i - 1].is_alphanumeric() && chars[i - 1] != '_')
+        {
+            while i < chars.len()
+                && (chars[i].is_ascii_alphanumeric() || chars[i] == '.' || chars[i] == '_')
+            {
                 out[i] = Style::new().fg(p::PEACH);
                 i += 1;
             }
@@ -165,7 +175,10 @@ impl Editor {
             }
         }
         let cfg: Config = inkui::config::load("editor");
-        let lang = path.as_deref().map(|p| lang_for(p, &cfg)).unwrap_or(Lang::Plain);
+        let lang = path
+            .as_deref()
+            .map(|p| lang_for(p, &cfg))
+            .unwrap_or(Lang::Plain);
         let mut area = TextArea::new(&text);
         area.tab_width = cfg.tab_width.clamp(1, 16);
         Editor {
@@ -198,18 +211,31 @@ impl Editor {
                 self.area.modified = false;
                 if path.starts_with("/config/") && path.ends_with(".toml") {
                     // Settings files: say so if they don't parse.
-                    let name = icons::file_name(&path).trim_end_matches(".toml").to_string();
+                    let name = icons::file_name(&path)
+                        .trim_end_matches(".toml")
+                        .to_string();
                     let checked = match name.as_str() {
                         "system" => inkui::config::check::<inkui::config::System>(&name),
                         "editor" => inkui::config::check::<Config>(&name),
                         _ => inkui::config::check::<toml_any::Any>(&name),
                     };
                     if let Err(e) = checked {
-                        self.msg = Some((format!("saved, but the settings have an error: {}", e.trim()), true));
+                        self.msg = Some((
+                            format!("saved, but the settings have an error: {}", e.trim()),
+                            true,
+                        ));
                         return;
                     }
                 }
-                self.msg = Some((format!("{} saved {} lines to {}", icons::CHECK, self.area.lines.len(), path), false));
+                self.msg = Some((
+                    format!(
+                        "{} saved {} lines to {}",
+                        icons::CHECK,
+                        self.area.lines.len(),
+                        path
+                    ),
+                    false,
+                ));
             }
             Err(_) => self.msg = Some((format!("cannot write {}", path), true)),
         }
@@ -302,7 +328,12 @@ impl App for Editor {
     fn draw(&mut self, buf: &mut Buffer) {
         let area = buf.area;
         let (main, bottom) = area.take_bottom(2);
-        let name = self.path.as_deref().map(icons::file_name).unwrap_or("untitled").to_string();
+        let name = self
+            .path
+            .as_deref()
+            .map(icons::file_name)
+            .unwrap_or("untitled")
+            .to_string();
         let (icon, color) = icons::file_icon(&name, false);
 
         let mut title = Line::new()
@@ -311,13 +342,21 @@ impl App for Editor {
         if self.area.modified {
             title.add(" \u{25cf}", Style::new().fg(p::PEACH));
         }
+
         let pos = Line::new()
-            .push(format!("Ln {}", self.area.row + 1), Style::new().fg(p::LAVENDER))
-            .push(format!(", Col {}", self.area.col + 1), Style::new().fg(p::SUBTEXT0));
+            .push(
+                format!("Ln {}", self.area.row + 1),
+                Style::new().fg(p::LAVENDER),
+            )
+            .push(
+                format!(", Col {}", self.area.col + 1),
+                Style::new().fg(p::SUBTEXT0),
+            );
         let footer = Line::styled(
             self.path.clone().unwrap_or_else(|| "not saved yet".into()),
             Style::new().fg(p::OVERLAY0),
         );
+
         let inner = Block::new()
             .title(title)
             .title_right(pos)
@@ -343,21 +382,51 @@ impl App for Editor {
             Prompt::ConfirmQuit => Some("Save changes before closing? (y / n / Esc) "),
             Prompt::None => None,
         };
+
         if let Some(label) = label {
             buf.fill(status, ' ', Style::new().bg(with_alpha(p::SURFACE0, 0xE0)));
-            let x = buf.text(status.x, status.y, label, status.w, Style::new().fg(p::YELLOW).bg(with_alpha(p::SURFACE0, 0xE0)).bold());
+            let x = buf.text(
+                status.x,
+                status.y,
+                label,
+                status.w,
+                Style::new()
+                    .fg(p::YELLOW)
+                    .bg(with_alpha(p::SURFACE0, 0xE0))
+                    .bold(),
+            );
+
             if self.prompt != Prompt::ConfirmQuit {
                 let r = inkui::Rect::new(x, status.y, status.right().saturating_sub(x), 1);
-                self.input.render(buf, r, Style::new().bg(with_alpha(p::SURFACE0, 0xE0)), true, "");
+                self.input.render(
+                    buf,
+                    r,
+                    Style::new().bg(with_alpha(p::SURFACE0, 0xE0)),
+                    true,
+                    "",
+                );
             }
         } else if let Some((m, is_err)) = &self.msg {
-            let st = if *is_err { Style::new().fg(p::RED) } else { Style::new().fg(p::GREEN) };
+            let st = if *is_err {
+                Style::new().fg(p::RED)
+            } else {
+                Style::new().fg(p::GREEN)
+            };
             buf.text(status.x, status.y, m, status.w, st);
         }
+
         widget::hints(
             buf,
             hint_row.inset(1, 0),
-            &[("Ctrl + S", "save"), ("Ctrl + Q", "quit"), ("Ctrl + F", "find"), ("Ctrl + G", "go to line"), ("Ctrl + X", "cut line"), ("Ctrl + C", "copy line"), ("Ctrl + V", "paste")],
+            &[
+                ("Ctrl + S", "save"),
+                ("Ctrl + Q", "quit"),
+                ("Ctrl + F", "find"),
+                ("Ctrl + G", "go to line"),
+                ("Ctrl + X", "cut line"),
+                ("Ctrl + C", "copy line"),
+                ("Ctrl + V", "paste"),
+            ],
         );
     }
 
@@ -378,7 +447,7 @@ impl App for Editor {
     }
 }
 
-// Accepts any valid TOML, to check a settings file's syntax.
+// Accepts any valid TOML, to check a settings file's syntax
 mod toml_any {
     #[derive(serde::Deserialize)]
     pub struct Any {}

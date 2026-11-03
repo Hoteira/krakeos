@@ -17,12 +17,7 @@ pub struct PageTable {
     pub entries: [u64; 512],
 }
 
-pub unsafe fn map_page(
-    root: *mut PageTable,
-    vaddr: usize,
-    paddr: usize,
-    flags: u64,
-) {
+pub unsafe fn map_page(root: *mut PageTable, vaddr: usize, paddr: usize, flags: u64) {
     let vpn2 = (vaddr >> 30) & 0x1FF;
     let vpn1 = (vaddr >> 21) & 0x1FF;
     let vpn0 = (vaddr >> 12) & 0x1FF;
@@ -37,7 +32,7 @@ pub unsafe fn map_page(
         if (pte & PTE_V) == 0 {
             let layout = Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap();
             let new_table = alloc::alloc::alloc_zeroed(layout) as *mut PageTable;
-            
+
             let new_ppn = (new_table as u64) >> 12;
             pte = (new_ppn << 10) | PTE_V;
             (*table).entries[index] = pte;
@@ -60,19 +55,18 @@ pub unsafe fn map_range(
 ) {
     let mut offset = 0;
     while offset < size {
-        map_page(
-            root,
-            vaddr_start + offset,
-            paddr_start + offset,
-            flags,
-        );
+        map_page(root, vaddr_start + offset, paddr_start + offset, flags);
         offset += PAGE_SIZE;
     }
 }
 
 // Returns the physical page that was mapped. Page tables aren't freed.
 pub unsafe fn unmap_page(root: *mut PageTable, vaddr: usize) -> Option<usize> {
-    let vpns = [(vaddr >> 30) & 0x1FF, (vaddr >> 21) & 0x1FF, (vaddr >> 12) & 0x1FF];
+    let vpns = [
+        (vaddr >> 30) & 0x1FF,
+        (vaddr >> 21) & 0x1FF,
+        (vaddr >> 12) & 0x1FF,
+    ];
     let mut table = root;
     for level in 0..2 {
         let pte = (*table).entries[vpns[level]];

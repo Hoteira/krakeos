@@ -40,3 +40,5 @@ bench
 run bench.wasm
 ls
 run explorer.wasm 
+help
+python

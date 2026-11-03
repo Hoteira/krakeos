@@ -75,7 +75,11 @@ pub fn start_others(satp: u64) {
         if stack == 0 {
             break;
         }
-        let r = sbi::hart_start(h, _secondary_start as *const () as usize, stack + SECONDARY_STACK);
+        let r = sbi::hart_start(
+            h,
+            _secondary_start as *const () as usize,
+            stack + SECONDARY_STACK,
+        );
         if r.error != 0 {
             unsafe { alloc::alloc::dealloc(stack as *mut u8, layout) };
         }
@@ -83,7 +87,7 @@ pub fn start_others(satp: u64) {
 }
 
 // Secondary hart entry from boot.S: share the boot hart's page table and trap vector.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn secondary_main(_hart_id: usize) -> ! {
     unsafe {
         core::arch::asm!("csrw stvec, {}", in(reg) crate::trap::trap_vector as *const () as usize);

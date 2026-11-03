@@ -1,4 +1,4 @@
-use crate::arch::paging::{map_page, PTE_R, PTE_W, PTE_X, PTE_U};
+use crate::arch::paging::{map_page, PTE_R, PTE_U, PTE_W, PTE_X};
 use crate::arch::trap::TrapFrame;
 
 #[repr(C)]
@@ -38,39 +38,45 @@ pub fn load_elf_and_spawn(elf_data: &[u8]) {
         crate::println!("Invalid ELF: too small");
         return;
     }
-    
+
     let header = unsafe { &*(elf_data.as_ptr() as *const Elf64Ehdr) };
-    
+
     if &header.e_ident[0..4] != b"\x7fELF" {
         crate::println!("Invalid ELF magic");
         return;
     }
-    
+
     crate::println!("ELF entry point: {:#x}", header.e_entry);
-    
+
     let phoff = header.e_phoff as usize;
     let phnum = header.e_phnum as usize;
     let phentsize = header.e_phentsize as usize;
-    
+
     for i in 0..phnum {
         let offset = phoff + i * phentsize;
         let phdr = unsafe { &*(elf_data.as_ptr().add(offset) as *const Elf64Phdr) };
-        
-        if phdr.p_type == 1 { // PT_LOAD
-            crate::println!("Loading segment: vaddr={:#x}, memsz={:#x}, filesz={:#x}", phdr.p_vaddr, phdr.p_memsz, phdr.p_filesz);
-            
+
+        if phdr.p_type == 1 {
+            // PT_LOAD
+            crate::println!(
+                "Loading segment: vaddr={:#x}, memsz={:#x}, filesz={:#x}",
+                phdr.p_vaddr,
+                phdr.p_memsz,
+                phdr.p_filesz
+            );
+
             let num_pages = (phdr.p_memsz as usize + 4095) / 4096;
             let layout = core::alloc::Layout::from_size_align(4096, 4096).unwrap();
-            
+
             for page in 0..num_pages {
                 let v = phdr.p_vaddr as usize + page * 4096;
                 let phys_addr = unsafe { alloc::alloc::alloc_zeroed(layout) } as usize;
-                
+
                 if phys_addr == 0 {
-                    crate::println!("  -> OUT OF MEMORY during ELF load!");
+                    crate::println!("  -> OOM during ELF load!");
                     loop {}
                 }
-                
+
                 let page_offset = page * 4096;
                 if page_offset < phdr.p_filesz as usize {
                     let mut copy_len = 4096;
@@ -85,10 +91,15 @@ pub fn load_elf_and_spawn(elf_data: &[u8]) {
                         );
                     }
                 }
-                
+
                 unsafe {
-                    map_page(crate::ROOT_PAGE_TABLE, v, phys_addr, PTE_R | PTE_W | PTE_X | PTE_U);
-                    
+                    map_page(
+                        crate::ROOT_PAGE_TABLE,
+                        v,
+                        phys_addr,
+                        PTE_R | PTE_W | PTE_X | PTE_U,
+                    );
+
                     let end_v = v + 4096;
                     if end_v > crate::sys::syscall::USER_BRK {
                         crate::sys::syscall::USER_BRK = end_v;
@@ -97,7 +108,7 @@ pub fn load_elf_and_spawn(elf_data: &[u8]) {
             }
         }
     }
-    
+
     crate::csr::sfence_vma();
     crate::csr::fence_i();
 
@@ -105,37 +116,47 @@ pub fn load_elf_and_spawn(elf_data: &[u8]) {
     let layout = core::alloc::Layout::from_size_align(stack_size, 4096).unwrap();
     let phys_stack = unsafe { alloc::alloc::alloc_zeroed(layout) } as usize;
     crate::println!("User stack phys_addr={:#x}", phys_stack);
-    
-    // Well above the runner's heap, which the runner maps up to about 0x5212_0000.
+
+    // Well above the runner's heap, which the runner maps up to about 0x5212_0000
     let v_stack_base = 0x7000_0000;
     for page in 0..(stack_size / 4096) {
         unsafe {
-            map_page(crate::ROOT_PAGE_TABLE, v_stack_base + page * 4096, phys_stack + page * 4096, PTE_R | PTE_W | PTE_U);
+            map_page(
+                crate::ROOT_PAGE_TABLE,
+                v_stack_base + page * 4096,
+                phys_stack + page * 4096,
+                PTE_R | PTE_W | PTE_U,
+            );
         }
     }
-    
+
     crate::csr::sfence_vma();
 
     crate::println!("User stack mapped at {:#x}", v_stack_base);
-    
+
     let k_stack_size = 4096 * 4;
     let k_layout = core::alloc::Layout::from_size_align(k_stack_size, 4096).unwrap();
     let k_stack = unsafe { alloc::alloc::alloc_zeroed(k_layout) } as usize;
-    
-    let trap_frame_ptr = (k_stack + k_stack_size - crate::arch::trap::FRAME_GAP - core::mem::size_of::<TrapFrame>()) as *mut TrapFrame;
+
+    let trap_frame_ptr = (k_stack + k_stack_size
+        - crate::arch::trap::FRAME_GAP
+        - core::mem::size_of::<TrapFrame>()) as *mut TrapFrame;
     unsafe {
         (*trap_frame_ptr).sepc = header.e_entry as usize;
         (*trap_frame_ptr).sstatus = 1 << 5; // SPIE=1, SPP=0 (U-mode)
         (*trap_frame_ptr).regs[2] = v_stack_base + stack_size;
     }
-    
+
     crate::println!("Spawning U-Mode thread...");
-    
+
     unsafe {
         for i in 0..crate::sys::scheduler::MAX_THREADS {
-            if crate::sys::scheduler::SCHEDULER.threads[i].state == crate::sys::scheduler::ThreadState::Empty {
+            if crate::sys::scheduler::SCHEDULER.threads[i].state
+                == crate::sys::scheduler::ThreadState::Empty
+            {
                 crate::sys::scheduler::SCHEDULER.threads[i].sp = trap_frame_ptr as usize;
-                crate::sys::scheduler::SCHEDULER.threads[i].state = crate::sys::scheduler::ThreadState::Ready;
+                crate::sys::scheduler::SCHEDULER.threads[i].state =
+                    crate::sys::scheduler::ThreadState::Ready;
                 return;
             }
         }

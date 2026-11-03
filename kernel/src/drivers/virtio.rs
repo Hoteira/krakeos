@@ -61,7 +61,11 @@ struct VirtQueue {
 static mut VIRTQ_MEM: [u8; 16384] = [0; 16384];
 static mut VIRTQ_PTR: *mut VirtQueue = core::ptr::null_mut();
 
-static mut REQ: BlkReq = BlkReq { type_: 0, reserved: 0, sector: 0 };
+static mut REQ: BlkReq = BlkReq {
+    type_: 0,
+    reserved: 0,
+    sector: 0,
+};
 static mut BLK_STATUS: u8 = 0;
 
 static mut LAST_USED_IDX: u16 = 0;
@@ -75,7 +79,8 @@ pub fn init() -> bool {
             if magic == VIRTIO_MAGIC {
                 if dev_id == VIRTIO_DEV_BLOCK {
                     VIRTIO_BASE = base;
-                } else if dev_id == 18 { // VIRTIO_DEV_INPUT
+                } else if dev_id == 18 {
+                    // VIRTIO_DEV_INPUT
                     crate::drivers::virtio_input::init(base);
                 }
             }
@@ -94,18 +99,18 @@ pub fn init() -> bool {
         let base = VIRTIO_BASE;
         let version = core::ptr::read_volatile((base + 0x004) as *const u32);
         crate::println!("VirtIO Version: {}", version);
-        
-        // Legacy MMIO: 0x070 Status, 0x010 DeviceFeatures, 0x020 DriverFeatures.
+
+        // Legacy MMIO: 0x070 Status, 0x010 DeviceFeatures, 0x020 DriverFeatures
         core::ptr::write_volatile((base + 0x070) as *mut u32, 0);
-        
+
         let mut status = VIRTIO_STATUS_ACKNOWLEDGE;
         core::ptr::write_volatile((base + 0x070) as *mut u32, status);
         status |= VIRTIO_STATUS_DRIVER;
         core::ptr::write_volatile((base + 0x070) as *mut u32, status);
-        
+
         let features = core::ptr::read_volatile((base + 0x010) as *const u32);
         core::ptr::write_volatile((base + 0x020) as *mut u32, features & !(1 << 5)); // Clear VIRTIO_BLK_F_RO
-        
+
         status |= VIRTIO_STATUS_FEATURES_OK;
         core::ptr::write_volatile((base + 0x070) as *mut u32, status);
         let s = core::ptr::read_volatile((base + 0x070) as *const u32);
@@ -120,7 +125,7 @@ pub fn init() -> bool {
             crate::println!("VirtIO queue size insufficient!");
             return false;
         }
-        
+
         let mem_addr = core::ptr::addr_of_mut!(VIRTQ_MEM) as usize;
         let aligned_addr = (mem_addr + 4095) & !4095;
         VIRTQ_PTR = aligned_addr as *mut VirtQueue;
@@ -135,17 +140,19 @@ pub fn init() -> bool {
 
         status |= VIRTIO_STATUS_DRIVER_OK;
         core::ptr::write_volatile((base + 0x070) as *mut u32, status);
-        
+
         crate::println!("VirtIO Block driver initialized at 0x{:X}", base);
         true
     }
 }
 
-// Synchronous block read/write. Sector is 512 bytes.
+// Synchronous block read/write, sector is 512 bytes
 pub fn block_op(sector: u64, buf: *mut u8, len: u32, write: bool) {
     unsafe {
         let base = VIRTIO_BASE;
-        if base == 0 { return; }
+        if base == 0 {
+            return;
+        }
 
         let p_req = 1;
         let p_buf = 2;
@@ -155,7 +162,7 @@ pub fn block_op(sector: u64, buf: *mut u8, len: u32, write: bool) {
         REQ.sector = sector;
         BLK_STATUS = 0;
 
-        // Chain: request header (device reads), data, status byte (device writes).
+        // Chain: request header (device reads), data, status byte (device writes)
         (*VIRTQ_PTR).desc[p_req].addr = core::ptr::addr_of!(REQ) as u64;
         (*VIRTQ_PTR).desc[p_req].len = core::mem::size_of::<BlkReq>() as u32;
         (*VIRTQ_PTR).desc[p_req].flags = 1; // NEXT
@@ -171,18 +178,20 @@ pub fn block_op(sector: u64, buf: *mut u8, len: u32, write: bool) {
         (*VIRTQ_PTR).desc[p_stat].flags = 2; // WRITE
         (*VIRTQ_PTR).desc[p_stat].next = 0;
 
-        (*VIRTQ_PTR).avail.ring[((*VIRTQ_PTR).avail.idx % QUEUE_SIZE as u16) as usize] = p_req as u16;
+        (*VIRTQ_PTR).avail.ring[((*VIRTQ_PTR).avail.idx % QUEUE_SIZE as u16) as usize] =
+            p_req as u16;
         core::arch::asm!("fence rw, rw");
         (*VIRTQ_PTR).avail.idx = (*VIRTQ_PTR).avail.idx.wrapping_add(1);
         core::arch::asm!("fence rw, rw");
 
         core::ptr::write_volatile((base + 0x050) as *mut u32, 0); // Notify Queue 0
 
-        while LAST_USED_IDX == core::ptr::read_volatile(core::ptr::addr_of!((*VIRTQ_PTR).used.idx)) {
+        while LAST_USED_IDX == core::ptr::read_volatile(core::ptr::addr_of!((*VIRTQ_PTR).used.idx))
+        {
             core::arch::asm!("nop");
             core::arch::asm!("fence r, rw");
         }
-        
+
         LAST_USED_IDX = LAST_USED_IDX.wrapping_add(1);
     }
 }

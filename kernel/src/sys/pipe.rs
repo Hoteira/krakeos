@@ -7,27 +7,34 @@ use crate::sys::scheduler::{current_tid, MAX_THREADS};
 
 pub const PIPE_FD_BASE: usize = 0x6000_0000;
 const MAX_PIPES: usize = 8;
-// Bytes buffered in each direction before writers are cut short.
+// Bytes buffered in each direction before writers are cut short
 const PIPE_CAP: usize = 64 * 1024;
-// Stdin read result when nothing is typed yet; the runner sleeps and retries.
+// Stdin read result when nothing is typed yet; the runner sleeps and retries
 pub const WOULD_BLOCK: usize = usize::MAX - 1;
 
 struct Pipe {
     used: bool,
-    // Terminal to app (the app's stdin).
+    // Terminal to app (the app's stdin)
     input: VecDeque<u8>,
-    // App to terminal (its stdout and stderr).
+    // App to terminal (its stdout and stderr)
     output: VecDeque<u8>,
-    // Ctrl + D from the terminal; the app's next read returns 0 once.
+    // Ctrl + D from the terminal; the app's next read returns 0 once
     eof: bool,
     owner: usize,
-    // True from creation, so the app isn't seen as finished before it starts.
+    // True from creation, so the app isn't seen as finished before it starts
     alive: bool,
 }
 
 impl Pipe {
     const fn new() -> Self {
-        Pipe { used: false, input: VecDeque::new(), output: VecDeque::new(), eof: false, owner: 0, alive: false }
+        Pipe {
+            used: false,
+            input: VecDeque::new(),
+            output: VecDeque::new(),
+            eof: false,
+            owner: 0,
+            alive: false,
+        }
     }
 }
 
@@ -42,7 +49,7 @@ pub fn is_pipe_fd(fd: usize) -> bool {
     fd >= PIPE_FD_BASE && fd < PIPE_FD_BASE + MAX_PIPES
 }
 
-// dev/pipe: a new pipe for the terminal.
+// dev/pipe: a new pipe for the terminal
 pub fn open() -> Option<usize> {
     let i = pipes().iter().position(|p| !p.used)?;
     let p = &mut pipes()[i];
@@ -53,7 +60,7 @@ pub fn open() -> Option<usize> {
     Some(PIPE_FD_BASE + i)
 }
 
-// dev/pipe/attach/<id>: route the calling thread's stdio to the pipe.
+// dev/pipe/attach/<id>: route the calling thread's stdio to the pipe
 pub fn attach(id: usize) -> bool {
     if id >= MAX_PIPES || !pipes()[id].used {
         return false;
@@ -83,7 +90,7 @@ pub fn app_read(buf: &mut [u8]) -> Option<usize> {
         }
         return Some(WOULD_BLOCK);
     }
-    // One line at a time, like a terminal in line mode.
+    // One line at a time, like a terminal in line mode
     let mut n = 0;
     while n < buf.len() {
         let Some(b) = p.input.pop_front() else { break };
@@ -93,6 +100,7 @@ pub fn app_read(buf: &mut [u8]) -> Option<usize> {
             break;
         }
     }
+
     Some(n)
 }
 
@@ -107,7 +115,7 @@ pub fn read(fd: usize, buf: &mut [u8]) -> usize {
     n
 }
 
-// Terminal side. An empty write is end-of-input.
+// Terminal side. An empty write is end-of-input
 pub fn write(fd: usize, buf: &[u8]) -> usize {
     let p = &mut pipes()[fd - PIPE_FD_BASE];
     if buf.is_empty() {
@@ -119,13 +127,13 @@ pub fn write(fd: usize, buf: &[u8]) -> usize {
     n
 }
 
-// 1 while the app runs or has output left, else 0.
+// 1 while the app runs or has output left, else 0
 pub fn status(fd: usize) -> usize {
     let p = &pipes()[fd - PIPE_FD_BASE];
     (p.alive || !p.output.is_empty()) as usize
 }
 
-// Also kills the app if it is still running.
+// Also kills the app if it is still running
 pub fn close(fd: usize) {
     let id = fd - PIPE_FD_BASE;
     pipes()[id] = Pipe::new();
@@ -137,7 +145,7 @@ pub fn close(fd: usize) {
     }
 }
 
-// Marks its pipe's app finished and closes pipes it opened.
+// Marks its pipe's app finished and closes pipes it opened
 pub fn thread_exited(tid: usize) {
     if let Some(id) = unsafe { ATTACHED[tid].take() } {
         pipes()[id].alive = false;

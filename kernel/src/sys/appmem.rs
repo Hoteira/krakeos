@@ -5,22 +5,26 @@ use core::alloc::Layout;
 
 use crate::arch::paging::{self, PAGE_SIZE, PTE_R, PTE_U, PTE_W};
 
-// Above RAM's identity map, in the user half of Sv39.
+// Above RAM's identity map, in the user half of Sv39
 const REGION_BASE: usize = 0x20_0000_0000;
-pub const SLOT_SIZE: usize = 1 << 30;
+pub const SLOT_SIZE: usize = 1 << 30; // 0x4000_0000
 const MAX_SLOTS: usize = 64;
-// Commits fail once the kernel heap would drop below this, so apps can't starve the kernel.
+// Commits fail once the kernel heap would drop below this, so apps can't starve the kernel
 const KERNEL_RESERVE: usize = 16 * 1024 * 1024;
 
 #[derive(Copy, Clone)]
 struct Slot {
     in_use: bool,
     owner: usize,
-    // Bytes from the slot base backed by pages (page-aligned).
+    // Bytes from the slot base backed by pages (page-aligned)
     committed: usize,
 }
 
-static mut SLOTS: [Slot; MAX_SLOTS] = [Slot { in_use: false, owner: 0, committed: 0 }; MAX_SLOTS];
+static mut SLOTS: [Slot; MAX_SLOTS] = [Slot {
+    in_use: false,
+    owner: 0,
+    committed: 0,
+}; MAX_SLOTS];
 
 fn slot_base(i: usize) -> usize {
     REGION_BASE + i * SLOT_SIZE
@@ -31,7 +35,7 @@ unsafe fn find(base: usize, tid: usize) -> Option<usize> {
         return None;
     }
     let i = (base - REGION_BASE) / SLOT_SIZE;
-    let slots = &*core::ptr::addr_of!(SLOTS);
+    let slots = unsafe { &*core::ptr::addr_of!(SLOTS) };
     if i < MAX_SLOTS && slot_base(i) == base && slots[i].in_use && slots[i].owner == tid {
         Some(i)
     } else {
@@ -43,7 +47,11 @@ pub fn reserve(tid: usize) -> Option<usize> {
     unsafe {
         let slots = &mut *core::ptr::addr_of_mut!(SLOTS);
         let i = slots.iter().position(|s| !s.in_use)?;
-        slots[i] = Slot { in_use: true, owner: tid, committed: 0 };
+        slots[i] = Slot {
+            in_use: true,
+            owner: tid,
+            committed: 0,
+        };
         Some(slot_base(i))
     }
 }
@@ -51,7 +59,9 @@ pub fn reserve(tid: usize) -> Option<usize> {
 // On failure nothing changes.
 pub fn commit(base: usize, size: usize, tid: usize) -> bool {
     unsafe {
-        let Some(i) = find(base, tid) else { return false };
+        let Some(i) = find(base, tid) else {
+            return false;
+        };
         if size > SLOT_SIZE {
             return false;
         }
@@ -72,7 +82,12 @@ pub fn commit(base: usize, size: usize, tid: usize) -> bool {
                 unmap_range(base, old, off);
                 return false;
             }
-            paging::map_page(crate::ROOT_PAGE_TABLE, base + off, page, PTE_R | PTE_W | PTE_U);
+            paging::map_page(
+                crate::ROOT_PAGE_TABLE,
+                base + off,
+                page,
+                PTE_R | PTE_W | PTE_U,
+            );
             off += PAGE_SIZE;
         }
         crate::csr::sfence_vma();
@@ -86,8 +101,10 @@ unsafe fn unmap_range(base: usize, from: usize, to: usize) {
     let layout = Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap();
     let mut off = from;
     while off < to {
-        if let Some(page) = paging::unmap_page(crate::ROOT_PAGE_TABLE, base + off) {
-            alloc::alloc::dealloc(page as *mut u8, layout);
+        unsafe {
+            if let Some(page) = paging::unmap_page(crate::ROOT_PAGE_TABLE, base + off) {
+                alloc::alloc::dealloc(page as *mut u8, layout);
+            }
         }
         off += PAGE_SIZE;
     }
@@ -95,9 +112,16 @@ unsafe fn unmap_range(base: usize, from: usize, to: usize) {
 }
 
 unsafe fn free_slot(i: usize) {
-    let slots = &mut *core::ptr::addr_of_mut!(SLOTS);
-    unmap_range(slot_base(i), 0, slots[i].committed);
-    slots[i] = Slot { in_use: false, owner: 0, committed: 0 };
+    unsafe {
+        let slots = &mut *core::ptr::addr_of_mut!(SLOTS);
+        unmap_range(slot_base(i), 0, slots[i].committed);
+
+        slots[i] = Slot {
+            in_use: false,
+            owner: 0,
+            committed: 0,
+        };
+    }
 }
 
 pub fn release(base: usize, tid: usize) -> bool {

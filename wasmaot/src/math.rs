@@ -1,4 +1,4 @@
-// Minimal no_std float helpers backed by libm, used for const-expr evaluation (not the hot path).
+// Minimal no_std float helpers backed by libm, used for const-expr evaluation (not the hot path)s
 
 pub trait FloatMath {
     fn abs(self) -> Self;
@@ -10,19 +10,43 @@ pub trait FloatMath {
 }
 
 impl FloatMath for f32 {
-    fn abs(self) -> Self { libm::fabsf(self) }
-    fn floor(self) -> Self { libm::floorf(self) }
-    fn ceil(self) -> Self { libm::ceilf(self) }
-    fn round(self) -> Self { libm::roundf(self) }
-    fn trunc(self) -> Self { libm::truncf(self) }
-    fn sqrt(self) -> Self { libm::sqrtf(self) }
+    fn abs(self) -> Self {
+        libm::fabsf(self)
+    }
+    fn floor(self) -> Self {
+        libm::floorf(self)
+    }
+    fn ceil(self) -> Self {
+        libm::ceilf(self)
+    }
+    fn round(self) -> Self {
+        libm::roundf(self)
+    }
+    fn trunc(self) -> Self {
+        libm::truncf(self)
+    }
+    fn sqrt(self) -> Self {
+        libm::sqrtf(self)
+    }
 }
 
 impl FloatMath for f64 {
-    fn abs(self) -> Self { libm::fabs(self) }
-    fn floor(self) -> Self { libm::floor(self) }
-    fn ceil(self) -> Self { libm::ceil(self) }
-    fn round(self) -> Self { libm::round(self) }
-    fn trunc(self) -> Self { libm::trunc(self) }
-    fn sqrt(self) -> Self { libm::sqrt(self) }
+    fn abs(self) -> Self {
+        libm::fabs(self)
+    }
+    fn floor(self) -> Self {
+        libm::floor(self)
+    }
+    fn ceil(self) -> Self {
+        libm::ceil(self)
+    }
+    fn round(self) -> Self {
+        libm::round(self)
+    }
+    fn trunc(self) -> Self {
+        libm::trunc(self)
+    }
+    fn sqrt(self) -> Self {
+        libm::sqrt(self)
+    }
 }

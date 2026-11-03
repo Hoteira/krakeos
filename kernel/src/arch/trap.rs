@@ -1,5 +1,5 @@
+use crate::{csr, println, sbi, scheduler};
 use core::arch::naked_asm;
-use crate::{csr, sbi, scheduler, println};
 
 #[repr(C)]
 pub struct TrapFrame {
@@ -16,16 +16,13 @@ pub unsafe extern "C" fn trap_vector() {
         "csrrw sp, sscratch, sp",
         "1:",
         "addi sp, sp, -272",
-        
         "sd t0, 5*8(sp)", // t0 first, it is the scratch register below
-        
         "csrr t0, sscratch",
         "csrw sscratch, zero", // Zero marks nested traps as coming from S-mode
         "bnez t0, 2f",
         "addi t0, sp, 272",
         "2:",
         "sd t0, 2*8(sp)",
-        
         "sd x1, 1*8(sp)",
         "sd x3, 3*8(sp)",
         "sd x4, 4*8(sp)",
@@ -61,31 +58,25 @@ pub unsafe extern "C" fn trap_vector() {
         "sd x29, 29*8(sp)",
         "sd x30, 30*8(sp)",
         "sd x31, 31*8(sp)",
-        
         "csrr t0, sepc",
         "sd t0, 32*8(sp)",
         "csrr t0, sstatus",
         "sd t0, 33*8(sp)",
-
         "mv a0, sp",
         "call trap_handler",
-        
         "mv sp, a0",
         // Unlock only once off the old stack: another hart may resume that thread.
         "call trap_unlock",
-
         "ld t0, 33*8(sp)",
         "csrw sstatus, t0",
         "ld t0, 32*8(sp)",
         "csrw sepc, t0",
-
         "ld t0, 33*8(sp)",
         "andi t0, t0, 0x100", // SPP bit
         "bnez t0, 3f",
         "ld t1, 2*8(sp)",
         "csrw sscratch, t1",
         "3:",
-
         "ld x1, 1*8(sp)",
         "ld x3, 3*8(sp)",
         "ld x4, 4*8(sp)",
@@ -115,16 +106,13 @@ pub unsafe extern "C" fn trap_vector() {
         "ld x29, 29*8(sp)",
         "ld x30, 30*8(sp)",
         "ld x31, 31*8(sp)",
-
         "csrr t0, sstatus",
         "andi t0, t0, 0x100",
         "bnez t0, 4f",
-        
         "ld t0, 5*8(sp)",
         "addi sp, sp, 272",
         "csrrw sp, sscratch, sp",
         "sret",
-        
         "4:",
         "csrw sscratch, zero",
         "ld t0, 5*8(sp)",
@@ -133,7 +121,7 @@ pub unsafe extern "C" fn trap_vector() {
     );
 }
 
-// Free bytes above a user trap frame; the first word holds the hart running it.
+// Free bytes above a user trap frame (first word holds the hart running it)
 pub const FRAME_GAP: usize = 16;
 
 #[unsafe(no_mangle)]
@@ -142,7 +130,7 @@ pub extern "C" fn trap_handler(sp: usize) -> usize {
     handle(sp)
 }
 
-// Called by trap_vector once it is on the stack it will return on.
+// Called by trap_vector once it is on the stack it will return on
 #[unsafe(no_mangle)]
 pub extern "C" fn trap_unlock() {
     crate::arch::smp::unlock();
@@ -160,7 +148,8 @@ fn handle(sp: usize) -> usize {
 
     if is_interrupt {
         match code {
-            5 => { // Timer interrupt
+            5 => {
+                // Timer interrupt
                 let next_tick = csr::read_time() + 10_000;
                 sbi::set_timer(next_tick);
                 if crate::arch::smp::is_boot_hart() {
@@ -175,18 +164,26 @@ fn handle(sp: usize) -> usize {
             }
         }
     } else {
-        if code == 8 { // U-mode ecall
-            let new_sp = crate::sys::syscall::dispatch(frame);
-            frame.sepc += 4;
-            return new_sp.unwrap_or(sp);
-        }
+        match code {
+            8 => {
+                //U-mode ecall
+                let new_sp = crate::sys::syscall::dispatch(frame);
+                frame.sepc += 4;
+                return new_sp.unwrap_or(sp);
+            }
 
-        if code == 2 { // Illegal Instruction
-            let fs = (frame.sstatus >> 13) & 3;
-            if fs == 0 {
-                scheduler::handle_fpu_fault();
-                frame.sstatus |= 1 << 13;
-                return sp;
+            2 => {
+                // Illegal Instruction
+                let fs = (frame.sstatus >> 13) & 3;
+                if fs == 0 {
+                    scheduler::handle_fpu_fault();
+                    frame.sstatus |= 1 << 13;
+                    return sp;
+                }
+            }
+
+            _ => {
+                println!("Unhandled instruction: {}", code);
             }
         }
 
@@ -202,6 +199,6 @@ fn handle(sp: usize) -> usize {
         println!("stval:  {:#x}", stval);
         loop {}
     }
-    
+
     sp
 }

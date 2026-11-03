@@ -32,7 +32,7 @@ fn panic(info: &PanicInfo) -> ! {
     loop {}
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn main(hart_id: usize, dtb_ptr: usize) -> ! {
     arch::smp::BOOT_HART.store(hart_id, core::sync::atomic::Ordering::Relaxed);
     unsafe {
@@ -41,27 +41,57 @@ pub extern "C" fn main(hart_id: usize, dtb_ptr: usize) -> ! {
 
     println!("Hello from a Rust RISC-V Kernel Workspace!");
 
-    let fdt_parser = unsafe { fdt::FdtParser::from_ptr(dtb_ptr as *const u8).expect("Failed to parse FDT") };
-    let (mem_start, mem_size) = fdt_parser.get_memory_region().expect("Could not find memory region in FDT");
+    let fdt_parser =
+        unsafe { fdt::FdtParser::from_ptr(dtb_ptr as *const u8).expect("Failed to parse FDT") };
+    let (mem_start, mem_size) = fdt_parser
+        .get_memory_region()
+        .expect("Could not find memory region in FDT");
     let mem_end = mem_start + mem_size;
 
     let kernel_end_addr = core::ptr::addr_of!(__kernel_end) as usize;
 
     let satp_val;
     unsafe {
-        ALLOCATOR.lock().init(kernel_end_addr as *mut u8, mem_end - kernel_end_addr);
-        
+        ALLOCATOR
+            .lock()
+            .init(kernel_end_addr as *mut u8, mem_end - kernel_end_addr);
+
         let root_table_layout = core::alloc::Layout::from_size_align(4096, 4096).unwrap();
-        let root_table_ptr = alloc::alloc::alloc_zeroed(root_table_layout) as *mut paging::PageTable;
+        let root_table_ptr =
+            alloc::alloc::alloc_zeroed(root_table_layout) as *mut paging::PageTable;
         ROOT_PAGE_TABLE = root_table_ptr;
 
-        paging::map_range(root_table_ptr, 0x10000000, 0x10000000, 4096, paging::PTE_R | paging::PTE_W);
+        paging::map_range(
+            root_table_ptr,
+            0x10000000,
+            0x10000000,
+            4096,
+            paging::PTE_R | paging::PTE_W,
+        );
         // VirtIO MMIO region
-        paging::map_range(root_table_ptr, 0x10001000, 0x10001000, 0x8000, paging::PTE_R | paging::PTE_W);
-        paging::map_range(root_table_ptr, crate::drivers::rtc::GOLDFISH_RTC_BASE, crate::drivers::rtc::GOLDFISH_RTC_BASE, 4096, paging::PTE_R | paging::PTE_W);
-        
+        paging::map_range(
+            root_table_ptr,
+            0x10001000,
+            0x10001000,
+            0x8000,
+            paging::PTE_R | paging::PTE_W,
+        );
+        paging::map_range(
+            root_table_ptr,
+            crate::drivers::rtc::GOLDFISH_RTC_BASE,
+            crate::drivers::rtc::GOLDFISH_RTC_BASE,
+            4096,
+            paging::PTE_R | paging::PTE_W,
+        );
+
         let ram_size = mem_end - 0x80000000;
-        paging::map_range(root_table_ptr, 0x80000000, 0x80000000, ram_size, paging::PTE_R | paging::PTE_W | paging::PTE_X);
+        paging::map_range(
+            root_table_ptr,
+            0x80000000,
+            0x80000000,
+            ram_size,
+            paging::PTE_R | paging::PTE_W | paging::PTE_X,
+        );
 
         satp_val = (8u64 << 60) | ((root_table_ptr as u64) >> 12);
         csr::write_satp(satp_val);
@@ -88,7 +118,7 @@ pub extern "C" fn main(hart_id: usize, dtb_ptr: usize) -> ! {
 
     scheduler::Scheduler::init_main();
     println!("Loading /bin/wasm_runner.elf...");
-    
+
     let desc_idx = match fs::find_file("/bin/wasm_runner.elf") {
         Some(idx) => idx,
         None => {
@@ -96,10 +126,10 @@ pub extern "C" fn main(hart_id: usize, dtb_ptr: usize) -> ! {
             loop {}
         }
     };
-    
+
     let size = fs::get_file_size(desc_idx);
     println!("Found /bin/wasm_runner.elf, size: {} bytes", size);
-    
+
     let mut elf_bytes = alloc::vec![0; size];
     let br = fs::read_file(desc_idx, 0, &mut elf_bytes);
     if br == size {
